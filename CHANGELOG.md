@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/cubicecho/agent-core/compare/v1.2.0...v1.3.0) (2026-09-07)
+
+
+### Features
+
+* runTurn, the whole turn loop rather than its parts ([c06fb17](https://github.com/cubicecho/agent-core/commit/c06fb1777f10883e79eb39ba9870c557305e3821)), closes [#18](https://github.com/cubicecho/agent-core/issues/18)
+
 # [1.2.0](https://github.com/cubicecho/agent-core/compare/v1.1.0...v1.2.0) (2026-09-07)
 
 
