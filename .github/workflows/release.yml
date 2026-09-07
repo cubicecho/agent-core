@@ -1,0 +1,84 @@
+# Publishes the package to npm.
+#
+# Needs NPM_TOKEN — an npm granular-access or automation token that can publish
+# @cubicecho/agent-core — until a trusted publisher for the package is set up on
+# npmjs.com. After that the OIDC exchange below authenticates the publish on its
+# own and the secret can be dropped; `id-token: write` is what makes it possible.
+#
+# Versions come from the commit log, so a release only happens when commits say
+# what changed — `feat:` for a minor, `fix:` for a patch, `BREAKING CHANGE:` in
+# a body for a major. Anything else releases nothing, which is why the manual
+# trigger below exists: it publishes the current main under a version you name,
+# without waiting for the history to become conventional.
+name: Release
+
+on:
+  # Never in parallel with the tests: CI has to have passed on this commit.
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish as, e.g. 0.1.0 (no tag or release notes are created)'
+        required: true
+
+# The repo's default workflow token is read-only. semantic-release pushes the
+# CHANGELOG/version commit, cuts the GitHub release, and comments on issues, so
+# each of those has to be granted here.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    # A red CI run must not become a published version.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The commit CI actually tested, not whatever main has drifted to.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          # semantic-release reads the whole log to work out the next version.
+          fetch-depth: 0
+          # It authenticates with GITHUB_TOKEN itself; the checkout credentials
+          # would only shadow that.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          # Writes the .npmrc that both publish paths below authenticate through.
+          registry-url: https://registry.npmjs.org
+
+      # Also builds dist/, via `prepare` — which is what actually gets published.
+      - run: npm ci
+
+      - name: Semantic release
+        if: github.event_name == 'workflow_run'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Public repo, so the published version can carry a provenance
+          # attestation saying which commit and workflow built it.
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: npx semantic-release
+
+      # The escape hatch: no tag, no release notes, no CHANGELOG — just the
+      # tarball on npm under the version you asked for. The bump is deliberately
+      # not committed; main stays at 0.0.0-development and semantic-release keeps
+      # taking its baseline from the tags.
+      - name: Publish ${{ inputs.version }}
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: |
+          npm pkg set version="$VERSION"
+          npm publish
