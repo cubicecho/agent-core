@@ -68,10 +68,16 @@ function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
 /**
  * The tools half, cached against the array.
  *
- * Tool definitions are stable objects handed out by a pool, and `sanitizeTools` already caches on
- * that same identity — so the array a turn sends is the array the last turn sent unless something
- * reconnected. Serialising two dozen JSON schemas to measure them, on every turn, to get the same
- * number every time, was the more expensive half of this function.
+ * Serialising two dozen JSON schemas to measure them, on every turn, to get the same number every
+ * time, was the more expensive half of this function.
+ *
+ * The array is the key, so this pays only a caller that hands the same one back. That is not what
+ * a turn built through `sanitizeTools` or `relaxTools` does — both are a `map`, so each build
+ * allocates a fresh array however stable the tools inside it are, and those builds miss here every
+ * time. It is not free to change: keying on the tools instead would hit for them, at the cost of
+ * the array-level memoisation `tests/retry.test.ts` pins, which deliberately holds a mutated array
+ * to its first reading. Sizing happens once per turn either way, so the miss costs one walk of the
+ * schemas rather than a walk per attempt.
  */
 const toolTokens = new WeakMap<OpenAI.ChatCompletionTool[], number>();
 
