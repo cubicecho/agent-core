@@ -76,8 +76,8 @@ export interface ModelInfo {
  *
  * Keyed the same way the clients are, because two endpoints are two different sets of models
  * and one of them having answered says nothing about the other. It is only ever a cache of
- * something asked for anyway: nothing here refreshes it, and a listing that fails leaves
- * whatever was there rather than emptying it.
+ * something asked for anyway, and a listing that fails leaves whatever was there rather than
+ * emptying it.
  */
 const listings = new Map<string, ModelInfo[]>();
 
@@ -101,24 +101,37 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * happily load a 256k model at `-c 16384` and go on listing it as 256k — and a run refused on
  * the honest-looking number is a run that fails at the endpoint instead.
  *
- * Otherwise the listing is asked, once per endpoint. A server that will not list models still
- * has to be able to run a turn: a failure here is an unknown window, not a failed run.
+ * Otherwise the endpoint's listing is asked — once, and again whenever it does not name this
+ * model, since a model can arrive after the first listing was taken. A server that will not
+ * list models still has to be able to run a turn: a failure here is an unknown window, not a
+ * failed run.
  */
 export async function contextLimitFor(
   config: Endpoint & { model: string },
   declared = 0,
 ): Promise<number> {
   if (declared > 0) return declared;
-  // A failure is not remembered: an endpoint that was down when the last run started is not an
-  // endpoint with no models, and the one listing this costs is nothing beside the run itself.
-  if (!listings.has(endpointKey(config))) {
+  const key = endpointKey(config);
+  // The listing is asked for again when it does not name this model, rather than only when
+  // there is no listing at all. Models arrive after a process starts — an `ollama pull` on a
+  // box that has been up a week, a worker added to a router, a name the operator has only just
+  // typed into settings — and a cache keyed on "we have asked once" answers zero for every one
+  // of them until a restart. Zero means "nobody knows", so what the operator loses is the
+  // context meter and, in a consumer that compacts on it, compaction: the session then runs at
+  // the window instead of under it and fails against the endpoint's own refusal.
+  //
+  // The cost of asking again is one listing per call while the model really is absent, which
+  // is exactly the case where the cached answer would have been wrong.
+  if (!listings.get(key)?.some((model) => model.id === config.model)) {
+    // A failure is not remembered: an endpoint that was down when the last run started is not
+    // an endpoint with no models, and a window nobody could ask about is not a failed run.
     try {
       await listModels(config);
     } catch {
       return 0;
     }
   }
-  const listed = listings.get(endpointKey(config)) ?? [];
+  const listed = listings.get(key) ?? [];
   return listed.find((model) => model.id === config.model)?.contextLength ?? 0;
 }
 
