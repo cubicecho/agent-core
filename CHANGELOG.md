@@ -1,3 +1,10 @@
+# [2.1.0](https://github.com/cubicecho/agent-core/compare/v2.0.8...v2.1.0) (2026-09-07)
+
+
+### Features
+
+* negotiate what the model refuses, not only the endpoint ([#38](https://github.com/cubicecho/agent-core/issues/38)) ([#39](https://github.com/cubicecho/agent-core/issues/39)) ([77fd8a0](https://github.com/cubicecho/agent-core/commit/77fd8a0c24572e20c7d68ec122973a776f2e8e4a))
+
 ## [2.0.8](https://github.com/cubicecho/agent-core/compare/v2.0.7...v2.0.8) (2026-09-07)
 
 
