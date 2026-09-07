@@ -252,6 +252,79 @@ function mergeRootUnion(out: Schema) {
 }
 
 /**
+ * Every `$ref` string anywhere under a node, walked as arbitrary JSON rather than as a schema.
+ *
+ * The keyword-aware walk `strip` does is the wrong way round for this one. Missing a pointer
+ * here means deleting a definition that something still refers to, which breaks the schema;
+ * finding one that was really a string sitting in a `default` or an `enum` costs a definition
+ * that outlives its last real reference. So this errs the cheap way and reads every position.
+ */
+function collectRefs(node: unknown, into: Set<string>) {
+  if (Array.isArray(node)) {
+    for (const item of node) collectRefs(item, into);
+    return;
+  }
+  if (!isObject(node)) return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "$ref" && typeof value === "string") into.add(value);
+    else collectRefs(value, into);
+  }
+}
+
+/**
+ * Drops the `definitions` and `$defs` entries that nothing points at any more.
+ *
+ * The rewrites above delete whole subtrees — a root combinator once its branches are folded in,
+ * every sibling of a `$ref`, the branch of a union that was only ever `null` — and the pointers
+ * go with them while the pools they named stay behind. On a real Gmail or filesystem schema
+ * those pools are most of the parameter bytes, re-sent for every tool on every turn of every
+ * run, describing shapes the request no longer mentions anywhere.
+ *
+ * Reachability rather than a single pass, because a definition that is still pointed at can
+ * name another; a cycle among them terminates on the `has` check, whether or not anything
+ * outside it still refers in.
+ */
+function pruneDefs(out: Schema) {
+  const pools = (["definitions", "$defs"] as const).filter((key) => isObject(out[key]));
+  if (!pools.length) return;
+
+  const live: Record<string, Set<string>> = {};
+  const visit = (node: unknown) => {
+    const pointers = new Set<string>();
+    collectRefs(node, pointers);
+    for (const pointer of pointers) {
+      const target = LOCAL_POINTER.exec(pointer);
+      if (!target) continue;
+      const [, poolKey, name] = target;
+      const pool = out[poolKey];
+      if (!isObject(pool) || !(name in pool)) continue;
+      live[poolKey] ??= new Set<string>();
+      const names = live[poolKey];
+      if (names.has(name)) continue;
+      names.add(name);
+      visit(pool[name]);
+    }
+  };
+
+  // The pools themselves are not roots: a definition is reached from the schema body, or by
+  // another definition that was, or not at all.
+  const body = { ...out };
+  for (const key of pools) delete body[key];
+  visit(body);
+
+  for (const key of pools) {
+    const names = live[key];
+    if (!names?.size) {
+      delete out[key];
+      continue;
+    }
+    const pool = out[key] as Schema;
+    if (names.size === Object.keys(pool).length) continue;
+    out[key] = Object.fromEntries(Object.entries(pool).filter(([name]) => names.has(name)));
+  }
+}
+
+/**
  * A required argument that is not in `properties` is one no caller can supply and no strict
  * validator will accept. Anything the rewrites above removed, `required` may still name.
  */
@@ -273,6 +346,7 @@ function sanitizeParameters(parameters: unknown): Schema {
   if (out.type !== "object") out.type = "object";
   if (!isObject(out.properties)) out.properties = {};
   pruneRequired(out);
+  pruneDefs(out);
   return out;
 }
 

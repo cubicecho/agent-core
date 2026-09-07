@@ -354,6 +354,59 @@ test("a root union branch that resolves nowhere never claims a required name", (
   }
 });
 
+test("definitions nothing points at any more do not go out", () => {
+  // The union that referenced these is folded into `properties` and then deleted, so the
+  // pointers are gone and the pools they named are pure token cost.
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        type: "object",
+        oneOf: [{ $ref: "#/$defs/ByPath" }, { $ref: "#/$defs/ByQuery" }],
+        $defs: {
+          ByPath: { type: "object", properties: { path: { type: "string" } } },
+          ByQuery: { type: "object", properties: { query: { type: "string" } } },
+        },
+      }),
+    ]),
+  );
+
+  expect(out.$defs).toBeUndefined();
+  expect(JSON.stringify(out)).not.toContain("$defs/");
+});
+
+test("a definition a surviving reference reaches is kept, along with what it names", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        type: "object",
+        properties: { where: { $ref: "#/definitions/Filters" } },
+        definitions: {
+          Filters: { type: "object", properties: { by: { $ref: "#/definitions/Field" } } },
+          Field: { type: "string" },
+          Unused: { type: "object", properties: { x: { type: "string" } } },
+        },
+      }),
+    ]),
+  );
+
+  // `Field` is reached only through `Filters`, which is why one pass is not enough.
+  expect(Object.keys(out.definitions as object)).toEqual(["Filters", "Field"]);
+});
+
+test("a definition that only refers to itself goes with the rest", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        type: "object",
+        properties: { a: { type: "string" } },
+        $defs: { Loop: { $ref: "#/$defs/Loop" } },
+      }),
+    ]),
+  );
+
+  expect(out.$defs).toBeUndefined();
+});
+
 test("the same tool object is walked once, however often it is sent", () => {
   const declared = [
     tool({
