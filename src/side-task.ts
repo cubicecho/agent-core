@@ -39,7 +39,7 @@ const noHints = new Set<string>();
 
 const hintKey = (baseUrl: string, model: string) => JSON.stringify([baseUrl, model]);
 
-/** Test seam, alongside `resetClients` and `reset`: forget which models refused the hints. */
+/** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
 export const resetHints = () => noHints.clear();
 
 /**
