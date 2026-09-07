@@ -35,6 +35,44 @@ only, Node >=22.
 What is **not** here is the work: orchestration, prompts, and whatever the run is about. That
 is the caller's, and it is the part that actually differs between one server and the next.
 
+## A turn
+
+`negotiate` wrapping `streamTurn` is the whole of one turn against an endpoint: the request is
+re-sent for as long as the answer is this server refusing something the request can do without,
+and nothing is re-sent once it has started answering.
+
+```ts
+import {
+  capabilitiesFor, getClient, negotiate, relaxTools, sanitizeTools, streamTurn, timeoutMs,
+} from "@cubicecho/agent-core";
+
+const declared = sanitizeTools(tools);
+const supports = capabilitiesFor(config.baseUrl);
+
+const turn = await negotiate(supports, (supports, produced) =>
+  streamTurn(
+    getClient(config),
+    {
+      model, messages, stream: true,
+      // Rebuilt per attempt: what the endpoint has refused is latched off by the line above.
+      ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
+      tools: supports.strictSchemas ? declared : relaxTools(declared),
+    },
+    { produced, signal, idleMs: timeoutMs(config), onOutput: (text) => emit(runId, { kind: "output", text }) },
+  ),
+);
+```
+
+`send` takes a callback rather than a body because the body has to be rebuilt from the latched
+flags. `produced` is one box per attempt — `streamTurn` sets it as soon as the server says
+anything, and the re-send reads it — so a caller with its own retry budget passes one in
+(`{ produced }`) and reads it afterwards to decide whether the failure is worth another attempt.
+
+`idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is
+still talking is never cut off however long it takes, and one that has stopped answering raises
+`EndpointSilent` rather than hanging the run. `timeoutMs(config)` returns `undefined` for a
+`requestTimeoutSeconds` of zero, which waits forever — what a local model answering slowly needs.
+
 ## The config seam
 
 Nothing here imports a config type from a consumer, and no function asks for a whole
