@@ -97,6 +97,11 @@ export interface SideTaskOptions {
   /**
    * Told what was given up on, the same way `runTurn` and `negotiate` tell a caller.
    *
+   * The one notice `ask` raises itself opens with the model's name, as `negotiate`'s do for the
+   * refusals that are the model's: what it announces is latched on the (endpoint, model) pair,
+   * so on a consumer reaching several models through one base URL the name is the only thing
+   * separating one announcement from the next.
+   *
    * There is no default, and nothing is printed without one. A library that writes to the
    * console decides for its consumer where operator text goes — which a server embedding this
    * cannot then route to its own logger, attach to the run it belongs to, or silence in tests.
@@ -163,7 +168,7 @@ export async function ask(
     // the hints it does not, which is `chat_template_kwargs` and an effort the model has but
     // does not offer as `none`.
     if (!hints || !rejectedTheRequest(error)) throw error;
-    onNotice?.("server rejected the no-thinking hints; retrying without them");
+    onNotice?.(`${model} rejected the no-thinking hints; retrying without them`);
     noHints.add(key);
     response = await attempt(false);
   }

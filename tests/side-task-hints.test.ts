@@ -58,7 +58,7 @@ describe("no-thinking hints", () => {
     await ask(endpoint("http://picky/v1"), "m", "system", "user", {
       onNotice: (message) => notices.push(message),
     });
-    expect(notices).toEqual(["server rejected the no-thinking hints; retrying without them"]);
+    expect(notices).toEqual(["m rejected the no-thinking hints; retrying without them"]);
 
     // A library that writes to the console has decided for its consumer where operator text
     // goes. The retry still happens; it just says so through the seam or not at all.
@@ -111,6 +111,26 @@ describe("no-thinking hints", () => {
 
     await call(endpoint("http://router/v1"), "other-model");
     expect(sentHints(2)).toBe(true);
+  });
+
+  it("names the model in the notice, so two on one host are told apart", async () => {
+    // The latch is on the (endpoint, model) pair and this line is the only announcement that it
+    // caught. Opening with "server" made every model behind one route say the same sentence.
+    const notices: string[] = [];
+    const watched = (model: string) =>
+      ask(endpoint("http://router/v1"), model, "system", "user", {
+        onNotice: (message) => notices.push(message),
+      });
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await watched("picky-model");
+    create.mockReset();
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await watched("other-model");
+
+    expect(notices).toEqual([
+      "picky-model rejected the no-thinking hints; retrying without them",
+      "other-model rejected the no-thinking hints; retrying without them",
+    ]);
   });
 
   it("does not latch on a rate limit, or answer one by sending it again", async () => {
