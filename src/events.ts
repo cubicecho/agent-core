@@ -79,13 +79,24 @@ export interface RunEvent {
   usage: RunUsage | null;
 }
 
-/** What `emit` is given: the run and the sequence are the bus's to assign. */
-export type RunEventInput = Pick<RunEvent, "kind"> & Partial<Omit<RunEvent, "kind">>;
+/**
+ * What `emit` is given: the run and the sequence are the bus's to assign.
+ *
+ * Named exclusions rather than a blanket `Partial`, which permitted both and let the spread in
+ * `emit` overwrite them — a caller could file an event under another run and hand every watcher
+ * a duplicate `seq`, which is the one thing the sequence is for.
+ */
+export type RunEventInput = Pick<RunEvent, "kind"> &
+  Partial<Omit<RunEvent, "kind" | "runId" | "seq">>;
 
 interface Stream {
   events: RunEvent[];
   listeners: Set<(event: RunEvent) => void>;
   seq: number;
+  /** When this stream last saw an event, for the sweep below. */
+  touched: number;
+  /** Whether `done` has been seen, so a watcher leaving knows the run is over. */
+  ended: boolean;
 }
 
 const streams = new Map<string, Stream>();
@@ -93,17 +104,59 @@ const streams = new Map<string, Stream>();
 const streamFor = (runId: string): Stream => {
   const existing = streams.get(runId);
   if (existing) return existing;
-  const stream: Stream = { events: [], listeners: new Set(), seq: 0 };
+  const stream: Stream = {
+    events: [],
+    listeners: new Set(),
+    seq: 0,
+    touched: Date.now(),
+    ended: false,
+  };
   streams.set(runId, stream);
   return stream;
 };
+
+/**
+ * Drops the streams nobody is reading and nothing is writing to.
+ *
+ * Cleanup used to hang entirely off `done`, which assumed every run reaches it. A run killed by
+ * an uncaught throw, a signal, or a caller that simply forgets pinned its backlog for the life
+ * of the process — and in a long-lived server that map only ever grew. The `done` timer had the
+ * same shape of hole from the other end: if a watcher was still attached when it fired it
+ * deleted nothing and nothing rescheduled it, so any client slow enough to still be reading a
+ * minute after the end leaked the stream permanently.
+ *
+ * One timer for the whole map, rescheduled only while there is something in it to expire.
+ */
+let sweeping: ReturnType<typeof setTimeout> | null = null;
+
+function sweep() {
+  sweeping = null;
+  const deadline = Date.now() - RETAIN_MS;
+  for (const [runId, stream] of streams) {
+    if (stream.listeners.size === 0 && stream.touched <= deadline) streams.delete(runId);
+  }
+  scheduleSweep();
+}
+
+function scheduleSweep() {
+  if (sweeping || streams.size === 0) return;
+  sweeping = setTimeout(sweep, RETAIN_MS);
+  sweeping.unref?.();
+}
+
+/**
+ * Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose
+ * loop threw where it could not be caught. The sweep gets there on its own; this is for a
+ * caller that already knows.
+ */
+export function endRun(runId: string) {
+  streams.delete(runId);
+}
 
 /** Records one event and hands it to everyone watching that run. Never throws at the caller. */
 export function emit(runId: string, input: RunEventInput): RunEvent {
   const stream = streamFor(runId);
   const event: RunEvent = {
-    runId,
-    seq: ++stream.seq,
     at: new Date(),
     text: "",
     name: "",
@@ -111,19 +164,26 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
     ok: null,
     usage: null,
     ...input,
+    // After the spread, not before: these are the bus's and a caller does not get a say.
+    runId,
+    seq: ++stream.seq,
   };
   stream.events.push(event);
+  stream.touched = event.at.getTime();
   if (stream.events.length > MAX_EVENTS + TRIM_SLACK) {
     stream.events.splice(0, stream.events.length - MAX_EVENTS);
   }
-  for (const listener of stream.listeners) listener(event);
+  // Kept for a moment so a watcher that arrives just after the end still sees how it went,
+  // then dropped: a finished run's record is the row, not this.
+  if (event.kind === "done") stream.ended = true;
+  scheduleSweep();
 
-  if (event.kind === "done") {
-    // Kept for a moment so a watcher that arrives just after the end still sees how it went,
-    // then dropped: a finished run's record is the row, not this.
-    setTimeout(() => {
-      if (streams.get(runId) === stream && stream.listeners.size === 0) streams.delete(runId);
-    }, RETAIN_MS).unref?.();
+  for (const listener of stream.listeners) {
+    // The guarantee above is the point of this: a listener that throws must not take out the
+    // emitter, the listeners after it, or the bookkeeping already done above.
+    try {
+      listener(event);
+    } catch {}
   }
   return event;
 }
@@ -160,8 +220,11 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
   } finally {
     stream.listeners.delete(listener);
     // A watcher can name a run that has not started, or will never start. Nothing was recorded
-    // under it, so nothing is left behind either.
-    if (stream.listeners.size === 0 && stream.events.length === 0) streams.delete(runId);
+    // under it, so nothing is left behind either — and a run that has ended has nothing more to
+    // say to anyone, so the last watcher leaving takes the backlog with it.
+    if (stream.listeners.size === 0 && (stream.ended || stream.events.length === 0)) {
+      streams.delete(runId);
+    }
   }
 }
 
@@ -169,7 +232,11 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
 export const history = (runId: string): RunEvent[] => [...(streams.get(runId)?.events ?? [])];
 
 /** Test seam: forget every run, so one test's events cannot be read by the next. */
-export const reset = () => streams.clear();
+export const reset = () => {
+  streams.clear();
+  if (sweeping) clearTimeout(sweeping);
+  sweeping = null;
+};
 
 /**
  * Consecutive tokens of one kind are one thing being said, not hundreds of things.
@@ -192,7 +259,10 @@ export function fold(events: RunEvent[]): RunEvent[] {
         text: last.text + event.text,
       };
     } else {
-      blocks.push(event);
+      // A copy, because the merged branch above makes one and the caller cannot tell which
+      // branch its events took. Pushing the stored object let `fold(history(id))[0].text = ...`
+      // rewrite the bus, and every watcher after it read the rewrite.
+      blocks.push({ ...event });
     }
   }
   return blocks;

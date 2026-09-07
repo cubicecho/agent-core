@@ -29,6 +29,7 @@ export type {
 export { errorMessage } from "./errors.ts";
 export {
   emit,
+  endRun,
   fold,
   history,
   type RunEvent,
