@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { estimateTokens } from "./side-task.ts";
+import { estimateTokens } from "./tokens.ts";
 
 /**
  * Everything about a request failing that is not about what the request said.
@@ -53,8 +53,21 @@ const OVERFLOW = [
   /reduce the length/i,
 ];
 
+/**
+ * A rate limit says the same words and means the opposite thing.
+ *
+ * OpenAI refuses a request over the per-minute token budget with "Request too large for gpt-4o
+ * ... on tokens per min (TPM)", which is "too large for" beside "tokens" — both halves of the
+ * test below. That is a 429, which `isTransient` accepts and which succeeds on the next attempt;
+ * reading it as an overflow turned it into a `ContextOverflow`, whose whole purpose is that
+ * nothing retries it. The two classifiers in this file disagreed about one error.
+ */
+const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
+
 export const isOverflow = (detail: string) =>
-  OVERFLOW.some((pattern) => pattern.test(detail)) && /token|context/i.test(detail);
+  !RATE_LIMITED.test(detail) &&
+  OVERFLOW.some((pattern) => pattern.test(detail)) &&
+  /token|context/i.test(detail);
 
 /**
  * Below this, the window is nobody's business and is not asked for.

@@ -53,12 +53,13 @@ export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";
 export {
   ask,
   clean,
-  estimateTokens,
   listLines,
   parseJson,
+  resetHints,
   type SideTaskOptions,
   tryAsk,
 } from "./side-task.ts";
+export { estimateTokens } from "./tokens.ts";
 export {
   carryOver,
   catalogList,

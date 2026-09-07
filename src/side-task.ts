@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import { getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
+import { errorMessage } from "./errors.ts";
+import { isTransient } from "./retry.ts";
 
 /**
  * One-shot calls that support a run without being one: picking tools, naming a session,
@@ -21,31 +23,53 @@ const NO_THINKING = {
 };
 
 /**
- * The endpoints that turned out not to take the hints, by base URL.
+ * The models that turned out not to take the hints, by endpoint and model.
  *
  * Keyed rather than global for the reason the client cache is keyed: a refusal is a fact about
- * the server on the other end, not about this process. A llama.cpp box and a cloud API are both
+ * what is on the other end, not about this process. A llama.cpp box and a cloud API are both
  * reachable from one consumer over its lifetime, and the first one's refusal must not stop the
  * second from ever being asked.
+ *
+ * The model belongs in the key for the same reason. One base URL is routinely many models —
+ * OpenRouter, LiteLLM, vLLM serving several at once — and whether `reasoning_effort` is
+ * understood is a property of the model behind the route, not of the route. Keyed on the host
+ * alone, the first model to refuse spoke for every model on it.
  */
 const noHints = new Set<string>();
+
+const hintKey = (baseUrl: string, model: string) => JSON.stringify([baseUrl, model]);
+
+/** Test seam, alongside `resetClients` and `reset`: forget which models refused the hints. */
+export const resetHints = () => noHints.clear();
 
 /**
  * Whether a failure is the server complaining about the request, rather than failing to answer.
  *
  * The retry below used to catch everything, so an aborted first call — or a connection that
  * never landed — latched the hints off for the life of the process and every later side task
- * paid for it by burning a whole budget on deliberation. Only a 4xx says the fields were the
- * problem; a timeout, a refused connection or a 500 say nothing about them at all.
+ * paid for it by burning a whole budget on deliberation. Narrowing that to any 4xx was still
+ * too wide: 401, 404 and 429 are all 4xx and none of them is about the fields. A 429 was the
+ * worst of them, because the retry then re-sent the whole request immediately — doubling the
+ * rate against a server that had just asked for less of it — and `isTransient` accepts exactly
+ * that status, so the two halves of this package disagreed about one error.
+ *
+ * 400 and 422 are what a server says when it read the body and disliked it. Everything else
+ * is left to the caller's own retry.
  */
 function rejectedTheRequest(error: unknown): boolean {
-  if (!(error instanceof OpenAI.APIError)) return false;
-  const status = error.status ?? 0;
-  return status >= 400 && status < 500;
+  if (!(error instanceof OpenAI.APIError) || isTransient(error)) return false;
+  return error.status === 400 || error.status === 422;
 }
 
-/** Reasoning models that ignore the hints still fence their scratchpad; drop it. */
-const stripThinking = (text: string) => text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+/**
+ * Reasoning models that ignore the hints still fence their scratchpad; drop it.
+ *
+ * Including the fence that never closes. A side task answers under a small `max_tokens`, so a
+ * model that spends it deliberating is cut off mid-scratchpad and the closing tag never
+ * arrives — and the whole deliberation was then returned to the caller as the answer.
+ */
+const stripThinking = (text: string) =>
+  text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "");
 
 export interface SideTaskOptions {
   maxTokens?: number;
@@ -76,18 +100,25 @@ export async function ask(
       { signal },
     );
 
-  const hints = !noHints.has(config.baseUrl);
+  const key = hintKey(config.baseUrl, model);
+  const hints = !noHints.has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {
     response = await send(hints);
   } catch (error) {
     if (!hints || !rejectedTheRequest(error)) throw error;
     console.warn("[side-task] server rejected the no-thinking hints; retrying without them");
-    noHints.add(config.baseUrl);
+    noHints.add(key);
     response = await send(false);
   }
 
-  return stripThinking(response.choices[0]?.message?.content ?? "").trim();
+  const message = response.choices[0]?.message;
+  const answer = stripThinking(message?.content ?? "").trim();
+  // Nothing but scratchpad. Some servers put the deliberation in its own field and leave the
+  // content genuinely empty, in which case there is no answer to find anywhere else.
+  if (answer) return answer;
+  const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
+  return typeof reasoning === "string" ? stripThinking(reasoning).trim() : "";
 }
 
 /**
@@ -98,7 +129,10 @@ export async function tryAsk<T>(label: string, run: () => Promise<T>): Promise<T
   try {
     return await run();
   } catch (error) {
-    console.warn(`[side-task] ${label}:`, (error as Error).message);
+    // A cancelled run is not a failed side task. Swallowing the abort made the two
+    // indistinguishable and left the cancellation with nowhere to go.
+    if (error instanceof OpenAI.APIUserAbortError) throw error;
+    console.warn(`[side-task] ${label}:`, errorMessage(error));
     return undefined;
   }
 }
@@ -140,15 +174,3 @@ export const listLines = (text: string, max: number, maxChars: number) =>
     .map(clean)
     .filter((line) => line.length > 0 && line.length <= maxChars)
     .slice(0, max);
-
-/**
- * Rough token count. Characters over four, because there is no tokenizer here and there is not
- * going to be one: a server that will not say how big its window is will not lend us its
- * vocabulary either.
- *
- * The estimate runs low on tool schemas — JSON packs more tokens into a character than prose
- * does — and that is the side to be wrong on wherever it guards a window, since the cost of
- * guessing high is a run refused that would have worked, and the cost of guessing low is the
- * endpoint's own refusal, which is where we were before the guard existed.
- */
-export const estimateTokens = (text: string) => Math.ceil(text.length / 4);
