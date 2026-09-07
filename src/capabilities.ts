@@ -62,6 +62,9 @@ export function resetCapabilities() {
   capabilities.clear();
 }
 
+/** Every flag on a `Capabilities`, typed, so a third one is compared without an edit here. */
+const keys = (of: Capabilities) => Object.keys(of) as (keyof Capabilities)[];
+
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
 const REJECTS_USAGE = /stream_options/i;
 
@@ -112,6 +115,10 @@ export async function negotiate<T>(
   { produced = { any: false }, onNotice }: NegotiateOptions = {},
 ): Promise<T> {
   for (;;) {
+    // What this attempt was built with. `capabilitiesFor` hands one object per endpoint to
+    // everyone on it, so a run starting alongside this one may latch a flag off while this call
+    // is in flight — and the branches below are guarded on the flag still being set.
+    const sent = { ...supports };
     try {
       return await send(supports, produced);
     } catch (error) {
@@ -123,9 +130,16 @@ export async function negotiate<T>(
       } else if (supports.usageInStream && REJECTS_USAGE.test(detail)) {
         supports.usageInStream = false;
         onNotice?.("server rejected stream_options; token counts unavailable");
-      } else {
+      } else if (keys(sent).every((flag) => sent[flag] === supports[flag])) {
         throw error;
       }
+      // Otherwise the refusal was answered by whoever got there first, and this attempt was
+      // built before the answer existed. Two runs opening on a fresh llama.cpp box both get the
+      // grammar error; the first latches it off and re-sends, and the second used to find the
+      // flag already clear, fall through to the throw and die on an error the process had just
+      // learned to fix — `isTransient` refuses a 400, so `runTurn` would not send it again
+      // either. Sending it again is the whole of the fix: flags only ever latch off, so this
+      // gives up after one pass per flag.
     }
   }
 }
