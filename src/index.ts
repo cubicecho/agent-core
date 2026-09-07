@@ -47,6 +47,7 @@ export {
   reset,
   watch,
 } from "./events.ts";
+export { resetAll } from "./reset.ts";
 export {
   backoffMs,
   ContextOverflow,

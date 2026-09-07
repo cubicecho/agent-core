@@ -29,6 +29,7 @@ only, Node >=22.
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `config` | The structural interfaces every function here asks for. |
+| `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
 | `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
 
