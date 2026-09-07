@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 
@@ -13,13 +13,36 @@ import type { Endpoint } from "./config.ts";
  * return empty content, so side tasks ask for thinking to be turned off. `reasoning_effort` is
  * the OpenAI-compatible spelling and `chat_template_kwargs` the llama.cpp/vLLM one; servers
  * disagree about which they take, so send both. One that rejects the unknown fields gets a
- * single retry without them, and we stop sending them after that.
+ * single retry without them, and is not offered them again.
  */
 const NO_THINKING = {
   reasoning_effort: "none",
   chat_template_kwargs: { enable_thinking: false },
 };
-let thinkingHintsSupported = true;
+
+/**
+ * The endpoints that turned out not to take the hints, by base URL.
+ *
+ * Keyed rather than global for the reason the client cache is keyed: a refusal is a fact about
+ * the server on the other end, not about this process. A llama.cpp box and a cloud API are both
+ * reachable from one consumer over its lifetime, and the first one's refusal must not stop the
+ * second from ever being asked.
+ */
+const noHints = new Set<string>();
+
+/**
+ * Whether a failure is the server complaining about the request, rather than failing to answer.
+ *
+ * The retry below used to catch everything, so an aborted first call — or a connection that
+ * never landed — latched the hints off for the life of the process and every later side task
+ * paid for it by burning a whole budget on deliberation. Only a 4xx says the fields were the
+ * problem; a timeout, a refused connection or a 500 say nothing about them at all.
+ */
+function rejectedTheRequest(error: unknown): boolean {
+  if (!(error instanceof OpenAI.APIError)) return false;
+  const status = error.status ?? 0;
+  return status >= 400 && status < 500;
+}
 
 /** Reasoning models that ignore the hints still fence their scratchpad; drop it. */
 const stripThinking = (text: string) => text.replace(/<think>[\s\S]*?<\/think>/gi, "");
@@ -53,13 +76,14 @@ export async function ask(
       { signal },
     );
 
+  const hints = !noHints.has(config.baseUrl);
   let response: Awaited<ReturnType<typeof send>>;
   try {
-    response = await send(thinkingHintsSupported);
+    response = await send(hints);
   } catch (error) {
-    if (!thinkingHintsSupported) throw error;
+    if (!hints || !rejectedTheRequest(error)) throw error;
     console.warn("[side-task] server rejected the no-thinking hints; retrying without them");
-    thinkingHintsSupported = false;
+    noHints.add(config.baseUrl);
     response = await send(false);
   }
 
