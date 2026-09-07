@@ -45,6 +45,8 @@ const capabilities = new Map<string, Capabilities>();
 /**
  * What this endpoint is known not to support. The same object every time, so what `negotiate`
  * latches off stays off.
+ *
+ * @param baseUrl Identifies the endpoint. These are per-server, not per-model.
  */
 export function capabilitiesFor(baseUrl: string): Capabilities {
   let known = capabilities.get(baseUrl);
@@ -98,6 +100,11 @@ export interface NegotiateOptions {
  * ever one flag in a turn — the same box `streamTurn` sets and the re-send below reads — and a
  * caller that passed it to only one of the two got a turn that had already streamed tokens sent
  * again, silently, with the watcher seeing every one of them twice.
+ *
+ * @param supports What this endpoint has already refused. Latched off further as it refuses more.
+ * @param send Builds and sends the request. Called again per downgrade, never once tokens
+ * have arrived.
+ * @param options `produced` for a caller with its own retry budget, `onNotice` for a watcher.
  */
 export async function negotiate<T>(
   supports: Capabilities,

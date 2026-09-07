@@ -8,7 +8,11 @@ import type { Endpoint } from "./config.ts";
  */
 export const NO_KEY = "agent-core";
 
-/** Zero, less, or absent means no limit, which the SDK spells as `undefined`. */
+/**
+ * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
+ *
+ * @param config Read for `requestTimeoutSeconds` alone.
+ */
 export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined => {
   const seconds = config.requestTimeoutSeconds ?? 0;
   return seconds > 0 ? seconds * 1000 : undefined;
@@ -93,7 +97,11 @@ const listings = new Map<string, ModelInfo[]>();
 
 const endpointKey = (config: Endpoint) => JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
 
-/** Asks an endpoint what it serves, and remembers the answer. */
+/**
+ * Asks an endpoint what it serves, and remembers the answer.
+ *
+ * @param config The endpoint to ask. Remembered per base URL and key, not per model.
+ */
 export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
   const { data } = await getClient(config).models.list();
   const models = data
@@ -115,6 +123,9 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * model, since a model can arrive after the first listing was taken. A server that will not
  * list models still has to be able to run a turn: a failure here is an unknown window, not a
  * failed run.
+ *
+ * @param config The endpoint, plus the model whose window is wanted.
+ * @param declared The operator's own number. Above zero it wins and the endpoint is not asked.
  */
 export async function contextLimitFor(
   config: Endpoint & { model: string },

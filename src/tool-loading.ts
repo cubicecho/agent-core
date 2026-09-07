@@ -59,6 +59,9 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
  * A server with no tools is dropped rather than titled: a pool hands one over whenever a
  * server is connected but has nothing to offer, and a label with nothing under it reads as a
  * listing that got cut off.
+ *
+ * @param catalog The connected servers. Ones with no tools are dropped.
+ * @param loaded Names already loaded, marked in the listing rather than removed from it.
  */
 export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
   return catalog
@@ -79,6 +82,9 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
  * moment it was loaded, and the model loads again to get it back; hoisting them into a separate
  * "already loaded" section splits a server's tools apart, and the model picks a sibling from
  * the longer list instead.
+ *
+ * @param catalog The connected servers. A catalogue with no tools in it produces an empty string.
+ * @param loaded Names already loaded, marked in the listing.
  */
 export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
   const list = catalogList(catalog, loaded);
@@ -118,7 +124,12 @@ export const MAX_PER_LOAD = 12;
  */
 export const MAX_CARRIED = 16;
 
-/** The tools to start the next turn with: recently used, newest last, capped. */
+/**
+ * The tools to start the next turn with: recently used, newest last, capped.
+ *
+ * @param previous Last turn's names, oldest first.
+ * @param used What this turn called. Moved to the end, so the oldest unused fall off.
+ */
 export const carryOver = (previous: string[], used: Set<string>) =>
   [...previous.filter((name) => !used.has(name)), ...used].slice(-MAX_CARRIED);
 
@@ -130,6 +141,9 @@ export const carryOver = (previous: string[], used: Set<string>) =>
  * on the `__` boundary — accepted only when it is unambiguous. Rejecting those outright just
  * buys a wasted round trip while the model guesses the prefix, and pushes it toward
  * shotgunning wildcards.
+ *
+ * @param requested What the model asked for. A trailing `*` expands.
+ * @param catalog The servers to resolve against.
  */
 export function expandNames(requested: string[], catalog: CatalogServer[]) {
   const all = flatten(catalog);
@@ -178,7 +192,12 @@ export function expandNames(requested: string[], catalog: CatalogServer[]) {
   return { matched: [...matched], unknown, overBroad };
 }
 
-/** What `load_tools` reports back: the descriptions, now that they are worth their tokens. */
+/**
+ * What `load_tools` reports back: the descriptions, now that they are worth their tokens.
+ *
+ * @param expanded What `expandNames` resolved: the matches, the misses, and the over-broad asks.
+ * @param catalog The servers, read for the descriptions now worth their tokens.
+ */
 export function loadResult(
   { matched, unknown, overBroad }: ReturnType<typeof expandNames>,
   catalog: CatalogServer[],
@@ -214,7 +233,11 @@ export function loadResult(
 export const inCatalog = (catalog: CatalogServer[], name: string) =>
   catalog.some((server) => server.tools.some((tool) => tool.name === name));
 
-/** `load_tools` arguments, defensively — a model may send a bare string or a nested object. */
+/**
+ * `load_tools` arguments, defensively — a model may send a bare string or a nested object.
+ *
+ * @param args The tool call's arguments, exactly as the model sent them.
+ */
 export function requestedNames(args: Record<string, unknown>): string[] {
   const value = args.names ?? args.tools ?? args.name;
   if (typeof value === "string") return [value];
@@ -249,7 +272,13 @@ export const PRESELECT_SYSTEM =
 export const preselectInput = (catalog: CatalogServer[], prompt: string) =>
   `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, 2000)}`;
 
-/** Resolves a preselection against the catalogue: unknown names dropped, count capped. */
+/**
+ * Resolves a preselection against the catalogue: unknown names dropped, count capped.
+ *
+ * @param names What the preselector replied. Unvalidated: a non-array gives none, and entries
+ * that are not strings are dropped.
+ * @param catalog The servers to resolve against.
+ */
 export function preselection(names: unknown, catalog: CatalogServer[]): string[] {
   if (!Array.isArray(names)) return [];
   const wanted = names.filter((name): name is string => typeof name === "string");

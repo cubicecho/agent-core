@@ -164,12 +164,19 @@ function scheduleSweep() {
  * Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose
  * loop threw where it could not be caught. The sweep gets there on its own; this is for a
  * caller that already knows.
+ *
+ * @param runId The run to forget. An id nothing was emitted under is ignored.
  */
 export function endRun(runId: string) {
   streams.delete(runId);
 }
 
-/** Records one event and hands it to everyone watching that run. Never throws at the caller. */
+/**
+ * Records one event and hands it to everyone watching that run. Never throws at the caller.
+ *
+ * @param runId The run this belongs to. Created on first use.
+ * @param input The event. `kind` is required; `runId` and `seq` are not a caller's to set.
+ */
 export function emit(runId: string, input: RunEventInput): RunEvent {
   const stream = streamFor(runId);
   // One clock read, used for both the event and the sweep's bookkeeping.
@@ -211,6 +218,8 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
  *
  * The backlog comes first so a watcher that joins halfway through — or after the run finished,
  * inside the retention window — reads the same story as one that was there from the start.
+ *
+ * @param runId The run to follow. One that has not started yet is waited on, not refused.
  */
 export async function* watch(runId: string): AsyncGenerator<RunEvent> {
   const stream = streamFor(runId);
@@ -299,7 +308,11 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
   }
 }
 
-/** The backlog alone, for a caller that wants a snapshot rather than a subscription. */
+/**
+ * The backlog alone, for a caller that wants a snapshot rather than a subscription.
+ *
+ * @param runId The run to read. An unknown or already-swept run gives an empty array.
+ */
 export const history = (runId: string): RunEvent[] => [...(streams.get(runId)?.events ?? [])];
 
 /**
@@ -322,6 +335,8 @@ export const resetEvents = () => {
  * reasoning model spends ten thousand deltas on a paragraph, and a paragraph is what it meant.
  * Each block carries the `seq` of its last event, so asking for what came after one block
  * picks up exactly where it left off.
+ *
+ * @param events Events in `seq` order, from `history` or collected from `watch`.
  */
 export function fold(events: RunEvent[]): RunEvent[] {
   const blocks: RunEvent[] = [];

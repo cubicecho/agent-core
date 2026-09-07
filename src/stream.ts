@@ -77,6 +77,10 @@ export interface StreamTurnOptions {
  * Two token callbacks rather than an event input, because a turn does not know which step of
  * which run it is: `step` is the caller's flow concept, and wrapping these into an `emit` is one
  * line at the call site.
+ *
+ * @param client The pooled client for this endpoint.
+ * @param body The request, which must set `stream: true`.
+ * @param options Cancellation, the idle watchdog, and the token callbacks.
  */
 export async function streamTurn(
   client: OpenAI,

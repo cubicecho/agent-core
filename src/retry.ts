@@ -23,7 +23,11 @@ export class ContextOverflow extends Error {
   override readonly name = "ContextOverflow";
 }
 
-/** 1234 → "1.2k". The numbers in an overflow message are large and nobody reads the units digit. */
+/**
+ * 1234 → "1.2k". The numbers in an overflow message are large and nobody reads the units digit.
+ *
+ * @param tokens The count to render.
+ */
 export const compact = (tokens: number) =>
   tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
 
@@ -92,6 +96,8 @@ function toolsCost(tools: OpenAI.ChatCompletionTool[]): number {
  * about to serialise again to send. What the walk misses is JSON's own punctuation and the keys,
  * which `ENVELOPE` puts back approximately; the difference is a rounding error against an
  * estimate that is already characters over four.
+ *
+ * @param body The request as it will be sent, tools included.
  */
 export const requestTokens = (body: OpenAI.ChatCompletionCreateParamsStreaming) => {
   // Characters first and the division once at the end, rather than a rounded count per message:
@@ -161,6 +167,8 @@ export const SMALLEST_LIKELY_WINDOW = 8192;
  * to answer, an endpoint that went quiet. A 400 for a malformed tool schema would fail exactly
  * the same way on every attempt, and the two capability cases below are negotiated rather than
  * retried blindly.
+ *
+ * @param error The rejection, as caught. What is not an SDK error is not transient.
  */
 export function isTransient(error: unknown): boolean {
   if (error instanceof EndpointSilent) return true;
@@ -170,7 +178,11 @@ export function isTransient(error: unknown): boolean {
   return status === 408 || status === 409 || status === 429 || (status ?? 0) >= 500;
 }
 
-/** Exponential, with jitter so several tasks failing at once do not return in lockstep. */
+/**
+ * Exponential, with jitter so several tasks failing at once do not return in lockstep.
+ *
+ * @param attempt Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
+ */
 export const backoffMs = (attempt: number) =>
   Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
 
