@@ -1,0 +1,141 @@
+# @cubicecho/agent-core
+
+> The endpoint-agnostic half of an OpenAI-compatible agent loop: tool-schema compatibility, on-demand tool loading, one-shot side tasks, run events, and a pooled client.
+
+What is here is everything that does not know what the agent is *for*: making a tool schema a strict server will accept, getting tool definitions in front of a model without paying for all of them, reading one streamed turn back into a message, answering an endpoint that refuses one of those, one-shot calls that support a run, the event bus a watcher reads, a pooled client, and the rules about retrying. What is not here is the work — orchestration, prompts, and whatever the run is about — because that is the caller's, and it is the part that differs between one server and the next.
+
+Requires Node >=22, with `openai` >=6 as a peer dependency. ESM only.
+Full prose, worked examples and the reasoning behind each seam are in README.md; this file is the index.
+
+## Exports
+
+### capabilities
+
+What an endpoint turned out not to support, and answering it when it says so.
+
+- `Capabilities` (type) — What one endpoint turned out not to support.
+- `capabilitiesFor` — What this endpoint is known not to support.
+- `NegotiateOptions` (type)
+- `negotiate` — Sends a request, re-sending it each time the answer is this endpoint refusing something the request can do without.
+- `resetCapabilities` — Forgets every endpoint's capabilities.
+
+### catalog
+
+The contract between whatever holds the tools and the loop that offers them to a model.
+
+- `CatalogServer` (type) — One server's tools, without their JSON schemas — the cheap half of a tool definition.
+
+### client
+
+- `contextLimitFor` — How much a model will read, in tokens.
+- `getClient`
+- `listModels` — Asks an endpoint what it serves, and remembers the answer.
+- `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
+- `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
+- `resetClients` — Forgets every cached client and listing.
+- `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
+
+### config
+
+What this package needs to know about a caller's configuration.
+
+- `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
+- `Endpoint` (type) — Where to send a request and how long to wait.
+- `ModelParams` (type) — What to ask the model for.
+- `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
+- `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
+
+### errors
+
+- `errorMessage` — What went wrong, as a string.
+
+### events
+
+What a run is doing, while it is doing it.
+
+- `emit` — Records one event and hands it to everyone watching that run.
+- `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
+- `fold` — Consecutive tokens of one kind are one thing being said, not hundreds of things.
+- `history` — The backlog alone, for a caller that wants a snapshot rather than a subscription.
+- `RunEvent` (type)
+- `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
+- `RunEventKind` (type)
+- `RunUsage` (type) — What a run has spent, counted from the start of the run rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
+- `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
+- `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
+
+### reset
+
+- `resetAll` — Forgets everything this package remembers between calls.
+
+### retry
+
+Everything about a request failing that is not about what the request said.
+
+- `backoffMs` — Exponential, with jitter so several tasks failing at once do not return in lockstep.
+- `ContextOverflow` — The request was bigger than the model will read.
+- `compact` — 1234 → "1.2k".
+- `EndpointSilent` — The endpoint stopped answering mid-request.
+- `isOverflow`
+- `isTransient` — Whether a failed request is worth trying again.
+- `requestTokens` — What this request will cost the window, in tokens, near enough.
+- `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under both of its uses.
+- `sleep`
+
+### run-turn
+
+One turn, given as many attempts as the caller allows.
+
+- `RunTurnOptions` (type) — A retry is not the same event as a downgrade, but a watcher wants to be told about both.
+- `runTurn` — `request` is a callback rather than a body because the body has to be rebuilt from whatever the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools` has to apply to the schemas that were just sanitised.
+
+### schema-compat
+
+JSON Schema compatibility for llama.cpp-backed servers.
+
+- `isGrammarError` — Does this failure look like the server could not build a grammar from our tool schemas?
+- `relaxTools` — The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in `pattern` and most `format` values, both of which only ever narrowed a string the tool re-validates anyway.
+- `sanitizeTools`
+
+### side-task
+
+One-shot calls that support a run without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
+
+- `ask` — Runs a side task and returns the reply text, thinking stripped.
+- `clean` — Strips the quoting and list punctuation models decorate short answers with.
+- `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
+- `parseJson` — Models are asked for JSON and often answer with prose around it, or a fenced block.
+- `resetHints` — Test seam, alongside `resetClients` and `reset`: forget which models refused the hints.
+- `SideTaskOptions` (type)
+- `tryAsk` — A side task is never worth failing the work it supports.
+
+### stream
+
+Reading one streamed turn back into a message.
+
+- `Produced` (type) — Whether the server has started answering.
+- `StreamTurnOptions` (type)
+- `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
+- `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.
+- `TurnUsage` (type) — What a turn cost.
+
+### tokens
+
+- `estimateTokens` — Rough token count.
+
+### tool-loading
+
+- `carryOver` — The tools to start the next turn with: recently used, newest last, capped.
+- `catalogList` — The catalogue as a plain grouped listing of names, loaded ones marked.
+- `catalogPrompt` — The catalogue block appended to the system prompt.
+- `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
+- `inCatalog`
+- `LOAD_TOOLS` — On-demand tool loading.
+- `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
+- `loadResult` — What `load_tools` reports back: the descriptions, now that they are worth their tokens.
+- `MAX_CARRIED` — The most a conversation carries between turns.
+- `MAX_PER_LOAD` — The most a single `load_tools` call may pull in.
+- `PRESELECT_SYSTEM` — Tool preselection.
+- `preselectInput`
+- `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
+- `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
