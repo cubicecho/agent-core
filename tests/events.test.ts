@@ -189,8 +189,43 @@ describe("cleanup", () => {
     emit("abandoned", { kind: "output", text: "half a thought" });
     expect(history("abandoned")).toHaveLength(1);
 
-    vi.advanceTimersByTime(2 * 60_000 + 1);
+    // On the unfinished run's much longer clock: a minute of quiet is a slow tool call, not a
+    // death, and the run below depends on the difference.
+    vi.advanceTimersByTime(31 * 60_000);
     expect(history("abandoned")).toEqual([]);
+  });
+
+  it("keeps a live run that has simply gone quiet, and its sequence with it", () => {
+    vi.useFakeTimers();
+    emit("slow", { kind: "output", text: "before the tool call" });
+
+    // Nobody watching, nothing emitted: one long MCP call, well past a finished run's retention.
+    vi.advanceTimersByTime(5 * 60_000);
+
+    expect(history("slow")).toHaveLength(1);
+    // The backlog surviving is the smaller half. A fresh stream would restart `seq` at 1, and
+    // `seq` is what a reconnecting client de-duplicates on — it would drop this as one it had.
+    expect(emit("slow", { kind: "output", text: "after" }).seq).toBe(2);
+  });
+
+  it("completes a watcher it is ending the run under", async () => {
+    const seen: string[] = [];
+    let finished = false;
+    const drained = (async () => {
+      for await (const event of watch("cut")) seen.push(event.kind);
+      finished = true;
+    })();
+
+    emit("cut", { kind: "output", text: "a" });
+    await vi.waitFor(() => expect(seen).toEqual(["output"]));
+
+    // The loop threw where it could not be caught. A watcher parked on the next event has no
+    // emit coming to wake it, so ending the run has to be the thing that does.
+    endRun("cut");
+    await drained;
+
+    expect(finished).toBe(true);
+    expect(seen).toEqual(["output", "done"]);
   });
 
   it("does not forget a run that is still being watched", async () => {
