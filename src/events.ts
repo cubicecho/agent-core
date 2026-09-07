@@ -219,9 +219,15 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
     // The bus caps its own backlog at `MAX_EVENTS`; without this the watcher downstream of it
     // had no cap at all, so a client too slow to keep up held every delta a run ever emitted.
     // The oldest go, which is what the backlog does, and the gap is reported once below.
-    if (queue.length - head > MAX_EVENTS + TRIM_SLACK) {
-      const cut = queue.length - head - MAX_EVENTS;
-      head += cut;
+    //
+    // Dropped here means released here. Advancing the cursor alone left the dropped events in
+    // the slots behind it, to be freed by the compaction in the drain below — which a consumer
+    // that has stalled does not reach, and a stalled consumer is the whole reason for the cap.
+    // It read as capped and held every event anyway: 16MB where the cap promises a third of one.
+    const cut = queue.length - head - MAX_EVENTS;
+    if (cut > TRIM_SLACK) {
+      queue = queue.slice(head + cut);
+      head = 0;
       dropped += cut;
     }
     wake?.();
@@ -244,11 +250,17 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
         if (dropped > 0) {
           // Said once per gap rather than per event, and before the event that follows it, so a
           // client reading `seq` sees why the numbers jump instead of assuming it lost its place.
+          //
+          // One short of the event it precedes, which is the last seq that went missing. Sharing
+          // a seq with the event behind it made the notice indistinguishable from a duplicate,
+          // and de-duplicating on `seq` is the one thing the sequence is documented for — so a
+          // client doing exactly that dropped either the gap notice or the event it explains.
+          // Inside the gap there is nothing to collide with: those seqs reach no watcher.
           const gap = dropped;
           dropped = 0;
           yield {
             runId,
-            seq: event.seq,
+            seq: event.seq - 1,
             at: event.at,
             kind: "notice",
             text: `${gap} event(s) dropped: this watcher fell too far behind`,

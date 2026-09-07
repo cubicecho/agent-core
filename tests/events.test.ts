@@ -1,3 +1,5 @@
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emit, endRun, fold, history, resetEvents, watch } from "../src/events.ts";
 
@@ -82,8 +84,49 @@ describe("watch", () => {
     const notices = seen.filter((step) => step.value?.kind === "notice");
     expect(notices).toHaveLength(1);
     expect(notices[0].value?.text).toMatch(/event\(s\) dropped/);
+    // Inside the gap it reports, not on top of the event behind it. `seq` is what a client
+    // de-duplicates on, so sharing one made the notice and that event indistinguishable from a
+    // repeat and a client doing exactly that threw away one of the two.
+    const after = seen[seen.indexOf(notices[0]) + 1];
+    expect(notices[0].value?.seq).toBe((after.value?.seq ?? 0) - 1);
+    expect(new Set(seen.map((step) => step.value?.seq)).size).toBe(seen.length);
     // Capped rather than unbounded: the watcher inherits the guarantee the bus already has.
     expect(seen.length).toBeLessThan(1500);
+  });
+
+  it("releases what it dropped, rather than only declining to deliver it", async () => {
+    // The cap is about memory, and the assertion above it is not: a watcher that reports a gap
+    // and hands back fewer events can still be holding every one of them. Only a reference can
+    // tell the two apart, so hold one to an event that must not survive.
+    //
+    // `gc` is turned on here rather than by an `execArgv` in the vitest config, which the pool
+    // does not pass through, so the flag would have been set and the test would have gone on
+    // asserting nothing.
+    setFlagsFromString("--expose-gc");
+    const collect = runInNewContext("gc") as () => void;
+
+    const stream = watch("r");
+    emit("r", { kind: "notice", text: "start" });
+    // Subscribes, delivers that one, and parks on the yield. Everything below piles up behind a
+    // consumer that has stopped pulling — which is the only case the cap exists for.
+    await stream.next();
+
+    // Made in a frame that has returned by the time anything is collected. Written inline, the
+    // event stays live in this function's own registers and the assertion fails on correct code.
+    const track = () => new WeakRef(emit("r", { kind: "thinking", text: "first" }));
+    const dropped = track();
+    // Past both caps, so neither the bus's backlog nor the watcher's queue may still name it.
+    for (let i = 0; i < 3000; i++) emit("r", { kind: "thinking", text: `${i}` });
+
+    // A `WeakRef` holds its target alive for the rest of the job it was made in, so the two
+    // below reclaim nothing at all without a turn of the event loop between them and `track`.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    collect();
+    collect();
+    expect(dropped.deref()).toBeUndefined();
+
+    emit("r", { kind: "done", ok: true });
+    for (;;) if ((await stream.next()).done) break;
   });
 
   it("reads the backlog first, then what happens next, and stops at done", async () => {
