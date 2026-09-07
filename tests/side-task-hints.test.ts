@@ -7,6 +7,9 @@ vi.mock("../src/client.ts", () => ({
 }));
 
 const { ask, resetHints } = await import("../src/side-task.ts");
+const { modelCapabilitiesFor, capabilitiesFor, resetCapabilities } = await import(
+  "../src/capabilities.ts"
+);
 
 const reply = { choices: [{ message: { content: "ok" } }] };
 const endpoint = (baseUrl: string) => ({ baseUrl, apiKey: "", requestTimeoutSeconds: 60 });
@@ -15,8 +18,27 @@ const call = (config: ReturnType<typeof endpoint>, model = "m") =>
 /** Whether the hints rode along on the nth call. */
 const sentHints = (nth: number) => "reasoning_effort" in create.mock.calls[nth][0];
 
-const apiError = (status: number) =>
-  new OpenAI.APIError(status, { error: {} }, "rejected", undefined);
+const apiError = (status: number, message = "rejected") =>
+  new OpenAI.APIError(status, { error: { message } }, message, undefined);
+
+/** The three the model refuses by name, as OpenAI words them. */
+const WANTS_COMPLETION_LIMIT = apiError(
+  400,
+  "Unsupported parameter: 'max_tokens' is not supported with this model. " +
+    "Use 'max_completion_tokens' instead.",
+);
+const OWN_TEMPERATURE = apiError(
+  400,
+  "Unsupported value: 'temperature' does not support 0.3 with this model. " +
+    "Only the default (1) is supported.",
+);
+const NO_EFFORT = apiError(
+  400,
+  "Unsupported parameter: 'reasoning_effort' is not supported with this model.",
+);
+
+/** What the nth call actually put in the body. */
+const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
 
 describe("no-thinking hints", () => {
   // The latch outlives a test as surely as the mock does. Without this the suite only passed
@@ -24,6 +46,9 @@ describe("no-thinking hints", () => {
   beforeEach(() => {
     create.mockReset();
     resetHints();
+    // The latch `negotiate` keeps outlives a test the same way this module's does, and `ask`
+    // now reads both.
+    resetCapabilities();
   });
 
   it("reports the downgrade to a caller who asked, and to nobody who did not", async () => {
@@ -122,5 +147,54 @@ describe("no-thinking hints", () => {
       choices: [{ message: { content: "", reasoning_content: "deliberation — the answer" } }],
     });
     expect(await call(endpoint("http://split/v1"))).toBe("deliberation — the answer");
+  });
+});
+
+describe("what the model refuses", () => {
+  beforeEach(() => {
+    create.mockReset();
+    resetHints();
+    resetCapabilities();
+  });
+
+  it("spells the ceiling the way the model wants it", async () => {
+    // Every side task against an OpenAI reasoning model used to fail here: the hint retry is
+    // not what a `max_tokens` refusal is about, so the same field went back out and came back
+    // the same way, and `tryAsk` turned that into a session with no title.
+    create.mockRejectedValueOnce(WANTS_COMPLETION_LIMIT).mockResolvedValue(reply);
+    await expect(call(endpoint("https://api.openai.com/v1"), "o3")).resolves.toBe("ok");
+    expect(body(0).max_tokens).toBe(512);
+    expect(body(1).max_completion_tokens).toBe(512);
+    expect(body(1)).not.toHaveProperty("max_tokens");
+    // And the run on the same model does not have to find this out for itself.
+    const supports = capabilitiesFor("https://api.openai.com/v1");
+    expect(modelCapabilitiesFor(supports, "o3").legacyTokenLimit).toBe(false);
+  });
+
+  it("lets the model keep the temperature it was built with", async () => {
+    create.mockRejectedValueOnce(OWN_TEMPERATURE).mockResolvedValue(reply);
+    await expect(call(endpoint("https://api.openai.com/v1"), "o3")).resolves.toBe("ok");
+    expect(body(0).temperature).toBe(0.3);
+    expect(body(1)).not.toHaveProperty("temperature");
+  });
+
+  it("drops the effort without dropping the other spelling of the same hint", async () => {
+    // The two used to go out and be given up on as a bundle, so a model that had never heard of
+    // `reasoning_effort` also stopped being told, in the spelling it does read, not to think.
+    create.mockRejectedValueOnce(NO_EFFORT).mockResolvedValue(reply);
+    await expect(call(endpoint("http://vllm/v1"), "qwen")).resolves.toBe("ok");
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(body(1)).not.toHaveProperty("reasoning_effort");
+    expect(body(1).chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it("does not spend a second call on what it was told the first time", async () => {
+    create.mockRejectedValueOnce(WANTS_COMPLETION_LIMIT).mockResolvedValue(reply);
+    await call(endpoint("https://api.openai.com/v1"), "o3");
+    create.mockReset();
+    create.mockResolvedValue(reply);
+    await call(endpoint("https://api.openai.com/v1"), "o3");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(body(0).max_completion_tokens).toBe(512);
   });
 });

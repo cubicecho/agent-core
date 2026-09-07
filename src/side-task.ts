@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { capabilitiesFor, type ModelCapabilities, negotiate } from "./capabilities.ts";
 import { getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
@@ -16,11 +17,13 @@ import { isTransient } from "./retry.ts";
  * the OpenAI-compatible spelling and `chat_template_kwargs` the llama.cpp/vLLM one; servers
  * disagree about which they take, so send both. One that rejects the unknown fields gets a
  * single retry without them, and is not offered them again.
+ *
+ * Only the second half is latched here. `reasoning_effort` is a field `negotiate` already knows
+ * how to be refused, so it is sent under `ModelCapabilities.reasoningEffort` instead — which
+ * both narrows the fallback below to the field it is really about, and shares the answer with
+ * the runs on that model rather than keeping a second opinion about it.
  */
-const NO_THINKING = {
-  reasoning_effort: "none",
-  chat_template_kwargs: { enable_thinking: false },
-};
+const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
 
 /**
  * The models that turned out not to take the hints, by endpoint and model.
@@ -31,9 +34,12 @@ const NO_THINKING = {
  * second from ever being asked.
  *
  * The model belongs in the key for the same reason. One base URL is routinely many models —
- * OpenRouter, LiteLLM, vLLM serving several at once — and whether `reasoning_effort` is
- * understood is a property of the model behind the route, not of the route. Keyed on the host
- * alone, the first model to refuse spoke for every model on it.
+ * OpenRouter, LiteLLM, vLLM serving several at once — and whether `chat_template_kwargs` reaches
+ * a chat template that reads it is a property of the model behind the route, not of the route.
+ * Keyed on the host alone, the first model to refuse spoke for every model on it.
+ *
+ * Only the `chat_template_kwargs` half is here. `reasoning_effort` is `negotiate`'s to latch, on
+ * the same (endpoint, model) pair, where a run on that model can read it too.
  */
 const noHints = new Set<string>();
 
@@ -114,31 +120,52 @@ export async function ask(
   user: string,
   { maxTokens = 512, temperature = 0.3, signal, onNotice }: SideTaskOptions = {},
 ): Promise<string> {
-  const send = (hints: boolean) =>
+  const send = (hints: boolean, refused: ModelCapabilities | undefined) =>
     getClient(config).chat.completions.create(
       {
         model,
-        max_tokens: maxTokens,
-        temperature,
+        // The reasoning models want the ceiling spelled the other way, and they are exactly the
+        // models a side task most wants to stop deliberating.
+        ...(refused && !refused.legacyTokenLimit
+          ? { max_completion_tokens: maxTokens }
+          : { max_tokens: maxTokens }),
+        // One that will only run at the temperature it was built with is sent none: a side task
+        // wants the same answer twice, and 1.0 from that model is as close as it gets.
+        ...(refused && !refused.chosenTemperature ? {} : { temperature }),
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
         ],
         ...(hints ? NO_THINKING : {}),
+        ...(hints && refused?.reasoningEffort !== false ? { reasoning_effort: "none" } : {}),
       } as OpenAI.ChatCompletionCreateParamsNonStreaming,
       { signal },
     );
+
+  // The endpoint's own object, not one of this module's: what a model refuses is the same fact
+  // whether a run or a side task found it out, and the point of latching it is that only one of
+  // them has to pay for it. Nothing here sends tools or `stream_options`, so the two
+  // endpoint-level flags are not in play — the model's three are the whole of what this meets.
+  const supports = capabilitiesFor(config.baseUrl);
+  const attempt = (hints: boolean) =>
+    negotiate(supports, (_supports, _produced, refused) => send(hints, refused), {
+      model,
+      onNotice,
+    });
 
   const key = hintKey(config.baseUrl, model);
   const hints = !noHints.has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {
-    response = await send(hints);
+    response = await attempt(hints);
   } catch (error) {
+    // Whatever is left after `negotiate` has answered everything it knows: on this path that is
+    // the hints it does not, which is `chat_template_kwargs` and an effort the model has but
+    // does not offer as `none`.
     if (!hints || !rejectedTheRequest(error)) throw error;
     onNotice?.("server rejected the no-thinking hints; retrying without them");
     noHints.add(key);
-    response = await send(false);
+    response = await attempt(false);
   }
 
   const message = response.choices[0]?.message;
