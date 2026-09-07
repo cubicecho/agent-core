@@ -59,6 +59,11 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
  * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
  * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
  * object throughout, and a caller that reads those from its own closure can ignore the argument.
+ *
+ * @param client The pooled client for this endpoint.
+ * @param supports What the endpoint has already refused, threaded through the negotiation.
+ * @param request Builds the body. Called again per attempt, since a downgrade changes it.
+ * @param options Retry budget, context limit, notices, and the stream's own callbacks.
  */
 export async function runTurn(
   client: OpenAI,

@@ -252,6 +252,15 @@ const through = (
     return built;
   });
 
+/**
+ * Tool definitions a strict server will accept, remembered per definition object.
+ *
+ * The first call on a connection's tools does the work and every later one is a lookup, so
+ * calling this per request costs nothing.
+ *
+ * @param tools The definitions as the pool hands them over. Never mutated — where a schema
+ * changed, a new definition is returned in its place.
+ */
 export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
   through(sanitized, tools, sanitizeParameters);
 
@@ -285,6 +294,8 @@ const strip = (node: unknown): unknown => {
  * The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in
  * `pattern` and most `format` values, both of which only ever narrowed a string the tool
  * re-validates anyway.
+ *
+ * @param tools Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) =>
   through(relaxed, tools, (parameters) => {
@@ -306,6 +317,8 @@ const NO_USER_QUERY = "no user query found";
  * says "Failed to initialize samplers: failed to parse grammar", others surface the converter
  * by name. Since a grammar is only ever involved in constrained decoding, treat any mention of
  * one as ours; the retry is cheap and latches after a single request.
+ *
+ * @param message The server's error text. Matched case-insensitively.
  */
 export function isGrammarError(message: string): boolean {
   const text = message.toLowerCase();

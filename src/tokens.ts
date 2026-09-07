@@ -12,5 +12,7 @@
  * owns it should not be one that also does something. It was extracted from `side-task` to
  * break a cycle with `retry`; `side-task` no longer reads it, but `retry` and any consumer
  * sizing its own prompt still do, and a leaf with no imports is the right home for it.
+ *
+ * @param text Prose or serialised JSON — both counted the same way, which is why JSON reads low.
  */
 export const estimateTokens = (text: string) => Math.ceil(text.length / 4);
