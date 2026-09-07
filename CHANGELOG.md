@@ -1,3 +1,10 @@
+## [2.0.8](https://github.com/cubicecho/agent-core/compare/v2.0.7...v2.0.8) (2026-09-07)
+
+
+### Bug Fixes
+
+* stop sending the definitions nothing points at any more ([#37](https://github.com/cubicecho/agent-core/issues/37)) ([9ce7111](https://github.com/cubicecho/agent-core/commit/9ce71114d7d2e8bf8ede2723657e501d99aae8e9))
+
 ## [2.0.7](https://github.com/cubicecho/agent-core/compare/v2.0.6...v2.0.7) (2026-09-07)
 
 
