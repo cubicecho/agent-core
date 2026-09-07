@@ -267,21 +267,91 @@ test("a single-branch root union is the named argument type, required and all", 
   expect(out).toEqual({ type: "object", properties: { a: { type: "string" } }, required: ["a"] });
 });
 
-test("a root union that references a definition never claims a required name", () => {
+test("a root union of references keeps the arguments its branches name", () => {
+  // How a discriminated union actually arrives: the branches live in `$defs` and the root
+  // points at them. Reading only inline branches left this advertising no arguments at all.
   const out = paramsOf(
     sanitizeTools([
       tool({
-        anyOf: [
-          { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
-          { $ref: "#/definitions/Other" },
-        ],
-        definitions: { Other: { type: "object", properties: { b: {} } } },
+        type: "object",
+        oneOf: [{ $ref: "#/$defs/ByPath" }, { $ref: "#/$defs/ByQuery" }],
+        $defs: {
+          ByPath: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+          ByQuery: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
       }),
     ]),
   );
 
-  expect(out.properties).toEqual({ a: { type: "string" } });
+  expect(out.properties).toEqual({ path: { type: "string" }, query: { type: "string" } });
+  // Neither name is asked for by both branches, so the model must be free to omit either.
   expect(out.required).toBeUndefined();
+});
+
+test("a mixed root union reads the referenced half too", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        anyOf: [
+          { type: "object", properties: { a: { type: "string" } }, required: ["a", "id"] },
+          { $ref: "#/definitions/Other" },
+        ],
+        definitions: {
+          Other: { type: "object", properties: { b: {} }, required: ["id"] },
+        },
+      }),
+    ]),
+  );
+
+  expect(out.properties).toEqual({ a: { type: "string" }, b: {} });
+  // `id` is asked for by both branches — but neither branch declares it as a property, so
+  // `pruneRequired` takes it rather than leaving a name no caller can supply.
+  expect(out.required).toBeUndefined();
+});
+
+test("a root allOf of references keeps the arguments its branches name", () => {
+  // What Pydantic emits for a nested model: the type goes in `definitions` and `allOf` points
+  // at it.
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        allOf: [{ $ref: "#/definitions/Args" }],
+        definitions: {
+          Args: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
+        },
+      }),
+    ]),
+  );
+
+  expect(out.properties).toEqual({ q: { type: "string" } });
+  expect(out.required).toEqual(["q"]);
+});
+
+test("a root union branch that resolves nowhere never claims a required name", () => {
+  for (const branch of [
+    { $ref: "#/definitions/Missing" },
+    { $ref: "https://example.com/schema.json" },
+    { $ref: "#/definitions/Loop" },
+  ]) {
+    const out = paramsOf(
+      sanitizeTools([
+        tool({
+          anyOf: [
+            { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
+            branch,
+          ],
+          definitions: { Loop: { $ref: "#/definitions/Loop" } },
+        }),
+      ]),
+    );
+
+    expect(out.properties).toEqual({ a: { type: "string" } });
+    expect(out.required).toBeUndefined();
+  }
 });
 
 test("the same tool object is walked once, however often it is sent", () => {

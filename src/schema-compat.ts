@@ -120,6 +120,37 @@ const TOP_LEVEL_COMBINATORS = ["allOf", "anyOf", "oneOf", "enum", "not"] as cons
 /** `#/definitions/Args` or `#/$defs/Args` — a pointer into this schema's own definitions. */
 const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
 
+/** The `definitions` and `$defs` that a local pointer in this schema resolves against. */
+function poolsOf(parameters: Schema): Schema {
+  const defs: Schema = {};
+  for (const key of ["definitions", "$defs"] as const)
+    if (isObject(parameters[key])) defs[key] = parameters[key];
+  return defs;
+}
+
+/**
+ * Follows a chain of local references to the schema it arrives at, or `undefined` where it
+ * arrives at none — a pointer into another document, one that comes back around to itself, or a
+ * name the pools do not hold. A node that is not a reference resolves to itself, so a caller can
+ * hand this a branch without first asking which spelling it is.
+ *
+ * @param node The schema position to resolve, reference or not.
+ * @param defs The pools to resolve against, as `poolsOf` collects them from the root.
+ */
+function resolveRef(node: unknown, defs: Schema): Schema | undefined {
+  const seen = new Set<string>();
+  let current = node;
+  while (isObject(current) && typeof current.$ref === "string") {
+    const pointer = current.$ref;
+    const target = LOCAL_POINTER.exec(pointer);
+    if (!target || seen.has(pointer)) return undefined;
+    seen.add(pointer);
+    const pool = defs[target[1]];
+    current = isObject(pool) ? pool[target[2]] : undefined;
+  }
+  return isObject(current) ? current : undefined;
+}
+
 /**
  * Replaces a root-level `$ref` with what it points at.
  *
@@ -130,26 +161,13 @@ const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
  * generator emits this shape whenever the argument object is a named type.
  */
 function inlineRootRef(parameters: Schema): Schema {
-  const defs: Schema = {};
-  for (const key of ["definitions", "$defs"] as const)
-    if (isObject(parameters[key])) defs[key] = parameters[key];
-
-  const seen = new Set<string>();
-  let node: Schema = parameters;
-  while (typeof node.$ref === "string") {
-    const pointer = node.$ref;
-    const target = LOCAL_POINTER.exec(pointer);
-    // A pointer at another document, or one that comes back to itself, has nothing here to
-    // resolve against. An object with no properties is at least honest about taking none.
-    if (!target || seen.has(pointer)) return EMPTY_OBJECT();
-    seen.add(pointer);
-    const pool = defs[target[1]];
-    const resolved = isObject(pool) ? pool[target[2]] : undefined;
-    if (!isObject(resolved)) return EMPTY_OBJECT();
-    node = resolved;
-  }
-  // The definitions travel with it: whatever the target refers to still lives in them.
-  return node === parameters ? parameters : { ...node, ...defs };
+  if (typeof parameters.$ref !== "string") return parameters;
+  const defs = poolsOf(parameters);
+  const resolved = resolveRef(parameters, defs);
+  // A pointer that lands nowhere has nothing here to resolve against. An object with no
+  // properties is at least honest about taking none.
+  // The definitions travel with what it did land on: whatever that refers to still lives in them.
+  return resolved ? { ...resolved, ...defs } : EMPTY_OBJECT();
 }
 
 /**
@@ -157,19 +175,23 @@ function inlineRootRef(parameters: Schema): Schema {
  *
  * It is the other way a generated schema spells "the arguments are this named type", and
  * deleting it outright below threw the arguments away while leaving the `required` that named
- * them. Branches that are references are not something to guess at — those fall through to
- * `pruneRequired`, which at least keeps the result self-consistent.
+ * them. A branch is far more often a reference than an inline object — a named type is exactly
+ * what a generator puts in `$defs` — so each is resolved against this schema's own pools first.
+ * One that resolves nowhere is not something to guess at, and falls through to `pruneRequired`,
+ * which at least keeps the result self-consistent.
  */
 function mergeRootAllOf(out: Schema) {
   const branches = out.allOf;
   if (!Array.isArray(branches)) return;
 
+  const defs = poolsOf(out);
   const properties: Schema = isObject(out.properties) ? { ...out.properties } : {};
   const required = new Set<string>(
     Array.isArray(out.required) ? out.required.filter((name) => typeof name === "string") : [],
   );
-  for (const branch of branches) {
-    if (!isObject(branch) || "$ref" in branch) continue;
+  for (const raw of branches) {
+    const branch = resolveRef(raw, defs);
+    if (!branch) continue;
     if (isObject(branch.properties)) Object.assign(properties, branch.properties);
     if (Array.isArray(branch.required))
       for (const name of branch.required) if (typeof name === "string") required.add(name);
@@ -188,10 +210,14 @@ function mergeRootAllOf(out: Schema) {
  * `collapseNullableUnion` to take apart, so it reached the delete below intact and every
  * argument went with it. Properties are unioned because a caller satisfies any one branch;
  * `required` keeps only the names every branch asks for, since one that a branch does without
- * is one the model has to be free to omit. A branch that is a reference is not something to
- * guess at — it cannot vouch for a name, so its presence alone empties `required`.
+ * is one the model has to be free to omit. The branches of a discriminated union arrive as
+ * references rather than inline — Pydantic, zod-to-json-schema and the MCP TypeScript SDK all
+ * emit the shapes into `$defs` and point at them from the root — so each is resolved against
+ * this schema's own pools first. One that resolves nowhere still cannot vouch for a name, so its
+ * presence alone empties `required`.
  */
 function mergeRootUnion(out: Schema) {
+  const defs = poolsOf(out);
   for (const key of ["anyOf", "oneOf"] as const) {
     const branches = out[key];
     if (!Array.isArray(branches)) continue;
@@ -200,9 +226,10 @@ function mergeRootUnion(out: Schema) {
     // `null` until a branch has been read, which is what tells "no branches yet" apart from
     // "the branches agreed on nothing".
     let shared: Set<string> | null = null;
-    for (const branch of branches) {
+    for (const raw of branches) {
       const previous: Set<string> | null = shared;
-      if (!isObject(branch) || "$ref" in branch) {
+      const branch = resolveRef(raw, defs);
+      if (!branch) {
         shared = new Set<string>();
         continue;
       }
