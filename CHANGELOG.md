@@ -1,3 +1,30 @@
+# [2.0.0](https://github.com/cubicecho/agent-core/compare/v1.3.0...v2.0.0) (2026-09-07)
+
+
+* feat!: v2 API, and stop the event bus scaling badly per token ([f272ab0](https://github.com/cubicecho/agent-core/commit/f272ab07f7f9d1ac9a67942989a2974991f2d088))
+
+
+### Features
+
+* size a request against an opt-in contextLimit in runTurn ([cfae8fc](https://github.com/cubicecho/agent-core/commit/cfae8fcdc586a0728439649dfaf849fec922a8e9))
+
+
+### Performance Improvements
+
+* cache relaxTools, and size a request without serialising it ([f81ecda](https://github.com/cubicecho/agent-core/commit/f81ecda6299cc7b12d6b06285bf417095197aaee))
+
+
+### BREAKING CHANGES
+
+* `reset` is renamed `resetEvents`; `RunEvent.at` is epoch
+milliseconds rather than a `Date`; `tryAsk` takes an options argument and
+neither it nor `ask` writes to the console — pass `onNotice` to be told;
+`LOAD_TOOLS_DEFINITION` is frozen. `Endpoint.requestTimeoutSeconds` becoming
+optional is source-compatible for callers and widens the shape for implementors.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MDW8PWYhkMRpZS7D6Wxid8
+
 # [1.3.0](https://github.com/cubicecho/agent-core/compare/v1.2.0...v1.3.0) (2026-09-07)
 
 
