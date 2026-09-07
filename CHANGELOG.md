@@ -1,3 +1,10 @@
+## [2.0.4](https://github.com/cubicecho/agent-core/compare/v2.0.3...v2.0.4) (2026-09-07)
+
+
+### Bug Fixes
+
+* do not fail the run that lost the capability race ([#31](https://github.com/cubicecho/agent-core/issues/31)) ([fe46bc1](https://github.com/cubicecho/agent-core/commit/fe46bc1b2d0ad3f8c09deea25544d7d8e7fdb7fd))
+
 ## [2.0.3](https://github.com/cubicecho/agent-core/compare/v2.0.2...v2.0.3) (2026-09-07)
 
 
