@@ -1,5 +1,6 @@
 import { errorMessage } from "./errors.ts";
 import { isGrammarError } from "./schema-compat.ts";
+import type { Produced } from "./stream.ts";
 
 /**
  * What an endpoint turned out not to support, and answering it when it says so.
@@ -64,11 +65,13 @@ const REJECTS_USAGE = /stream_options/i;
 
 export interface NegotiateOptions {
   /**
-   * Whether the server has started answering. Nothing is re-sent once it has: the tokens are
-   * already out and on their way to whoever is watching, and a second attempt would say
-   * everything twice. See `streamTurn`, which sets this.
+   * The flag `send` will be given, for a caller that has to read it after `negotiate` returns.
+   *
+   * An outer retry loop needs it: nothing is retried once the server has started answering, and
+   * by the time a rejected promise is in hand the turn is over. Callers without one can leave
+   * this out and take the flag from `send`'s second argument, which is the same object.
    */
-  produced?: { any: boolean };
+  produced?: Produced;
   /** Told what was given up on, for a watcher who would otherwise see an unexplained pause. */
   onNotice?: (message: string) => void;
 }
@@ -89,17 +92,22 @@ export interface NegotiateOptions {
  * `stream_options` is present or absent rather than adjusted. It is generic over what it
  * resolves, so a caller whose request resolves a stream object before any chunk is read is the
  * same shape as one that resolves a finished turn.
+ *
+ * It is handed the `produced` flag rather than being expected to close over one. There is only
+ * ever one flag in a turn — the same box `streamTurn` sets and the re-send below reads — and a
+ * caller that passed it to only one of the two got a turn that had already streamed tokens sent
+ * again, silently, with the watcher seeing every one of them twice.
  */
 export async function negotiate<T>(
   supports: Capabilities,
-  send: (supports: Capabilities) => Promise<T>,
-  { produced, onNotice }: NegotiateOptions = {},
+  send: (supports: Capabilities, produced: Produced) => Promise<T>,
+  { produced = { any: false }, onNotice }: NegotiateOptions = {},
 ): Promise<T> {
   for (;;) {
     try {
-      return await send(supports);
+      return await send(supports, produced);
     } catch (error) {
-      if (produced?.any) throw error;
+      if (produced.any) throw error;
       const detail = errorMessage(error);
       if (supports.strictSchemas && isGrammarError(detail)) {
         supports.strictSchemas = false;

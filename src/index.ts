@@ -69,6 +69,7 @@ export {
   tryAsk,
 } from "./side-task.ts";
 export {
+  type Produced,
   type StreamTurnOptions,
   streamTurn,
   type Turn,

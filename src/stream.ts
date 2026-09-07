@@ -35,6 +35,19 @@ type ReasoningDelta = OpenAI.ChatCompletionChunk.Choice.Delta & {
   reasoning?: string | null;
 };
 
+/**
+ * Whether the server has started answering.
+ *
+ * A box rather than a return value because it has to be readable *while* the request is in
+ * flight: the rules in `retry.ts` are built on the premise that a stream which has already
+ * emitted tokens must never be replayed, and by the time a rejected promise is in hand the turn
+ * is over. There is one of these per attempt, shared by everything that has a say in whether
+ * the attempt is repeated. See `negotiate`.
+ */
+export interface Produced {
+  any: boolean;
+}
+
 export interface StreamTurnOptions {
   signal?: AbortSignal;
   /**
@@ -43,13 +56,8 @@ export interface StreamTurnOptions {
    * needs.
    */
   idleMs?: number;
-  /**
-   * Set as soon as the server has said anything, so a failed call knows whether it can be
-   * retried. The rules in `retry.ts` are built on the premise that a stream which has already
-   * emitted tokens must never be replayed, and this is the flag that says so — a caller that
-   * has to thread it by hand is a caller that can forget to.
-   */
-  produced?: { any: boolean };
+  /** Set as soon as the server has said anything, so a failed call knows if it can be retried. */
+  produced?: Produced;
   /** The model's scratchpad, as it arrives. */
   onThinking?: (delta: string) => void;
   /** The model's answer, as it arrives. */
