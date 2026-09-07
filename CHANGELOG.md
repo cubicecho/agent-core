@@ -1,3 +1,10 @@
+## [2.0.5](https://github.com/cubicecho/agent-core/compare/v2.0.4...v2.0.5) (2026-09-07)
+
+
+### Bug Fixes
+
+* tell a model the call is full instead of calling its name over-broad ([#32](https://github.com/cubicecho/agent-core/issues/32)) ([0c875f5](https://github.com/cubicecho/agent-core/commit/0c875f52db498732f662516845776e0ffe783853))
+
 ## [2.0.4](https://github.com/cubicecho/agent-core/compare/v2.0.3...v2.0.4) (2026-09-07)
 
 
