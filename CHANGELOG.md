@@ -1,3 +1,10 @@
+## [2.2.4](https://github.com/cubicecho/agent-core/compare/v2.2.3...v2.2.4) (2026-09-07)
+
+
+### Bug Fixes
+
+* tell a refused temperature from a refused value ([#58](https://github.com/cubicecho/agent-core/issues/58)) ([#60](https://github.com/cubicecho/agent-core/issues/60)) ([f31bfee](https://github.com/cubicecho/agent-core/commit/f31bfee102106d921fd75ef4660819076cc2912c))
+
 ## [2.2.3](https://github.com/cubicecho/agent-core/compare/v2.2.2...v2.2.3) (2026-09-07)
 
 
