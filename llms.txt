@@ -15,6 +15,8 @@ What an endpoint turned out not to support, and answering it when it says so.
 
 - `Capabilities` (type) — What one endpoint turned out not to support.
 - `capabilitiesFor` — What this endpoint is known not to support.
+- `ModelCapabilities` (type) — What one model on that endpoint turned out not to support.
+- `modelCapabilitiesFor` — What this model on this endpoint is known not to support.
 - `NegotiateOptions` (type) — What `negotiate` takes besides the request.
 - `negotiate` — Sends a request, re-sending it each time the answer is this endpoint refusing something the request can do without.
 - `resetCapabilities` — Forgets every endpoint's capabilities.

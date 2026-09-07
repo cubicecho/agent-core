@@ -98,7 +98,7 @@ describe("negotiate ∘ streamTurn", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await settled;
     // Not a capability refusal: nothing is latched off on the way past.
-    expect(capabilitiesFor("http://quiet/v1")).toEqual({
+    expect(capabilitiesFor("http://quiet/v1")).toMatchObject({
       strictSchemas: true,
       usageInStream: true,
     });

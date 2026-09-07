@@ -1,15 +1,56 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { capabilitiesFor, negotiate, resetCapabilities } from "../src/capabilities.ts";
+import {
+  type Capabilities,
+  capabilitiesFor,
+  type ModelCapabilities,
+  modelCapabilitiesFor,
+  negotiate,
+  resetCapabilities,
+} from "../src/capabilities.ts";
+import type { Produced } from "../src/stream.ts";
 
 /** How each server words the refusal, near enough. */
 const NO_GRAMMAR = new Error("Failed to initialize samplers: failed to parse grammar");
 const NO_USAGE = new Error("400 Unrecognized request argument supplied: stream_options");
 
+/** The three that are about the model, as OpenAI words them. */
+const NO_EFFORT = new Error(
+  "400 Unsupported parameter: 'reasoning_effort' is not supported with this model.",
+);
+const WANTS_COMPLETION_LIMIT = new Error(
+  "400 Unsupported parameter: 'max_tokens' is not supported with this model. " +
+    "Use 'max_completion_tokens' instead.",
+);
+const OWN_TEMPERATURE = new Error(
+  "400 Unsupported value: 'temperature' does not support 0.7 with this model. " +
+    "Only the default (1) is supported.",
+);
+/** Not a refusal of the field at all — the number was too big, which is the caller's to see. */
+const TOO_MANY_TOKENS = new Error(
+  "400 max_tokens is too large: 200000. This model supports at most 16384 completion tokens.",
+);
+
+/** The same, for a model: refuses in order, recording what each attempt was built with. */
+const modelThatRefuses = (...refusals: Error[]) => {
+  const asked: ModelCapabilities[] = [];
+  const send = vi.fn(
+    async (_supports: Capabilities, _produced: Produced, model: ModelCapabilities | undefined) => {
+      if (model) asked.push({ ...model });
+      const refusal = refusals.shift();
+      if (refusal) throw refusal;
+      return "answered";
+    },
+  );
+  return { send, asked };
+};
+
 /** A send that refuses in order and then answers, recording what it was asked for each time. */
 const serverThatRefuses = (...refusals: Error[]) => {
   const asked: { strictSchemas: boolean; usageInStream: boolean }[] = [];
   const send = vi.fn(async (supports: { strictSchemas: boolean; usageInStream: boolean }) => {
-    asked.push({ ...supports });
+    // The two flags alone: what a `Capabilities` also carries is the per-model map, and these
+    // assertions are about the endpoint's own.
+    asked.push({ strictSchemas: supports.strictSchemas, usageInStream: supports.usageInStream });
     const refusal = refusals.shift();
     if (refusal) throw refusal;
     return "answered";
@@ -22,7 +63,7 @@ beforeEach(() => resetCapabilities());
 describe("capabilitiesFor", () => {
   it("starts optimistic and hands back the same memory each time", () => {
     const supports = capabilitiesFor("http://local/v1");
-    expect(supports).toEqual({ strictSchemas: true, usageInStream: true });
+    expect(supports).toEqual({ strictSchemas: true, usageInStream: true, models: new Map() });
     supports.strictSchemas = false;
     expect(capabilitiesFor("http://local/v1").strictSchemas).toBe(false);
   });
@@ -62,14 +103,14 @@ describe("negotiate", () => {
       { strictSchemas: true, usageInStream: false },
       { strictSchemas: false, usageInStream: false },
     ]);
-    expect(supports).toEqual({ strictSchemas: false, usageInStream: false });
+    expect(supports).toMatchObject({ strictSchemas: false, usageInStream: false });
   });
 
   it("answers them in the other order too", async () => {
     const supports = capabilitiesFor("http://old-llama/v1");
     const { send } = serverThatRefuses(NO_GRAMMAR, NO_USAGE);
     await expect(negotiate(supports, send)).resolves.toBe("answered");
-    expect(supports).toEqual({ strictSchemas: false, usageInStream: false });
+    expect(supports).toMatchObject({ strictSchemas: false, usageInStream: false });
   });
 
   it("opens with what the endpoint already refused", async () => {
@@ -125,6 +166,135 @@ describe("negotiate", () => {
   });
 });
 
+describe("modelCapabilitiesFor", () => {
+  it("starts optimistic and hands back the same memory each time", () => {
+    const supports = capabilitiesFor("https://api.openai.com/v1");
+    const model = modelCapabilitiesFor(supports, "gpt-5");
+    expect(model).toEqual({
+      reasoningEffort: true,
+      legacyTokenLimit: true,
+      chosenTemperature: true,
+    });
+    model.reasoningEffort = false;
+    expect(modelCapabilitiesFor(supports, "gpt-5").reasoningEffort).toBe(false);
+  });
+
+  it("keeps one model's refusal off another model's requests", () => {
+    // The whole reason this is a second level. One key reaches both, so a flag on the endpoint
+    // would have the first turn on `gpt-4o` stop `gpt-5` ever being asked to reason again —
+    // with the setting still reading `high` and nothing saying it had stopped.
+    const supports = capabilitiesFor("https://api.openai.com/v1");
+    modelCapabilitiesFor(supports, "gpt-4o").reasoningEffort = false;
+    expect(modelCapabilitiesFor(supports, "gpt-5").reasoningEffort).toBe(true);
+  });
+
+  it("keeps one endpoint's answer off the same name at another endpoint", () => {
+    // `gpt-4o` at OpenAI and `gpt-4o` behind a proxy need not be the same weights, and a proxy
+    // is free to answer to a name it does not really serve.
+    modelCapabilitiesFor(capabilitiesFor("https://api.openai.com/v1"), "gpt-4o").legacyTokenLimit =
+      false;
+    expect(
+      modelCapabilitiesFor(capabilitiesFor("http://proxy/v1"), "gpt-4o").legacyTokenLimit,
+    ).toBe(true);
+  });
+
+  it("forgets everything on reset", () => {
+    modelCapabilitiesFor(capabilitiesFor("http://local/v1"), "m").chosenTemperature = false;
+    resetCapabilities();
+    expect(modelCapabilitiesFor(capabilitiesFor("http://local/v1"), "m").chosenTemperature).toBe(
+      true,
+    );
+  });
+});
+
+describe("negotiate, for a model", () => {
+  const openai = () => capabilitiesFor("https://api.openai.com/v1");
+
+  it("stops asking a model that cannot reason for an effort", async () => {
+    const supports = openai();
+    const { send, asked } = modelThatRefuses(NO_EFFORT);
+    await expect(negotiate(supports, send, { model: "gpt-4o" })).resolves.toBe("answered");
+    expect(asked.map((model) => model.reasoningEffort)).toEqual([true, false]);
+    expect(modelCapabilitiesFor(supports, "gpt-4o").reasoningEffort).toBe(false);
+  });
+
+  it("spells the ceiling the way the model asks for", async () => {
+    const supports = openai();
+    const { send } = modelThatRefuses(WANTS_COMPLETION_LIMIT);
+    await expect(negotiate(supports, send, { model: "gpt-5" })).resolves.toBe("answered");
+    expect(modelCapabilitiesFor(supports, "gpt-5").legacyTokenLimit).toBe(false);
+  });
+
+  it("passes on a ceiling that was simply too high", async () => {
+    // A bare `max_tokens` complaint is how a server says the number was too large, and the
+    // answer to that is not to send the same number under a different name — it is to put the
+    // error in front of whoever typed it.
+    const supports = openai();
+    const { send } = modelThatRefuses(TOO_MANY_TOKENS);
+    await expect(negotiate(supports, send, { model: "gpt-5" })).rejects.toThrow("too large");
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(modelCapabilitiesFor(supports, "gpt-5").legacyTokenLimit).toBe(true);
+  });
+
+  it("lets the model keep the temperature it was built with", async () => {
+    const supports = openai();
+    const { send } = modelThatRefuses(OWN_TEMPERATURE);
+    await expect(negotiate(supports, send, { model: "gpt-5" })).resolves.toBe("answered");
+    expect(modelCapabilitiesFor(supports, "gpt-5").chosenTemperature).toBe(false);
+  });
+
+  it("keeps going after the first answer, since a reasoning model has two waiting", async () => {
+    // The one that made this a loop rather than a retry: answering `max_tokens` and stopping
+    // handed the caller the temperature refusal instead of the turn.
+    const supports = openai();
+    const { send, asked } = modelThatRefuses(WANTS_COMPLETION_LIMIT, OWN_TEMPERATURE);
+    await expect(negotiate(supports, send, { model: "gpt-5" })).resolves.toBe("answered");
+    expect(asked).toEqual([
+      { reasoningEffort: true, legacyTokenLimit: true, chosenTemperature: true },
+      { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: true },
+      { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: false },
+    ]);
+  });
+
+  it("answers the endpoint's refusal and the model's in the one loop", async () => {
+    const supports = openai();
+    const { send } = modelThatRefuses(NO_USAGE, NO_EFFORT);
+    await expect(negotiate(supports, send, { model: "gpt-4o" })).resolves.toBe("answered");
+    expect(supports.usageInStream).toBe(false);
+    expect(modelCapabilitiesFor(supports, "gpt-4o").reasoningEffort).toBe(false);
+  });
+
+  it("passes a model's refusal on when no model was named", async () => {
+    // Additive: a caller that never passes `model` is where it was, and the refusal reaches it
+    // rather than being answered on a memory that does not exist.
+    const { send } = modelThatRefuses(NO_EFFORT);
+    await expect(negotiate(openai(), send)).rejects.toThrow("reasoning_effort");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("says what it gave up on", async () => {
+    const notices: string[] = [];
+    const { send } = modelThatRefuses(NO_EFFORT, WANTS_COMPLETION_LIMIT, OWN_TEMPERATURE);
+    await negotiate(openai(), send, {
+      model: "gpt-5",
+      onNotice: (message) => notices.push(message),
+    });
+    expect(notices).toEqual([
+      "model does not take a reasoning effort; retrying without one",
+      "model wants max_completion_tokens; retrying with the limit spelled that way",
+      "model takes only its own temperature; retrying without ours",
+    ]);
+  });
+
+  it("gives up rather than looping on a model that will not stop complaining", async () => {
+    const { send } = modelThatRefuses(NO_EFFORT, NO_EFFORT);
+    await expect(negotiate(openai(), send, { model: "gpt-4o" })).rejects.toThrow(
+      "reasoning_effort",
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("two runs on one endpoint", () => {
   it("does not let the run that lost the race die on the answered refusal", async () => {
     // `capabilitiesFor` hands the same object to both, which is the point of it — the refusal
@@ -144,6 +314,24 @@ describe("two runs on one endpoint", () => {
 
     expect([first, second]).toEqual(["answered", "answered"]);
     expect(supports.strictSchemas).toBe(false);
+  });
+
+  it("does not let the run that lost the race die on an answered model refusal", async () => {
+    // The same race one level down: `modelCapabilitiesFor` hands both runs the same object, so
+    // the loser finds the flag already latched off and has to send again rather than give up.
+    const supports = capabilitiesFor("https://api.openai.com/v1");
+    const send = async (_s: Capabilities, _p: Produced, model: ModelCapabilities | undefined) => {
+      if (model?.reasoningEffort) throw NO_EFFORT;
+      return "answered";
+    };
+
+    const both = await Promise.all([
+      negotiate(supports, send, { model: "gpt-4o" }),
+      negotiate(supports, send, { model: "gpt-4o" }),
+    ]);
+
+    expect(both).toEqual(["answered", "answered"]);
+    expect(modelCapabilitiesFor(supports, "gpt-4o").reasoningEffort).toBe(false);
   });
 
   it("still gives up on a refusal nothing here knows how to answer", async () => {

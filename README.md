@@ -23,7 +23,7 @@ only, Node >=22.
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`. |
 | `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
-| `capabilities` | What an endpoint turned out not to support, per endpoint, and the loop that answers it when it says so. `capabilitiesFor`, `negotiate`. |
+| `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
@@ -69,6 +69,41 @@ const turn = await negotiate(supports, (supports, produced) =>
   ),
 );
 ```
+
+## What the model refuses, rather than the server
+
+`strictSchemas` and `usageInStream` are facts about a server. Three more arrive through the same
+channel — an error string on a chat completion — and are facts about a *model*: a
+`reasoning_effort` it does not take, a ceiling it spells `max_completion_tokens`, a temperature
+that is not ours to pick. They cannot latch on the endpoint, because one API key reaches every
+model a provider offers: the first turn on `gpt-4o` would stop `gpt-5` ever being asked to reason
+again, with the setting still reading `high` and nothing anywhere saying it had stopped.
+
+So they hang off the endpoint under the name the endpoint knows the model by. Pass `model` and
+the same loop answers both levels; leave it out and nothing changes.
+
+```ts
+const turn = await negotiate(supports, (supports, produced, model) =>
+  streamTurn(
+    getClient(config),
+    {
+      model: name, messages, stream: true,
+      // Each rebuilt per attempt from what this model has already refused.
+      ...(model?.reasoningEffort ? { reasoning_effort: effort } : {}),
+      ...(model?.legacyTokenLimit ? { max_tokens: limit } : { max_completion_tokens: limit }),
+      ...(model?.chosenTemperature ? { temperature } : {}),
+      tools: supports.strictSchemas ? declared : relaxTools(declared),
+    },
+    { produced, signal },
+  ),
+  { model: name },
+);
+```
+
+`runTurn` takes the same option and hands `request` the same second argument. Keying on
+`(endpoint, model)` rather than the model name alone is the part worth keeping: `gpt-4o` at
+OpenAI and `gpt-4o` behind a proxy need not be the same weights, and one that refused a reasoning
+effort must not speak for the other.
 
 `send` takes a callback rather than a body because the body has to be rebuilt from the latched
 flags. `produced` is one box per attempt — `streamTurn` sets it as soon as the server says
