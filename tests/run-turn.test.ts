@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { capabilitiesFor, resetCapabilities } from "../src/capabilities.ts";
+import { ContextOverflow } from "../src/retry.ts";
 import { runTurn } from "../src/run-turn.ts";
 
 type Chunk = OpenAI.ChatCompletionChunk;
@@ -180,5 +181,73 @@ describe("runTurn", () => {
     // The downgrade is still latched on the attempt that came after it.
     expect(known.usageInStream).toBe(false);
     expect(create.mock.calls[2][0]).not.toHaveProperty("stream_options");
+  });
+});
+
+describe("contextLimit", () => {
+  const supports = () => capabilitiesFor("http://local/v1");
+  /** A body whose transcript is comfortably over any limit worth setting. */
+  const big = () =>
+    ({
+      model: "m",
+      messages: [{ role: "user", content: "x".repeat(200_000) }],
+      stream: true,
+    }) as OpenAI.ChatCompletionCreateParamsStreaming;
+
+  it("refuses a request too big for the window before it is sent", async () => {
+    const create = vi.fn();
+    await expect(
+      runTurn(clientOf(create), supports(), big, { contextLimit: 8192 }),
+    ).rejects.toThrow(ContextOverflow);
+    // The point of the guard: not one round trip was spent finding this out.
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("does not spend a retry on a request that will never fit", async () => {
+    const create = vi.fn();
+    await expect(
+      runTurn(clientOf(create), supports(), big, { contextLimit: 8192, maxRetries: 3 }),
+    ).rejects.toThrow(ContextOverflow);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("sends a request that fits", async () => {
+    const create = vi.fn().mockReturnValue(chunks(text("ok")));
+    await expect(
+      runTurn(clientOf(create), supports(), body, { contextLimit: 8192 }),
+    ).resolves.toMatchObject({ content: "ok" });
+  });
+
+  it("sends whatever it is given when no limit was set", async () => {
+    const create = vi.fn().mockReturnValue(chunks(text("ok")));
+    await expect(runTurn(clientOf(create), supports(), big)).resolves.toMatchObject({
+      content: "ok",
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not believe a limit no model could have", async () => {
+    // A caller threading a placeholder through — an unset column, a listing that said nothing —
+    // is not a reason to refuse a run that would have worked.
+    const create = vi.fn().mockReturnValue(chunks(text("ok")));
+    await expect(
+      runTurn(clientOf(create), supports(), big, { contextLimit: 64 }),
+    ).resolves.toMatchObject({ content: "ok" });
+  });
+
+  it("sizes the body once rather than once per attempt", async () => {
+    vi.useFakeTimers();
+    const build = vi.fn(body);
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(lost())
+      .mockReturnValue(chunks(text("at last")));
+    const turn = runTurn(clientOf(create), supports(), build, {
+      contextLimit: 8192,
+      maxRetries: 1,
+    });
+    await runOutTheClock();
+    await expect(turn).resolves.toMatchObject({ content: "at last" });
+    expect(build).toHaveBeenCalledTimes(2);
   });
 });

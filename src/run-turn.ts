@@ -1,7 +1,15 @@
 import type OpenAI from "openai";
 import { type Capabilities, negotiate } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
-import { backoffMs, isTransient, sleep } from "./retry.ts";
+import {
+  backoffMs,
+  ContextOverflow,
+  compact,
+  isTransient,
+  requestTokens,
+  SMALLEST_LIKELY_WINDOW,
+  sleep,
+} from "./retry.ts";
 import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./stream.ts";
 
 /**
@@ -32,6 +40,18 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
    * see an unexplained pause. Carries both the capability notices and the retry notices.
    */
   onNotice?: (message: string) => void;
+  /**
+   * What the model will read, in tokens. Zero — the default — sends whatever it is given.
+   *
+   * With a limit, the request is sized before it is sent and a `ContextOverflow` is raised here
+   * rather than by the endpoint one round trip later. It is opt-in because the number is the
+   * caller's to find: `contextLimitFor` asks the endpoint, an operator's own setting overrides
+   * it, and neither is something a turn should be doing network I/O to discover. A limit below
+   * `SMALLEST_LIKELY_WINDOW` is not believed — a model with a window that small is rare enough
+   * that the number is far more likely a caller threading a placeholder through, and refusing a
+   * run over one would be the guard failing exactly the callers it was meant to help.
+   */
+  contextLimit?: number;
 }
 
 /**
@@ -44,15 +64,37 @@ export async function runTurn(
   client: OpenAI,
   supports: Capabilities,
   request: (supports: Capabilities) => OpenAI.ChatCompletionCreateParamsStreaming,
-  { maxRetries = 0, onNotice, ...stream }: RunTurnOptions = {},
+  { maxRetries = 0, onNotice, contextLimit = 0, ...stream }: RunTurnOptions = {},
 ): Promise<Turn> {
+  // Sized once rather than per build. `request` is called again for every downgrade and every
+  // retry, but a downgraded body is strictly smaller than the one before it and the transcript
+  // does not change between attempts — so the first body is the one worth measuring, and
+  // measuring the rest would only spend the walk again to reach the same answer.
+  let sized = false;
+  const measured = (capabilities: Capabilities) => {
+    const body = request(capabilities);
+    if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
+      sized = true;
+      const needed = requestTokens(body);
+      // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
+      // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
+      // loops on the first attempt instead of being sent again to be refused again.
+      if (needed > contextLimit) {
+        throw new ContextOverflow(
+          `the request is about ${compact(needed)} tokens, over this model's ${compact(contextLimit)}`,
+        );
+      }
+    }
+    return body;
+  };
+
   for (let attempt = 0; ; attempt++) {
     const produced: Produced = { any: false };
     try {
       return await negotiate(
         supports,
         (capabilities, box) =>
-          streamTurn(client, request(capabilities), { ...stream, produced: box }),
+          streamTurn(client, measured(capabilities), { ...stream, produced: box }),
         { produced, onNotice },
       );
     } catch (error) {
