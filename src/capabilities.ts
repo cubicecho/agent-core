@@ -196,7 +196,17 @@ export interface NegotiateOptions {
    * this out and take the flag from `send`'s second argument, which is the same object.
    */
   produced?: Produced;
-  /** Told what was given up on, for a watcher who would otherwise see an unexplained pause. */
+  /**
+   * Told what was given up on, for a watcher who would otherwise see an unexplained pause.
+   *
+   * Each message opens with the thing that refused, so a reader tells the two levels apart
+   * without parsing: `server` for the endpoint's own, and the model's own name — as `model` was
+   * given it — for the three that are the model's. That matters because these latch for the
+   * life of the process and this line is the only announcement that one did: on a consumer
+   * where the model is a per-turn setting, "model does not take a reasoning effort" is the same
+   * line for every model on the endpoint, and the operator who later asks why the setting still
+   * reads `high` has no way to tell which one it was about.
+   */
   onNotice?: (message: string) => void;
   /**
    * Which model this request is for, by the name the endpoint knows it as.
@@ -252,7 +262,12 @@ export async function negotiate<T>(
   ) => Promise<T>,
   { produced = { any: false }, onNotice, model: name }: NegotiateOptions = {},
 ): Promise<T> {
-  const model = name === undefined ? undefined : modelCapabilitiesFor(supports, name);
+  // The name and what it has refused, bound together because the notices below need both. They
+  // exist or are absent as one — the second is resolved from the first — but that is a fact
+  // about two locals, and narrowing one of those tells TypeScript nothing about the other.
+  const named =
+    name === undefined ? undefined : { name, refused: modelCapabilitiesFor(supports, name) };
+  const model = named?.refused;
   for (;;) {
     // What this attempt was built with. `capabilitiesFor` and `modelCapabilitiesFor` hand one
     // object per endpoint and per model to everyone on them, so a run starting alongside this
@@ -270,15 +285,17 @@ export async function negotiate<T>(
       } else if (supports.usageInStream && REJECTS_USAGE.test(detail)) {
         supports.usageInStream = false;
         onNotice?.("server rejected stream_options; token counts unavailable");
-      } else if (model?.reasoningEffort && rejectsEffort(detail)) {
-        model.reasoningEffort = false;
-        onNotice?.("model does not take a reasoning effort; retrying without one");
-      } else if (model?.legacyTokenLimit && wantsCompletionLimit(detail)) {
-        model.legacyTokenLimit = false;
-        onNotice?.("model wants max_completion_tokens; retrying with the limit spelled that way");
-      } else if (model?.chosenTemperature && refusesChosenTemperature(detail)) {
-        model.chosenTemperature = false;
-        onNotice?.("model takes only its own temperature; retrying without ours");
+      } else if (named?.refused.reasoningEffort && rejectsEffort(detail)) {
+        named.refused.reasoningEffort = false;
+        onNotice?.(`${named.name} does not take a reasoning effort; retrying without one`);
+      } else if (named?.refused.legacyTokenLimit && wantsCompletionLimit(detail)) {
+        named.refused.legacyTokenLimit = false;
+        onNotice?.(
+          `${named.name} wants max_completion_tokens; retrying with the limit spelled that way`,
+        );
+      } else if (named?.refused.chosenTemperature && refusesChosenTemperature(detail)) {
+        named.refused.chosenTemperature = false;
+        onNotice?.(`${named.name} takes only its own temperature; retrying without ours`);
       } else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) {
         throw error;
       }
