@@ -35,7 +35,7 @@ export const compact = (tokens: number) =>
 const ENVELOPE = 25;
 
 /** The same for `{"id":"","type":"function","function":{"name":"","arguments":""}},` in a call. */
-const CALL_ENVELOPE = 62;
+const CALL_ENVELOPE = 66;
 
 /** The divisor behind `estimateTokens`, applied here to a character count rather than a string. */
 const CHARS_PER_TOKEN = 4;
@@ -150,18 +150,19 @@ export const isOverflow = (detail: string) =>
   /token|context/i.test(detail);
 
 /**
- * The smallest window worth believing in, and the floor under both of its uses.
+ * The smallest window worth believing in, and the floor under `runTurn`'s guard.
  *
  * `runTurn`'s `contextLimit` reads it as a sanity check on a number it was handed: below this,
  * the limit is taken for a placeholder — an unset column, a listing that said nothing — rather
- * than a window worth refusing a run over. `contextLimitFor` reads it as the point below which
- * the window is nobody's business and is not asked for.
+ * than a window worth refusing a run over. That is the whole of what reads it; `contextLimitFor`
+ * asks the endpoint whatever the number, and `client.ts` does not import this file.
  *
- * Finding out what a model reads costs a listing against its endpoint, and a run whose whole
- * request is a few thousand tokens fits anything anyone serves — spending a round trip to
- * confirm that, on every run of every card, would be the cost of the guard falling on the
- * runs that never needed it. A model in a window smaller than this exists, and a request that
- * overruns one is left to the endpoint's own complaint, which reads properly now either way.
+ * A model in a window smaller than this exists, and the reason not to refuse a run over one is
+ * that the number far more often came from a caller threading a placeholder through than from
+ * such a model. A request that really does overrun a tiny window is left to the endpoint's own
+ * complaint, which `isOverflow` reads properly either way — so what the floor costs is a round
+ * trip on the runs it declines to guard, and what it saves is refusing the ones it would have
+ * guarded wrongly.
  */
 export const SMALLEST_LIKELY_WINDOW = 8192;
 

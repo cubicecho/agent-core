@@ -88,10 +88,16 @@ export interface ModelInfo {
 /**
  * The last listing from each endpoint, so a run can size its window without a round trip.
  *
- * Keyed the same way the clients are, because two endpoints are two different sets of models
- * and one of them having answered says nothing about the other. It is only ever a cache of
- * something asked for anyway, and a listing that fails leaves whatever was there rather than
- * emptying it.
+ * Keyed by base URL and key, because two endpoints are two different sets of models and one of
+ * them having answered says nothing about the other — and because a key can be the difference
+ * between what a router will show one caller and another.
+ *
+ * The timeout is deliberately not in it, which is where this key parts company with the
+ * clients'. Which models a server offers has nothing to do with how long we are willing to wait
+ * for it, so two settings rows differing only there ask once between them rather than twice.
+ *
+ * It is only ever a cache of something asked for anyway, and a listing that fails leaves
+ * whatever was there rather than emptying it.
  */
 const listings = new Map<string, ModelInfo[]>();
 

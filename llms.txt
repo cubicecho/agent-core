@@ -81,7 +81,7 @@ Everything about a request failing that is not about what the request said.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
 - `requestTokens` — What this request will cost the window, in tokens, near enough.
-- `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under both of its uses.
+- `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 - `sleep` — A delay an abort cuts short, rejecting rather than resolving early.
 
 ### run-turn
