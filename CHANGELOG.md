@@ -1,3 +1,10 @@
+## [2.0.7](https://github.com/cubicecho/agent-core/compare/v2.0.6...v2.0.7) (2026-09-07)
+
+
+### Bug Fixes
+
+* resolve the union branch that arrives as a reference ([#35](https://github.com/cubicecho/agent-core/issues/35)) ([#36](https://github.com/cubicecho/agent-core/issues/36)) ([f4dfbd8](https://github.com/cubicecho/agent-core/commit/f4dfbd8905880eb2e4f6079191625708005ac862))
+
 ## [2.0.6](https://github.com/cubicecho/agent-core/compare/v2.0.5...v2.0.6) (2026-09-07)
 
 
