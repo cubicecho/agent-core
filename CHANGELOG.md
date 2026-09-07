@@ -1,3 +1,10 @@
+## [2.0.2](https://github.com/cubicecho/agent-core/compare/v2.0.1...v2.0.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* fold a root anyOf/oneOf in rather than deleting the arguments ([#29](https://github.com/cubicecho/agent-core/issues/29)) ([71b724e](https://github.com/cubicecho/agent-core/commit/71b724e567e57d4908a99bad08a0fb7c1ec34948))
+
 ## [2.0.1](https://github.com/cubicecho/agent-core/compare/v2.0.0...v2.0.1) (2026-09-07)
 
 
