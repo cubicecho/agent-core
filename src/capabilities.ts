@@ -58,6 +58,11 @@ export interface ModelCapabilities {
   /**
    * Spells its ceiling `max_tokens`. The reasoning models want `max_completion_tokens` instead,
    * and they are exactly the models anyone sets an effort on.
+   *
+   * Read it as `=== false` rather than for truthiness. This is the one flag whose two answers are
+   * both a field to send, so a caller that named no model — and was told that changes nothing —
+   * gets `undefined` here and, on a truthiness test, sends `max_completion_tokens` to a server
+   * that never refused anything. The flag starts `true`; absent has to mean the same.
    */
   legacyTokenLimit: boolean;
   /**

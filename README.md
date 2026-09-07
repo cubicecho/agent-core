@@ -90,7 +90,9 @@ const turn = await negotiate(supports, (supports, produced, model) =>
       model: name, messages, stream: true,
       // Each rebuilt per attempt from what this model has already refused.
       ...(model?.reasoningEffort ? { reasoning_effort: effort } : {}),
-      ...(model?.legacyTokenLimit ? { max_tokens: limit } : { max_completion_tokens: limit }),
+      ...(model?.legacyTokenLimit === false
+        ? { max_completion_tokens: limit }
+        : { max_tokens: limit }),
       ...(model?.chosenTemperature ? { temperature } : {}),
       tools: supports.strictSchemas ? declared : relaxTools(declared),
     },
@@ -99,6 +101,14 @@ const turn = await negotiate(supports, (supports, produced, model) =>
   { model: name },
 );
 ```
+
+The ceiling is the one of the three guarded on `=== false` rather than on truthiness, and it is
+the only one that has to be. The other two *omit* a field where the flag is absent, so a caller
+that leaves `model` out sends a smaller request and nothing else; both branches of this one are a
+field, so truthiness picks the newer spelling for a caller who was told nothing would change —
+and the newer spelling is exactly the one an older model or a llama.cpp-shaped endpoint rejects.
+`modelCapabilitiesFor` starts a model at `legacyTokenLimit: true`, and an absent model has to read
+the same way it does.
 
 `runTurn` takes the same option and hands `request` the same second argument. Keying on
 `(endpoint, model)` rather than the model name alone is the part worth keeping: `gpt-4o` at
