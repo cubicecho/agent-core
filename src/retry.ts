@@ -37,10 +37,25 @@ const ENVELOPE = 25;
 /** The same for `{"id":"","type":"function","function":{"name":"","arguments":""}},` in a call. */
 const CALL_ENVELOPE = 66;
 
+// `ENVELOPE` is the two keys every message has. These are the three that only some do, and each
+// is the key with its punctuation and the comma after the value it holds — the value's own
+// length is counted where the value is read. Applying `ENVELOPE` alone to these shapes left the
+// keys out, which cost 4.5 tokens on every tool result: the message a tool-using run has most
+// of, and short in the direction that lets an overflow through the guard meant to catch it.
+
+/** What `"name":"",` costs around a message's name. */
+const NAME_KEY = 10;
+
+/** The same for `"tool_call_id":"",` around a tool result's call id. */
+const TOOL_CALL_ID_KEY = 18;
+
+/** The same for `"tool_calls":[]` around the calls; each call's own comma is in `CALL_ENVELOPE`. */
+const TOOL_CALLS_KEY = 15;
+
 /** The divisor behind `estimateTokens`, applied here to a character count rather than a string. */
 const CHARS_PER_TOKEN = 4;
 
-/** How many characters one message is worth, whichever of the shapes its content is in. */
+/** How many characters one message is worth: its keys, and its content in whichever shape. */
 function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
   let chars = message.role.length + ENVELOPE;
   const { content } = message;
@@ -53,15 +68,18 @@ function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
       else if (part.type === "refusal") chars += part.refusal.length;
     }
 
-  if ("name" in message && typeof message.name === "string") chars += message.name.length;
+  if ("name" in message && typeof message.name === "string")
+    chars += NAME_KEY + message.name.length;
   if ("tool_call_id" in message && typeof message.tool_call_id === "string")
-    chars += message.tool_call_id.length;
-  if ("tool_calls" in message && Array.isArray(message.tool_calls))
+    chars += TOOL_CALL_ID_KEY + message.tool_call_id.length;
+  if ("tool_calls" in message && Array.isArray(message.tool_calls)) {
+    chars += TOOL_CALLS_KEY;
     for (const call of message.tool_calls) {
       chars += CALL_ENVELOPE + call.id.length;
       if (call.type === "function")
         chars += call.function.name.length + call.function.arguments.length;
     }
+  }
   return chars;
 }
 
@@ -100,8 +118,10 @@ function toolsCost(tools: OpenAI.ChatCompletionTool[]): number {
  * built the entire transcript into a string on every call and threw it away having read nothing
  * but its `.length` — against a transcript that grows by a turn each turn, and one the SDK is
  * about to serialise again to send. What the walk misses is JSON's own punctuation and the keys,
- * which `ENVELOPE` puts back approximately; the difference is a rounding error against an
- * estimate that is already characters over four.
+ * which the envelope constants put back — one per key rather than one per message, since the
+ * three keys only some shapes carry are most of what a tool-using transcript is made of. What
+ * is left is a message's escaping, which is not a constant and is small against an estimate
+ * that is already characters over four.
  *
  * @param body The request as it will be sent, tools included.
  */
