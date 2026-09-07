@@ -225,3 +225,31 @@ test("required never names an argument the rewrites removed", () => {
   );
   expect(out).toEqual({ type: "object", properties: {} });
 });
+
+test("the same tool object is walked once, however often it is sent", () => {
+  const declared = [
+    tool({
+      type: "object",
+      properties: { q: { type: "string", pattern: "^a", format: "email" } },
+    }),
+  ];
+  const sanitized = sanitizeTools(declared);
+  expect(sanitizeTools(declared)[0]).toBe(sanitized[0]);
+
+  // The path that matters: once `strictSchemas` latches off, this is what every request calls,
+  // and its input is the stable output above rather than the caller's array.
+  const relaxed = relaxTools(sanitized);
+  expect(relaxTools(sanitized)[0]).toBe(relaxed[0]);
+  expect(relaxed[0]).not.toBe(sanitized[0]);
+});
+
+test("neither pass writes back into the tool it was given", () => {
+  const parameters = {
+    type: "object",
+    properties: { q: { type: "string", pattern: "^a" } },
+  };
+  const declared = [tool(parameters)];
+  const before = JSON.stringify(parameters);
+  relaxTools(sanitizeTools(declared));
+  expect(JSON.stringify(parameters)).toBe(before);
+});

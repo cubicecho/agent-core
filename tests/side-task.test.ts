@@ -72,9 +72,18 @@ describe("listLines", () => {
 
 describe("tryAsk", () => {
   it("reports a throwable that is not an Error", async () => {
+    const notices: string[] = [];
+    const onNotice = (message: string) => notices.push(message);
+    expect(
+      await tryAsk("naming", () => Promise.reject("just a string"), { onNotice }),
+    ).toBeUndefined();
+    expect(notices).toEqual(["naming: just a string"]);
+  });
+
+  it("says nothing at all when nobody asked to be told", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(await tryAsk("naming", () => Promise.reject("just a string"))).toBeUndefined();
-    expect(warn).toHaveBeenCalledWith("[side-task] naming:", "just a string");
+    expect(await tryAsk("naming", () => Promise.reject(new Error("nope")))).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 

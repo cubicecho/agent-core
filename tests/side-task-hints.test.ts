@@ -26,6 +26,26 @@ describe("no-thinking hints", () => {
     resetHints();
   });
 
+  it("reports the downgrade to a caller who asked, and to nobody who did not", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notices: string[] = [];
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await ask(endpoint("http://picky/v1"), "m", "system", "user", {
+      onNotice: (message) => notices.push(message),
+    });
+    expect(notices).toEqual(["server rejected the no-thinking hints; retrying without them"]);
+
+    // A library that writes to the console has decided for its consumer where operator text
+    // goes. The retry still happens; it just says so through the seam or not at all.
+    resetHints();
+    create.mockReset();
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await call(endpoint("http://picky/v1"));
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("stops offering them to a server that answered 4xx", async () => {
     create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
     await call(endpoint("http://picky/v1"));

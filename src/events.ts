@@ -61,7 +61,15 @@ export interface RunEvent {
   runId: string;
   /** Per-run counter, from 1. Lets a client order and de-duplicate what it receives. */
   seq: number;
-  at: Date;
+  /**
+   * When it happened, as epoch milliseconds.
+   *
+   * A number rather than a `Date`: these events are read over a wire, where a `Date` is an ISO
+   * string by the time anyone sees it, and `emit` runs once per streamed token — so the object
+   * it does not allocate is one per token. It also spares the `getTime()` the sweep used to do
+   * to get this same number back out.
+   */
+  at: number;
   kind: RunEventKind;
   /** The delta, the arguments, the result, or the reason — whatever the kind carries. */
   text: string;
@@ -156,8 +164,10 @@ export function endRun(runId: string) {
 /** Records one event and hands it to everyone watching that run. Never throws at the caller. */
 export function emit(runId: string, input: RunEventInput): RunEvent {
   const stream = streamFor(runId);
+  // One clock read, used for both the event and the sweep's bookkeeping.
+  const at = Date.now();
   const event: RunEvent = {
-    at: new Date(),
+    at,
     text: "",
     name: "",
     step: "",
@@ -169,7 +179,7 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
     seq: ++stream.seq,
   };
   stream.events.push(event);
-  stream.touched = event.at.getTime();
+  stream.touched = at;
   if (stream.events.length > MAX_EVENTS + TRIM_SLACK) {
     stream.events.splice(0, stream.events.length - MAX_EVENTS);
   }
@@ -196,17 +206,58 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
  */
 export async function* watch(runId: string): AsyncGenerator<RunEvent> {
   const stream = streamFor(runId);
-  const queue: RunEvent[] = [...stream.events];
+  // A cursor rather than `shift()`. Draining a backlog an event at a time off the front of an
+  // array is a copy of the whole array per event, which on the ten-thousand-delta run this bus
+  // is built for is the one quadratic left in the file. The prefix behind the cursor is dropped
+  // in one `slice` per `MAX_EVENTS` instead — the same amortised trade the bus itself makes.
+  let queue: RunEvent[] = [...stream.events];
+  let head = 0;
+  let dropped = 0;
   let wake: (() => void) | null = null;
   const listener = (event: RunEvent) => {
     queue.push(event);
+    // The bus caps its own backlog at `MAX_EVENTS`; without this the watcher downstream of it
+    // had no cap at all, so a client too slow to keep up held every delta a run ever emitted.
+    // The oldest go, which is what the backlog does, and the gap is reported once below.
+    if (queue.length - head > MAX_EVENTS + TRIM_SLACK) {
+      const cut = queue.length - head - MAX_EVENTS;
+      head += cut;
+      dropped += cut;
+    }
     wake?.();
   };
   stream.listeners.add(listener);
   try {
     for (;;) {
-      while (queue.length > 0) {
-        const event = queue.shift() as RunEvent;
+      while (head < queue.length) {
+        const event = queue[head++];
+        // What is behind the cursor is released rather than left there. Resetting only on catch-up
+        // was not enough: a watcher that keeps pace but never quite empties the queue never
+        // reaches that branch, and the array grows by a slot per event for the length of the run.
+        if (head === queue.length) {
+          queue = [];
+          head = 0;
+        } else if (head > MAX_EVENTS) {
+          queue = queue.slice(head);
+          head = 0;
+        }
+        if (dropped > 0) {
+          // Said once per gap rather than per event, and before the event that follows it, so a
+          // client reading `seq` sees why the numbers jump instead of assuming it lost its place.
+          const gap = dropped;
+          dropped = 0;
+          yield {
+            runId,
+            seq: event.seq,
+            at: event.at,
+            kind: "notice",
+            text: `${gap} event(s) dropped: this watcher fell too far behind`,
+            name: "",
+            step: event.step,
+            ok: null,
+            usage: null,
+          };
+        }
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
         // than leaving the client holding an open stream that will never say anything again.
@@ -231,8 +282,14 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
 /** The backlog alone, for a caller that wants a snapshot rather than a subscription. */
 export const history = (runId: string): RunEvent[] => [...(streams.get(runId)?.events ?? [])];
 
-/** Test seam: forget every run, so one test's events cannot be read by the next. */
-export const reset = () => {
+/**
+ * Test seam: forget every run, so one test's events cannot be read by the next.
+ *
+ * Named for what it forgets rather than bare `reset`, which sat in a consumer's imports beside
+ * `resetAll`, `resetClients`, `resetCapabilities` and `resetHints` saying nothing about which
+ * of the five it was — `reset.ts` had to alias it on the way in to stay readable.
+ */
+export const resetEvents = () => {
   streams.clear();
   if (sweeping) clearTimeout(sweeping);
   sweeping = null;
@@ -248,22 +305,34 @@ export const reset = () => {
  */
 export function fold(events: RunEvent[]): RunEvent[] {
   const blocks: RunEvent[] = [];
+  // The text of the block still open, accumulated rather than re-concatenated. Rebuilding the
+  // block object per delta — a spread and a join of everything so far — is the same paragraph
+  // built ten thousand times to produce it once.
+  let parts: string[] = [];
+  const close = () => {
+    if (!parts.length) return;
+    const last = blocks[blocks.length - 1];
+    if (parts.length > 1) last.text = parts.join("");
+    parts = [];
+  };
+
   for (const event of events) {
     const last = blocks[blocks.length - 1];
     const mergeable = event.kind === "thinking" || event.kind === "output";
     if (last && mergeable && last.kind === event.kind && last.step === event.step) {
-      blocks[blocks.length - 1] = {
-        ...last,
-        seq: event.seq,
-        at: event.at,
-        text: last.text + event.text,
-      };
+      last.seq = event.seq;
+      last.at = event.at;
+      parts.push(event.text);
     } else {
-      // A copy, because the merged branch above makes one and the caller cannot tell which
-      // branch its events took. Pushing the stored object let `fold(history(id))[0].text = ...`
-      // rewrite the bus, and every watcher after it read the rewrite.
+      close();
+      // A copy, because the merged branch above writes into the block it returns and the caller
+      // cannot tell which branch its events took. Pushing the stored object let
+      // `fold(history(id))[0].text = ...` rewrite the bus, and every watcher after it read the
+      // rewrite.
       blocks.push({ ...event });
+      if (mergeable) parts.push(event.text);
     }
   }
+  close();
   return blocks;
 }

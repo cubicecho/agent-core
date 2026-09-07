@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { emit, endRun, fold, history, reset, watch } from "../src/events.ts";
+import { emit, endRun, fold, history, resetEvents, watch } from "../src/events.ts";
 
-beforeEach(() => reset());
+beforeEach(() => resetEvents());
 afterEach(() => {
-  reset();
+  resetEvents();
   vi.useRealTimers();
 });
 
@@ -50,6 +50,42 @@ describe("emit", () => {
 });
 
 describe("watch", () => {
+  it("delivers a backlog larger than the bus keeps, in order, without dropping any of it", async () => {
+    // Bigger than `MAX_EVENTS + TRIM_SLACK`, so the bus has already trimmed by the time this
+    // subscribes: what a watcher joining a long reasoning run actually finds waiting for it.
+    for (let i = 0; i < 4000; i++) emit("r", { kind: "thinking", text: `${i}` });
+    emit("r", { kind: "done", ok: true });
+
+    const seen: number[] = [];
+    for await (const event of watch("r")) {
+      if (event.kind === "thinking") seen.push(event.seq);
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    // In order and contiguous. The cursor drain replaced a `shift()`, and an off-by-one there
+    // would show up as a hole rather than as a failure anywhere else.
+    expect(seen).toEqual(Array.from({ length: seen.length }, (_, i) => seen[0] + i));
+  });
+
+  it("tells a watcher that fell behind how much it missed rather than growing forever", async () => {
+    const stream = watch("r");
+    // Nothing is read until this point, so everything below queues behind the generator.
+    const first = stream.next();
+    for (let i = 0; i < 3000; i++) emit("r", { kind: "thinking", text: `${i}` });
+    emit("r", { kind: "done", ok: true });
+
+    const seen = [await first];
+    for (;;) {
+      const next = await stream.next();
+      if (next.done) break;
+      seen.push(next);
+    }
+    const notices = seen.filter((step) => step.value?.kind === "notice");
+    expect(notices).toHaveLength(1);
+    expect(notices[0].value?.text).toMatch(/event\(s\) dropped/);
+    // Capped rather than unbounded: the watcher inherits the guarantee the bus already has.
+    expect(seen.length).toBeLessThan(1500);
+  });
+
   it("reads the backlog first, then what happens next, and stops at done", async () => {
     emit("r", { kind: "step", name: "plan" });
     emit("r", { kind: "output", text: "before" });

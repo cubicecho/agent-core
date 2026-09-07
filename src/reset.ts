@@ -1,6 +1,6 @@
 import { resetCapabilities } from "./capabilities.ts";
 import { resetClients } from "./client.ts";
-import { reset as resetEvents } from "./events.ts";
+import { resetEvents } from "./events.ts";
 import { resetHints } from "./side-task.ts";
 
 /**
@@ -9,7 +9,7 @@ import { resetHints } from "./side-task.ts";
  * Four modules here keep state for the life of the process, each for a good reason and each
  * with its own seam: the pooled clients and their model listings, the endpoints that turned
  * out not to take `stream_options` or a grammar, the models that refused the no-thinking
- * hints, and the event bus. `resetClients`, `resetCapabilities`, `resetHints` and `reset` stay
+ * hints, and the event bus. `resetClients`, `resetCapabilities`, `resetHints` and `resetEvents` stay
  * exported, because a test that means to clear one thing should say so.
  *
  * This is for the other case, which is every teardown. What all four hold is *latched

@@ -16,8 +16,20 @@ import type { CatalogServer } from "./catalog.ts";
  */
 export const LOAD_TOOLS = "load_tools";
 
-/** One object for the life of the process — the agent loop asks for it on every iteration. */
-export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = {
+/** Shallow freezing this one would leave `.function.description` — the part worth editing. */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") for (const held of Object.values(value)) deepFreeze(held);
+  return Object.freeze(value);
+}
+
+/**
+ * One object for the life of the process — the agent loop asks for it on every iteration.
+ *
+ * Frozen because it is shared: one mutable export reached by every consumer in the process
+ * means a caller that edits the description in place has edited it for all of them, in a place
+ * nobody would think to look for the change.
+ */
+export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
   type: "function",
   function: {
     name: LOAD_TOOLS,
@@ -39,7 +51,7 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = {
       additionalProperties: false,
     },
   },
-};
+});
 
 /**
  * The catalogue as a plain grouped listing of names, loaded ones marked.
