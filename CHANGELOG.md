@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/cubicecho/agent-core/compare/v2.1.2...v2.2.0) (2026-09-07)
+
+
+### Features
+
+* name the model in the notices that are about one ([#43](https://github.com/cubicecho/agent-core/issues/43)) ([#50](https://github.com/cubicecho/agent-core/issues/50)) ([dded90e](https://github.com/cubicecho/agent-core/commit/dded90e3651b5ced9bf4f1b98a1be8b50da73edd))
+
 ## [2.1.2](https://github.com/cubicecho/agent-core/compare/v2.1.1...v2.1.2) (2026-09-07)
 
 
