@@ -137,3 +137,91 @@ test("a pattern a grammar can express is kept, and so are enums and descriptions
   };
   expect(paramsOf(sanitizeTools([tool(schema)]))).toEqual(schema);
 });
+
+test("relaxing keeps an argument that happens to be called format or pattern", () => {
+  const out = paramsOf(
+    relaxTools([
+      tool({
+        type: "object",
+        properties: {
+          format: { type: "string", enum: ["json", "csv"] },
+          pattern: { type: "string" },
+          keep: { type: "string", format: "email", pattern: "\\d+" },
+        },
+        required: ["format", "pattern"],
+      }),
+    ]),
+  );
+
+  // The arguments survive; only the keywords on `keep` are stripped.
+  expect(Object.keys(out.properties as object).sort()).toEqual(["format", "keep", "pattern"]);
+  expect((out.properties as Record<string, unknown>).keep).toEqual({ type: "string" });
+  expect(out.required).toEqual(["format", "pattern"]);
+});
+
+test("relaxing does not reach into data that merely looks like schema", () => {
+  const out = paramsOf(
+    relaxTools([
+      tool({
+        type: "object",
+        properties: {
+          a: { type: "string", default: { format: "kept" }, enum: [{ pattern: "x" }] },
+        },
+      }),
+    ]),
+  );
+  expect((out.properties as Record<string, unknown>).a).toEqual({
+    type: "string",
+    default: { format: "kept" },
+    enum: [{ pattern: "x" }],
+  });
+});
+
+test("a root-level $ref is resolved rather than left dangling over no arguments", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        $ref: "#/definitions/Args",
+        definitions: {
+          Args: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }),
+    ]),
+  );
+
+  expect(out.$ref).toBeUndefined();
+  expect(out.properties).toEqual({ query: { type: "string" } });
+  expect(out.required).toEqual(["query"]);
+});
+
+test("a root $ref that resolves to nothing gives an honestly empty object", () => {
+  for (const parameters of [
+    { $ref: "#/definitions/Missing" },
+    { $ref: "https://example.com/schema.json" },
+    { $ref: "#/definitions/Loop", definitions: { Loop: { $ref: "#/definitions/Loop" } } },
+  ]) {
+    expect(paramsOf(sanitizeTools([tool(parameters)]))).toEqual({ type: "object", properties: {} });
+  }
+});
+
+test("a root allOf keeps its arguments instead of leaving required naming nothing", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        allOf: [{ type: "object", properties: { a: { type: "string" } }, required: ["a"] }],
+        properties: { b: { type: "number" } },
+      }),
+    ]),
+  );
+
+  expect(out.allOf).toBeUndefined();
+  expect(out.properties).toEqual({ a: { type: "string" }, b: { type: "number" } });
+  expect(out.required).toEqual(["a"]);
+});
+
+test("required never names an argument the rewrites removed", () => {
+  const out = paramsOf(
+    sanitizeTools([tool({ type: "object", oneOf: [{ properties: { z: {} } }], required: ["z"] })]),
+  );
+  expect(out).toEqual({ type: "object", properties: {} });
+});
