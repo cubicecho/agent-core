@@ -38,8 +38,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Coverage rather than a bare run, so the summary is in the log for a
+      # reviewer to read. Deliberately no threshold: a number that fails a build
+      # gets met by whatever test raises it fastest, which is not the same as
+      # being tested. What it is for is noticing a module that stops being.
       - name: Test
-        run: npm test
+        run: npm run coverage
 
       # `files` is ["dist"] and dist is gitignored, so every git-URL consumer
       # builds this themselves from `prepare`. A build that succeeds while

@@ -27,10 +27,11 @@ only, Node >=22.
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
 | `events` | The in-memory bus a watcher reads while a run happens. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
-| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
+| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
 | `config` | The structural interfaces every function here asks for. |
-| `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. |
+| `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
+| `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
 | `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
 
@@ -73,7 +74,29 @@ anything, and the re-send reads it — so a caller with its own retry budget pas
 `idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is
 still talking is never cut off however long it takes, and one that has stopped answering raises
 `EndpointSilent` rather than hanging the run. `timeoutMs(config)` returns `undefined` for a
-`requestTimeoutSeconds` of zero, which waits forever — what a local model answering slowly needs.
+`requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering
+slowly needs.
+
+## Sizing a request before sending it
+
+`runTurn` will refuse a request that cannot fit rather than spending a round trip finding out:
+
+```ts
+import { contextLimitFor, runTurn } from "@cubicecho/agent-core";
+
+const turn = await runTurn(client, supports, build, {
+  maxRetries: 3,
+  // Opt-in: the number is the caller's to find. `contextLimitFor` asks the endpoint, and an
+  // operator's own setting overrides it — neither is network I/O a turn should be doing.
+  contextLimit: settings.contextLength || (await contextLimitFor(settings, model)),
+  onNotice: (message) => emit(runId, { kind: "notice", text: message }),
+});
+```
+
+The body is sized once, not per attempt: a downgraded request is strictly smaller than the one
+before it and the transcript does not change between retries. A `ContextOverflow` from this is
+neither a capability `negotiate` can answer nor something `isTransient` accepts, so it leaves
+both loops on the first attempt.
 
 ## The config seam
 
@@ -93,9 +116,8 @@ row has no `contextLength`; `min-agent` spells it `contextLimit` and carries no 
 A single god interface would have forced two of them to grow columns they have no use for.
 
 The seam is not finished. `timeoutMs` narrows to the one field it reads, but `getClient` still
-asks for the whole of `Endpoint`, and `requestTimeoutSeconds` on it is required — so a consumer
-that has no timeout to give must invent one (`0` means "no limit"). Making it optional is a
-breaking change and is waiting for the next major.
+asks for the whole of `Endpoint`. `requestTimeoutSeconds` became optional in v2, so a consumer
+with no timeout to give now leaves it out rather than inventing a `0`.
 
 ## Where the merged behaviour came from
 

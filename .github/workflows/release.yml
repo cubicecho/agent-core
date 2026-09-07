@@ -89,8 +89,9 @@ jobs:
       # The escape hatch: no tag, no release notes, no CHANGELOG — just the
       # tarball on npm under the version you asked for. It authenticates exactly
       # the same way, so it is not a way around the first-publish problem above.
-      # The bump is deliberately not committed; main stays at 0.0.0-development
-      # and semantic-release keeps taking its baseline from the tags.
+      # The `npm pkg set` below is deliberately not committed: this job publishes a
+      # tarball and leaves the branch alone, so semantic-release keeps taking its
+      # baseline from the tags rather than from a version it did not write.
       - name: Publish ${{ inputs.version }}
         if: github.event_name == 'workflow_dispatch'
         env:

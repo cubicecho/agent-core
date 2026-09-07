@@ -1,6 +1,9 @@
 {
+  // Everything the compiler would otherwise never see. `tsconfig.json` includes `src` alone and
+  // excludes `**/*.test.ts`, and vitest transpiles without checking — so tests, benches and the
+  // vitest config are all linted and all run, and until they are named here, none is typechecked.
   "extends": "./tsconfig.json",
   "compilerOptions": { "noEmit": true, "rootDir": "." },
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "bench", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]
 }
