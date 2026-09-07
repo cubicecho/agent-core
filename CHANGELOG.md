@@ -1,3 +1,10 @@
+## [2.0.6](https://github.com/cubicecho/agent-core/compare/v2.0.5...v2.0.6) (2026-09-07)
+
+
+### Bug Fixes
+
+* strip the reasoning fence that never opens ([#33](https://github.com/cubicecho/agent-core/issues/33)) ([604edd2](https://github.com/cubicecho/agent-core/commit/604edd21f0d46dc7a7258f7599ca26624126fe75))
+
 ## [2.0.5](https://github.com/cubicecho/agent-core/compare/v2.0.4...v2.0.5) (2026-09-07)
 
 
