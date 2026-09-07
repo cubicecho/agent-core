@@ -45,6 +45,12 @@ jobs:
       - name: Test
         run: npm run coverage
 
+      # `npm ci` above ran `prepare`, which regenerates llms.txt — so this asks git
+      # whether the regenerated file matches the committed one. `npm run llms:check`
+      # would pass unconditionally here, having just written the file it compares.
+      - name: llms.txt matches the exports it indexes
+        run: git diff --exit-code -- llms.txt
+
       # `files` is ["dist"] and dist is gitignored, so every git-URL consumer
       # builds this themselves from `prepare`. A build that succeeds while
       # emitting nothing would leave them with an exports map pointing at a

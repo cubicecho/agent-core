@@ -38,6 +38,10 @@ only, Node >=22.
 What is **not** here is the work: orchestration, prompts, and whatever the run is about. That
 is the caller's, and it is the part that actually differs between one server and the next.
 
+`llms.txt` is the same surface as a flat index — every export with the first line of its own doc
+comment. It is generated from `src/index.ts` by `npm run llms`, which the build runs, so it is
+the exports rather than a second description of them; CI fails if the committed copy has drifted.
+
 ## A turn
 
 `negotiate` wrapping `streamTurn` is the whole of one turn against an endpoint: the request is
