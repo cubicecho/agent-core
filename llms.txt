@@ -105,7 +105,7 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `clean` — Strips the quoting and list punctuation models decorate short answers with.
 - `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
 - `parseJson` — Models are asked for JSON and often answer with prose around it, or a fenced block.
-- `resetHints` — Test seam, alongside `resetClients` and `reset`: forget which models refused the hints.
+- `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
 - `SideTaskOptions` (type) — What a side task may be given.
 - `tryAsk` — A side task is never worth failing the work it supports.
 
