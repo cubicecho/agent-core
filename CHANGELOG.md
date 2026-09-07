@@ -1,3 +1,10 @@
+## [2.2.3](https://github.com/cubicecho/agent-core/compare/v2.2.2...v2.2.3) (2026-09-07)
+
+
+### Bug Fixes
+
+* latch produced on what a chunk carried, not on its arrival ([#57](https://github.com/cubicecho/agent-core/issues/57)) ([#59](https://github.com/cubicecho/agent-core/issues/59)) ([fe35c9a](https://github.com/cubicecho/agent-core/commit/fe35c9accdb5d4fd9654ddac919c6aec4c8292f6))
+
 ## [2.2.2](https://github.com/cubicecho/agent-core/compare/v2.2.1...v2.2.2) (2026-09-07)
 
 
