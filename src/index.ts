@@ -59,6 +59,7 @@ export {
   SMALLEST_LIKELY_WINDOW,
   sleep,
 } from "./retry.ts";
+export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";
 export {
   ask,
