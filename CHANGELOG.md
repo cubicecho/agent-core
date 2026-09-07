@@ -1,3 +1,15 @@
+# [1.2.0](https://github.com/cubicecho/agent-core/compare/v1.1.0...v1.2.0) (2026-09-07)
+
+
+### Bug Fixes
+
+* **capabilities:** hand send the produced flag instead of expecting two ([78a3a72](https://github.com/cubicecho/agent-core/commit/78a3a7264118175d4d777a8d846f267545d3ac9d))
+
+
+### Features
+
+* one call that forgets every cache and latch ([307c486](https://github.com/cubicecho/agent-core/commit/307c486a7a73a96c18ad8d6ad21d85154bac5eed))
+
 # [1.1.0](https://github.com/cubicecho/agent-core/compare/v1.0.0...v1.1.0) (2026-09-07)
 
 
