@@ -117,13 +117,90 @@ function collapseNullableUnion(node: Schema) {
 /** Combinators at the top level of a parameters schema; strict backends reject them outright. */
 const TOP_LEVEL_COMBINATORS = ["allOf", "anyOf", "oneOf", "enum", "not"] as const;
 
+/** `#/definitions/Args` or `#/$defs/Args` — a pointer into this schema's own definitions. */
+const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
+
+/**
+ * Replaces a root-level `$ref` with what it points at.
+ *
+ * Dropping the siblings of a `$ref` is right at a nested position and wrong at this one: the
+ * siblings here are the `definitions` the pointer needs, so the reference is left dangling and
+ * `properties` is then backfilled empty below. The tool goes out advertising no arguments at
+ * all — which the model cannot detect and the server has no reason to refuse. A schema
+ * generator emits this shape whenever the argument object is a named type.
+ */
+function inlineRootRef(parameters: Schema): Schema {
+  const defs: Schema = {};
+  for (const key of ["definitions", "$defs"] as const)
+    if (isObject(parameters[key])) defs[key] = parameters[key];
+
+  const seen = new Set<string>();
+  let node: Schema = parameters;
+  while (typeof node.$ref === "string") {
+    const pointer = node.$ref;
+    const target = LOCAL_POINTER.exec(pointer);
+    // A pointer at another document, or one that comes back to itself, has nothing here to
+    // resolve against. An object with no properties is at least honest about taking none.
+    if (!target || seen.has(pointer)) return EMPTY_OBJECT();
+    seen.add(pointer);
+    const pool = defs[target[1]];
+    const resolved = isObject(pool) ? pool[target[2]] : undefined;
+    if (!isObject(resolved)) return EMPTY_OBJECT();
+    node = resolved;
+  }
+  // The definitions travel with it: whatever the target refers to still lives in them.
+  return node === parameters ? parameters : { ...node, ...defs };
+}
+
+/**
+ * Folds a root `allOf` into the root itself.
+ *
+ * It is the other way a generated schema spells "the arguments are this named type", and
+ * deleting it outright below threw the arguments away while leaving the `required` that named
+ * them. Branches that are references are not something to guess at — those fall through to
+ * `pruneRequired`, which at least keeps the result self-consistent.
+ */
+function mergeRootAllOf(out: Schema) {
+  const branches = out.allOf;
+  if (!Array.isArray(branches)) return;
+
+  const properties: Schema = isObject(out.properties) ? { ...out.properties } : {};
+  const required = new Set<string>(
+    Array.isArray(out.required) ? out.required.filter((name) => typeof name === "string") : [],
+  );
+  for (const branch of branches) {
+    if (!isObject(branch) || "$ref" in branch) continue;
+    if (isObject(branch.properties)) Object.assign(properties, branch.properties);
+    if (Array.isArray(branch.required))
+      for (const name of branch.required) if (typeof name === "string") required.add(name);
+  }
+
+  if (!Object.keys(properties).length) return;
+  out.properties = properties;
+  if (required.size) out.required = [...required];
+}
+
+/**
+ * A required argument that is not in `properties` is one no caller can supply and no strict
+ * validator will accept. Anything the rewrites above removed, `required` may still name.
+ */
+function pruneRequired(out: Schema) {
+  if (!Array.isArray(out.required)) return;
+  const properties = isObject(out.properties) ? out.properties : {};
+  const kept = out.required.filter((name) => typeof name === "string" && name in properties);
+  if (kept.length) out.required = kept;
+  else delete out.required;
+}
+
 function sanitizeParameters(parameters: unknown): Schema {
   if (!isObject(parameters)) return EMPTY_OBJECT();
-  const out = normalize(parameters);
+  const out = normalize(inlineRootRef(parameters));
 
+  mergeRootAllOf(out);
   for (const key of TOP_LEVEL_COMBINATORS) delete out[key];
   if (out.type !== "object") out.type = "object";
   if (!isObject(out.properties)) out.properties = {};
+  pruneRequired(out);
   return out;
 }
 
@@ -162,13 +239,27 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
  * re-validates anyway.
  */
 export function relaxTools(tools: OpenAI.ChatCompletionTool[]) {
+  /**
+   * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are
+   * keyword names and perfectly ordinary argument names at once. Matching on the key alone
+   * deleted a *property* called `format` along with the keyword, leaving the parent's
+   * `required` naming an argument that no longer existed — which every strict validator
+   * rejects, so the retry produced the failure it was reaching for. The same distinction keeps
+   * the walk out of `default`, `enum` and `const`, whose contents are data, not schema.
+   */
   const strip = (node: unknown): unknown => {
     if (Array.isArray(node)) return node.map(strip);
     if (!isObject(node)) return node;
     const out: Schema = {};
     for (const [key, value] of Object.entries(node)) {
       if (key === "pattern" || key === "format") continue;
-      out[key] = strip(value);
+      if (SCHEMA_KEYS.has(key)) out[key] = Array.isArray(value) ? value.map(strip) : strip(value);
+      else if (SCHEMA_MAPS.has(key) && isObject(value))
+        // The keys here are argument names; only the values are schemas.
+        out[key] = Object.fromEntries(
+          Object.entries(value).map(([name, sub]) => [name, strip(sub)]),
+        );
+      else out[key] = value;
     }
     return out;
   };
