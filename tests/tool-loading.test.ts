@@ -126,3 +126,40 @@ test("carry-over drops the least recently used past the cap", () => {
   expect(out.at(-1)).toBe("fresh");
   expect(out).not.toContain("old_0");
 });
+
+test("an empty catalogue produces no prompt at all", () => {
+  // Not a heading with nothing under it: a run with no servers must not be told about a
+  // mechanism it has nothing to use it on.
+  expect(catalogPrompt([])).toBe("");
+});
+
+test("a name that matches nothing is reported, and a match is never counted twice", () => {
+  const { matched, unknown } = expandNames(["gmail__send_email", "gmail__*", "nope"], catalog);
+  expect(matched).toHaveLength(3);
+  expect(unknown).toEqual(["nope"]);
+});
+
+test("loading says which names it could not place", () => {
+  expect(loadResult({ matched: [], unknown: ["nope"], overBroad: [] }, catalog)).toContain(
+    "Not in the catalogue: nope",
+  );
+});
+
+test("an over-broad wildcard comes back with the names it would have loaded", () => {
+  const wide: CatalogServer[] = [
+    {
+      id: "3",
+      label: "Mail",
+      tools: Array.from({ length: MAX_PER_LOAD + 5 }, (_, i) => tool(`mail__tool_${i}`)),
+    },
+  ];
+  const text = loadResult(expandNames(["mail__*"], wide), wide);
+  expect(text).toContain(`more than the ${MAX_PER_LOAD} one call may load`);
+  expect(text).toContain("mail__tool_3");
+});
+
+test("a malformed preselection reply means no preselection, not a failure", () => {
+  expect(preselection(undefined, catalog)).toEqual([]);
+  expect(preselection({ names: ["gmail__send_email"] }, catalog)).toEqual([]);
+  expect(preselection(["", 7, null], catalog)).toEqual([]);
+});

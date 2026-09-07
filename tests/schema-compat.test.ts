@@ -106,3 +106,34 @@ test("leaves a reference standing alone, whatever it was wrapped in", () => {
   // The targets are still there: the reference is narrowed, never severed.
   expect(Object.keys(out.definitions as object)).toEqual(["Filters", "Note"]);
 });
+
+test("a nullable union keeps the constraints of the branch that survives", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        type: "object",
+        properties: { name: { anyOf: [{ type: "string", maxLength: 3 }, { type: "null" }] } },
+      }),
+    ]),
+  );
+  const properties = out.properties as Record<string, Record<string, unknown>>;
+  expect(properties.name).toEqual({ nullable: true, type: "string", maxLength: 3 });
+});
+
+test("a union of two real branches is left as it was", () => {
+  const anyOf = [{ type: "string" }, { type: "number" }];
+  const out = paramsOf(sanitizeTools([tool({ type: "object", properties: { a: { anyOf } } })]));
+  expect((out.properties as Record<string, unknown>).a).toEqual({ anyOf });
+});
+
+test("a pattern a grammar can express is kept, and so are enums and descriptions", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      hex: { type: "string", pattern: "^#[0-9a-f]{6}$" },
+      mode: { type: "string", enum: ["a", "b"], description: "how" },
+    },
+    required: ["mode"],
+  };
+  expect(paramsOf(sanitizeTools([tool(schema)]))).toEqual(schema);
+});

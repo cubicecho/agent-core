@@ -69,7 +69,7 @@ export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<str
     "These tools exist but are not loaded. Call `load_tools` with the names you need, then call",
     "them on the step after. Names are descriptive; load a tool to see its parameters. A name",
     "marked `(loaded)` is already in your tool list — call it directly, do not load it again. Do",
-    "not load tools the task does not need, and do not mention this mechanism in your report.",
+    "not load tools the task does not need, and do not mention this mechanism in your answer.",
     "",
     catalogList(catalog, loaded),
   ].join("\n");
@@ -191,13 +191,13 @@ export function requestedNames(args: Record<string, unknown>): string[] {
  * broad guess is not, so the same `MAX_PER_LOAD` cap applies here as to a `load_tools` call.
  */
 export const PRESELECT_SYSTEM =
-  "You choose tools. Below is a catalogue of tool names, then a task. Reply with a JSON array " +
-  "of the names the task is likely to need — exact names from the catalogue, at most " +
-  `${MAX_PER_LOAD}, and as few as could do the job. Reply with \`[]\` if the task can be done ` +
-  "without tools. Reply with the array alone — no prose, no explanation.";
+  "You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON " +
+  "array of the names the request is likely to need — exact names from the catalogue, at most " +
+  `${MAX_PER_LOAD}, and as few as could do the job. Reply with \`[]\` if the request can be ` +
+  "answered without tools. Reply with the array alone — no prose, no explanation.";
 
 export const preselectInput = (catalog: CatalogServer[], prompt: string) =>
-  `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Task\n\n${prompt.slice(0, 2000)}`;
+  `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, 2000)}`;
 
 /** Resolves a preselection against the catalogue: unknown names dropped, count capped. */
 export function preselection(names: unknown, catalog: CatalogServer[]): string[] {
