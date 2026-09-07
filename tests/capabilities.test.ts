@@ -310,11 +310,32 @@ describe("negotiate, for a model", () => {
       model: "gpt-5",
       onNotice: (message) => notices.push(message),
     });
+    // Named, because these latch for the life of the process and the notice is the only
+    // announcement that one did. On a consumer where the model is a per-turn setting, a bare
+    // "model" is the same line for every model on the endpoint.
     expect(notices).toEqual([
-      "model does not take a reasoning effort; retrying without one",
-      "model wants max_completion_tokens; retrying with the limit spelled that way",
-      "model takes only its own temperature; retrying without ours",
+      "gpt-5 does not take a reasoning effort; retrying without one",
+      "gpt-5 wants max_completion_tokens; retrying with the limit spelled that way",
+      "gpt-5 takes only its own temperature; retrying without ours",
     ]);
+  });
+
+  it("keeps the two levels tellable apart by their first word", async () => {
+    // The endpoint's notices open with `server` and the model's with its own name, so a reader
+    // knows which level latched without parsing the rest of the line.
+    const notices: string[] = [];
+    const supports = capabilitiesFor("http://one-box/v1");
+    const refusals = [NO_USAGE, NO_EFFORT];
+    const send = async () => {
+      const refusal = refusals.shift();
+      if (refusal) throw refusal;
+      return "answered";
+    };
+    await negotiate(supports, send, {
+      model: "qwen3-30b",
+      onNotice: (message) => notices.push(message),
+    });
+    expect(notices.map((notice) => notice.split(" ")[0])).toEqual(["server", "qwen3-30b"]);
   });
 
   it("gives up rather than looping on a model that will not stop complaining", async () => {
