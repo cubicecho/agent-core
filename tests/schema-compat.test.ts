@@ -220,10 +220,68 @@ test("a root allOf keeps its arguments instead of leaving required naming nothin
 });
 
 test("required never names an argument the rewrites removed", () => {
+  // A union of non-objects has no properties to fold in, so the combinator still goes and
+  // `required` is left naming nothing.
   const out = paramsOf(
-    sanitizeTools([tool({ type: "object", oneOf: [{ properties: { z: {} } }], required: ["z"] })]),
+    sanitizeTools([tool({ type: "object", oneOf: [{ type: "string" }], required: ["z"] })]),
   );
   expect(out).toEqual({ type: "object", properties: {} });
+});
+
+test("a root union keeps its arguments, requiring only what every branch asks for", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        anyOf: [
+          {
+            type: "object",
+            properties: { a: { type: "string" }, id: { type: "string" } },
+            required: ["a", "id"],
+          },
+          {
+            type: "object",
+            properties: { b: { type: "number" }, id: { type: "string" } },
+            required: ["id"],
+          },
+        ],
+      }),
+    ]),
+  );
+
+  expect(out.anyOf).toBeUndefined();
+  expect(out.properties).toEqual({
+    a: { type: "string" },
+    b: { type: "number" },
+    id: { type: "string" },
+  });
+  // `id` is asked for by both branches; `a` by only one, so the model must be free to omit it.
+  expect(out.required).toEqual(["id"]);
+});
+
+test("a single-branch root union is the named argument type, required and all", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({ oneOf: [{ type: "object", properties: { a: { type: "string" } }, required: ["a"] }] }),
+    ]),
+  );
+  expect(out).toEqual({ type: "object", properties: { a: { type: "string" } }, required: ["a"] });
+});
+
+test("a root union that references a definition never claims a required name", () => {
+  const out = paramsOf(
+    sanitizeTools([
+      tool({
+        anyOf: [
+          { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
+          { $ref: "#/definitions/Other" },
+        ],
+        definitions: { Other: { type: "object", properties: { b: {} } } },
+      }),
+    ]),
+  );
+
+  expect(out.properties).toEqual({ a: { type: "string" } });
+  expect(out.required).toBeUndefined();
 });
 
 test("the same tool object is walked once, however often it is sent", () => {

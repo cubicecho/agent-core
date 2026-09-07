@@ -181,6 +181,50 @@ function mergeRootAllOf(out: Schema) {
 }
 
 /**
+ * Folds a root `anyOf` or `oneOf` into the root itself.
+ *
+ * The third spelling of "the arguments are this named type", after `$ref` and `allOf`, and the
+ * one still going out empty: a union of real object shapes has no `null` branch for
+ * `collapseNullableUnion` to take apart, so it reached the delete below intact and every
+ * argument went with it. Properties are unioned because a caller satisfies any one branch;
+ * `required` keeps only the names every branch asks for, since one that a branch does without
+ * is one the model has to be free to omit. A branch that is a reference is not something to
+ * guess at — it cannot vouch for a name, so its presence alone empties `required`.
+ */
+function mergeRootUnion(out: Schema) {
+  for (const key of ["anyOf", "oneOf"] as const) {
+    const branches = out[key];
+    if (!Array.isArray(branches)) continue;
+
+    const properties: Schema = {};
+    // `null` until a branch has been read, which is what tells "no branches yet" apart from
+    // "the branches agreed on nothing".
+    let shared: Set<string> | null = null;
+    for (const branch of branches) {
+      const previous: Set<string> | null = shared;
+      if (!isObject(branch) || "$ref" in branch) {
+        shared = new Set<string>();
+        continue;
+      }
+      if (isObject(branch.properties)) Object.assign(properties, branch.properties);
+      const names = Array.isArray(branch.required)
+        ? branch.required.filter((name): name is string => typeof name === "string")
+        : [];
+      shared = previous === null ? new Set(names) : new Set(names.filter((n) => previous.has(n)));
+    }
+
+    if (!Object.keys(properties).length) continue;
+    out.properties = { ...(isObject(out.properties) ? out.properties : {}), ...properties };
+    if (shared?.size) {
+      const already = Array.isArray(out.required)
+        ? out.required.filter((name): name is string => typeof name === "string")
+        : [];
+      out.required = [...new Set([...already, ...shared])];
+    }
+  }
+}
+
+/**
  * A required argument that is not in `properties` is one no caller can supply and no strict
  * validator will accept. Anything the rewrites above removed, `required` may still name.
  */
@@ -197,6 +241,7 @@ function sanitizeParameters(parameters: unknown): Schema {
   const out = normalize(inlineRootRef(parameters));
 
   mergeRootAllOf(out);
+  mergeRootUnion(out);
   for (const key of TOP_LEVEL_COMBINATORS) delete out[key];
   if (out.type !== "object") out.type = "object";
   if (!isObject(out.properties)) out.properties = {};
