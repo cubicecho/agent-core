@@ -204,70 +204,93 @@ function sanitizeParameters(parameters: unknown): Schema {
   return out;
 }
 
-const mapTools = (
-  tools: OpenAI.ChatCompletionTool[],
-  fn: (parameters: unknown) => Schema,
-): OpenAI.ChatCompletionTool[] =>
-  tools.map((tool) =>
-    tool.type === "function"
-      ? { ...tool, function: { ...tool.function, parameters: fn(tool.function.parameters) } }
-      : tool,
-  );
+/** Rewrites one tool's parameters, leaving a non-function tool alone. */
+const mapTool = (
+  tool: OpenAI.ChatCompletionTool,
+  fn: (parameters: unknown) => unknown,
+): OpenAI.ChatCompletionTool =>
+  tool.type === "function"
+    ? {
+        ...tool,
+        function: { ...tool.function, parameters: fn(tool.function.parameters) as Schema },
+      }
+    : tool;
 
 /**
- * Cached against the tool object rather than recomputed.
+ * Both rewrites are cached against the tool object rather than recomputed.
  *
  * The agent loop rebuilds its tool array on every iteration of every step, and normalising a
  * couple of dozen MCP schemas is the only walk in a run that is neither a request nor a query.
  * The pool hands out the same definition objects for the life of a connection, so identity is
  * exactly the right key: a reconnect makes new ones and they are normalised again.
+ *
+ * Two maps rather than one, because the two answer different questions about the same tool and a
+ * relaxed schema is reached by way of a sanitised one. `relaxed` is the load-bearing half: an
+ * endpoint that has refused a grammar once has `strictSchemas` off for the life of the process
+ * (see `capabilities.ts`), so from that point every request takes this path and only this path.
+ * Caching the call that happens once per connection and not the one that happens on every request
+ * had it exactly the wrong way round.
+ *
+ * The contract both rely on is that a tool definition is not mutated in place. Nothing can evict
+ * an entry here — a caller that edits `tool.function.parameters` after the fact keeps the schema
+ * it had at first sight. Build a new definition object instead.
  */
 const sanitized = new WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>();
+const relaxed = new WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>();
+
+/** Looks one up, computing and remembering it on a miss. */
+const through = (
+  cache: WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>,
+  tools: OpenAI.ChatCompletionTool[],
+  fn: (parameters: unknown) => unknown,
+) =>
+  tools.map((tool) => {
+    const hit = cache.get(tool);
+    if (hit) return hit;
+    const built = mapTool(tool, fn);
+    cache.set(tool, built);
+    return built;
+  });
 
 export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
-  tools.map((tool) => {
-    const hit = sanitized.get(tool);
-    if (hit) return hit;
-    const [clean] = mapTools([tool], sanitizeParameters);
-    sanitized.set(tool, clean);
-    return clean;
-  });
+  through(sanitized, tools, sanitizeParameters);
+
+/**
+ * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are keyword
+ * names and perfectly ordinary argument names at once. Matching on the key alone deleted a
+ * *property* called `format` along with the keyword, leaving the parent's `required` naming an
+ * argument that no longer existed — which every strict validator rejects, so the retry produced
+ * the failure it was reaching for. The same distinction keeps the walk out of `default`, `enum`
+ * and `const`, whose contents are data, not schema.
+ *
+ * At module scope rather than inside `relaxTools`, so the closure is made once rather than per
+ * call — which, on the path this is on, is per request.
+ */
+const strip = (node: unknown): unknown => {
+  if (Array.isArray(node)) return node.map(strip);
+  if (!isObject(node)) return node;
+  const out: Schema = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "pattern" || key === "format") continue;
+    if (SCHEMA_KEYS.has(key)) out[key] = Array.isArray(value) ? value.map(strip) : strip(value);
+    else if (SCHEMA_MAPS.has(key) && isObject(value))
+      // The keys here are argument names; only the values are schemas.
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, strip(sub)]));
+    else out[key] = value;
+  }
+  return out;
+};
 
 /**
  * The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in
  * `pattern` and most `format` values, both of which only ever narrowed a string the tool
  * re-validates anyway.
  */
-export function relaxTools(tools: OpenAI.ChatCompletionTool[]) {
-  /**
-   * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are
-   * keyword names and perfectly ordinary argument names at once. Matching on the key alone
-   * deleted a *property* called `format` along with the keyword, leaving the parent's
-   * `required` naming an argument that no longer existed — which every strict validator
-   * rejects, so the retry produced the failure it was reaching for. The same distinction keeps
-   * the walk out of `default`, `enum` and `const`, whose contents are data, not schema.
-   */
-  const strip = (node: unknown): unknown => {
-    if (Array.isArray(node)) return node.map(strip);
-    if (!isObject(node)) return node;
-    const out: Schema = {};
-    for (const [key, value] of Object.entries(node)) {
-      if (key === "pattern" || key === "format") continue;
-      if (SCHEMA_KEYS.has(key)) out[key] = Array.isArray(value) ? value.map(strip) : strip(value);
-      else if (SCHEMA_MAPS.has(key) && isObject(value))
-        // The keys here are argument names; only the values are schemas.
-        out[key] = Object.fromEntries(
-          Object.entries(value).map(([name, sub]) => [name, strip(sub)]),
-        );
-      else out[key] = value;
-    }
-    return out;
-  };
-  return mapTools(tools, (parameters) => {
+export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) =>
+  through(relaxed, tools, (parameters) => {
     const stripped = strip(parameters);
     return isObject(stripped) ? stripped : EMPTY_OBJECT();
   });
-}
 
 /**
  * Qwen chat templates raise this when the transcript has no user turn. Some servers wrap it

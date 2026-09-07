@@ -10,6 +10,7 @@ import {
   requestTokens,
   sleep,
 } from "../src/retry.ts";
+import { estimateTokens } from "../src/tokens.ts";
 
 /** An `APIError` as the SDK raises it, with only the status this cares about set. */
 const apiError = (status: number) =>
@@ -87,6 +88,69 @@ test("a request is sized from what is actually sent, tools included", () => {
   });
   expect(bare).toBeGreaterThan(100);
   expect(withTools).toBeGreaterThan(bare);
+});
+
+test("a transcript costs more the longer it gets, and the walk sees every part of it", () => {
+  const turn = (n: number) => [
+    { role: "user" as const, content: `ask ${n} ${"x".repeat(200)}` },
+    {
+      role: "assistant" as const,
+      content: null,
+      tool_calls: [
+        {
+          id: `call_${n}`,
+          type: "function" as const,
+          function: { name: "search", arguments: JSON.stringify({ q: "y".repeat(100) }) },
+        },
+      ],
+    },
+    { role: "tool" as const, tool_call_id: `call_${n}`, content: "z".repeat(300) },
+  ];
+  const sized = (turns: number) =>
+    requestTokens({
+      model: "m",
+      stream: true,
+      messages: Array.from({ length: turns }, (_, i) => turn(i)).flat(),
+    });
+  expect(sized(5)).toBeGreaterThan(sized(1));
+  expect(sized(20)).toBeGreaterThan(sized(5));
+  // Within a rounding error of what serialising the same body would have said, which is what
+  // the walk replaced. `estimateTokens` is documented as running low; it must not run wild.
+  const walked = sized(20);
+  const serialized = estimateTokens(
+    JSON.stringify(Array.from({ length: 20 }, (_, i) => turn(i)).flat()),
+  );
+  expect(walked).toBeGreaterThan(serialized * 0.9);
+  expect(walked).toBeLessThan(serialized * 1.1);
+});
+
+test("a message whose content is parts is sized from the parts it has text in", () => {
+  const sized = (content: OpenAI.ChatCompletionUserMessageParam["content"]) =>
+    requestTokens({ model: "m", stream: true, messages: [{ role: "user", content }] });
+  const plain = sized("x".repeat(400));
+  const parts = sized([
+    { type: "text", text: "x".repeat(200) },
+    { type: "text", text: "x".repeat(200) },
+  ]);
+  expect(parts).toBe(plain);
+  // An image part is a URL or a blob, and is not priced by the length of either.
+  const withImage = sized([
+    { type: "text", text: "x".repeat(400) },
+    { type: "image_url", image_url: { url: `data:image/png;base64,${"A".repeat(5000)}` } },
+  ]);
+  expect(withImage).toBe(plain);
+});
+
+test("the same tools array is only measured once", () => {
+  const tools: OpenAI.ChatCompletionTool[] = [
+    { type: "function", function: { name: "t", parameters: { type: "object" } } },
+  ];
+  const messages = [{ role: "user" as const, content: "hi" }];
+  const first = requestTokens({ model: "m", stream: true, messages, tools });
+  // Mutated behind the cache: a second reading of the same array must be the memoised number,
+  // not a fresh walk, or the identity key is not doing what the comment says it does.
+  tools.push({ type: "function", function: { name: "u".repeat(500), parameters: {} } });
+  expect(requestTokens({ model: "m", stream: true, messages, tools })).toBe(first);
 });
 
 test("token counts are shortened the way they are read", () => {
