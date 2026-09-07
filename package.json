@@ -1,6 +1,6 @@
 {
   "name": "@cubicecho/agent-core",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "The endpoint-agnostic half of an OpenAI-compatible agent loop: tool-schema compatibility, on-demand tool loading, one-shot side tasks, run events, and a pooled client.",
   "keywords": [
     "openai",

@@ -1,3 +1,10 @@
+## [2.1.2](https://github.com/cubicecho/agent-core/compare/v2.1.1...v2.1.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* let a side task answer what the model refuses ([#45](https://github.com/cubicecho/agent-core/issues/45)) ([#46](https://github.com/cubicecho/agent-core/issues/46)) ([67249ef](https://github.com/cubicecho/agent-core/commit/67249ef7362b42fdcf6f7af6bfa15a0b30157af1))
+
 ## [2.1.1](https://github.com/cubicecho/agent-core/compare/v2.1.0...v2.1.1) (2026-09-07)
 
 
