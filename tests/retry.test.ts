@@ -53,6 +53,29 @@ test("a server's own words for an over-long request are read as one", () => {
   expect(isOverflow("rate limit exceeded")).toBe(false);
 });
 
+test("a rate limit is not read as an overflow, however it is worded", () => {
+  // OpenAI's real one: "too large for" beside "tokens", which is both halves of the test
+  // above, on a 429 that `isTransient` accepts and that succeeds on the next attempt.
+  expect(
+    isOverflow(
+      "Request too large for gpt-4o in organization org-abc on tokens per min (TPM): " +
+        "Limit 30000, Requested 40000.",
+    ),
+  ).toBe(false);
+  expect(isOverflow("Rate limit reached for gpt-4o: 200000 tokens per day")).toBe(false);
+  expect(isOverflow("token quota exceeded, request too large for this key")).toBe(false);
+
+  // The classifiers have to agree: nothing may be both.
+  const tpm = new OpenAI.APIError(
+    429,
+    { error: {} },
+    "Request too large for gpt-4o on TPM",
+    undefined,
+  );
+  expect(isTransient(tpm)).toBe(true);
+  expect(isOverflow(tpm.message)).toBe(false);
+});
+
 test("a request is sized from what is actually sent, tools included", () => {
   const messages = [{ role: "user" as const, content: "x".repeat(400) }];
   const bare = requestTokens({ model: "m", stream: true, messages });

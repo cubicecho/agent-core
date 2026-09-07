@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { clean, estimateTokens, listLines, parseJson } from "../src/side-task.ts";
+import OpenAI from "openai";
+import { describe, expect, it, vi } from "vitest";
+import { clean, listLines, parseJson, tryAsk } from "../src/side-task.ts";
+import { estimateTokens } from "../src/tokens.ts";
 
 describe("clean", () => {
   it("strips the decoration models put around a short answer", () => {
@@ -65,5 +67,19 @@ describe("listLines", () => {
 
   it("keeps at most the requested number", () => {
     expect(listLines("a\nb\nc\nd", 2, 80)).toEqual(["a", "b"]);
+  });
+});
+
+describe("tryAsk", () => {
+  it("reports a throwable that is not an Error", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await tryAsk("naming", () => Promise.reject("just a string"))).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith("[side-task] naming:", "just a string");
+    warn.mockRestore();
+  });
+
+  it("lets a cancelled run through instead of reporting it as a failed side task", async () => {
+    const abort = new OpenAI.APIUserAbortError();
+    await expect(tryAsk("naming", () => Promise.reject(abort))).rejects.toBe(abort);
   });
 });
