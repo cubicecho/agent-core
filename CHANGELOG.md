@@ -1,3 +1,11 @@
+## [2.2.1](https://github.com/cubicecho/agent-core/compare/v2.2.0...v2.2.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* count the keys only some messages carry ([#52](https://github.com/cubicecho/agent-core/issues/52)) ([#54](https://github.com/cubicecho/agent-core/issues/54)) ([28c001d](https://github.com/cubicecho/agent-core/commit/28c001d5052bf0093c06f53312e3b2894707840b)), closes [#47](https://github.com/cubicecho/agent-core/issues/47)
+* name the model in the no-thinking-hints notice ([#51](https://github.com/cubicecho/agent-core/issues/51)) ([#53](https://github.com/cubicecho/agent-core/issues/53)) ([0437e42](https://github.com/cubicecho/agent-core/commit/0437e42b504e204465ecfaaf067ffd1488130db1))
+
 # [2.2.0](https://github.com/cubicecho/agent-core/compare/v2.1.2...v2.2.0) (2026-09-07)
 
 
