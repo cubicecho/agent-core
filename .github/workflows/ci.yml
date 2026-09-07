@@ -37,3 +37,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # `files` is ["dist"] and dist is gitignored, so every git-URL consumer
+      # builds this themselves from `prepare`. A build that succeeds while
+      # emitting nothing would leave them with an exports map pointing at a
+      # dist/ that is not there — which is how the prepack-instead-of-prepare
+      # bug reached a consumer rather than this repo.
+      - name: The build actually emitted
+        run: test -f dist/index.js && test -f dist/index.d.ts
