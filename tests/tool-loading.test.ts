@@ -163,3 +163,48 @@ test("a malformed preselection reply means no preselection, not a failure", () =
   expect(preselection({ names: ["gmail__send_email"] }, catalog)).toEqual([]);
   expect(preselection(["", 7, null], catalog)).toEqual([]);
 });
+
+test("a server with no tools is not given a heading with nothing under it", () => {
+  const empty: CatalogServer[] = [{ id: "1", label: "Gmail", tools: [] }];
+  expect(catalogPrompt(empty)).toBe("");
+
+  const mixed: CatalogServer[] = [{ id: "1", label: "Gmail", tools: [] }, ...catalog];
+  const prompt = catalogPrompt(mixed);
+  expect(prompt).not.toContain("Gmail:\n\n");
+  expect(prompt).toContain("Files:");
+  // The one Gmail heading present is the real server's, not the empty one's.
+  expect(prompt.match(/^Gmail:$/gm)).toHaveLength(1);
+});
+
+test("the load cap is what one call may load, not what one name may match", () => {
+  const dozen = (prefix: string) =>
+    Array.from({ length: MAX_PER_LOAD }, (_, i) => tool(`${prefix}__t${i}`));
+  const wide: CatalogServer[] = [
+    { id: "1", label: "A", tools: dozen("a") },
+    { id: "2", label: "B", tools: dozen("b") },
+    { id: "3", label: "C", tools: dozen("c") },
+  ];
+
+  const resolved = expandNames(["a__*", "b__*", "c__*"], wide);
+  expect(resolved.matched).toHaveLength(MAX_PER_LOAD);
+  expect(resolved.overBroad.map(({ name }) => name)).toEqual(["b__*", "c__*"]);
+  expect(loadResult(resolved, wide)).toContain(`more than the ${MAX_PER_LOAD} one call may load`);
+});
+
+test("a name that only repeats an earlier match does not spend budget", () => {
+  const resolved = expandNames(["gmail__send_email", "send_email", "gmail__*"], catalog);
+  expect(resolved.matched.sort()).toEqual([
+    "gmail__list_labels",
+    "gmail__read_email",
+    "gmail__send_email",
+  ]);
+  expect(resolved.overBroad).toEqual([]);
+});
+
+test("a bare wildcard is answered with the names rather than the whole catalogue", () => {
+  const resolved = expandNames(["*"], catalog);
+  expect(resolved.matched).toEqual([]);
+  expect(resolved.overBroad).toHaveLength(1);
+  expect(resolved.overBroad[0].hits).toHaveLength(5);
+  expect(loadResult(resolved, catalog)).toContain("Name the ones you need from:");
+});

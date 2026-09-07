@@ -31,7 +31,10 @@ jobs:
         run: npx biome ci .
 
       # The build above compiles src/ alone — tsconfig.build.json excludes the
-      # tests. This is the pass that puts tests/ through the compiler.
+      # tests. This is the pass that puts tests/ through the compiler, via
+      # tsconfig.tests.json. It has to be that project explicitly: the default
+      # tsconfig.json excludes `**/*.test.ts`, and vitest transpiles without
+      # checking, so plain `tsc --noEmit` type-checked none of the suite.
       - name: Typecheck
         run: npm run typecheck
 

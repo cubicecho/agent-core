@@ -4,7 +4,17 @@ The endpoint-agnostic half of an OpenAI-compatible agent loop.
 
 Extracted from three servers that had each written it separately — `kanban_server`,
 `task_server` and `min-agent` — after the copies drifted far enough that a fix in one was a bug
-still live in another. See [`standards/extraction-backlog.md`](../standards/extraction-backlog.md).
+still live in another.
+
+## Install
+
+```sh
+npm install @cubicecho/agent-core openai
+```
+
+`openai` is a peer dependency (`>=6`) so the client this hands back is the same one your code
+already imports — one SDK version in the tree, one `instanceof` that means what it says. ESM
+only, Node >=22.
 
 ## What is here
 
@@ -17,6 +27,8 @@ still live in another. See [`standards/extraction-backlog.md`](../standards/extr
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `config` | The structural interfaces every function here asks for. |
+| `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
+| `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
 
 What is **not** here is the work: orchestration, prompts, and whatever the run is about. That
 is the caller's, and it is the part that actually differs between one server and the next.
@@ -35,9 +47,13 @@ const client = getClient(settings satisfies Endpoint);
 ```
 
 This matters because the three consumers do not agree on the fields. `task_server`'s settings
-row has no `contextLength`; `min-agent` spells it `contextLimit` and has no timeout or retry
-budget at all. A single god interface would have forced two of them to grow columns they have
-no use for.
+row has no `contextLength`; `min-agent` spells it `contextLimit` and carries no retry budget.
+A single god interface would have forced two of them to grow columns they have no use for.
+
+The seam is not finished. `timeoutMs` narrows to the one field it reads, but `getClient` still
+asks for the whole of `Endpoint`, and `requestTimeoutSeconds` on it is required — so a consumer
+that has no timeout to give must invent one (`0` means "no limit"). Making it optional is a
+breaking change and is waiting for the next major.
 
 ## Where the merged behaviour came from
 
