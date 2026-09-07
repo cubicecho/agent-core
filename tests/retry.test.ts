@@ -162,18 +162,46 @@ test("the keys only some messages carry are counted, not only their values", () 
 test("a message whose content is parts is sized from the parts it has text in", () => {
   const sized = (content: OpenAI.ChatCompletionUserMessageParam["content"]) =>
     requestTokens({ model: "m", stream: true, messages: [{ role: "user", content }] });
+  const serialized = (content: OpenAI.ChatCompletionUserMessageParam["content"]) =>
+    estimateTokens(JSON.stringify([{ role: "user", content }]));
+
+  // Each part is an object in the body, so splitting the same text across more of them makes
+  // the request bigger — `{"type":"text","text":""},` is 26 characters that are really sent.
+  // Charging only `part.text` read the split content as the unsplit content and was short by
+  // 6.5 tokens a part, which grows with the part count rather than with what the parts say.
   const plain = sized("x".repeat(400));
-  const parts = sized([
-    { type: "text", text: "x".repeat(200) },
-    { type: "text", text: "x".repeat(200) },
-  ]);
-  expect(parts).toBe(plain);
-  // An image part is a URL or a blob, and is not priced by the length of either.
+  const one = sized([{ type: "text", text: "x".repeat(400) }]);
+  const eight = sized(
+    Array.from({ length: 8 }, () => ({ type: "text" as const, text: "x".repeat(50) })),
+  );
+  expect(one).toBeGreaterThan(plain);
+  expect(eight).toBeGreaterThan(one);
+
+  // And each of the three is what serialising that same body says, which is the point: the
+  // string case was already exact and the parts cases now are too.
+  expect(plain).toBe(serialized("x".repeat(400)));
+  expect(one).toBe(serialized([{ type: "text", text: "x".repeat(400) }]));
+  expect(eight).toBe(
+    serialized(Array.from({ length: 8 }, () => ({ type: "text" as const, text: "x".repeat(50) }))),
+  );
+
+  // An image part is a URL or a blob, and is not priced by the length of either — a vision
+  // model does not charge a data URL by its base64 length, so this one stays uncounted on
+  // purpose and the text part beside it is unaffected.
   const withImage = sized([
     { type: "text", text: "x".repeat(400) },
     { type: "image_url", image_url: { url: `data:image/png;base64,${"A".repeat(5000)}` } },
   ]);
-  expect(withImage).toBe(plain);
+  expect(withImage).toBe(one);
+});
+
+test("a refusal part is charged its own envelope too", () => {
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: "assistant", content: [{ type: "refusal", refusal: "no".repeat(100) }] },
+  ];
+  expect(requestTokens({ model: "m", stream: true, messages })).toBe(
+    estimateTokens(JSON.stringify(messages)),
+  );
 });
 
 test("the same tools array is only measured once", () => {

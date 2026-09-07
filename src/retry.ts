@@ -52,6 +52,17 @@ const TOOL_CALL_ID_KEY = 18;
 /** The same for `"tool_calls":[]` around the calls; each call's own comma is in `CALL_ENVELOPE`. */
 const TOOL_CALLS_KEY = 15;
 
+// A content part is an object in the body the same way a message is, and its two keys are in the
+// request exactly as `tool_call_id` was. Charging only `part.text` left them out, which is 6.5
+// tokens per part — short in proportion to how finely the content is split rather than to how
+// much it says, so a transcript a client appends block by block is worst hit.
+
+/** What `{"type":"text","text":""},` costs around a text part. */
+const TEXT_PART = 26;
+
+/** The same for `{"type":"refusal","refusal":""},` around a refusal part. */
+const REFUSAL_PART = 32;
+
 /** The divisor behind `estimateTokens`, applied here to a character count rather than a string. */
 const CHARS_PER_TOKEN = 4;
 
@@ -63,9 +74,11 @@ function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
   else if (Array.isArray(content))
     for (const part of content) {
       // Text and refusal parts carry their own strings; an image or an audio part carries a URL
-      // or a blob, and neither is priced by its length anyway.
-      if (part.type === "text") chars += part.text.length;
-      else if (part.type === "refusal") chars += part.refusal.length;
+      // or a blob, and neither is priced by its length anyway — a vision model does not charge
+      // an image by its base64 length, so counting the data URL would overshoot by more than
+      // leaving the part out undershoots.
+      if (part.type === "text") chars += TEXT_PART + part.text.length;
+      else if (part.type === "refusal") chars += REFUSAL_PART + part.refusal.length;
     }
 
   if ("name" in message && typeof message.name === "string")
@@ -118,10 +131,11 @@ function toolsCost(tools: OpenAI.ChatCompletionTool[]): number {
  * built the entire transcript into a string on every call and threw it away having read nothing
  * but its `.length` — against a transcript that grows by a turn each turn, and one the SDK is
  * about to serialise again to send. What the walk misses is JSON's own punctuation and the keys,
- * which the envelope constants put back — one per key rather than one per message, since the
- * three keys only some shapes carry are most of what a tool-using transcript is made of. What
- * is left is a message's escaping, which is not a constant and is small against an estimate
- * that is already characters over four.
+ * which the envelope constants put back — one per key and one per content part, rather than one
+ * per message, since the keys only some shapes carry and the parts a client appends block by
+ * block are most of what a tool-using transcript is made of. What is left is a message's
+ * escaping, which is not a constant and is small against an estimate that is already characters
+ * over four.
  *
  * @param body The request as it will be sent, tools included.
  */
