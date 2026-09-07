@@ -25,7 +25,7 @@ only, Node >=22.
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support, per endpoint, and the loop that answers it when it says so. `capabilitiesFor`, `negotiate`. |
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
-| `events` | The in-memory bus a watcher reads while a run happens. |
+| `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
 | `config` | The structural interfaces every function here asks for. |
@@ -46,7 +46,7 @@ and nothing is re-sent once it has started answering.
 
 ```ts
 import {
-  capabilitiesFor, getClient, negotiate, relaxTools, sanitizeTools, streamTurn, timeoutMs,
+  capabilitiesFor, emit, getClient, negotiate, relaxTools, sanitizeTools, streamTurn, timeoutMs,
 } from "@cubicecho/agent-core";
 
 const declared = sanitizeTools(tools);
@@ -82,13 +82,14 @@ slowly needs.
 `runTurn` will refuse a request that cannot fit rather than spending a round trip finding out:
 
 ```ts
-import { contextLimitFor, runTurn } from "@cubicecho/agent-core";
+import { contextLimitFor, emit, runTurn } from "@cubicecho/agent-core";
 
 const turn = await runTurn(client, supports, build, {
   maxRetries: 3,
-  // Opt-in: the number is the caller's to find. `contextLimitFor` asks the endpoint, and an
-  // operator's own setting overrides it — neither is network I/O a turn should be doing.
-  contextLimit: settings.contextLength || (await contextLimitFor(settings, model)),
+  // Opt-in: the number is the caller's to find, because neither of these is network I/O a
+  // turn should be doing. The second argument is the operator's own number and it wins
+  // outright when set, so there is no need to check it yourself first.
+  contextLimit: await contextLimitFor({ ...settings, model }, settings.contextLength),
   onNotice: (message) => emit(runId, { kind: "notice", text: message }),
 });
 ```
@@ -97,6 +98,33 @@ The body is sized once, not per attempt: a downgraded request is strictly smalle
 before it and the transcript does not change between retries. A `ContextOverflow` from this is
 neither a capability `negotiate` can answer nor something `isTransient` accepts, so it leaves
 both loops on the first attempt.
+
+## Watching a run
+
+`watch` replays what the run has already emitted, then yields what happens next until `done`.
+`emit` assigns `seq`, a per-run counter from 1, and that is what a client orders and
+de-duplicates on.
+
+```ts
+import { watch } from "@cubicecho/agent-core";
+
+for await (const event of watch(runId)) {
+  render(event);
+}
+```
+
+A watcher that stops keeping up is capped rather than left to grow. Its queue holds the most
+recent 1000 events — trimmed in batches, so it runs a little over that before cutting back —
+the oldest go, and what is dropped is released where it is dropped, not held until a consumer
+that has already stalled next reads.
+
+The gap is reported once, as a single `notice`, not once per lost event. It carries the `seq`
+immediately before the event that follows it: inside the gap, where no real event will ever
+appear. Sharing a `seq` with the event behind it would make the pair indistinguishable from a
+repeat, and a client doing what `seq` is documented for would throw away one of the two.
+
+`history` reads what a run has emitted without subscribing, `fold` collapses a token stream into
+blocks for display, and `endRun` drops a finished run's buffer.
 
 ## The config seam
 
