@@ -36,13 +36,19 @@ type ReasoningDelta = OpenAI.ChatCompletionChunk.Choice.Delta & {
 };
 
 /**
- * Whether the server has started answering.
+ * Whether the model has said anything a second attempt would say twice.
  *
  * A box rather than a return value because it has to be readable *while* the request is in
  * flight: the rules in `retry.ts` are built on the premise that a stream which has already
  * emitted tokens must never be replayed, and by the time a rejected promise is in hand the turn
  * is over. There is one of these per attempt, shared by everything that has a say in whether
  * the attempt is repeated. See `negotiate`.
+ *
+ * What sets it is a chunk that carried something — text, reasoning, or a piece of a tool call —
+ * rather than a chunk arriving. Those read as the same sentence until a server puts an empty
+ * chunk between them, and most of them do: a stream usually opens with a content-free
+ * `{"role":"assistant"}` that shows nobody anything, and a turn that latched on it could never
+ * be retried however early it then died.
  */
 export interface Produced {
   any: boolean;
@@ -58,7 +64,7 @@ export interface StreamTurnOptions {
    * needs.
    */
   idleMs?: number;
-  /** Set as soon as the server has said anything, so a failed call knows if it can be retried. */
+  /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
   produced?: Produced;
   /** The model's scratchpad, as it arrives. */
   onThinking?: (delta: string) => void;
@@ -123,7 +129,8 @@ export async function streamTurn(
     const usage: TurnUsage = { prompt: 0, completion: 0, total: 0 };
 
     for await (const chunk of stream) {
-      if (produced) produced.any = true;
+      // Rearmed on every chunk, latched below on only some: a priming chunk is the endpoint
+      // being alive, which is all the watchdog is asking about.
       rearm();
       // Assigned rather than accumulated. `stream_options.include_usage` sends one final chunk
       // and the two agree there, but a server that reports cumulatively per chunk makes a sum
@@ -138,6 +145,14 @@ export async function streamTurn(
       if (!delta) continue;
 
       const thinking = delta.reasoning_content || delta.reasoning || "";
+      // Latched on what the chunk carried, not on its having arrived. Most OpenAI-compatible
+      // servers open a stream with a content-free `{"role":"assistant"}` before the first
+      // token; latching on that made an endpoint that primes and then wedges unrepeatable,
+      // which is exactly the case the watchdog raises `EndpointSilent` for. Tool-call
+      // fragments count even though no callback reports them: a partial call is state the turn
+      // has accumulated, and losing a retry is the safer half of that trade. Set before the
+      // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
+      if (produced && (thinking || delta.content || delta.tool_calls?.length)) produced.any = true;
       if (thinking) onThinking?.(thinking);
       if (delta.content) {
         content.push(delta.content);

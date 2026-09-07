@@ -115,7 +115,7 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 
 Reading one streamed turn back into a message.
 
-- `Produced` (type) — Whether the server has started answering.
+- `Produced` (type) — Whether the model has said anything a second attempt would say twice.
 - `StreamTurnOptions` (type) — What `streamTurn` takes besides the request body.
 - `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
 - `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.

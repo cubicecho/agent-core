@@ -134,7 +134,7 @@ describe("streamTurn", () => {
     expect(turn.usage).toEqual({ prompt: 0, completion: 0, total: 0 });
   });
 
-  it("sets produced as soon as anything arrives, and not before", async () => {
+  it("sets produced once the model has said something, and not before", async () => {
     const produced = { any: false };
     await expect(
       streamTurn(
@@ -151,6 +151,49 @@ describe("streamTurn", () => {
       { produced },
     );
     expect(produced.any).toBe(true);
+  });
+
+  it("is not made unrepeatable by the empty chunk a stream opens with", async () => {
+    // Most OpenAI-compatible servers prime a stream with `{"role":"assistant"}` before the
+    // first token. It shows nobody anything, and latching `produced` on its arrival made an
+    // endpoint that primes and then wedges unretryable — which is the case the watchdog raises
+    // `EndpointSilent` for, and which `retry.ts` calls transient precisely so it is sent again.
+    const priming = chunk({ choices: [{ delta: { role: "assistant" } }] });
+    const shown: string[] = [];
+    const produced = { any: false };
+
+    vi.useFakeTimers();
+    const turn = streamTurn(
+      clientOf((_, { signal }) => stalls(signal, priming)),
+      body,
+      { produced, idleMs: 30_000, onOutput: (delta) => shown.push(delta), onThinking: () => {} },
+    );
+    const settled = expect(turn).rejects.toThrow(EndpointSilent);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settled;
+
+    expect(shown).toEqual([]);
+    expect(produced.any).toBe(false);
+  });
+
+  it("latches on reasoning and on a tool-call fragment, not only on output", async () => {
+    // Reasoning has reached a watcher, so a re-send would print it twice. A tool-call fragment
+    // reaches no callback at all, but it is state this turn has accumulated — and losing a
+    // retry is the safer half of that trade.
+    const latched = async (delta: unknown) => {
+      const produced = { any: false };
+      await streamTurn(
+        clientOf(() => chunks(chunk({ choices: [{ delta }] }))),
+        body,
+        { produced },
+      );
+      return produced.any;
+    };
+    expect(await latched({ reasoning_content: "hmm" })).toBe(true);
+    expect(await latched({ reasoning: "hmm" })).toBe(true);
+    expect(await latched({ tool_calls: [{ index: 0, function: { name: "t" } }] })).toBe(true);
+    // An empty tool-call list is the same nothing as an empty delta.
+    expect(await latched({ role: "assistant", content: "", tool_calls: [] })).toBe(false);
   });
 
   it("gives up on an endpoint that goes quiet mid-turn", async () => {
