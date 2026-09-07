@@ -1,9 +1,18 @@
-# Publishes the package to npm.
+# Publishes the package to npm. There is no NPM_TOKEN and no npm secret of any
+# kind: the runner trades its GitHub OIDC token for a short-lived registry
+# credential, which is what `id-token: write` below exists for. npm only makes
+# that trade for a workflow the package has been told to trust:
 #
-# Needs NPM_TOKEN — an npm granular-access or automation token that can publish
-# @cubicecho/agent-core — until a trusted publisher for the package is set up on
-# npmjs.com. After that the OIDC exchange below authenticates the publish on its
-# own and the secret can be dropped; `id-token: write` is what makes it possible.
+#   npm trust github @cubicecho/agent-core --allow-publish \
+#     --repository cubicecho/agent-core --workflow release.yml
+#
+# so renaming this file, or moving the publish into another workflow, revokes
+# its own access until that is run again.
+#
+# The one thing OIDC cannot do is the very first publish — npm has nowhere to
+# hang the trust configuration until the package exists, and `npm trust` says as
+# much ("the package you're configuring must already exist"). 0.1.0 therefore has
+# to go out from a logged-in `npm publish` once; every release after it is this.
 #
 # Versions come from the commit log, so a release only happens when commits say
 # what changed — `feat:` for a minor, `fix:` for a patch, `BREAKING CHANGE:` in
@@ -26,7 +35,8 @@ on:
 
 # The repo's default workflow token is read-only. semantic-release pushes the
 # CHANGELOG/version commit, cuts the GitHub release, and comments on issues, so
-# each of those has to be granted here.
+# each of those has to be granted here. id-token is the npm half: without it
+# there is no OIDC token to trade and nothing can be published at all.
 permissions:
   contents: write
   issues: write
@@ -51,9 +61,11 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
+          # Trusted publishing needs npm >= 11.5.1, which is well inside what 26
+          # ships. The npm in an older major would fail the exchange, not fall
+          # back to something that works.
           node-version: '26'
           cache: npm
-          # Writes the .npmrc that both publish paths below authenticate through.
           registry-url: https://registry.npmjs.org
 
       # Also builds dist/, via `prepare` — which is what actually gets published.
@@ -63,21 +75,26 @@ jobs:
         if: github.event_name == 'workflow_run'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # Public repo, so the published version can carry a provenance
-          # attestation saying which commit and workflow built it.
+          # No NPM_TOKEN on purpose. @semantic-release/npm does the OIDC exchange
+          # itself and returns before it would look for a token; one in the
+          # environment would only become the thing that gets used when the
+          # exchange quietly fails, turning a broken trust config into a
+          # successful publish that nobody notices.
+          #
+          # Public repo, so the published version carries a provenance
+          # attestation naming the commit and workflow that built it.
           NPM_CONFIG_PROVENANCE: 'true'
         run: npx semantic-release
 
       # The escape hatch: no tag, no release notes, no CHANGELOG — just the
-      # tarball on npm under the version you asked for. The bump is deliberately
-      # not committed; main stays at 0.0.0-development and semantic-release keeps
-      # taking its baseline from the tags.
+      # tarball on npm under the version you asked for. It authenticates exactly
+      # the same way, so it is not a way around the first-publish problem above.
+      # The bump is deliberately not committed; main stays at 0.0.0-development
+      # and semantic-release keeps taking its baseline from the tags.
       - name: Publish ${{ inputs.version }}
         if: github.event_name == 'workflow_dispatch'
         env:
           VERSION: ${{ inputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: 'true'
         run: |
           npm pkg set version="$VERSION"
