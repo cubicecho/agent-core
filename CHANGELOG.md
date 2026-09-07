@@ -1,3 +1,10 @@
+## [2.0.3](https://github.com/cubicecho/agent-core/compare/v2.0.2...v2.0.3) (2026-09-07)
+
+
+### Bug Fixes
+
+* stop deleting event streams something still depends on ([#30](https://github.com/cubicecho/agent-core/issues/30)) ([b838089](https://github.com/cubicecho/agent-core/commit/b8380891fd9e413f7afeff5cb88483c81638212f))
+
 ## [2.0.2](https://github.com/cubicecho/agent-core/compare/v2.0.1...v2.0.2) (2026-09-07)
 
 
