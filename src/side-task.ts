@@ -75,6 +75,14 @@ export interface SideTaskOptions {
   maxTokens?: number;
   temperature?: number;
   signal?: AbortSignal;
+  /**
+   * Told what was given up on, the same way `runTurn` and `negotiate` tell a caller.
+   *
+   * There is no default, and nothing is printed without one. A library that writes to the
+   * console decides for its consumer where operator text goes — which a server embedding this
+   * cannot then route to its own logger, attach to the run it belongs to, or silence in tests.
+   */
+  onNotice?: (message: string) => void;
 }
 
 /** Runs a side task and returns the reply text, thinking stripped. Throws like any request. */
@@ -83,7 +91,7 @@ export async function ask(
   model: string,
   system: string,
   user: string,
-  { maxTokens = 512, temperature = 0.3, signal }: SideTaskOptions = {},
+  { maxTokens = 512, temperature = 0.3, signal, onNotice }: SideTaskOptions = {},
 ): Promise<string> {
   const send = (hints: boolean) =>
     getClient(config).chat.completions.create(
@@ -107,7 +115,7 @@ export async function ask(
     response = await send(hints);
   } catch (error) {
     if (!hints || !rejectedTheRequest(error)) throw error;
-    console.warn("[side-task] server rejected the no-thinking hints; retrying without them");
+    onNotice?.("server rejected the no-thinking hints; retrying without them");
     noHints.add(key);
     response = await send(false);
   }
@@ -125,14 +133,18 @@ export async function ask(
  * A side task is never worth failing the work it supports. Callers that can carry on without
  * an answer use this and get `undefined` instead of an exception.
  */
-export async function tryAsk<T>(label: string, run: () => Promise<T>): Promise<T | undefined> {
+export async function tryAsk<T>(
+  label: string,
+  run: () => Promise<T>,
+  { onNotice }: Pick<SideTaskOptions, "onNotice"> = {},
+): Promise<T | undefined> {
   try {
     return await run();
   } catch (error) {
     // A cancelled run is not a failed side task. Swallowing the abort made the two
     // indistinguishable and left the cancellation with nowhere to go.
     if (error instanceof OpenAI.APIUserAbortError) throw error;
-    console.warn(`[side-task] ${label}:`, errorMessage(error));
+    onNotice?.(`${label}: ${errorMessage(error)}`);
     return undefined;
   }
 }

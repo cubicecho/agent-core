@@ -8,9 +8,11 @@ import type { Endpoint } from "./config.ts";
  */
 export const NO_KEY = "agent-core";
 
-/** Zero or less means no limit, which the SDK spells as `undefined`. */
-export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined =>
-  config.requestTimeoutSeconds > 0 ? config.requestTimeoutSeconds * 1000 : undefined;
+/** Zero, less, or absent means no limit, which the SDK spells as `undefined`. */
+export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined => {
+  const seconds = config.requestTimeoutSeconds ?? 0;
+  return seconds > 0 ? seconds * 1000 : undefined;
+};
 
 /**
  * A client per endpoint, made once and kept.

@@ -18,8 +18,15 @@ export interface Endpoint {
   baseUrl: string;
   /** Empty is normal — a local server ignores it. See `getClient` for what is sent instead. */
   apiKey: string;
-  /** Zero or less means no limit. */
-  requestTimeoutSeconds: number;
+  /**
+   * Zero, less, or absent means no limit — what a local model answering slowly needs.
+   *
+   * Optional because a consumer that has no timeout to give should not have to invent one. Two
+   * of the three servers this was extracted from carry no such field, and requiring it made
+   * them write `requestTimeoutSeconds: 0` to mean "I have no opinion", which is a made-up
+   * number standing in for an absent one.
+   */
+  requestTimeoutSeconds?: number;
 }
 
 /** What to ask the model for. */

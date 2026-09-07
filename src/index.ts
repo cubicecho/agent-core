@@ -44,7 +44,7 @@ export {
   type RunEventInput,
   type RunEventKind,
   type RunUsage,
-  reset,
+  resetEvents,
   watch,
 } from "./events.ts";
 export { resetAll } from "./reset.ts";
