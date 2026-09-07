@@ -1,0 +1,9 @@
+{
+  // The published build. Drops the maps: they point at `../src/*.ts`, which is not shipped
+  // (`files: ["dist"]`), so publishing them would leave consumers with dead references.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declarationMap": false
+  }
+}
