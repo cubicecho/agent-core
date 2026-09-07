@@ -69,7 +69,16 @@ function rejectedTheRequest(error: unknown): boolean {
  * arrives — and the whole deliberation was then returned to the caller as the answer.
  */
 const stripThinking = (text: string) =>
-  text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "");
+  text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*$/i, "")
+    // And the fence that never opens. Several chat templates put the opening tag at the end of
+    // the prompt rather than leaving the model to write it, so what comes back is deliberation
+    // first and only the closing tag to mark where it stops. Neither pattern above matches that,
+    // and the whole scratchpad went to the caller as the answer — a session title, a tool
+    // preselection, a suggestion list. Every real `<think>` is gone by this point, so a `</think>`
+    // still here opened in the prompt; the first one is taken, which keeps the most text.
+    .replace(/^[\s\S]*?<\/think>/i, "");
 
 /** What a side task may be given. All optional — one given none of them still runs. */
 export interface SideTaskOptions {
