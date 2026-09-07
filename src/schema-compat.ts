@@ -252,6 +252,15 @@ const through = (
     return built;
   });
 
+/**
+ * Tool definitions a strict server will accept, remembered per definition object.
+ *
+ * The first call on a connection's tools does the work and every later one is a lookup, so
+ * calling this per request costs nothing.
+ *
+ * @param tools The definitions as the pool hands them over. Never mutated — where a schema
+ * changed, a new definition is returned in its place.
+ */
 export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
   through(sanitized, tools, sanitizeParameters);
 

@@ -124,6 +124,14 @@ const OVERFLOW = [
  */
 const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
 
+/**
+ * Whether a refusal means the request was too big, rather than merely refused.
+ *
+ * Rate limits are ruled out first: they borrow the same words and mean the opposite, being worth
+ * another attempt where an overflow never is.
+ *
+ * @param detail The endpoint's own message.
+ */
 export const isOverflow = (detail: string) =>
   !RATE_LIMITED.test(detail) &&
   OVERFLOW.some((pattern) => pattern.test(detail)) &&
@@ -166,6 +174,12 @@ export function isTransient(error: unknown): boolean {
 export const backoffMs = (attempt: number) =>
   Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
 
+/**
+ * A delay an abort cuts short, rejecting rather than resolving early.
+ *
+ * @param ms How long to wait.
+ * @param signal Abandons the wait. One already aborted rejects without waiting at all.
+ */
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {

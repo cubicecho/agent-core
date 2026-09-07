@@ -205,6 +205,12 @@ export function loadResult(
   return lines.join("\n") || "No tool names were given.";
 }
 
+/**
+ * Whether the catalogue holds a tool by this name.
+ *
+ * @param catalog The connected servers and the tools each one offers.
+ * @param name An exact name. Nothing is prefixed, trimmed or fuzzily matched.
+ */
 export const inCatalog = (catalog: CatalogServer[], name: string) =>
   catalog.some((server) => server.tools.some((tool) => tool.name === name));
 
@@ -233,6 +239,13 @@ export const PRESELECT_SYSTEM =
   `${MAX_PER_LOAD}, and as few as could do the job. Reply with \`[]\` if the request can be ` +
   "answered without tools. Reply with the array alone — no prose, no explanation.";
 
+/**
+ * The user message for a preselection call: the catalogue, then the request.
+ *
+ * @param catalog The connected servers, rendered as the name-only listing.
+ * @param prompt The request being planned for, truncated at 2000 characters — choosing tools
+ * needs the shape of the ask, not all of it.
+ */
 export const preselectInput = (catalog: CatalogServer[], prompt: string) =>
   `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, 2000)}`;
 

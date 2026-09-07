@@ -24,6 +24,7 @@ const TRIM_SLACK = 256;
 /** How long a finished run stays readable, for a watcher that arrives just after the end. */
 const RETAIN_MS = 60_000;
 
+/** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export type RunEventKind =
   /** A step of a caller's own flow began. `name` is the step, `text` its kind. */
   | "step"
@@ -57,7 +58,14 @@ export interface RunUsage {
   totalTokens: number;
 }
 
+/**
+ * One thing that happened in a run, as a watcher receives it.
+ *
+ * Every field is always present — the empty ones are `""` or `null` rather than missing — so a
+ * client reads it without guarding each key.
+ */
 export interface RunEvent {
+  /** The run it belongs to. `emit` fills this in; a caller does not pass it. */
   runId: string;
   /** Per-run counter, from 1. Lets a client order and de-duplicate what it receives. */
   seq: number;

@@ -63,6 +63,7 @@ export function resetCapabilities() {
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
 const REJECTS_USAGE = /stream_options/i;
 
+/** What `negotiate` takes besides the request. Both optional, both about telling someone. */
 export interface NegotiateOptions {
   /**
    * The flag `send` will be given, for a caller that has to read it after `negotiate` returns.

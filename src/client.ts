@@ -29,6 +29,14 @@ export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): numb
  */
 const clients = new Map<string, OpenAI>();
 
+/**
+ * The client for an endpoint, built once and kept.
+ *
+ * Pooled on the three fields that change how a request is sent, so agents sharing a server share
+ * a connection and agents on different servers never share a client.
+ *
+ * @param config Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
+ */
 export function getClient(config: Endpoint): OpenAI {
   const apiKey = config.apiKey || NO_KEY;
   const timeout = timeoutMs(config);

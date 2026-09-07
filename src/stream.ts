@@ -48,7 +48,9 @@ export interface Produced {
   any: boolean;
 }
 
+/** What `streamTurn` takes besides the request body. */
 export interface StreamTurnOptions {
+  /** Cancels the request and the stream being read from it. */
   signal?: AbortSignal;
   /**
    * Silence allowed before the request is given up on. Zero or undefined waits forever, which

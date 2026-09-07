@@ -71,9 +71,13 @@ function rejectedTheRequest(error: unknown): boolean {
 const stripThinking = (text: string) =>
   text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "");
 
+/** What a side task may be given. All optional — one given none of them still runs. */
 export interface SideTaskOptions {
+  /** Ceiling on the reply, default 512. These answers are meant to be short. */
   maxTokens?: number;
+  /** Sampling temperature, default 0.3. Naming and classifying want the same answer twice. */
   temperature?: number;
+  /** Abandons the call, usually because the run it supports has gone away. */
   signal?: AbortSignal;
   /**
    * Told what was given up on, the same way `runTurn` and `negotiate` tell a caller.
