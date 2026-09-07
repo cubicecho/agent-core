@@ -1,3 +1,10 @@
+## [2.2.2](https://github.com/cubicecho/agent-core/compare/v2.2.1...v2.2.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* charge a content part its own envelope ([#55](https://github.com/cubicecho/agent-core/issues/55)) ([#56](https://github.com/cubicecho/agent-core/issues/56)) ([fb75ad8](https://github.com/cubicecho/agent-core/commit/fb75ad8eb9df1ade6bc3b8f30f508a5cc474e634)), closes [#52](https://github.com/cubicecho/agent-core/issues/52)
+
 ## [2.2.1](https://github.com/cubicecho/agent-core/compare/v2.2.0...v2.2.1) (2026-09-07)
 
 
