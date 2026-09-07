@@ -41,9 +41,16 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = {
   },
 };
 
-/** The catalogue as a plain grouped listing of names, loaded ones marked. */
+/**
+ * The catalogue as a plain grouped listing of names, loaded ones marked.
+ *
+ * A server with no tools is dropped rather than titled: a pool hands one over whenever a
+ * server is connected but has nothing to offer, and a label with nothing under it reads as a
+ * listing that got cut off.
+ */
 export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
   return catalog
+    .filter((server) => server.tools.length > 0)
     .map((server) => {
       const names = server.tools.map(
         (tool) => `  ${tool.name}${loaded?.has(tool.name) ? " (loaded)" : ""}`,
@@ -62,7 +69,10 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
  * the longer list instead.
  */
 export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
-  if (!catalog.length) return "";
+  const list = catalogList(catalog, loaded);
+  // Not `catalog.length`: a catalogue of nothing but empty servers has no names to offer, and
+  // the preamble below would then explain a mechanism against an empty list.
+  if (!list) return "";
   return [
     "# Tool catalogue",
     "",
@@ -71,7 +81,7 @@ export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<str
     "marked `(loaded)` is already in your tool list — call it directly, do not load it again. Do",
     "not load tools the task does not need, and do not mention this mechanism in your answer.",
     "",
-    catalogList(catalog, loaded),
+    list,
   ].join("\n");
 }
 
@@ -132,9 +142,24 @@ export function expandNames(requested: string[], catalog: CatalogServer[]) {
   for (const raw of requested) {
     const name = raw.trim();
     if (!name) continue;
+    // A bare `*` is not a guess at a name, it is a refusal to choose, and its empty stem
+    // prefixes every tool in the catalogue. Answer it the way any other over-broad request is
+    // answered: with the names, so the next call can pick from them.
+    if (name === "*") {
+      overBroad.push({ name, hits: all.map((tool) => tool.name) });
+      continue;
+    }
     const hits = resolve(name);
-    if (!hits.length) unknown.push(name);
-    else if (hits.length > MAX_PER_LOAD) overBroad.push({ name, hits });
+    if (!hits.length) {
+      unknown.push(name);
+      continue;
+    }
+    // The cap is what one call may load, not what one name may match: three wildcards of a
+    // dozen each cleared a per-name check and still put thirty-six definitions in front of a
+    // model that is meant to be choosing from twelve. Already-matched names are free, so a
+    // name that only repeats an earlier one never spends budget.
+    const fresh = hits.filter((hit) => !matched.has(hit));
+    if (matched.size + fresh.length > MAX_PER_LOAD) overBroad.push({ name, hits });
     else for (const hit of hits) matched.add(hit);
   }
 
