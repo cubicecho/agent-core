@@ -3,12 +3,19 @@
  *
  * What is here is everything that does not know what the agent is *for*: making a tool schema
  * a strict server will accept, getting tool definitions in front of a model without paying for
- * all of them, one-shot calls that support a run, the event bus a watcher reads, a pooled
- * client, and the rules about retrying. What is not here is the work — orchestration, prompts,
- * and whatever the run is about — because that is the caller's, and it is the part that differs
- * between one server and the next.
+ * all of them, answering an endpoint that refuses one of them, one-shot calls that support a
+ * run, the event bus a watcher reads, a pooled client, and the rules about retrying. What is
+ * not here is the work — orchestration, prompts, and whatever the run is about — because that
+ * is the caller's, and it is the part that differs between one server and the next.
  */
 
+export {
+  type Capabilities,
+  capabilitiesFor,
+  type NegotiateOptions,
+  negotiate,
+  resetCapabilities,
+} from "./capabilities.ts";
 export type { CatalogServer } from "./catalog.ts";
 export {
   contextLimitFor,

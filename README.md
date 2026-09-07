@@ -12,6 +12,7 @@ still live in another. See [`standards/extraction-backlog.md`](../standards/extr
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`. |
 | `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. |
+| `capabilities` | What an endpoint turned out not to support, per endpoint, and the loop that answers it when it says so. `capabilitiesFor`, `negotiate`. |
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
 | `events` | The in-memory bus a watcher reads while a run happens. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
