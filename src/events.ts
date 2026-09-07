@@ -23,6 +23,22 @@ const MAX_EVENTS = 1000;
 const TRIM_SLACK = 256;
 /** How long a finished run stays readable, for a watcher that arrives just after the end. */
 const RETAIN_MS = 60_000;
+/**
+ * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
+ *
+ * A finished run has nothing more to say, so forgetting it a minute later costs a late watcher
+ * a backlog and nothing else. An unfinished one is still writing: `touched` only moves on
+ * `emit`, so a live run that spends a minute inside one slow tool call looked exactly like an
+ * abandoned one and was reaped out from under itself. What made that more than a lost backlog
+ * is that the next `emit` builds a fresh stream with `seq` back at zero — and `seq` is the
+ * field `RunEvent` documents for ordering and de-duplication, so a client that reconnects
+ * across the gap discards the new events as ones it has already seen.
+ *
+ * The sweep still has to reap them, because a run killed by a signal or simply forgotten
+ * reaches no `done` either. This is the backstop for a caller that never says so; `endRun` is
+ * for one that knows.
+ */
+const RETAIN_UNENDED_MS = 30 * 60_000;
 
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export type RunEventKind =
@@ -147,9 +163,11 @@ let sweeping: ReturnType<typeof setTimeout> | null = null;
 
 function sweep() {
   sweeping = null;
-  const deadline = Date.now() - RETAIN_MS;
+  const now = Date.now();
   for (const [runId, stream] of streams) {
-    if (stream.listeners.size === 0 && stream.touched <= deadline) streams.delete(runId);
+    if (stream.listeners.size) continue;
+    if (stream.touched <= now - (stream.ended ? RETAIN_MS : RETAIN_UNENDED_MS))
+      streams.delete(runId);
   }
   scheduleSweep();
 }
@@ -168,6 +186,15 @@ function scheduleSweep() {
  * @param runId The run to forget. An id nothing was emitted under is ignored.
  */
 export function endRun(runId: string) {
+  const stream = streams.get(runId);
+  if (!stream) return;
+  // Watchers are parked on a promise that only an `emit` to *this* stream can resolve, and the
+  // delete below puts it beyond the reach of every later one — the next `emit` builds a fresh
+  // stream and wakes nobody. So they are told the run is over first: a watcher that is handed
+  // `done` completes, runs its `finally` and lets its consumer go, where one left parked holds
+  // an open subscription that can never say anything again. An SSE client on the other end of
+  // that is a connection that never closes.
+  if (stream.listeners.size) emit(runId, { kind: "done", ok: false, text: "run ended" });
   streams.delete(runId);
 }
 
@@ -302,7 +329,14 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
     // A watcher can name a run that has not started, or will never start. Nothing was recorded
     // under it, so nothing is left behind either — and a run that has ended has nothing more to
     // say to anyone, so the last watcher leaving takes the backlog with it.
-    if (stream.listeners.size === 0 && (stream.ended || stream.events.length === 0)) {
+    // Against `stream` rather than the id: this generator may have outlived its own entry — a
+    // sweep or an `endRun` drops it and a later `emit` files the same run under a new one — and
+    // the last watcher of the old stream has no business deleting the new one.
+    if (
+      streams.get(runId) === stream &&
+      stream.listeners.size === 0 &&
+      (stream.ended || stream.events.length === 0)
+    ) {
       streams.delete(runId);
     }
   }
