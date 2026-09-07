@@ -30,6 +30,14 @@ const TOO_MANY_TOKENS = new Error(
   "400 max_tokens is too large: 200000. This model supports at most 16384 completion tokens.",
 );
 
+/** Not a refusal of the field either — the model reasons, it just does not offer this effort. */
+const NO_SUCH_EFFORT = new Error(
+  "400 Unsupported value: 'reasoning_effort' does not support 'none' with this model. " +
+    "Supported values are: 'minimal', 'low', 'medium', and 'high'.",
+);
+/** A real field refusal that happens to be worded the way a value refusal usually is. */
+const NO_EFFORT_FIELD = new Error("400 This model does not support reasoning_effort.");
+
 /** The same, for a model: refuses in order, recording what each attempt was built with. */
 const modelThatRefuses = (...refusals: Error[]) => {
   const asked: ModelCapabilities[] = [];
@@ -234,6 +242,29 @@ describe("negotiate, for a model", () => {
     await expect(negotiate(supports, send, { model: "gpt-5" })).rejects.toThrow("too large");
     expect(send).toHaveBeenCalledTimes(1);
     expect(modelCapabilitiesFor(supports, "gpt-5").legacyTokenLimit).toBe(true);
+  });
+
+  it("passes on an effort the model does not offer, rather than giving up reasoning", async () => {
+    // A model that answers this reasons perfectly well — it was handed a value off a list this
+    // package does not know. Dropping the field succeeds at the model's own default effort,
+    // which is neither what the caller asked for nor something it can see, and the drop latches
+    // for every later turn.
+    const supports = openai();
+    const { send } = modelThatRefuses(NO_SUCH_EFFORT);
+    await expect(negotiate(supports, send, { model: "gpt-5" })).rejects.toThrow(
+      "Unsupported value",
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(modelCapabilitiesFor(supports, "gpt-5").reasoningEffort).toBe(true);
+  });
+
+  it("still latches a field refusal worded like a value one", async () => {
+    // `does not support` is how a value refusal usually reads, which is why it is not the
+    // marker: a proxy wording a real field refusal this way still has to be answered.
+    const supports = openai();
+    const { send } = modelThatRefuses(NO_EFFORT_FIELD);
+    await expect(negotiate(supports, send, { model: "gpt-5" })).resolves.toBe("answered");
+    expect(modelCapabilitiesFor(supports, "gpt-5").reasoningEffort).toBe(false);
   });
 
   it("lets the model keep the temperature it was built with", async () => {

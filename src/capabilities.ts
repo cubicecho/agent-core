@@ -138,8 +138,27 @@ const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): 
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
 const REJECTS_USAGE = /stream_options/i;
 
-/** A model that cannot reason refuses the field by name. */
-const rejectsEffort = (detail: string) => /reasoning_effort/i.test(detail);
+/**
+ * A refusal of the *value* rather than of the field, which names the field either way.
+ *
+ * `Unsupported value: 'reasoning_effort' does not support 'none' with this model. Supported
+ * values are: 'minimal', 'low', 'medium', and 'high'.` A model that answers this reasons
+ * perfectly well; it was handed an effort off a list this package does not know. Dropping the
+ * field succeeds, at the model's own default effort, which is neither what the caller asked for
+ * nor something it can see — and the drop latches, so every later turn on that model reasons at
+ * the default with the setting still reading what the operator typed.
+ */
+const REFUSED_VALUE = /unsupported value|invalid value|supported values/i;
+
+/**
+ * A model that cannot reason refuses the field by name — and only the field. See `REFUSED_VALUE`
+ * for the refusal that names it too and means the opposite, which is the caller's to see rather
+ * than ours to work around. `does not support` is deliberately not the marker: a proxy that
+ * words a real field refusal as `this model does not support reasoning_effort` has to keep
+ * latching.
+ */
+const rejectsEffort = (detail: string) =>
+  /reasoning_effort/i.test(detail) && !REFUSED_VALUE.test(detail);
 
 /**
  * Read only alongside the name it is asking for: `'max_tokens' is not supported with this model.
