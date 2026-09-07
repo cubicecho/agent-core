@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/cubicecho/agent-core/compare/v2.0.0...v2.0.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **events:** release what a stalled watcher drops, and seq the gap inside it ([93a486e](https://github.com/cubicecho/agent-core/commit/93a486e367f91fb2bb4309c13f38e7745f9226d9))
+
 # [2.0.0](https://github.com/cubicecho/agent-core/compare/v1.3.0...v2.0.0) (2026-09-07)
 
 
