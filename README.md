@@ -82,6 +82,12 @@ again, with the setting still reading `high` and nothing anywhere saying it had 
 So they hang off the endpoint under the name the endpoint knows the model by. Pass `model` and
 the same loop answers both levels; leave it out and nothing changes.
 
+A refusal of the *value* is not one of these, however alike the two read: an effort off a list
+this package does not know, a `max_tokens` larger than the model's ceiling, a temperature out of
+range. Dropping the field answers those too — at the model's own default, latched for the rest of
+the process, with the settings row still reading what was typed and nothing saying it had stopped
+meaning it. They are passed to the caller instead, where whoever typed the number can see it.
+
 ```ts
 const turn = await negotiate(supports, (supports, produced, model) =>
   streamTurn(
