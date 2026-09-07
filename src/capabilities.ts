@@ -178,13 +178,38 @@ const wantsCompletionLimit = (detail: string) =>
   /max_tokens/i.test(detail) && /max_completion_tokens/i.test(detail);
 
 /**
+ * Temperature named as the field being refused, rather than mentioned in passing.
+ *
+ * A bare search of the message is not that question. `Unsupported value: 'top_p' does not
+ * support 3 with this model. Adjust temperature instead.` refuses another field and merely says
+ * the word, and it disabled ours — the word is ordinary English about a model, so any advice,
+ * aside or list that reaches for it counted. OpenAI quotes the field it is refusing, which is
+ * the anchor; the second half is a server that writes the same clause without the quotes.
+ */
+const NAMES_TEMPERATURE = /(['"`])temperature\1|\btemperature\s+(?:is|does|must|can)\b/i;
+
+/**
  * `'temperature' does not support 0.7 with this model. Only the default (1) is supported.`
  *
- * The qualifier is load-bearing. A temperature out of range is the caller's mistake to see
- * rather than ours to work around, and dropping the field would hide it.
+ * The qualifier is load-bearing, and `does not support` is not the qualifier: that is how a
+ * server words a refusal of the *value* — `Invalid value: 'temperature' does not support 5.
+ * Supported values are between 0 and 2.` — which is the caller's mistake to see rather than
+ * ours to work around. Dropping the field there succeeds, at the model's own default, so a
+ * number the operator typed and can still read on a settings row is silently replaced by one
+ * nobody chose, for the life of the process. `only the default` is the whole of what separates
+ * the two: it says the field takes one value, where the generic phrasing says only that this
+ * value was the wrong one.
+ *
+ * `REFUSED_VALUE` cannot be borrowed from `rejectsEffort` to draw that line, which is why this
+ * has no such guard rather than having lost one — the genuine refusal above opens with
+ * `Unsupported value:` too, so the guard would reject the one message that has to latch.
+ *
+ * It under-matches an endpoint that refuses the field in some third wording, which is the
+ * direction this file argues for on `max_tokens` and on `reasoning_effort`: a false negative
+ * costs one visible error, and a false positive quietly changes what every later request means.
  */
 const refusesChosenTemperature = (detail: string) =>
-  /temperature/i.test(detail) && /only the default|does not support/i.test(detail);
+  NAMES_TEMPERATURE.test(detail) && /only the default/i.test(detail);
 
 /** What `negotiate` takes besides the request. Both optional, both about telling someone. */
 export interface NegotiateOptions {

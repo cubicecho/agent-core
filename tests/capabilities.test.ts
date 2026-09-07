@@ -38,6 +38,22 @@ const NO_SUCH_EFFORT = new Error(
 /** A real field refusal that happens to be worded the way a value refusal usually is. */
 const NO_EFFORT_FIELD = new Error("400 This model does not support reasoning_effort.");
 
+// The temperature's own value refusals, which read almost exactly like the field refusal above
+// it. `does not support` is in all three, which is why it cannot be the marker.
+
+/** The caller typed 5. The field works; the number is theirs to see rejected. */
+const TEMPERATURE_OUT_OF_RANGE = new Error(
+  "400 Invalid value: 'temperature' does not support 5. Supported values are between 0 and 2.",
+);
+
+/** The same refusal in a server's plainer words, quoting nothing. */
+const TEMPERATURE_TOO_HIGH = new Error("400 temperature does not support values above 2");
+
+/** A refusal of another field that says the word in passing — the advice at the end is all. */
+const ANOTHER_FIELD_REFUSED = new Error(
+  "400 Unsupported value: 'top_p' does not support 3 with this model. Adjust temperature instead.",
+);
+
 /** The same, for a model: refuses in order, recording what each attempt was built with. */
 const modelThatRefuses = (...refusals: Error[]) => {
   const asked: ModelCapabilities[] = [];
@@ -272,6 +288,21 @@ describe("negotiate, for a model", () => {
     const { send } = modelThatRefuses(OWN_TEMPERATURE);
     await expect(negotiate(supports, send, { model: "gpt-5" })).resolves.toBe("answered");
     expect(modelCapabilitiesFor(supports, "gpt-5").chosenTemperature).toBe(false);
+  });
+
+  it("passes on a temperature the model would not take, rather than dropping the field", async () => {
+    // The same trade as the effort above, and the one the field-name test alone got wrong. A
+    // model that answers any of these takes a temperature perfectly well — the number was out
+    // of range, or the refusal was about another field entirely. Dropping ours succeeds at the
+    // model's own default, latched for the life of the process, with the settings row still
+    // reading what the operator typed and nothing anywhere saying it had stopped meaning it.
+    for (const refusal of [TEMPERATURE_OUT_OF_RANGE, TEMPERATURE_TOO_HIGH, ANOTHER_FIELD_REFUSED]) {
+      const supports = openai();
+      const { send } = modelThatRefuses(refusal);
+      await expect(negotiate(supports, send, { model: "gpt-5" })).rejects.toThrow(refusal.message);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(modelCapabilitiesFor(supports, "gpt-5").chosenTemperature).toBe(true);
+    }
   });
 
   it("keeps going after the first answer, since a reasoning model has two waiting", async () => {
