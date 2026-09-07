@@ -124,6 +124,41 @@ test("a transcript costs more the longer it gets, and the walk sees every part o
   expect(walked).toBeLessThan(serialized * 1.1);
 });
 
+test("the keys only some messages carry are counted, not only their values", () => {
+  // `ENVELOPE` is the two keys every message has. It was being applied to the three shapes that
+  // carry another, whose value was counted and whose key was not — 4.5 tokens on every tool
+  // result, the message a tool-using run accumulates most of, and short in the one direction
+  // this estimate must not be short in: `requestTokens` guards a window, and under-counting
+  // passes a request that then overflows for real.
+  const sized = (messages: OpenAI.ChatCompletionMessageParam[]) =>
+    requestTokens({ model: "m", stream: true, messages });
+  const serialized = (messages: OpenAI.ChatCompletionMessageParam[]) =>
+    estimateTokens(JSON.stringify(messages));
+  // A hundred of a shape, so a per-message constant is worth whole tokens rather than a
+  // rounding the ceiling swallows.
+  const many = (message: OpenAI.ChatCompletionMessageParam) =>
+    Array.from({ length: 100 }, () => message);
+
+  // Each key, priced against the same message without it: the difference the walk sees has to
+  // be the difference the serialisation sees.
+  const named = many({ role: "user", name: "bob", content: "hi" });
+  const anonymous = many({ role: "user", content: "hi" });
+  expect(sized(named) - sized(anonymous)).toBe(serialized(named) - serialized(anonymous));
+
+  const result = many({ role: "tool", tool_call_id: "call_1", content: "hi" });
+  const bare = many({ role: "user", content: "hi" });
+  expect(sized(result) - sized(bare)).toBe(serialized(result) - serialized(bare));
+
+  // And the whole shape, end to end: twenty tool results is what a real run is mostly made of,
+  // and the body the omission was worth ninety tokens on.
+  const run = Array.from({ length: 20 }, (_, i) => ({
+    role: "tool" as const,
+    tool_call_id: `call_${i}`,
+    content: "x".repeat(200),
+  }));
+  expect(sized(run)).toBe(serialized(run));
+});
+
 test("a message whose content is parts is sized from the parts it has text in", () => {
   const sized = (content: OpenAI.ChatCompletionUserMessageParam["content"]) =>
     requestTokens({ model: "m", stream: true, messages: [{ role: "user", content }] });
