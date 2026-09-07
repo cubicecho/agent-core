@@ -13,6 +13,8 @@
 export {
   type Capabilities,
   capabilitiesFor,
+  type ModelCapabilities,
+  modelCapabilitiesFor,
   type NegotiateOptions,
   negotiate,
   resetCapabilities,

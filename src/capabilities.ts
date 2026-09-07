@@ -12,7 +12,10 @@ import type { Produced } from "./stream.ts";
  * this package's to hold.
  */
 
-/** What one endpoint turned out not to support. Both start optimistic and only ever latch off. */
+/**
+ * What one endpoint turned out not to support. Both flags start optimistic and only ever latch
+ * off; what is about the model rather than the server hangs off `models`.
+ */
 export interface Capabilities {
   /**
    * llama.cpp-backed servers compile every tool schema into one grammar and reject keywords
@@ -27,6 +30,41 @@ export interface Capabilities {
    * happens: the counts are worth one failed call to find out about, not one per run.
    */
   usageInStream: boolean;
+  /**
+   * What each model reached through this endpoint turned out not to support, by the name the
+   * endpoint knows it as. A second level rather than two more flags beside these, because one
+   * API key reaches every model a provider offers: a flag here would let the first turn on a
+   * model that cannot reason latch "no reasoning" for every later turn on one that can, which
+   * stops asking for it with the setting still reading `high` and nothing anywhere saying it
+   * stopped. Empty until `modelCapabilitiesFor` is asked about a model.
+   */
+  models: Map<string, ModelCapabilities>;
+}
+
+/**
+ * What one model on that endpoint turned out not to support. All start optimistic and only ever
+ * latch off, the same as the endpoint's own.
+ *
+ * These arrive through the same channel as the endpoint's — an error string on a chat
+ * completion — which is why they are negotiated by the same loop rather than a second one. What
+ * makes them the model's is that the answer differs between two models the same key reaches.
+ */
+export interface ModelCapabilities {
+  /**
+   * Takes a `reasoning_effort` at all. A model that cannot reason refuses the field rather than
+   * ignoring it, so the whole request fails over a setting that means nothing to it.
+   */
+  reasoningEffort: boolean;
+  /**
+   * Spells its ceiling `max_tokens`. The reasoning models want `max_completion_tokens` instead,
+   * and they are exactly the models anyone sets an effort on.
+   */
+  legacyTokenLimit: boolean;
+  /**
+   * Takes a temperature we picked, rather than only the one it was built with. A reasoning model
+   * refuses any other value, including the one a settings row has been showing all along.
+   */
+  chosenTemperature: boolean;
 }
 
 /**
@@ -46,13 +84,36 @@ const capabilities = new Map<string, Capabilities>();
  * What this endpoint is known not to support. The same object every time, so what `negotiate`
  * latches off stays off.
  *
- * @param baseUrl Identifies the endpoint. These are per-server, not per-model.
+ * @param baseUrl Identifies the endpoint. The two flags on it are per-server; what is
+ * per-model hangs off `models`, which `modelCapabilitiesFor` reads.
  */
 export function capabilitiesFor(baseUrl: string): Capabilities {
   let known = capabilities.get(baseUrl);
   if (!known) {
-    known = { strictSchemas: true, usageInStream: true };
+    known = { strictSchemas: true, usageInStream: true, models: new Map() };
     capabilities.set(baseUrl, known);
+  }
+  return known;
+}
+
+/**
+ * What this model on this endpoint is known not to support. The same object every time, so what
+ * `negotiate` latches off stays off.
+ *
+ * Nested under the endpoint rather than keyed by name alone, because `gpt-4o` at OpenAI and
+ * `gpt-4o` behind a proxy need not be the same weights — and a proxy is free to answer to a name
+ * it does not really serve. One that refused a reasoning effort must not speak for the other.
+ * Bounded by the models actually asked for on that endpoint, which is what a dropdown holds.
+ *
+ * @param supports The endpoint's own, as `capabilitiesFor` hands it over.
+ * @param model The name the endpoint knows the model as — whatever goes in the request body,
+ * since that is the only name the refusal is about.
+ */
+export function modelCapabilitiesFor(supports: Capabilities, model: string): ModelCapabilities {
+  let known = supports.models.get(model);
+  if (!known) {
+    known = { reasoningEffort: true, legacyTokenLimit: true, chosenTemperature: true };
+    supports.models.set(model, known);
   }
   return known;
 }
@@ -62,11 +123,44 @@ export function resetCapabilities() {
   capabilities.clear();
 }
 
-/** Every flag on a `Capabilities`, typed, so a third one is compared without an edit here. */
-const keys = (of: Capabilities) => Object.keys(of) as (keyof Capabilities)[];
+/**
+ * Every latching flag in play on one attempt, endpoint and model together, in a stable order.
+ * Read positionally and only against another reading of the same two objects: what it answers is
+ * whether anything moved while the request was out, and a flag added to either interface later is
+ * compared without an edit here. `models` is not one of them — it is the second level, not a
+ * flag, and the map is the same object throughout.
+ */
+const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): boolean[] => [
+  ...Object.values(supports).filter((value) => typeof value === "boolean"),
+  ...(model ? Object.values(model) : []),
+];
 
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
 const REJECTS_USAGE = /stream_options/i;
+
+/** A model that cannot reason refuses the field by name. */
+const rejectsEffort = (detail: string) => /reasoning_effort/i.test(detail);
+
+/**
+ * Read only alongside the name it is asking for: `'max_tokens' is not supported with this model.
+ * Use 'max_completion_tokens' instead.`
+ *
+ * A bare `max_tokens` complaint is also how a server says the *number* was too large —
+ * `max_tokens is too large: 200000. This model supports at most 16384.` — and the answer to that
+ * is not to send the same number under a different name. It is to let the error out, where
+ * whoever typed the number can see it.
+ */
+const wantsCompletionLimit = (detail: string) =>
+  /max_tokens/i.test(detail) && /max_completion_tokens/i.test(detail);
+
+/**
+ * `'temperature' does not support 0.7 with this model. Only the default (1) is supported.`
+ *
+ * The qualifier is load-bearing. A temperature out of range is the caller's mistake to see
+ * rather than ours to work around, and dropping the field would hide it.
+ */
+const refusesChosenTemperature = (detail: string) =>
+  /temperature/i.test(detail) && /only the default|does not support/i.test(detail);
 
 /** What `negotiate` takes besides the request. Both optional, both about telling someone. */
 export interface NegotiateOptions {
@@ -80,6 +174,15 @@ export interface NegotiateOptions {
   produced?: Produced;
   /** Told what was given up on, for a watcher who would otherwise see an unexplained pause. */
   onNotice?: (message: string) => void;
+  /**
+   * Which model this request is for, by the name the endpoint knows it as.
+   *
+   * Given one, the refusals that are about the model rather than the server are answered too,
+   * and `send` is handed what that model has already refused. Left out, nothing changes — which
+   * is the point of it being here rather than a third positional argument: a caller with one
+   * model per endpoint, or one that only ever meets the endpoint's own refusals, needs no edit.
+   */
+  model?: string;
 }
 
 /**
@@ -92,6 +195,11 @@ export interface NegotiateOptions {
  * second to fail the request — so the first run against such an endpoint is spent discovering
  * what the second one starts knowing. It terminates in at most one pass per capability, since
  * each pass either latches one off for good or rethrows.
+ *
+ * One loop over both levels, because a refusal arrives the same way whichever it is about and
+ * one request can meet both. An OpenAI reasoning model has two waiting on its own — the ceiling
+ * is spelled the other way, and then the temperature is not ours to pick — so a loop that
+ * stopped after the first answer would hand the caller the second.
  *
  * `send` is a thunk rather than a request body because the body has to be rebuilt from the
  * latched flags: `relaxTools` applies to the tools that were just sanitised, and
@@ -106,21 +214,29 @@ export interface NegotiateOptions {
  *
  * @param supports What this endpoint has already refused. Latched off further as it refuses more.
  * @param send Builds and sends the request. Called again per downgrade, never once tokens
- * have arrived.
- * @param options `produced` for a caller with its own retry budget, `onNotice` for a watcher.
+ * have arrived. Its third argument is what the named model has refused, absent when no model
+ * was named.
+ * @param options `produced` for a caller with its own retry budget, `onNotice` for a watcher,
+ * `model` to negotiate the model's refusals alongside the endpoint's.
  */
 export async function negotiate<T>(
   supports: Capabilities,
-  send: (supports: Capabilities, produced: Produced) => Promise<T>,
-  { produced = { any: false }, onNotice }: NegotiateOptions = {},
+  send: (
+    supports: Capabilities,
+    produced: Produced,
+    model: ModelCapabilities | undefined,
+  ) => Promise<T>,
+  { produced = { any: false }, onNotice, model: name }: NegotiateOptions = {},
 ): Promise<T> {
+  const model = name === undefined ? undefined : modelCapabilitiesFor(supports, name);
   for (;;) {
-    // What this attempt was built with. `capabilitiesFor` hands one object per endpoint to
-    // everyone on it, so a run starting alongside this one may latch a flag off while this call
-    // is in flight — and the branches below are guarded on the flag still being set.
-    const sent = { ...supports };
+    // What this attempt was built with. `capabilitiesFor` and `modelCapabilitiesFor` hand one
+    // object per endpoint and per model to everyone on them, so a run starting alongside this
+    // one may latch a flag off while this call is in flight — and the branches below are guarded
+    // on the flag still being set.
+    const sent = flagsOf(supports, model);
     try {
-      return await send(supports, produced);
+      return await send(supports, produced, model);
     } catch (error) {
       if (produced.any) throw error;
       const detail = errorMessage(error);
@@ -130,7 +246,16 @@ export async function negotiate<T>(
       } else if (supports.usageInStream && REJECTS_USAGE.test(detail)) {
         supports.usageInStream = false;
         onNotice?.("server rejected stream_options; token counts unavailable");
-      } else if (keys(sent).every((flag) => sent[flag] === supports[flag])) {
+      } else if (model?.reasoningEffort && rejectsEffort(detail)) {
+        model.reasoningEffort = false;
+        onNotice?.("model does not take a reasoning effort; retrying without one");
+      } else if (model?.legacyTokenLimit && wantsCompletionLimit(detail)) {
+        model.legacyTokenLimit = false;
+        onNotice?.("model wants max_completion_tokens; retrying with the limit spelled that way");
+      } else if (model?.chosenTemperature && refusesChosenTemperature(detail)) {
+        model.chosenTemperature = false;
+        onNotice?.("model takes only its own temperature; retrying without ours");
+      } else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) {
         throw error;
       }
       // Otherwise the refusal was answered by whoever got there first, and this attempt was

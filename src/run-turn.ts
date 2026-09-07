@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { type Capabilities, negotiate } from "./capabilities.ts";
+import { type Capabilities, type ModelCapabilities, negotiate } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
 import {
   backoffMs,
@@ -16,9 +16,10 @@ import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./
  * One turn, given as many attempts as the caller allows.
  *
  * Two different things are being recovered from here, and they nest. The inner one is a
- * capability the endpoint turns out not to have — `stream_options`, a grammar keyword — which
- * is a refusal: it is answered by sending a lesser request, and it latches against that
- * endpoint for the life of the process, so it costs one failed call rather than one a run.
+ * capability the endpoint turns out not to have — `stream_options`, a grammar keyword — or that
+ * the model does not, given `model` below. Either is a refusal: it is answered by sending a
+ * lesser request, and it latches for the life of the process against the endpoint or against
+ * that one model on it, so it costs one failed call rather than one a run.
  * The outer one is the endpoint being unreachable, busy or silent, which is not about this
  * request at all and is worth simply waiting out.
  *
@@ -52,6 +53,15 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
    * run over one would be the guard failing exactly the callers it was meant to help.
    */
   contextLimit?: number;
+  /**
+   * Which model the body names, so the refusals that are about the model rather than the server
+   * are negotiated too — a reasoning effort it does not take, a token ceiling it spells the
+   * other way, a temperature that is not ours to pick. Left out, only the endpoint's own are.
+   *
+   * It is given here rather than read off the body because the body is built from the answer:
+   * `request` has to know what this model refused before it can build one that avoids it.
+   */
+  model?: string;
 }
 
 /**
@@ -62,22 +72,27 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
  *
  * @param client The pooled client for this endpoint.
  * @param supports What the endpoint has already refused, threaded through the negotiation.
- * @param request Builds the body. Called again per attempt, since a downgrade changes it.
- * @param options Retry budget, context limit, notices, and the stream's own callbacks.
+ * @param request Builds the body. Called again per attempt, since a downgrade changes it. Its
+ * second argument is what the model named in `options.model` has refused, absent when none was.
+ * @param options Retry budget, context limit, the model to negotiate for, notices, and the
+ * stream's own callbacks.
  */
 export async function runTurn(
   client: OpenAI,
   supports: Capabilities,
-  request: (supports: Capabilities) => OpenAI.ChatCompletionCreateParamsStreaming,
-  { maxRetries = 0, onNotice, contextLimit = 0, ...stream }: RunTurnOptions = {},
+  request: (
+    supports: Capabilities,
+    model: ModelCapabilities | undefined,
+  ) => OpenAI.ChatCompletionCreateParamsStreaming,
+  { maxRetries = 0, onNotice, contextLimit = 0, model, ...stream }: RunTurnOptions = {},
 ): Promise<Turn> {
   // Sized once rather than per build. `request` is called again for every downgrade and every
   // retry, but a downgraded body is strictly smaller than the one before it and the transcript
   // does not change between attempts — so the first body is the one worth measuring, and
   // measuring the rest would only spend the walk again to reach the same answer.
   let sized = false;
-  const measured = (capabilities: Capabilities) => {
-    const body = request(capabilities);
+  const measured = (capabilities: Capabilities, forModel: ModelCapabilities | undefined) => {
+    const body = request(capabilities, forModel);
     if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
       sized = true;
       const needed = requestTokens(body);
@@ -98,9 +113,9 @@ export async function runTurn(
     try {
       return await negotiate(
         supports,
-        (capabilities, box) =>
-          streamTurn(client, measured(capabilities), { ...stream, produced: box }),
-        { produced, onNotice },
+        (capabilities, box, forModel) =>
+          streamTurn(client, measured(capabilities, forModel), { ...stream, produced: box }),
+        { produced, onNotice, model },
       );
     } catch (error) {
       // The abort is read before the classification, not after. A run stopped by its operator

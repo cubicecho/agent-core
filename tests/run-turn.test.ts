@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { capabilitiesFor, resetCapabilities } from "../src/capabilities.ts";
+import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from "../src/capabilities.ts";
 import { ContextOverflow } from "../src/retry.ts";
 import { runTurn } from "../src/run-turn.ts";
 
@@ -165,6 +165,39 @@ describe("runTurn", () => {
     await runTurn(clientOf(create), supports(), body);
     expect(create.mock.calls[0][0]).toHaveProperty("stream_options");
     expect(create.mock.calls[1][0]).not.toHaveProperty("stream_options");
+  });
+
+  it("rebuilds the request from what the model gave up on, not only the endpoint", async () => {
+    // The refusal is about the model rather than the server, so the answer has to be per model
+    // — and `request` has to see it, since the body it builds is what changes.
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(
+        apiError(
+          400,
+          "Unsupported parameter: 'max_tokens' is not supported with this model. " +
+            "Use 'max_completion_tokens' instead.",
+        ),
+      )
+      .mockReturnValue(chunks(text("ok")));
+    const known = supports();
+    const turn = await runTurn(
+      clientOf(create),
+      known,
+      (_supports, model) =>
+        ({
+          model: "gpt-5",
+          messages: [],
+          stream: true,
+          ...(model?.legacyTokenLimit ? { max_tokens: 256 } : { max_completion_tokens: 256 }),
+        }) as OpenAI.ChatCompletionCreateParamsStreaming,
+      { model: "gpt-5" },
+    );
+
+    expect(turn.content).toBe("ok");
+    expect(create.mock.calls[0][0]).toHaveProperty("max_tokens");
+    expect(create.mock.calls[1][0]).toHaveProperty("max_completion_tokens");
+    expect(modelCapabilitiesFor(known, "gpt-5").legacyTokenLimit).toBe(false);
   });
 
   it("waits out a lost request that arrives in the middle of a negotiation", async () => {
