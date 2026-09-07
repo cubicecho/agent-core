@@ -1,3 +1,10 @@
+## [2.1.1](https://github.com/cubicecho/agent-core/compare/v2.1.0...v2.1.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* tell the effort being refused from the field being refused ([#42](https://github.com/cubicecho/agent-core/issues/42)) ([#44](https://github.com/cubicecho/agent-core/issues/44)) ([a2f14de](https://github.com/cubicecho/agent-core/commit/a2f14de5a787790a25b18094dbbb1a080fd90c4b))
+
 # [2.1.0](https://github.com/cubicecho/agent-core/compare/v2.0.8...v2.1.0) (2026-09-07)
 
 
