@@ -140,9 +140,9 @@ test("a name that matches nothing is reported, and a match is never counted twic
 });
 
 test("loading says which names it could not place", () => {
-  expect(loadResult({ matched: [], unknown: ["nope"], overBroad: [] }, catalog)).toContain(
-    "Not in the catalogue: nope",
-  );
+  expect(
+    loadResult({ matched: [], unknown: ["nope"], overBroad: [], deferred: [] }, catalog),
+  ).toContain("Not in the catalogue: nope");
 });
 
 test("an over-broad wildcard comes back with the names it would have loaded", () => {
@@ -187,8 +187,35 @@ test("the load cap is what one call may load, not what one name may match", () =
 
   const resolved = expandNames(["a__*", "b__*", "c__*"], wide);
   expect(resolved.matched).toHaveLength(MAX_PER_LOAD);
-  expect(resolved.overBroad.map(({ name }) => name)).toEqual(["b__*", "c__*"]);
-  expect(loadResult(resolved, wide)).toContain(`more than the ${MAX_PER_LOAD} one call may load`);
+  // A dozen apiece is exactly what one call may hold, so neither is too broad to ask for —
+  // they just cannot have this call. The budget is still what stops them.
+  expect(resolved.deferred).toEqual(["b__*", "c__*"]);
+  expect(resolved.overBroad).toEqual([]);
+  expect(loadResult(resolved, wide)).toContain("Ask for them on your next step");
+});
+
+test("a precise name that only misses the budget is not called over-broad", () => {
+  const wide: CatalogServer[] = [
+    {
+      id: "4",
+      label: "Many",
+      tools: Array.from({ length: MAX_PER_LOAD + 1 }, (_, i) => tool(`many__t${i}`)),
+    },
+  ];
+  const asked = wide[0].tools.map((t) => t.name);
+  const resolved = expandNames(asked, wide);
+
+  expect(resolved.matched).toHaveLength(MAX_PER_LOAD);
+  expect(resolved.deferred).toEqual([`many__t${MAX_PER_LOAD}`]);
+  expect(resolved.overBroad).toEqual([]);
+
+  // The old message told it this one exact name matched one tool, "more than the twelve one
+  // call may load", and to pick from a list holding only that name — nothing it could act on
+  // but sending the same call again.
+  const text = loadResult(resolved, wide);
+  expect(text).not.toContain("Name the ones you need from:");
+  expect(text).toContain(`This call is full at ${MAX_PER_LOAD} tools`);
+  expect(text).toContain(`many__t${MAX_PER_LOAD}`);
 });
 
 test("a name that only repeats an earlier match does not spend budget", () => {

@@ -150,6 +150,7 @@ export function expandNames(requested: string[], catalog: CatalogServer[]) {
   const matched = new Set<string>();
   const unknown: string[] = [];
   const overBroad: { name: string; hits: string[] }[] = [];
+  const deferred: string[] = [];
 
   const known = new Set(all.map((tool) => tool.name));
 
@@ -185,11 +186,18 @@ export function expandNames(requested: string[], catalog: CatalogServer[]) {
     // model that is meant to be choosing from twelve. Already-matched names are free, so a
     // name that only repeats an earlier one never spends budget.
     const fresh = hits.filter((hit) => !matched.has(hit));
-    if (matched.size + fresh.length > MAX_PER_LOAD) overBroad.push({ name, hits });
+    // Two different refusals, and answering both with "narrow it down" made one of them
+    // impossible to act on. A name that would not fit an empty call is over-broad, and the
+    // names are what the model needs. A name that only does not fit *this* call is precise
+    // enough already — telling a model that asked for one exact tool that it matches one tool,
+    // "more than the twelve one call may load", and to choose from a list holding just that
+    // name, leaves it nothing to do but send the identical call again.
+    if (fresh.length > MAX_PER_LOAD) overBroad.push({ name, hits });
+    else if (matched.size + fresh.length > MAX_PER_LOAD) deferred.push(name);
     else for (const hit of hits) matched.add(hit);
   }
 
-  return { matched: [...matched], unknown, overBroad };
+  return { matched: [...matched], unknown, overBroad, deferred };
 }
 
 /**
@@ -199,7 +207,7 @@ export function expandNames(requested: string[], catalog: CatalogServer[]) {
  * @param catalog The servers, read for the descriptions now worth their tokens.
  */
 export function loadResult(
-  { matched, unknown, overBroad }: ReturnType<typeof expandNames>,
+  { matched, unknown, overBroad, deferred }: ReturnType<typeof expandNames>,
   catalog: CatalogServer[],
 ): string {
   const byName = new Map(flatten(catalog).map((tool) => [tool.name, tool.description]));
@@ -215,6 +223,13 @@ export function loadResult(
       `\`${name}\` matches ${hits.length} tools, more than the ${MAX_PER_LOAD} one call may load.`,
       "Name the ones you need from:",
       ...hits.map((hit) => `  ${hit}`),
+    );
+  }
+  if (deferred.length) {
+    if (lines.length) lines.push("");
+    lines.push(
+      `This call is full at ${MAX_PER_LOAD} tools, so these were not loaded: ${deferred.join(", ")}.`,
+      "Ask for them on your next step.",
     );
   }
   if (unknown.length) {
