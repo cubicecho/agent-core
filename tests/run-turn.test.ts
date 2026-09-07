@@ -113,6 +113,35 @@ describe("runTurn", () => {
     expect(seen).toEqual(["half an "]);
   });
 
+  it("still retries an endpoint that primed the stream and then dropped it", async () => {
+    // The other half of the rule above, and the one that made `maxRetries` read as dead: most
+    // servers open a stream with a content-free `{"role":"assistant"}` before the first token,
+    // so an endpoint that accepts, primes and then wedges — a model still loading, a proxy that
+    // stalls, a GPU that OOMs — used to look identical to one that had already spoken. Nothing
+    // was shown to anybody either way, which is what makes it the same case as no chunks at all.
+    vi.useFakeTimers();
+    const seen: string[] = [];
+    const priming = chunk({ choices: [{ delta: { role: "assistant" } }] });
+    const create = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {
+          yield priming;
+          throw lost();
+        },
+      }))
+      .mockReturnValue(chunks(text("second")));
+    const turn = runTurn(clientOf(create), supports(), body, {
+      maxRetries: 3,
+      onOutput: (delta) => seen.push(delta),
+    });
+    await runOutTheClock();
+    await expect(turn).resolves.toMatchObject({ content: "second" });
+    expect(create).toHaveBeenCalledTimes(2);
+    // Said once, by the attempt that got through.
+    expect(seen).toEqual(["second"]);
+  });
+
   it("does not bring back a run whose operator stopped it", async () => {
     // The trap this loop is easiest to get wrong at. A stop can land while a request is failing
     // for the endpoint's own reasons, and a 503 is transient — so classifying before reading the

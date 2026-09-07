@@ -23,9 +23,11 @@ import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./
  * The outer one is the endpoint being unreachable, busy or silent, which is not about this
  * request at all and is worth simply waiting out.
  *
- * Both are bounded by the same rule: nothing is sent again once the server has started
+ * Both are bounded by the same rule: nothing is sent again once the model has started
  * answering. The tokens are already out and on their way to whoever is watching, and a second
- * attempt would say everything twice. That is what `produced` is, one box per attempt.
+ * attempt would say everything twice. That is what `produced` is, one box per attempt — set by
+ * a chunk that carried something rather than by a chunk arriving, so the empty opening chunk
+ * most servers send does not cost the retry.
  */
 
 /** A retry is not the same event as a downgrade, but a watcher wants to be told about both. */

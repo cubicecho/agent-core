@@ -46,7 +46,7 @@ the exports rather than a second description of them; CI fails if the committed 
 
 `negotiate` wrapping `streamTurn` is the whole of one turn against an endpoint: the request is
 re-sent for as long as the answer is this server refusing something the request can do without,
-and nothing is re-sent once it has started answering.
+and nothing is re-sent once the model has started answering.
 
 ```ts
 import {
@@ -116,9 +116,12 @@ OpenAI and `gpt-4o` behind a proxy need not be the same weights, and one that re
 effort must not speak for the other.
 
 `send` takes a callback rather than a body because the body has to be rebuilt from the latched
-flags. `produced` is one box per attempt — `streamTurn` sets it as soon as the server says
-anything, and the re-send reads it — so a caller with its own retry budget passes one in
-(`{ produced }`) and reads it afterwards to decide whether the failure is worth another attempt.
+flags. `produced` is one box per attempt — `streamTurn` sets it on the first chunk that carries
+text, reasoning or a piece of a tool call, and the re-send reads it — so a caller with its own
+retry budget passes one in (`{ produced }`) and reads it afterwards to decide whether the failure
+is worth another attempt. The content-free `{"role":"assistant"}` most servers open a stream with
+does not set it: nothing has been shown to anybody yet, so an endpoint that primes the stream and
+then wedges is retried like one that never answered at all.
 
 `idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is
 still talking is never cut off however long it takes, and one that has stopped answering raises
