@@ -124,3 +124,37 @@ describe("negotiate", () => {
     ]);
   });
 });
+
+describe("two runs on one endpoint", () => {
+  it("does not let the run that lost the race die on the answered refusal", async () => {
+    // `capabilitiesFor` hands the same object to both, which is the point of it — the refusal
+    // is a fact about the server, not about either run.
+    const supports = capabilitiesFor("http://local/v1");
+    const send = async (as: { strictSchemas: boolean }) => {
+      if (as.strictSchemas) throw NO_GRAMMAR;
+      return "answered";
+    };
+
+    // Started together against a fresh box, so both are built with strictSchemas still on and
+    // both come back refused. Whichever loses the race finds the flag already latched off.
+    const [first, second] = await Promise.all([
+      negotiate(supports, send),
+      negotiate(supports, send),
+    ]);
+
+    expect([first, second]).toEqual(["answered", "answered"]);
+    expect(supports.strictSchemas).toBe(false);
+  });
+
+  it("still gives up on a refusal nothing here knows how to answer", async () => {
+    const supports = capabilitiesFor("http://local/v1");
+    const send = vi.fn(async () => {
+      throw new Error("401 Incorrect API key provided");
+    });
+
+    // The re-send above is bounded by the flags latching off. Nothing latched here, so this has
+    // to leave on the first pass rather than sending the same rejected request forever.
+    await expect(negotiate(supports, send)).rejects.toThrow("401");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
