@@ -1,3 +1,10 @@
+# [2.3.0](https://github.com/cubicecho/agent-core/compare/v2.2.4...v2.3.0) (2026-09-13)
+
+
+### Features
+
+* host-side lifecycle hooks, and caches keyed on the whole endpoint ([e10663c](https://github.com/cubicecho/agent-core/commit/e10663ccb0eaaaa11824673e64d26543699f48e6))
+
 ## [2.2.4](https://github.com/cubicecho/agent-core/compare/v2.2.3...v2.2.4) (2026-09-07)
 
 
