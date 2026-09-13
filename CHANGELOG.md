@@ -1,3 +1,10 @@
+# [2.4.0](https://github.com/cubicecho/agent-core/compare/v2.3.0...v2.4.0) (2026-09-13)
+
+
+### Features
+
+* let the hooks' context budget be configured or passed in ([35b0f59](https://github.com/cubicecho/agent-core/commit/35b0f59e80a3d722a822bafdab8ab88b84c2871a))
+
 # [2.3.0](https://github.com/cubicecho/agent-core/compare/v2.2.4...v2.3.0) (2026-09-13)
 
 
