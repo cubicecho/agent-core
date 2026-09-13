@@ -53,6 +53,7 @@ export {
 } from "./events.ts";
 export {
   assembleContext,
+  configureHooks,
   type Gathered,
   gather,
   HOOK_CONTEXT_TOKENS,
@@ -62,10 +63,12 @@ export {
   type HookEvent,
   type HookMessage,
   type HookNote,
+  type HookOptions,
   type HookOutcome,
   type HookRunner,
   INJECT_EVENTS,
   notify,
+  resetHooks,
   turnIndex,
   turnMessages,
   withContext,

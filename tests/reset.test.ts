@@ -19,6 +19,7 @@ const OpenAI = (await import("openai")).default;
 const { getClient } = await import("../src/client.ts");
 const { capabilitiesFor } = await import("../src/capabilities.ts");
 const { emit, history } = await import("../src/events.ts");
+const { configureHooks } = await import("../src/hooks.ts");
 const { ask } = await import("../src/side-task.ts");
 const { resetAll } = await import("../src/reset.ts");
 
@@ -74,5 +75,11 @@ describe("resetAll", () => {
     expect(history("run-a")).toHaveLength(1);
     resetAll();
     expect(history("run-a")).toEqual([]);
+  });
+
+  it("puts the hooks' budget back", () => {
+    configureHooks({ contextTokens: 10 });
+    resetAll();
+    expect(configureHooks()).toEqual({ contextTokens: 2000 });
   });
 });

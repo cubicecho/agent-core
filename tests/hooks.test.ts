@@ -1,11 +1,14 @@
 import type OpenAI from "openai";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assembleContext,
+  configureHooks,
   gather,
+  HOOK_CONTEXT_TOKENS,
   type HookOutcome,
   type HookRunner,
   notify,
+  resetHooks,
   turnIndex,
   turnMessages,
   withContext,
@@ -155,6 +158,53 @@ describe("assembleContext", () => {
         outcome({ event: "afterTurn", inject: true, text: "too late" }),
       ]),
     ).toEqual({ context: "", notes: [] });
+  });
+});
+
+describe("the budget", () => {
+  afterEach(resetHooks);
+
+  const hungry = (hookId: string) =>
+    outcome({ hookId, inject: true, text: "x".repeat(40_000), maxTokens: 100_000 });
+  const spent = (gathered: { notes: { tokens?: number }[] }) =>
+    gathered.notes.reduce((sum, note) => sum + (note.tokens ?? 0), 0);
+
+  it("is HOOK_CONTEXT_TOKENS until something moves it", () => {
+    expect(spent(assembleContext([hungry("a")]))).toBe(HOOK_CONTEXT_TOKENS);
+  });
+
+  it("follows configureHooks for every call that does not give its own", async () => {
+    expect(configureHooks({ contextTokens: 500 })).toEqual({ contextTokens: 500 });
+    expect(spent(assembleContext([hungry("a"), hungry("b")]))).toBe(500);
+    const run: HookRunner = async () => [hungry("a")];
+    expect(spent(await gather(run, ["beforeTurn"], { session: { id: "s1" } }))).toBe(500);
+  });
+
+  it("gives way to a budget passed for one call", async () => {
+    configureHooks({ contextTokens: 500 });
+    expect(spent(assembleContext([hungry("a")], 3000))).toBe(3000);
+    const run: HookRunner = async () => [hungry("a")];
+    const gathered = await gather(
+      run,
+      ["beforeTurn"],
+      { session: { id: "s1" } },
+      { maxTokens: 50 },
+    );
+    expect(spent(gathered)).toBe(50);
+  });
+
+  it("ignores a budget that is not a number above zero, wherever it is given", () => {
+    configureHooks({ contextTokens: 500 });
+    for (const bad of [0, -1, Number.NaN, "900" as never]) {
+      expect(configureHooks({ contextTokens: bad })).toEqual({ contextTokens: 500 });
+      expect(spent(assembleContext([hungry("a")], bad))).toBe(500);
+    }
+  });
+
+  it("goes back to the default on resetHooks", () => {
+    configureHooks({ contextTokens: 500 });
+    resetHooks();
+    expect(spent(assembleContext([hungry("a")]))).toBe(HOOK_CONTEXT_TOKENS);
   });
 });
 

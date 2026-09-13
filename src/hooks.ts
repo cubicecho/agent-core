@@ -146,12 +146,64 @@ export interface Gathered {
 }
 
 /**
- * The most context all of a request's hooks add between them, in estimated tokens.
+ * The most context all of a request's hooks add between them by default, in estimated tokens.
  *
  * Enough for a handful of recalled memories, and small against any window worth running an agent
  * in. The point is that a generous hook cannot crowd out the conversation it was meant to inform.
+ * `configureHooks` moves it for a process, and `gather` and `assembleContext` for one request.
  */
 export const HOOK_CONTEXT_TOKENS = 2000;
+
+/** What hooks are held to across a process. Every field optional; see `configureHooks`. */
+export interface HookOptions {
+  /**
+   * The budget every injecting hook shares, when a call does not give its own. Each hook is still
+   * held to its own `maxTokens` inside it.
+   */
+  contextTokens?: number;
+}
+
+/** The numbers this module was written with. */
+const HOOK_DEFAULTS: Required<HookOptions> = { contextTokens: HOOK_CONTEXT_TOKENS };
+
+/** What is in force now. Read where it is used, so a change applies from the next request. */
+let hookLimits: Required<HookOptions> = { ...HOOK_DEFAULTS };
+
+/**
+ * Changes what hooks are held to, for a process whose windows are not the size these defaults
+ * were chosen for.
+ *
+ * Module-level for the same reason `configureEvents` is: a budget is a deployment's setting, said
+ * once at startup. A caller that sizes it per model or per agent — a 128k window can afford more
+ * recall than an 8k one — passes `maxTokens` to `gather` instead, which wins over this.
+ *
+ * @param options The limits to change. A field left out — or given anything that is not a number
+ * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
+ * above zero, and lifts the shared budget entirely.
+ * @returns Everything in force afterwards, including what this call did not change.
+ */
+export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
+  for (const [name, value] of Object.entries(options)) {
+    if (typeof value === "number" && value > 0) hookLimits[name as keyof HookOptions] = value;
+  }
+  return { ...hookLimits };
+}
+
+/**
+ * Test seam: puts `configureHooks` back to the defaults, so one test's budget is not the next's.
+ * `resetAll` calls it.
+ */
+export const resetHooks = () => {
+  hookLimits = { ...HOOK_DEFAULTS };
+};
+
+/**
+ * The budget a call is held to: its own when it gave a usable one, the process's otherwise. The
+ * same rule `configureHooks` applies, so a `0` threaded through for "no opinion" does not quietly
+ * turn every hook's context off.
+ */
+const budget = (given?: number) =>
+  typeof given === "number" && given > 0 ? given : hookLimits.contextTokens;
 
 /**
  * Said once, above the blocks, so the model reads them as background rather than instructions.
@@ -179,15 +231,13 @@ const attribute = (text: string) =>
  *
  * @param outcomes What the runners returned. An injecting outcome on an event that cannot inject
  * adds nothing; a failed one is noted wherever it falls, including past the budget.
- * @param maxTokens The budget every block shares. Defaults to `HOOK_CONTEXT_TOKENS`.
+ * @param maxTokens The budget every block shares. Absent, or not a number above zero, is what
+ * `configureHooks` last set — `HOOK_CONTEXT_TOKENS` unless something moved it.
  */
-export function assembleContext(
-  outcomes: readonly HookOutcome[],
-  maxTokens = HOOK_CONTEXT_TOKENS,
-): Gathered {
+export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: number): Gathered {
   const blocks: string[] = [];
   const notes: HookNote[] = [];
-  let remaining = maxTokens;
+  let remaining = budget(maxTokens);
   for (const outcome of outcomes) {
     const base = { event: outcome.event, source: outcome.label, hookId: outcome.hookId };
     if (!outcome.ok) {
@@ -331,7 +381,8 @@ const runSafely = (run: HookRunner, event: HookEvent, context: HookContext, sign
  * @param context What the hooks are told.
  * @param options `signal` is handed to the runner, and should be the turn's own: a user who
  * stopped the turn stopped its recall. `onNote` hears each note as the whole is assembled.
- * `maxTokens` is the shared budget, `HOOK_CONTEXT_TOKENS` if absent.
+ * `maxTokens` is the shared budget for this request, read as `assembleContext` reads it: absent
+ * or unusable is the process's, from `configureHooks`.
  */
 export async function gather(
   run: HookRunner,

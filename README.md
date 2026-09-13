@@ -273,6 +273,22 @@ host that stores what the user typed never stores the context as something they 
 injecting hook shares `HOOK_CONTEXT_TOKENS` (2000) by default, each held to its own `maxTokens`
 inside that, so a generous hook cannot crowd out the conversation it was meant to inform.
 
+The budget is the caller's to move, at either level. `configureHooks` sets it for the process, and
+`maxTokens` on `gather` (or the second argument to `assembleContext`) sets it for one request and
+wins over it — the one to reach for when the budget follows the model, since a 128k window can
+afford more recall than an 8k one:
+
+```ts
+import { configureHooks, gather } from "@cubicecho/agent-core";
+
+configureHooks({ contextTokens: 4000 });
+const gathered = await gather(run, ["beforeTurn"], context, { maxTokens: contextLimit / 20 });
+```
+
+Either one given something that is not a number above zero keeps what was there, as
+`configureEvents` does, so a `0` threaded through for "no opinion" does not switch recall off.
+`resetHooks` (and `resetAll`) puts the default back.
+
 Neither function rejects. A hook failing is an outcome, and a runner that throws outright is
 noted once for its event and costs only that event's context. `notify` takes no signal: a reader
 who leaves once the turn is answered has not asked for it not to be remembered.
