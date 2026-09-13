@@ -100,6 +100,29 @@ describe("capabilitiesFor", () => {
     expect(capabilitiesFor("https://api.openai.com/v1").strictSchemas).toBe(true);
   });
 
+  it("keeps two keys through one router apart", () => {
+    // A gateway is free to send two keys to two different backends, and then what one of them
+    // refused is not a fact about the other. Keyed on the URL alone, the first caller through
+    // latched for everyone behind it — including the `models` map underneath, which is where two
+    // keys on one host are most likely to reach different weights in the first place.
+    const cheap = capabilitiesFor("https://router/v1", "sk-cheap");
+    cheap.strictSchemas = false;
+    modelCapabilitiesFor(cheap, "gpt-4o").reasoningEffort = false;
+
+    const paid = capabilitiesFor("https://router/v1", "sk-paid");
+    expect(paid.strictSchemas).toBe(true);
+    expect(modelCapabilitiesFor(paid, "gpt-4o").reasoningEffort).toBe(true);
+    expect(capabilitiesFor("https://router/v1", "sk-cheap").strictSchemas).toBe(false);
+  });
+
+  it("reads no key and an empty one as one endpoint", () => {
+    // The same reading `getClient` gives them, so a caller that threads its key through and one
+    // that leaves it out are not two memories of the same local server.
+    capabilitiesFor("http://local/v1").usageInStream = false;
+    expect(capabilitiesFor("http://local/v1", "").usageInStream).toBe(false);
+    expect(capabilitiesFor("http://local/v1", undefined).usageInStream).toBe(false);
+  });
+
   it("forgets everything on reset", () => {
     capabilitiesFor("http://local/v1").usageInStream = false;
     resetCapabilities();

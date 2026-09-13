@@ -306,6 +306,62 @@ describe("streamTurn", () => {
     await settled;
   });
 
+  it("reports the reason the model stopped", async () => {
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(text("done"), chunk({ choices: [{ delta: {}, finish_reason: "stop" }] })),
+      ),
+      body,
+    );
+    expect(turn.finishReason).toBe("stop");
+  });
+
+  it("says a turn was cut off at the ceiling, which it otherwise comes back whole from", async () => {
+    // The failure this is here for: a tool call truncated mid-JSON. Nothing about the turn says
+    // so — the content is real, the call has an id and a name — and the caller meets a
+    // `JSON.parse` failure with nothing to attribute it to.
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          chunk({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: "c1", function: { name: "read", arguments: '{"pa' } },
+                  ],
+                },
+              },
+            ],
+          }),
+          chunk({ choices: [{ delta: {}, finish_reason: "length" }] }),
+        ),
+      ),
+      body,
+    );
+    expect(turn.finishReason).toBe("length");
+    expect(() => JSON.parse(turn.toolCalls[0].function.arguments)).toThrow();
+  });
+
+  it("reads the reason off a final chunk that carries no delta at all", async () => {
+    // Some servers send the reason on its own, which the delta guard skips — so it is read off
+    // the choice before that guard rather than beside the content.
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("hi"), chunk({ choices: [{ finish_reason: "tool_calls" }] }))),
+      body,
+    );
+    expect(turn.content).toBe("hi");
+    expect(turn.finishReason).toBe("tool_calls");
+  });
+
+  it("says nothing about the reason where the endpoint said nothing", async () => {
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("hi"))),
+      body,
+    );
+    expect(turn.finishReason).toBe("");
+  });
+
   it("does not return a turn that was cut off as though it were finished", async () => {
     // An aborted stream ends its iteration rather than throwing, so the check after the loop is
     // the only thing between a truncated answer and a recorded one.

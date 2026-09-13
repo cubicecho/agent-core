@@ -112,6 +112,11 @@ const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server
  * in the position on-demand loading exists to avoid — a tool array too large to choose from.
  * Over-broad requests are refused with the matching names listed, so the next call can be
  * precise.
+ *
+ * The default rather than the rule: twelve is what a small model chooses well from, and a caller
+ * running a large one against a large window can say otherwise to `expandNames`, `preselection`
+ * and `preselectSystem`. Whatever it says is carried on the resolution, so the refusal the model
+ * reads names the number it was actually held to.
  */
 export const MAX_PER_LOAD = 12;
 
@@ -120,7 +125,7 @@ export const MAX_PER_LOAD = 12;
  * conversation runs; least-recently-used names fall off the front.
  *
  * Only a multi-turn caller needs this — a run that starts from nothing each time has nothing to
- * carry. See `carryOver`.
+ * carry. See `carryOver`, which takes another number if this one is not yours.
  */
 export const MAX_CARRIED = 16;
 
@@ -129,9 +134,11 @@ export const MAX_CARRIED = 16;
  *
  * @param previous Last turn's names, oldest first.
  * @param used What this turn called. Moved to the end, so the oldest unused fall off.
+ * @param max How many to carry, defaulting to `MAX_CARRIED`. At least one: a cap of zero is
+ * read as no cap, which is what `slice` does with it and not what anybody asking for zero meant.
  */
-export const carryOver = (previous: string[], used: Set<string>) =>
-  [...previous.filter((name) => !used.has(name)), ...used].slice(-MAX_CARRIED);
+export const carryOver = (previous: string[], used: Set<string>, max = MAX_CARRIED) =>
+  [...previous.filter((name) => !used.has(name)), ...used].slice(-Math.max(1, max));
 
 /**
  * Resolves requested names against the catalogue, expanding trailing `*` wildcards.
@@ -144,8 +151,14 @@ export const carryOver = (previous: string[], used: Set<string>) =>
  *
  * @param requested What the model asked for. A trailing `*` expands.
  * @param catalog The servers to resolve against.
+ * @param maxPerLoad The most this call may load, defaulting to `MAX_PER_LOAD`. It comes back on
+ * the resolution so `loadResult` reports the same number rather than a second opinion of it.
  */
-export function expandNames(requested: string[], catalog: CatalogServer[]) {
+export function expandNames(
+  requested: string[],
+  catalog: CatalogServer[],
+  maxPerLoad = MAX_PER_LOAD,
+) {
   const all = flatten(catalog);
   const matched = new Set<string>();
   const unknown: string[] = [];
@@ -192,12 +205,12 @@ export function expandNames(requested: string[], catalog: CatalogServer[]) {
     // enough already — telling a model that asked for one exact tool that it matches one tool,
     // "more than the twelve one call may load", and to choose from a list holding just that
     // name, leaves it nothing to do but send the identical call again.
-    if (fresh.length > MAX_PER_LOAD) overBroad.push({ name, hits });
-    else if (matched.size + fresh.length > MAX_PER_LOAD) deferred.push(name);
+    if (fresh.length > maxPerLoad) overBroad.push({ name, hits });
+    else if (matched.size + fresh.length > maxPerLoad) deferred.push(name);
     else for (const hit of hits) matched.add(hit);
   }
 
-  return { matched: [...matched], unknown, overBroad, deferred };
+  return { matched: [...matched], unknown, overBroad, deferred, maxPerLoad };
 }
 
 /**
@@ -207,7 +220,7 @@ export function expandNames(requested: string[], catalog: CatalogServer[]) {
  * @param catalog The servers, read for the descriptions now worth their tokens.
  */
 export function loadResult(
-  { matched, unknown, overBroad, deferred }: ReturnType<typeof expandNames>,
+  { matched, unknown, overBroad, deferred, maxPerLoad }: ReturnType<typeof expandNames>,
   catalog: CatalogServer[],
 ): string {
   const byName = new Map(flatten(catalog).map((tool) => [tool.name, tool.description]));
@@ -220,7 +233,7 @@ export function loadResult(
   for (const { name, hits } of overBroad) {
     if (lines.length) lines.push("");
     lines.push(
-      `\`${name}\` matches ${hits.length} tools, more than the ${MAX_PER_LOAD} one call may load.`,
+      `\`${name}\` matches ${hits.length} tools, more than the ${maxPerLoad} one call may load.`,
       "Name the ones you need from:",
       ...hits.map((hit) => `  ${hit}`),
     );
@@ -228,7 +241,7 @@ export function loadResult(
   if (deferred.length) {
     if (lines.length) lines.push("");
     lines.push(
-      `This call is full at ${MAX_PER_LOAD} tools, so these were not loaded: ${deferred.join(", ")}.`,
+      `This call is full at ${maxPerLoad} tools, so these were not loaded: ${deferred.join(", ")}.`,
       "Ask for them on your next step.",
     );
   }
@@ -261,7 +274,16 @@ export function requestedNames(args: Record<string, unknown>): string[] {
 }
 
 /**
- * Tool preselection.
+ * Where a request is cut for the preselector, in characters.
+ *
+ * A tool choice is made on what the work is, which is the top of a request rather than all of
+ * it — and the whole of a long one is paid for again in the preselection call. `preselectInput`
+ * takes another number for a caller whose requests are not shaped that way.
+ */
+const PRESELECT_PROMPT_CHARS = 2000;
+
+/**
+ * The system prompt a preselector is given, holding it to the cap its answer will be held to.
  *
  * On-demand loading otherwise costs a round trip every run: the model reads the catalogue,
  * calls `load_tools`, and only then can do the work. A small model reading the same catalogue
@@ -269,23 +291,36 @@ export function requestedNames(args: Record<string, unknown>): string[] {
  * starts working on its first step.
  *
  * A wrong guess is cheap — an unused definition is a few hundred tokens for one run — but a
- * broad guess is not, so the same `MAX_PER_LOAD` cap applies here as to a `load_tools` call.
+ * broad guess is not, so the same cap applies here as to a `load_tools` call.
+ *
+ * @param maxPerLoad The most to ask for, defaulting to `MAX_PER_LOAD`. Give `preselection` the
+ * same number: this one is what the preselector is told, and that one is what it is held to.
  */
-export const PRESELECT_SYSTEM =
+export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
   "You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON " +
   "array of the names the request is likely to need — exact names from the catalogue, at most " +
-  `${MAX_PER_LOAD}, and as few as could do the job. Reply with \`[]\` if the request can be ` +
+  `${maxPerLoad}, and as few as could do the job. Reply with \`[]\` if the request can be ` +
   "answered without tools. Reply with the array alone — no prose, no explanation.";
+
+/** The preselection system prompt at the default cap, for a caller that never changes it. */
+export const PRESELECT_SYSTEM = preselectSystem();
 
 /**
  * The user message for a preselection call: the catalogue, then the request.
  *
  * @param catalog The connected servers, rendered as the name-only listing.
- * @param prompt The request being planned for, truncated at 2000 characters — choosing tools
- * needs the shape of the ask, not all of it.
+ * @param prompt The request being planned for, truncated — choosing tools needs the shape of the
+ * ask, not all of it.
+ * @param maxPromptChars Where the request is cut, defaulting to 2000. A caller whose requests
+ * carry the part that names the work at the end wants a larger one, and pays for it in the
+ * preselector's prompt.
  */
-export const preselectInput = (catalog: CatalogServer[], prompt: string) =>
-  `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, 2000)}`;
+export const preselectInput = (
+  catalog: CatalogServer[],
+  prompt: string,
+  maxPromptChars = PRESELECT_PROMPT_CHARS,
+) =>
+  `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, maxPromptChars)}`;
 
 /**
  * Resolves a preselection against the catalogue: unknown names dropped, count capped.
@@ -293,9 +328,15 @@ export const preselectInput = (catalog: CatalogServer[], prompt: string) =>
  * @param names What the preselector replied. Unvalidated: a non-array gives none, and entries
  * that are not strings are dropped.
  * @param catalog The servers to resolve against.
+ * @param maxPerLoad The most to keep, defaulting to `MAX_PER_LOAD`. The same number
+ * `preselectSystem` was given, or the model is being held to a cap it was never told about.
  */
-export function preselection(names: unknown, catalog: CatalogServer[]): string[] {
+export function preselection(
+  names: unknown,
+  catalog: CatalogServer[],
+  maxPerLoad = MAX_PER_LOAD,
+): string[] {
   if (!Array.isArray(names)) return [];
   const wanted = names.filter((name): name is string => typeof name === "string");
-  return expandNames(wanted, catalog).matched.slice(0, MAX_PER_LOAD);
+  return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
 }

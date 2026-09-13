@@ -297,6 +297,42 @@ describe("contextLimit", () => {
     ).resolves.toMatchObject({ content: "ok" });
   });
 
+  it("calls the endpoint's own refusal an overflow, whether or not a limit was set", async () => {
+    // The half the guard above never sees. Without a `contextLimit` — the default — the same
+    // failure used to come back as a raw SDK error, so one overflow had two error types
+    // depending on an option about a check that had not run.
+    const create = vi
+      .fn()
+      .mockRejectedValue(apiError(400, "This model's maximum context length is 8192 tokens"));
+    const failure = runTurn(clientOf(create), supports(), body, { maxRetries: 3 }).catch(
+      (error) => error,
+    );
+    const error = await failure;
+    expect(error).toBeInstanceOf(ContextOverflow);
+    // Nothing retried it, and the endpoint's own wording — the half that names the number — is
+    // kept rather than replaced.
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(error.message).toContain("8192");
+    expect((error as Error).cause).toBeInstanceOf(OpenAI.APIError);
+  });
+
+  it("still waits out a rate limit that borrows the same words", async () => {
+    // "Request too large for gpt-4o ... on tokens per min (TPM)" is a 429 that reads as an
+    // overflow. Calling it one would make it the one error nothing retries, and it succeeds on
+    // the next attempt.
+    vi.useFakeTimers();
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(
+        apiError(429, "Request too large for gpt-4o on tokens per min (TPM): limit 30000"),
+      )
+      .mockReturnValue(chunks(text("at last")));
+    const turn = runTurn(clientOf(create), supports(), body, { maxRetries: 2 });
+    await runOutTheClock();
+    await expect(turn).resolves.toMatchObject({ content: "at last" });
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
   it("sizes the body once rather than once per attempt", async () => {
     vi.useFakeTimers();
     const build = vi.fn(body);

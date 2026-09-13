@@ -5,6 +5,7 @@ import {
   backoffMs,
   ContextOverflow,
   compact,
+  isOverflow,
   isTransient,
   requestTokens,
   SMALLEST_LIKELY_WINDOW,
@@ -22,6 +23,11 @@ import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./
  * that one model on it, so it costs one failed call rather than one a run.
  * The outer one is the endpoint being unreachable, busy or silent, which is not about this
  * request at all and is worth simply waiting out.
+ *
+ * A request too big for the window is neither, and comes out of here as `ContextOverflow`
+ * however it was found out about — by the `contextLimit` guard below before a round trip was
+ * spent, or by the endpoint's own refusal after one. The option decides how early the caller
+ * hears, not what it hears.
  *
  * Both are bounded by the same rule: nothing is sent again once the model has started
  * answering. The tokens are already out and on their way to whoever is watching, and a second
@@ -124,6 +130,19 @@ export async function runTurn(
       // can trip the idle watchdog on the way out, and `EndpointSilent` is transient by the
       // rules in `retry.ts` — so classifying first brings a cancelled run back from the dead.
       if (produced.any || stream.signal?.aborted) throw error;
+      // The endpoint's own refusal, classified here rather than left to the caller. One failure
+      // had two error types depending on an option about something else: a caller that gave a
+      // `contextLimit` got `ContextOverflow` from the guard above, and one that did not — the
+      // default — got a raw SDK error and had to know to run `isOverflow` over its message
+      // itself. `runTurn` is offered as the whole loop, so the classification this package
+      // already knows how to do belongs inside it.
+      //
+      // The original is kept as `cause`, because the endpoint's wording is the half that names
+      // the number. A rate limit borrows the same words and is not one of these — `isOverflow`
+      // rules it out, and it goes on to be retried below as the 429 it is.
+      if (!(error instanceof ContextOverflow) && isOverflow(errorMessage(error))) {
+        throw new ContextOverflow(errorMessage(error), { cause: error });
+      }
       if (attempt >= maxRetries || !isTransient(error)) throw error;
       const wait = backoffMs(attempt);
       // Reported in whatever unit reads as a number: the first backoff is under a second, and

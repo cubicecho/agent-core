@@ -10,35 +10,77 @@
  * outcome is in the database. Nothing here survives a restart, and nothing here is the record.
  */
 
-/** How many events one run keeps for a watcher that joins late. A chatty run loses its oldest. */
-const MAX_EVENTS = 1000;
+/** What the bus keeps and for how long. Every field optional; see `configureEvents`. */
+export interface EventBusOptions {
+  /** How many events one run keeps for a watcher that joins late. A chatty run loses its oldest. */
+  maxEvents?: number;
+  /**
+   * How far past the cap the backlog is allowed to run before it is trimmed.
+   *
+   * Dropping the oldest event on every push means shifting a thousand-element array tens of
+   * thousands of times over a reasoning run — the one thing in here that would ever show up in a
+   * profile. Trimming in batches makes it a few dozen splices instead, at the cost of the backlog
+   * sometimes being a little longer than the cap, which nothing depends on. The one field here
+   * that is an implementation detail rather than a policy: raising it trades memory for fewer
+   * splices, and there is no reason to lower it.
+   */
+  trimSlack?: number;
+  /** How long a finished run stays readable, for a watcher that arrives just after the end. */
+  retainMs?: number;
+  /**
+   * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
+   *
+   * A finished run has nothing more to say, so forgetting it a minute later costs a late watcher
+   * a backlog and nothing else. An unfinished one is still writing: `touched` only moves on
+   * `emit`, so a live run that spends a minute inside one slow tool call looked exactly like an
+   * abandoned one and was reaped out from under itself. What made that more than a lost backlog
+   * is that the next `emit` builds a fresh stream with `seq` back at zero — and `seq` is the
+   * field `RunEvent` documents for ordering and de-duplication, so a client that reconnects
+   * across the gap discards the new events as ones it has already seen.
+   *
+   * The sweep still has to reap them, because a run killed by a signal or simply forgotten
+   * reaches no `done` either. This is the backstop for a caller that never says so; `endRun` is
+   * for one that knows. Anything shorter than the longest a tool call may take is a live run
+   * reaped out from under itself.
+   */
+  retainUnendedMs?: number;
+}
+
+/** The numbers a run of the shape this bus was written for wants. */
+const DEFAULTS: Required<EventBusOptions> = {
+  maxEvents: 1000,
+  trimSlack: 256,
+  retainMs: 60_000,
+  retainUnendedMs: 30 * 60_000,
+};
+
+/** What is in force now. Read where it is used, so a change applies from the next event. */
+let limits: Required<EventBusOptions> = { ...DEFAULTS };
+
 /**
- * How far past the cap the backlog is allowed to run before it is trimmed.
+ * Changes what the bus keeps, for a process whose runs are not shaped like the ones these
+ * defaults were chosen for.
  *
- * Dropping the oldest event on every push means shifting a thousand-element array tens of
- * thousands of times over a reasoning run — the one thing in here that would ever show up in a
- * profile. Trimming in batches makes it a few dozen splices instead, at the cost of the backlog
- * sometimes being a little longer than the cap, which nothing depends on.
+ * The bus is one module-level thing rather than an object a caller holds, so this is too: it is
+ * a deployment's setting, said once at startup, and not something to move around under a run.
+ * What it costs is memory against how much of a run a late or slow watcher can still read —
+ * a server with hundreds of concurrent runs wants a smaller backlog, and one whose tool calls
+ * take an hour wants a longer `retainUnendedMs` than the thirty minutes assumed here.
+ *
+ * Changes apply from the next event and the next sweep. Nothing already buffered is trimmed to
+ * a cap that has just come down, because the trim happens on push; the backlog settles to the
+ * new number as the run goes on.
+ *
+ * @param options The bounds to change. A field left out — or given anything that is not a
+ * number above zero — keeps what it has, so a partial or a half-built config narrows nothing.
+ * @returns Everything in force afterwards, including what this call did not change.
  */
-const TRIM_SLACK = 256;
-/** How long a finished run stays readable, for a watcher that arrives just after the end. */
-const RETAIN_MS = 60_000;
-/**
- * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
- *
- * A finished run has nothing more to say, so forgetting it a minute later costs a late watcher
- * a backlog and nothing else. An unfinished one is still writing: `touched` only moves on
- * `emit`, so a live run that spends a minute inside one slow tool call looked exactly like an
- * abandoned one and was reaped out from under itself. What made that more than a lost backlog
- * is that the next `emit` builds a fresh stream with `seq` back at zero — and `seq` is the
- * field `RunEvent` documents for ordering and de-duplication, so a client that reconnects
- * across the gap discards the new events as ones it has already seen.
- *
- * The sweep still has to reap them, because a run killed by a signal or simply forgotten
- * reaches no `done` either. This is the backstop for a caller that never says so; `endRun` is
- * for one that knows.
- */
-const RETAIN_UNENDED_MS = 30 * 60_000;
+export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
+  for (const [name, value] of Object.entries(options)) {
+    if (typeof value === "number" && value > 0) limits[name as keyof EventBusOptions] = value;
+  }
+  return { ...limits };
+}
 
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export type RunEventKind =
@@ -166,7 +208,7 @@ function sweep() {
   const now = Date.now();
   for (const [runId, stream] of streams) {
     if (stream.listeners.size) continue;
-    if (stream.touched <= now - (stream.ended ? RETAIN_MS : RETAIN_UNENDED_MS))
+    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs))
       streams.delete(runId);
   }
   scheduleSweep();
@@ -174,7 +216,7 @@ function sweep() {
 
 function scheduleSweep() {
   if (sweeping || streams.size === 0) return;
-  sweeping = setTimeout(sweep, RETAIN_MS);
+  sweeping = setTimeout(sweep, limits.retainMs);
   sweeping.unref?.();
 }
 
@@ -222,8 +264,8 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   };
   stream.events.push(event);
   stream.touched = at;
-  if (stream.events.length > MAX_EVENTS + TRIM_SLACK) {
-    stream.events.splice(0, stream.events.length - MAX_EVENTS);
+  if (stream.events.length > limits.maxEvents + limits.trimSlack) {
+    stream.events.splice(0, stream.events.length - limits.maxEvents);
   }
   // Kept for a moment so a watcher that arrives just after the end still sees how it went,
   // then dropped: a finished run's record is the row, not this.
@@ -247,20 +289,26 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
  * inside the retention window — reads the same story as one that was there from the start.
  *
  * @param runId The run to follow. One that has not started yet is waited on, not refused.
+ * @param signal Stops following. The only other way out is the run's own `done`, and a watcher
+ * with no way out is a leak rather than a lost backlog: the sweep below skips any stream a
+ * listener is on, so a run that dies without `done` pins its backlog for the life of the process.
+ * Returning the generator is not that way out — parked on the promise at the foot of this
+ * function it is suspended at an `await` rather than at a `yield`, and a `return()` there is
+ * queued behind a promise only the next event can settle. An abort resolves that promise itself.
  */
-export async function* watch(runId: string): AsyncGenerator<RunEvent> {
+export async function* watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
   const stream = streamFor(runId);
   // A cursor rather than `shift()`. Draining a backlog an event at a time off the front of an
   // array is a copy of the whole array per event, which on the ten-thousand-delta run this bus
   // is built for is the one quadratic left in the file. The prefix behind the cursor is dropped
-  // in one `slice` per `MAX_EVENTS` instead — the same amortised trade the bus itself makes.
+  // in one `slice` per `maxEvents` instead — the same amortised trade the bus itself makes.
   let queue: RunEvent[] = [...stream.events];
   let head = 0;
   let dropped = 0;
   let wake: (() => void) | null = null;
   const listener = (event: RunEvent) => {
     queue.push(event);
-    // The bus caps its own backlog at `MAX_EVENTS`; without this the watcher downstream of it
+    // The bus caps its own backlog at `maxEvents`; without this the watcher downstream of it
     // had no cap at all, so a client too slow to keep up held every delta a run ever emitted.
     // The oldest go, which is what the backlog does, and the gap is reported once below.
     //
@@ -268,8 +316,8 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
     // the slots behind it, to be freed by the compaction in the drain below — which a consumer
     // that has stalled does not reach, and a stalled consumer is the whole reason for the cap.
     // It read as capped and held every event anyway: 16MB where the cap promises a third of one.
-    const cut = queue.length - head - MAX_EVENTS;
-    if (cut > TRIM_SLACK) {
+    const cut = queue.length - head - limits.maxEvents;
+    if (cut > limits.trimSlack) {
       queue = queue.slice(head + cut);
       head = 0;
       dropped += cut;
@@ -277,9 +325,16 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
     wake?.();
   };
   stream.listeners.add(listener);
+  // The same wake the listener uses: an abort is another reason to stop waiting, and what the
+  // loop does about it is decided in one place below rather than here.
+  const onAbort = () => wake?.();
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
     for (;;) {
-      while (head < queue.length) {
+      // Guarding the drain rather than sitting after it, so an already-aborted signal leaves
+      // without replaying the backlog and one raised mid-drain stops at the next event instead
+      // of finishing the queue first.
+      while (!signal?.aborted && head < queue.length) {
         const event = queue[head++];
         // What is behind the cursor is released rather than left there. Resetting only on catch-up
         // was not enough: a watcher that keeps pace but never quite empties the queue never
@@ -287,7 +342,7 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
         if (head === queue.length) {
           queue = [];
           head = 0;
-        } else if (head > MAX_EVENTS) {
+        } else if (head > limits.maxEvents) {
           queue = queue.slice(head);
           head = 0;
         }
@@ -319,12 +374,17 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
         // than leaving the client holding an open stream that will never say anything again.
         if (event.kind === "done") return;
       }
+      if (signal?.aborted) return;
       await new Promise<void>((resolve) => {
         wake = resolve;
       });
       wake = null;
     }
   } finally {
+    // `once` covers the abort that fired; this is for the one that never did, which would
+    // otherwise hold this generator and its queue alive for as long as the caller holds the
+    // signal — a run's whole backlog kept by a watcher that finished on `done`.
+    signal?.removeEventListener("abort", onAbort);
     stream.listeners.delete(listener);
     // A watcher can name a run that has not started, or will never start. Nothing was recorded
     // under it, so nothing is left behind either — and a run that has ended has nothing more to
@@ -345,6 +405,11 @@ export async function* watch(runId: string): AsyncGenerator<RunEvent> {
 /**
  * The backlog alone, for a caller that wants a snapshot rather than a subscription.
  *
+ * The array is a copy; the events in it are not. They are the same objects the bus holds and
+ * every watcher was handed, so writing to one rewrites the run for everybody — which is what
+ * `fold` copies to avoid, and this is the other half of the same warning. Read them, or copy
+ * what you mean to change.
+ *
  * @param runId The run to read. An unknown or already-swept run gives an empty array.
  */
 export const history = (runId: string): RunEvent[] => [...(streams.get(runId)?.events ?? [])];
@@ -355,11 +420,17 @@ export const history = (runId: string): RunEvent[] => [...(streams.get(runId)?.e
  * Named for what it forgets rather than bare `reset`, which sat in a consumer's imports beside
  * `resetAll`, `resetClients`, `resetCapabilities` and `resetHints` saying nothing about which
  * of the five it was — `reset.ts` had to alias it on the way in to stay readable.
+ *
+ * `configureEvents` is undone too, for the reason `reset.ts` gives about latches: a bus left
+ * holding a cap one test set is the same order-dependent suite, passing where that test ran
+ * first and failing where it did not. A consumer that configures at startup and resets at
+ * teardown configures again, which is the same line it already wrote once.
  */
 export const resetEvents = () => {
   streams.clear();
   if (sweeping) clearTimeout(sweeping);
   sweeping = null;
+  limits = { ...DEFAULTS };
 };
 
 /**

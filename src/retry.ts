@@ -18,6 +18,11 @@ export class EndpointSilent extends Error {
 /**
  * The request was bigger than the model will read. Its own class so nothing retries it: sending
  * the same too-large request again is the same refusal, one round trip later.
+ *
+ * `runTurn` raises it from either side of the round trip — its own pre-flight guard, or the
+ * endpoint's refusal read back through `isOverflow` — so a caller has one thing to catch whether
+ * or not it gave a `contextLimit`. The second carries the endpoint's own message, and the error
+ * it was built from as `cause`.
  */
 export class ContextOverflow extends Error {
   override readonly name = "ContextOverflow";

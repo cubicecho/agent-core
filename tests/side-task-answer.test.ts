@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const create = vi.fn();
-vi.mock("../src/client.ts", () => ({
+/**
+ * The SDK-touching half of the client module, replaced. Partial rather than whole: the rest of
+ * it is pure — `endpointKey` is what every cache in this package agrees an endpoint is — and a
+ * blanket mock takes those out from under the modules under test too.
+ */
+vi.mock("../src/client.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/client.ts")>()),
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 

@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { capabilitiesFor, type ModelCapabilities, negotiate } from "./capabilities.ts";
-import { getClient } from "./client.ts";
+import { endpointKey, getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { isTransient } from "./retry.ts";
@@ -28,10 +28,10 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
 /**
  * The models that turned out not to take the hints, by endpoint and model.
  *
- * Keyed rather than global for the reason the client cache is keyed: a refusal is a fact about
- * what is on the other end, not about this process. A llama.cpp box and a cloud API are both
- * reachable from one consumer over its lifetime, and the first one's refusal must not stop the
- * second from ever being asked.
+ * Keyed rather than global for the reason the client cache is keyed, and on the same
+ * `endpointKey` it is: a refusal is a fact about what is on the other end, not about this
+ * process. A llama.cpp box and a cloud API are both reachable from one consumer over its
+ * lifetime, and the first one's refusal must not stop the second from ever being asked.
  *
  * The model belongs in the key for the same reason. One base URL is routinely many models —
  * OpenRouter, LiteLLM, vLLM serving several at once — and whether `chat_template_kwargs` reaches
@@ -43,7 +43,7 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  */
 const noHints = new Set<string>();
 
-const hintKey = (baseUrl: string, model: string) => JSON.stringify([baseUrl, model]);
+const hintKey = (config: Endpoint, model: string) => JSON.stringify([endpointKey(config), model]);
 
 /** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
 export const resetHints = () => noHints.clear();
@@ -151,14 +151,14 @@ export async function ask(
   // whether a run or a side task found it out, and the point of latching it is that only one of
   // them has to pay for it. Nothing here sends tools or `stream_options`, so the two
   // endpoint-level flags are not in play — the model's three are the whole of what this meets.
-  const supports = capabilitiesFor(config.baseUrl);
+  const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const attempt = (hints: boolean) =>
     negotiate(supports, (_supports, _produced, refused) => send(hints, refused), {
       model,
       onNotice,
     });
 
-  const key = hintKey(config.baseUrl, model);
+  const key = hintKey(config, model);
   const hints = !noHints.has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {

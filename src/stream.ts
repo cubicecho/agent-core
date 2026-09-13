@@ -22,8 +22,26 @@ export interface TurnUsage {
 /** One streamed turn, put back together into the shape a loop and a transcript work with. */
 export interface Turn {
   content: string;
-  toolCalls: OpenAI.ChatCompletionMessageToolCall[];
+  /**
+   * The narrower of the SDK's two tool-call shapes, because it is the only one built here — a
+   * streamed `tool_calls` delta carries a function and nothing else. Typed as the union it
+   * belongs to, every caller had to narrow before it could read `.function`, to rule out a
+   * custom call that this loop cannot produce. Still assignable wherever the union is wanted.
+   */
+  toolCalls: OpenAI.ChatCompletionMessageFunctionToolCall[];
   usage: TurnUsage;
+  /**
+   * Why the model stopped, in the endpoint's own words — `stop`, `length`, `tool_calls`, or `""`
+   * where it never said.
+   *
+   * Reported because `length` is otherwise invisible. A turn cut off at the token ceiling comes
+   * back as a well-formed `Turn` with truncated `content`, or with a tool call whose `arguments`
+   * stop mid-JSON — so the caller meets a parse failure with nothing to attribute it to. Being
+   * cut off looking whole is the same trap `throwIfAborted` below answers for the abort; this
+   * half is not an error, because the tokens are real and a caller may still want them, so it is
+   * handed over rather than raised.
+   */
+  finishReason: string;
 }
 
 /**
@@ -127,6 +145,7 @@ export async function streamTurn(
     const content: string[] = [];
     const calls = new Map<number, { id: string; name: string; arguments: string }>();
     const usage: TurnUsage = { prompt: 0, completion: 0, total: 0 };
+    let finishReason = "";
 
     for await (const chunk of stream) {
       // Rearmed on every chunk, latched below on only some: a priming chunk is the endpoint
@@ -141,7 +160,14 @@ export async function streamTurn(
         usage.completion = chunk.usage.completion_tokens ?? 0;
         usage.total = chunk.usage.total_tokens ?? 0;
       }
-      const delta = chunk.choices[0]?.delta as ReasoningDelta | undefined;
+      // One choice, because that is what an agent loop asks for. A body with `n` above one
+      // keeps only the first; nothing here is built to reassemble several at once.
+      const choice = chunk.choices[0];
+      // Read before the delta guard rather than beside the content. The chunk that carries the
+      // reason usually carries an empty delta, and some servers send it with no delta at all —
+      // either of which the guard below skips, taking the reason with it.
+      if (choice?.finish_reason) finishReason = choice.finish_reason;
+      const delta = choice?.delta as ReasoningDelta | undefined;
       if (!delta) continue;
 
       const thinking = delta.reasoning_content || delta.reasoning || "";
@@ -186,6 +212,7 @@ export async function streamTurn(
           function: { name: call.name, arguments: call.arguments },
         })),
       usage,
+      finishReason,
     };
   }
 }

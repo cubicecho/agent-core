@@ -12,7 +12,10 @@ import type OpenAI from "openai";
  *   2. If the server still reports a grammar failure, strip the advisory `pattern` and
  *      `format` keywords and retry once.
  *
- * Cloud providers accept all of this, so step 2 never fires against them.
+ * Cloud providers accept all of this, so step 2 never fires against them — with one edge worth
+ * knowing about, which is that `nullable` is OpenAPI's spelling rather than JSON Schema's.
+ * OpenAI's ordinary function tools ignore a keyword they do not know; `strict: true` structured
+ * tool calling rejects one. A caller on that path wants its own schemas rather than these.
  */
 
 type Schema = Record<string, unknown>;

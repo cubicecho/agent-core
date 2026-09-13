@@ -8,8 +8,10 @@ import {
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
+  PRESELECT_SYSTEM,
   preselectInput,
   preselection,
+  preselectSystem,
   requestedNames,
 } from "../src/tool-loading.ts";
 
@@ -141,7 +143,10 @@ test("a name that matches nothing is reported, and a match is never counted twic
 
 test("loading says which names it could not place", () => {
   expect(
-    loadResult({ matched: [], unknown: ["nope"], overBroad: [], deferred: [] }, catalog),
+    loadResult(
+      { matched: [], unknown: ["nope"], overBroad: [], deferred: [], maxPerLoad: MAX_PER_LOAD },
+      catalog,
+    ),
   ).toContain("Not in the catalogue: nope");
 });
 
@@ -234,4 +239,42 @@ test("a bare wildcard is answered with the names rather than the whole catalogue
   expect(resolved.overBroad).toHaveLength(1);
   expect(resolved.overBroad[0].hits).toHaveLength(5);
   expect(loadResult(resolved, catalog)).toContain("Name the ones you need from:");
+});
+
+test("a caller's own cap is what the resolution is held to and what it reports", () => {
+  const resolved = expandNames(["gmail__*"], catalog, 2);
+  expect(resolved.matched).toEqual([]);
+  expect(resolved.overBroad[0].name).toBe("gmail__*");
+  expect(resolved.maxPerLoad).toBe(2);
+  // Carried on the resolution rather than read again from the module, so the number the model is
+  // told about is the number it was actually held to.
+  expect(loadResult(resolved, catalog)).toContain("more than the 2 one call may load");
+});
+
+test("a caller's own cap defers what does not fit it", () => {
+  const resolved = expandNames(["gmail__send_email", "files__read_file"], catalog, 1);
+  expect(resolved.matched).toEqual(["gmail__send_email"]);
+  expect(resolved.deferred).toEqual(["files__read_file"]);
+  expect(loadResult(resolved, catalog)).toContain("This call is full at 1 tools");
+});
+
+test("carry-over carries as many as it was asked to", () => {
+  expect(carryOver(["a", "b", "c"], new Set(["d"]), 2)).toEqual(["c", "d"]);
+  // A cap of nobody's is not a cap of none: `slice(-0)` is the whole array, which is the one
+  // answer a caller asking for zero cannot have meant.
+  expect(carryOver(["a", "b", "c"], new Set(["d"]), 0)).toEqual(["d"]);
+});
+
+test("the preselector is told the cap it will be held to", () => {
+  expect(preselectSystem(3)).toContain("at most 3");
+  expect(PRESELECT_SYSTEM).toContain(`at most ${MAX_PER_LOAD}`);
+  expect(preselection(["gmail__send_email", "gmail__read_email"], catalog, 1)).toEqual([
+    "gmail__send_email",
+  ]);
+});
+
+test("the preselect prompt is cut where the caller says", () => {
+  const input = preselectInput(catalog, "read my notes file", 7);
+  expect(input).toContain("read my");
+  expect(input).not.toContain("notes");
 });

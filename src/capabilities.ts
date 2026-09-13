@@ -1,3 +1,4 @@
+import { endpointKey } from "./client.ts";
 import { errorMessage } from "./errors.ts";
 import { isGrammarError } from "./schema-compat.ts";
 import type { Produced } from "./stream.ts";
@@ -75,13 +76,20 @@ export interface ModelCapabilities {
 /**
  * What each endpoint cannot do, remembered for the life of the process.
  *
- * Keyed by base URL, because these are facts about the server on the other end and not about
- * this one. A llama.cpp box that cannot compile a grammar and a cloud API that can are both
- * reachable from one settings row over its lifetime — an operator retargets it from Ollama this
- * afternoon to OpenAI this evening — and the first one's refusal must not quietly strip
+ * Keyed by `endpointKey`, because these are facts about the server on the other end and not
+ * about this one. A llama.cpp box that cannot compile a grammar and a cloud API that can are
+ * both reachable from one settings row over its lifetime — an operator retargets it from Ollama
+ * this afternoon to OpenAI this evening — and the first one's refusal must not quietly strip
  * pattern/format from the second one's requests, or silently cost it its token counts, for the
  * rest of the process. Bounded by the number of endpoints ever configured, which is a settings
  * row's worth.
+ *
+ * The API key is part of that identity, the same as it is for the client pool and the model
+ * listings. A router — LiteLLM, OpenRouter, a gateway with several boxes behind it — is free to
+ * send two keys to two different backends, and then what one of them refused is not a fact about
+ * the other. Keyed on the URL alone the first caller through the gateway latched for everyone
+ * behind it, including the `models` map underneath, which is the level where two keys through
+ * one host are most likely to differ at all.
  */
 const capabilities = new Map<string, Capabilities>();
 
@@ -89,14 +97,19 @@ const capabilities = new Map<string, Capabilities>();
  * What this endpoint is known not to support. The same object every time, so what `negotiate`
  * latches off stays off.
  *
- * @param baseUrl Identifies the endpoint. The two flags on it are per-server; what is
- * per-model hangs off `models`, which `modelCapabilitiesFor` reads.
+ * @param baseUrl Where the endpoint is. The two flags on it are per-server; what is per-model
+ * hangs off `models`, which `modelCapabilitiesFor` reads.
+ * @param apiKey The rest of the endpoint's identity. Optional, because it changes nothing for
+ * the ordinary case of one key per base URL and a caller with one need not thread it through;
+ * absent reads as `NO_KEY`, exactly as it does in `getClient`, so an endpoint with no key and
+ * one that passes `undefined` share an entry rather than holding two.
  */
-export function capabilitiesFor(baseUrl: string): Capabilities {
-  let known = capabilities.get(baseUrl);
+export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities {
+  const key = endpointKey({ baseUrl, apiKey });
+  let known = capabilities.get(key);
   if (!known) {
     known = { strictSchemas: true, usageInStream: true, models: new Map() };
-    capabilities.set(baseUrl, known);
+    capabilities.set(key, known);
   }
   return known;
 }

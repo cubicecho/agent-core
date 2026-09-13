@@ -1,7 +1,7 @@
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { emit, endRun, fold, history, resetEvents, watch } from "../src/events.ts";
+import { configureEvents, emit, endRun, fold, history, resetEvents, watch } from "../src/events.ts";
 
 beforeEach(() => resetEvents());
 afterEach(() => {
@@ -157,6 +157,66 @@ describe("watch", () => {
   });
 });
 
+describe("watch, cancelled", () => {
+  it("lets a watcher out of a run that never says done", async () => {
+    emit("live", { kind: "output", text: "a" });
+    const stop = new AbortController();
+    const watcher = watch("live", stop.signal);
+
+    expect((await watcher.next()).value?.text).toBe("a");
+    // Parked here, waiting on a run that has not finished and will not. Returning the generator
+    // is not the way out: suspended at an `await` rather than at a `yield`, the return is queued
+    // behind a promise only the next event can settle.
+    const parked = watcher.next();
+    stop.abort();
+    expect(await parked).toEqual({ value: undefined, done: true });
+  });
+
+  it("stops pinning the stream, so the sweep can reach an abandoned run", async () => {
+    vi.useFakeTimers();
+    emit("abandoned", { kind: "output", text: "half a thought" });
+    const stop = new AbortController();
+    const watcher = watch("abandoned", stop.signal);
+    await watcher.next();
+
+    // A listener holds the stream past every deadline: the sweep skips any stream one is on, so
+    // this is the leak the sweep exists to prevent, arriving by the one route it cannot see.
+    vi.advanceTimersByTime(31 * 60_000);
+    expect(history("abandoned")).toHaveLength(1);
+
+    const parked = watcher.next();
+    stop.abort();
+    await parked;
+    vi.advanceTimersByTime(31 * 60_000);
+    expect(history("abandoned")).toEqual([]);
+  });
+
+  it("leaves without replaying the backlog when the signal is already aborted", async () => {
+    emit("r", { kind: "output", text: "a" });
+    expect(await watch("r", AbortSignal.abort()).next()).toEqual({ value: undefined, done: true });
+  });
+
+  it("stops mid-backlog rather than finishing the queue it already holds", async () => {
+    for (let i = 0; i < 5; i++) emit("r", { kind: "output", text: `${i}` });
+    const stop = new AbortController();
+    const seen: string[] = [];
+    for await (const event of watch("r", stop.signal)) {
+      seen.push(event.text);
+      if (seen.length === 2) stop.abort();
+    }
+    expect(seen).toEqual(["0", "1"]);
+  });
+
+  it("ends on done as it always did, with a signal that never fires", async () => {
+    emit("r", { kind: "output", text: "a" });
+    emit("r", { kind: "done", ok: true });
+    const stop = new AbortController();
+    const seen: string[] = [];
+    for await (const event of watch("r", stop.signal)) seen.push(event.kind);
+    expect(seen).toEqual(["output", "done"]);
+  });
+});
+
 describe("cleanup", () => {
   it("forgets a finished run whose watcher was still reading when retention lapsed", async () => {
     vi.useFakeTimers();
@@ -239,6 +299,52 @@ describe("cleanup", () => {
     expect(history("live")).toHaveLength(1);
 
     await watcher.return(undefined);
+  });
+});
+
+describe("configureEvents", () => {
+  it("caps a run's backlog at the number it was given", () => {
+    configureEvents({ maxEvents: 4, trimSlack: 1 });
+    for (let n = 0; n < 20; n++) emit("chatty", { kind: "output", text: `${n}` });
+    // Trimmed in batches, as at the default: the backlog runs to the cap plus the slack and is
+    // cut back to the cap, so what is left is the four most recent rather than five.
+    expect(history("chatty").map((event) => event.seq)).toEqual([17, 18, 19, 20]);
+  });
+
+  it("reaps an unfinished run on the clock it was given", () => {
+    vi.useFakeTimers();
+    // A consumer whose tool calls are minutes rather than hours wants its abandoned runs back
+    // sooner than the half-hour assumed here.
+    configureEvents({ retainUnendedMs: 60_000 });
+    emit("abandoned", { kind: "output", text: "half a thought" });
+    vi.advanceTimersByTime(60_000);
+    expect(history("abandoned")).toEqual([]);
+  });
+
+  it("changes only what it was handed a number for", () => {
+    const before = configureEvents();
+    const after = configureEvents({ retainMs: 5_000 });
+    expect(after).toEqual({ ...before, retainMs: 5_000 });
+  });
+
+  it("keeps what it has rather than taking a number that is not one", () => {
+    // A half-built config — a `0` standing in for "no opinion", a parsed env var that came back
+    // `NaN` — must not turn the backlog off. Nothing here has a meaningful zero.
+    expect(configureEvents({ maxEvents: 0, retainMs: -1, trimSlack: Number.NaN })).toEqual(
+      configureEvents(),
+    );
+    expect(configureEvents().maxEvents).toBe(1000);
+  });
+
+  it("is undone by a reset, so one test's cap is not the next one's", () => {
+    configureEvents({ maxEvents: 4, retainMs: 5_000 });
+    resetEvents();
+    expect(configureEvents()).toEqual({
+      maxEvents: 1000,
+      trimSlack: 256,
+      retainMs: 60_000,
+      retainUnendedMs: 30 * 60_000,
+    });
   });
 });
 
