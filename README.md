@@ -25,7 +25,7 @@ only, Node >=22.
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
-| `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
+| `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
@@ -408,6 +408,26 @@ Either one given something that is not a number above zero keeps what was there,
 Neither function rejects. A hook failing is an outcome, and a runner that throws outright is
 noted once for its event and costs only that event's context. `notify` takes no signal: a reader
 who leaves once the turn is answered has not asked for it not to be remembered.
+
+### Untrusted text
+
+Hook context is not the only text in a prompt that nobody vouched for. A fetched page, an email, a
+submitted card and a tool result all reach the model in the same words as the operator's own, and
+`untrusted` gives the model a fence it can see around them. Put `UNTRUSTED_PREFACE` in the system
+prompt once, where it costs the prompt cache nothing, and wrap each piece where it is pasted in:
+
+```ts
+import { UNTRUSTED_PREFACE, untrusted } from "@cubicecho/agent-core";
+
+const system = `${instructions}\n\n${UNTRUSTED_PREFACE}`;
+const content = `Summarise this page.\n\n${untrusted(page, { source: url })}`;
+```
+
+Any `untrusted` tag inside the text, opening or closing and in any case, has its `<` escaped, so a
+page that writes `</untrusted>` followed by an instruction leaves that instruction inside the
+block. This is one layer and not a defence on its own. A model can still be talked out of a fence,
+and the tool policy is what decides what the text can make the agent do. `withContext` does not
+fence hook blocks this way, because they have to stay identical to the MCP pool's `contextBlocks`.
 
 ## The config seam
 

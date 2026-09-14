@@ -98,6 +98,8 @@ export {
   resetHooks,
   turnIndex,
   turnMessages,
+  UNTRUSTED_PREFACE,
+  untrusted,
   withContext,
 } from "./hooks.ts";
 export { resetAll } from "./reset.ts";
