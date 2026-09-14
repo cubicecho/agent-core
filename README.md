@@ -143,11 +143,21 @@ is worth another attempt. The content-free `{"role":"assistant"}` most servers o
 does not set it: nothing has been shown to anybody yet, so an endpoint that primes the stream and
 then wedges is retried like one that never answered at all.
 
-`idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is
-still talking is never cut off however long it takes, and one that has stopped answering raises
+`idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is still
+talking is never cut off however long it takes, and one that has stopped answering raises
 `EndpointSilent` rather than hanging the run. `timeoutMs(config)` returns `undefined` for a
-`requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering
-slowly needs.
+`requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering slowly
+needs.
+
+The first chunk gets its own allowance, `firstChunkMs`, because the first wait is prefill: tens of
+seconds for a long prompt on a local GPU, minutes on a CPU, and longer again when the server is
+loading the model on demand. It holds until a chunk carries something, so an empty
+`{"role":"assistant"}` sent before the prompt is read does not start the idle clock.
+`firstTokenMs(config)` reads `firstTokenSeconds` off the endpoint, and five times
+`requestTimeoutSeconds` where that is absent. With a watchdog armed, the SDK's own timer is switched
+off for the stream; it runs until the headers arrive, which is the end of prefill, and used to
+abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, side
+tasks and model listings, the same way.
 
 ## Sizing a request before sending it
 

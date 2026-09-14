@@ -52,6 +52,24 @@ const clients = new Map<string, OpenAI>();
  */
 const MAX_CLIENTS = 32;
 
+/** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
+export const FIRST_TOKEN_FACTOR = 5;
+
+/**
+ * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
+ *
+ * @param config Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
+ */
+export const firstTokenMs = (
+  config: Pick<Endpoint, "requestTimeoutSeconds" | "firstTokenSeconds">,
+): number | undefined => {
+  if (config.firstTokenSeconds === undefined) {
+    const idle = timeoutMs(config);
+    return idle === undefined ? undefined : idle * FIRST_TOKEN_FACTOR;
+  }
+  return config.firstTokenSeconds > 0 ? config.firstTokenSeconds * 1000 : undefined;
+};
+
 /**
  * The client for an endpoint, built once and kept.
  *

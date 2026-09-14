@@ -46,6 +46,8 @@ The contract between whatever holds the tools and the loop that offers them to a
 ### client
 
 - `contextLimitFor` — How much a model will read, in tokens.
+- `FIRST_TOKEN_FACTOR` — How many idle windows the first chunk gets when `firstTokenSeconds` is not given.
+- `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for an endpoint, built once and kept.
 - `listModels` — Asks an endpoint what it serves, and remembers the answer.
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.

@@ -7,7 +7,9 @@ vi.mock("openai", () => ({
   },
 }));
 
-const { contextLimitFor, getClient, listModels, resetClients } = await import("../src/client.ts");
+const { contextLimitFor, firstTokenMs, getClient, listModels, resetClients } = await import(
+  "../src/client.ts"
+);
 
 const endpoint = { baseUrl: "http://local/v1", apiKey: "", requestTimeoutSeconds: 60 };
 /** What a listing endpoint answers with: the OpenAI shape plus whatever window key it uses. */
@@ -159,5 +161,17 @@ describe("getClient", () => {
     getClient(box(MAX_CLIENTS));
     expect(getClient(box(0))).toBe(first);
     expect(getClient(box(1))).not.toBe(second);
+  });
+});
+
+describe("firstTokenMs", () => {
+  it("is five idle windows unless the endpoint names its own", () => {
+    expect(firstTokenMs({ requestTimeoutSeconds: 60 })).toBe(300_000);
+    expect(firstTokenMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 600 })).toBe(600_000);
+  });
+
+  it("is no limit where there is none to multiply, or it is turned off", () => {
+    expect(firstTokenMs({})).toBeUndefined();
+    expect(firstTokenMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 0 })).toBeUndefined();
   });
 });

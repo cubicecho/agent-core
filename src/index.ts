@@ -35,6 +35,8 @@ export {
 export type { CatalogServer } from "./catalog.ts";
 export {
   contextLimitFor,
+  FIRST_TOKEN_FACTOR,
+  firstTokenMs,
   getClient,
   listModels,
   type ModelInfo,

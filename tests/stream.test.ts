@@ -246,6 +246,44 @@ describe("streamTurn", () => {
     await settled;
   });
 
+  it("gives the first token its own allowance, and the idle one after it", async () => {
+    // Prefill of a long prompt on a local server is many times the gap between tokens.
+    vi.useFakeTimers();
+    const options: { timeout?: number }[] = [];
+    const turn = streamTurn(
+      clientOf((_, requestOptions) => {
+        options.push(requestOptions as { timeout?: number });
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield chunk({ choices: [{ delta: { role: "assistant" } }] });
+            await new Promise((resolve) => setTimeout(resolve, 100_000));
+            yield* stalls(requestOptions.signal, text("after prefill"));
+          },
+        };
+      }),
+      body,
+      { idleMs: 30_000, firstChunkMs: 150_000 },
+    );
+    const settled = expect(turn).rejects.toThrow("the model endpoint sent nothing for 30s");
+    await vi.advanceTimersByTimeAsync(100_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settled;
+    // The watchdog covers the wait the SDK's own timer would otherwise cut short at the idle number.
+    expect(options[0]?.timeout).toBeGreaterThan(150_000);
+  });
+
+  it("says when it was the first token that never came", async () => {
+    vi.useFakeTimers();
+    const turn = streamTurn(
+      clientOf((_, { signal }) => stalls(signal)),
+      body,
+      { idleMs: 30_000, firstChunkMs: 150_000 },
+    );
+    const settled = expect(turn).rejects.toThrow("nothing for 150s before its first token");
+    await vi.advanceTimersByTimeAsync(150_000);
+    await settled;
+  });
+
   it("waits as long as a model needs when no idle budget is given", async () => {
     vi.useFakeTimers();
     let go = () => {};

@@ -69,6 +69,9 @@ type ReasoningDelta = OpenAI.ChatCompletionChunk.Choice.Delta & {
   reasoning?: string | null;
 };
 
+/** The largest delay a timer takes, which is as close to none as the SDK's timeout option goes. */
+const NO_SDK_TIMEOUT = 2 ** 31 - 1;
+
 /**
  * Whether the model has said anything a second attempt would say twice.
  *
@@ -98,6 +101,13 @@ export interface StreamTurnOptions {
    * needs.
    */
   idleMs?: number;
+  /**
+   * Silence allowed before the first chunk, `idleMs` unless given; zero waits forever.
+   *
+   * The first wait is prefill, or a server loading the model, and is routinely many times the
+   * gap between tokens. See `Endpoint.firstTokenSeconds` and `firstTokenMs`.
+   */
+  firstChunkMs?: number;
   /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
   produced?: Produced;
   /** The model's scratchpad, as it arrives. */
@@ -125,7 +135,7 @@ export interface StreamTurnOptions {
 export async function streamTurn(
   client: OpenAI,
   body: OpenAI.ChatCompletionCreateParamsStreaming,
-  { signal, idleMs, produced, onThinking, onOutput }: StreamTurnOptions = {},
+  { signal, idleMs, firstChunkMs, produced, onThinking, onOutput }: StreamTurnOptions = {},
 ): Promise<Turn> {
   // Silence, not duration: the timer is rearmed on every chunk, so a model that is still
   // talking is never cut off however long it takes, and one that has stopped talking does not
@@ -134,14 +144,20 @@ export async function streamTurn(
   const watchdog = new AbortController();
   const linked = signal ? AbortSignal.any([signal, watchdog.signal]) : watchdog.signal;
   let idle: ReturnType<typeof setTimeout> | undefined;
-  const rearm = () => {
-    if (!idleMs) return;
+  const first = firstChunkMs ?? idleMs;
+  // Until the model says something the wait is still prefill, however many empty chunks a
+  // server sends first: some open the stream with `{"role":"assistant"}` before they have read
+  // the prompt, and switching to the idle allowance on that abandoned the prefill it preceded.
+  let talking = false;
+  const rearm = (carried: boolean) => {
+    talking ||= carried;
+    const ms = talking ? idleMs : first;
     clearTimeout(idle);
-    idle = setTimeout(() => watchdog.abort(), idleMs);
+    if (ms) idle = setTimeout(() => watchdog.abort(), ms);
   };
 
   try {
-    rearm();
+    rearm(false);
     return await collect();
   } catch (error) {
     // The caller's own stop has to stay distinguishable from ours: one is a run that was called
@@ -149,7 +165,11 @@ export async function streamTurn(
     // this backwards records a stopped run as an endpoint fault, which nobody notices until
     // they read the row and disbelieve it.
     if (watchdog.signal.aborted && !signal?.aborted) {
-      throw new EndpointSilent(`the model endpoint sent nothing for ${(idleMs ?? 0) / 1000}s`);
+      const waited = talking ? idleMs : first;
+      const before = talking || first === idleMs ? "" : " before its first token";
+      throw new EndpointSilent(
+        `the model endpoint sent nothing for ${(waited ?? 0) / 1000}s${before}`,
+      );
     }
     throw error;
   } finally {
@@ -157,7 +177,14 @@ export async function streamTurn(
   }
 
   async function collect(): Promise<Turn> {
-    const stream = await client.chat.completions.create(body, { signal: linked });
+    // The SDK's own timer runs until the headers arrive, which for a stream is the end of
+    // prefill, and it was set from the idle number. Where a watchdog is armed it covers that
+    // wait already, with the allowance meant for it, so the SDK is told to leave it alone.
+    const watched = first || idleMs;
+    const stream = await client.chat.completions.create(body, {
+      signal: linked,
+      ...(watched ? { timeout: NO_SDK_TIMEOUT } : {}),
+    });
     const content: string[] = [];
     const calls = new Map<number, { id: string; name: string; arguments: string }>();
     const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
@@ -165,8 +192,9 @@ export async function streamTurn(
 
     for await (const chunk of stream) {
       // Rearmed on every chunk, latched below on only some: a priming chunk is the endpoint
-      // being alive, which is all the watchdog is asking about.
-      rearm();
+      // being alive, which is all the watchdog is asking about. Which allowance it rearms with
+      // moves from the first chunk's to the idle one when a chunk carries something.
+      rearm(false);
       // Assigned rather than accumulated. `stream_options.include_usage` sends one final chunk
       // and the two agree there, but a server that reports cumulatively per chunk makes a sum
       // of sums out of an accumulator — and a token count wrong by a factor of the chunk count
@@ -197,7 +225,9 @@ export async function streamTurn(
       // fragments count even though no callback reports them: a partial call is state the turn
       // has accumulated, and losing a retry is the safer half of that trade. Set before the
       // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
-      if (produced && (thinking || delta.content || delta.tool_calls?.length)) produced.any = true;
+      const carried = Boolean(thinking || delta.content || delta.tool_calls?.length);
+      if (carried && !talking) rearm(true);
+      if (produced && carried) produced.any = true;
       if (thinking) onThinking?.(thinking);
       if (delta.content) {
         content.push(delta.content);
