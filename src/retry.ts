@@ -153,6 +153,17 @@ export const requestTokens = (body: OpenAI.ChatCompletionCreateParamsStreaming) 
 };
 
 /**
+ * One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
+ *
+ * For the arithmetic that weighs part of a transcript against a window — `planCompaction`'s kept
+ * tail — where `estimateTokens` on the text alone would leave out the calls and the envelope.
+ *
+ * @param message The message as it will be sent.
+ */
+export const messageTokens = (message: OpenAI.ChatCompletionMessageParam) =>
+  Math.ceil(messageChars(message) / CHARS_PER_TOKEN);
+
+/**
  * Servers refuse an over-long request in their own words; these are the ones worth reading as
  * that rather than as a broken request. Matched loosely — every one of them is some
  * arrangement of "context" and "too long", and the arrangement is the part that varies.
