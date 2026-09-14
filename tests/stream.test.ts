@@ -75,6 +75,62 @@ describe("streamTurn", () => {
     expect(turn.reasoning).toBe("hmm so");
   });
 
+  it("routes a scratchpad fenced in content to thinking, not to the answer", async () => {
+    const thinking: string[] = [];
+    const output: string[] = [];
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("<thi"), text("nk>hmm</th"), text("ink>ans"), text("wer"))),
+      body,
+      { onThinking: (delta) => thinking.push(delta), onOutput: (delta) => output.push(delta) },
+    );
+    expect(turn.content).toBe("answer");
+    expect(turn.reasoning).toBe("hmm");
+    expect(thinking.join("")).toBe("hmm");
+    expect(output.join("")).toBe("answer");
+  });
+
+  it("keeps a scratchpad cut off at the ceiling out of the answer", async () => {
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          text("<think>still weighing"),
+          chunk({ choices: [{ delta: {}, finish_reason: "length" }] }),
+        ),
+      ),
+      body,
+    );
+    expect(turn).toMatchObject({
+      content: "",
+      reasoning: "still weighing",
+      finishReason: "length",
+    });
+  });
+
+  it("starts in the scratchpad when the template opened the fence", async () => {
+    const output: string[] = [];
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("hmm</think>"), text("answer"))),
+      body,
+      {
+        startInReasoning: true,
+        onOutput: (delta) => output.push(delta),
+      },
+    );
+    expect(turn).toMatchObject({ content: "answer", reasoning: "hmm" });
+    expect(output).toEqual(["answer"]);
+  });
+
+  it("reads content as all answer when given no fences", async () => {
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("<think>x</think>y"))),
+      body,
+      {
+        fences: [],
+      },
+    );
+    expect(turn.content).toBe("<think>x</think>y");
+  });
+
   it("reassembles tool calls arriving in pieces, in index order", async () => {
     const call = (index: number, part: Record<string, unknown>): Chunk =>
       chunk({ choices: [{ delta: { tool_calls: [{ index, ...part }] } }] });

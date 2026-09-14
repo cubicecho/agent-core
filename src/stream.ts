@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { EndpointSilent } from "./retry.ts";
+import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from "./thinking.ts";
 
 /**
  * Reading one streamed turn back into a message.
@@ -119,7 +120,21 @@ export interface StreamTurnOptions {
   idleMs?: number;
   /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
   produced?: Produced;
-  /** The model's scratchpad, as it arrives. */
+  /**
+   * The fences that mark a scratchpad written into `content`, `DEFAULT_FENCES` unless given.
+   *
+   * Text inside one goes to `onThinking` and `reasoning` rather than `onOutput` and `content`.
+   * `ALL_FENCES` adds `<thinking>` and `<reasoning>`, which a model can also be quoting; an
+   * empty list reads `content` as all answer.
+   */
+  fences?: readonly Fence[];
+  /**
+   * The chat template opened the first fence in the prompt, so the reply starts inside it.
+   * Without this the scratchpad is still moved out of `content` once the closing tag arrives,
+   * but `onOutput` will have been told it first.
+   */
+  startInReasoning?: boolean;
+  /** The model's scratchpad, as it arrives, from its own field or from a fence in `content`. */
   onThinking?: (delta: string) => void;
   /** The model's answer, as it arrives. */
   onOutput?: (delta: string) => void;
@@ -144,7 +159,15 @@ export interface StreamTurnOptions {
 export async function streamTurn(
   client: OpenAI,
   body: OpenAI.ChatCompletionCreateParamsStreaming,
-  { signal, idleMs, produced, onThinking, onOutput }: StreamTurnOptions = {},
+  {
+    signal,
+    idleMs,
+    produced,
+    fences = DEFAULT_FENCES,
+    startInReasoning,
+    onThinking,
+    onOutput,
+  }: StreamTurnOptions = {},
 ): Promise<Turn> {
   // Silence, not duration: the timer is rearmed on every chunk, so a model that is still
   // talking is never cut off however long it takes, and one that has stopped talking does not
@@ -177,8 +200,13 @@ export async function streamTurn(
 
   async function collect(): Promise<Turn> {
     const stream = await client.chat.completions.create(body, { signal: linked });
-    const content: string[] = [];
+    // The field's reasoning here, the fenced kind in the splitter, which can still move text
+    // already read as answer into reasoning when a closing tag turns up with no opening one.
     const reasoning: string[] = [];
+    const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
+    const report = (parts: Split[]) => {
+      for (const part of parts) (part.kind === "reasoning" ? onThinking : onOutput)?.(part.text);
+    };
     // In arrival order, sorted by index at the end; a call from a server that sent none keeps
     // its place in the order they arrived.
     const calls: PartialCall[] = [];
@@ -224,10 +252,7 @@ export async function streamTurn(
         reasoning.push(thinking);
         onThinking?.(thinking);
       }
-      if (delta.content) {
-        content.push(delta.content);
-        onOutput?.(delta.content);
-      }
+      if (delta.content) report(splitter.push(delta.content));
       // Tool calls arrive in pieces, keyed by position: the id in one chunk, the name in
       // another, the arguments spread across the next several.
       for (const part of delta.tool_calls ?? []) {
@@ -272,10 +297,14 @@ export async function streamTurn(
     // complete one, and a truncated answer is recorded as the output. Nothing about the API
     // says you have to know this.
     linked.throwIfAborted();
+    // What was held back as a possible tag. A reply that ended inside a fence stays reasoning:
+    // cut off at the ceiling mid-scratchpad, it has no answer, and promoting the deliberation to
+    // one is how a truncated turn gets recorded as output.
+    report(splitter.finish());
 
     const minted = new Set<string>();
     return {
-      content: content.join(""),
+      content: splitter.output,
       toolCalls: calls
         .map((call, order) => ({ call, order }))
         .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order)
@@ -293,7 +322,7 @@ export async function streamTurn(
         }),
       usage,
       finishReason,
-      reasoning: reasoning.join(""),
+      reasoning: reasoning.join("") + splitter.reasoning,
     };
   }
 }

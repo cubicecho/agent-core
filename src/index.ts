@@ -131,6 +131,16 @@ export {
   type Turn,
   type TurnUsage,
 } from "./stream.ts";
+export {
+  ALL_FENCES,
+  DEFAULT_FENCES,
+  type Fence,
+  FenceSplitter,
+  type FenceSplitterOptions,
+  type Split,
+  stripThinking,
+  THINK_FENCE,
+} from "./thinking.ts";
 export { estimateTokens } from "./tokens.ts";
 export {
   carryOver,

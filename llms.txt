@@ -182,6 +182,19 @@ Reading one streamed turn back into a message.
 - `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.
 - `TurnUsage` (type) — What a turn cost.
 
+### thinking
+
+Telling a model's scratchpad from its answer when both arrive in `content`.
+
+- `ALL_FENCES` — Every fence known, including the two plain-word ones some fine-tunes and prompt-instructed models use.
+- `DEFAULT_FENCES` — The fences nobody writes by accident, and so the ones `streamTurn` reads by default.
+- `Fence` (type) — One way a model marks off its scratchpad inside `content`.
+- `FenceSplitter` — A state machine over a stream of `content` that routes fenced text to reasoning.
+- `FenceSplitterOptions` (type) — What `FenceSplitter` takes besides its fences.
+- `Split` (type) — A piece of `content`, said to be one or the other.
+- `stripThinking` — What is left of a complete reply once every scratchpad is taken out of it.
+- `THINK_FENCE` — DeepSeek, Qwen3, QwQ and most distills.
+
 ### tokens
 
 - `estimateTokens` — Rough token count.
