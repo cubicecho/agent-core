@@ -78,11 +78,17 @@ for: a router is free to send two keys to two different backends, and then what 
 refused is not a fact about the other. Absent and empty read the same, so a local server with no
 key is one entry however its caller spells it.
 
-`Turn` is `content`, `toolCalls`, `usage` and `finishReason`. The last is worth reading: a turn
-cut off at the token ceiling comes back looking exactly like a finished one, with truncated prose
-or — the case that bites — a tool call whose `arguments` stop mid-JSON, so the caller meets a
-parse failure with nothing to attribute it to. `finishReason` is `"length"` there, `""` where the
-endpoint never said.
+`Turn` is `content`, `toolCalls`, `usage`, `finishReason` and `reasoning`. The fourth is worth
+reading: a turn cut off at the token ceiling comes back looking exactly like a finished one, with
+truncated prose or — the case that bites — a tool call whose `arguments` stop mid-JSON, so the
+caller meets a parse failure with nothing to attribute it to. `finishReason` is `"length"` there,
+`""` where the endpoint never said.
+
+`reasoning` is the scratchpad `onThinking` was told, kept because two common families want it
+back. gpt-oss and DeepSeek in thinking mode read the analysis behind a tool call off the assistant
+message on the next request: store it as `reasoning_content` on that message while it ends in a
+tool call, and drop it once the model has answered. Any other model is better off without it,
+since it is context paid for on every turn. `requestTokens` counts it either way.
 
 ## What the model refuses, rather than the server
 

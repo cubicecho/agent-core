@@ -149,6 +149,13 @@ test("the keys only some messages carry are counted, not only their values", () 
   const bare = many({ role: "user", content: "hi" });
   expect(sized(result) - sized(bare)).toBe(serialized(result) - serialized(bare));
 
+  // The scratchpad a caller passes back to gpt-oss or DeepSeek, in either spelling.
+  const thought = many({ role: "assistant", content: "hi", reasoning_content: "because" } as never);
+  const plain = many({ role: "assistant", content: "hi" });
+  expect(sized(thought) - sized(plain)).toBe(serialized(thought) - serialized(plain));
+  const routed = many({ role: "assistant", content: "hi", reasoning: "because" } as never);
+  expect(sized(routed) - sized(plain)).toBe(serialized(routed) - serialized(plain));
+
   // And the whole shape, end to end: twenty tool results is what a real run is mostly made of,
   // and the body the omission was worth ninety tokens on.
   const run = Array.from({ length: 20 }, (_, i) => ({

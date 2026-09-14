@@ -58,6 +58,17 @@ export interface Turn {
    * handed over rather than raised.
    */
   finishReason: string;
+  /**
+   * The model's scratchpad, as `onThinking` was told it, `""` where it deliberated in silence or
+   * not at all.
+   *
+   * Kept because some models want it back. gpt-oss and DeepSeek in thinking mode read the
+   * analysis behind a tool call off the assistant message on the next request, so a caller
+   * talking to one stores it as `reasoning_content` on that message for as long as the message
+   * ends in a tool call, and drops it once the model has given a final answer. A model that
+   * does not ask for it is better off without it: it is context, paid for on every turn.
+   */
+  reasoning: string;
 }
 
 /**
@@ -167,6 +178,7 @@ export async function streamTurn(
   async function collect(): Promise<Turn> {
     const stream = await client.chat.completions.create(body, { signal: linked });
     const content: string[] = [];
+    const reasoning: string[] = [];
     // In arrival order, sorted by index at the end; a call from a server that sent none keeps
     // its place in the order they arrived.
     const calls: PartialCall[] = [];
@@ -208,7 +220,10 @@ export async function streamTurn(
       // has accumulated, and losing a retry is the safer half of that trade. Set before the
       // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
       if (produced && (thinking || delta.content || delta.tool_calls?.length)) produced.any = true;
-      if (thinking) onThinking?.(thinking);
+      if (thinking) {
+        reasoning.push(thinking);
+        onThinking?.(thinking);
+      }
       if (delta.content) {
         content.push(delta.content);
         onOutput?.(delta.content);
@@ -278,6 +293,7 @@ export async function streamTurn(
         }),
       usage,
       finishReason,
+      reasoning: reasoning.join(""),
     };
   }
 }

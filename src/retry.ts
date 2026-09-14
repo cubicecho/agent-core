@@ -68,6 +68,18 @@ const TEXT_PART = 26;
 /** The same for `{"type":"refusal","refusal":""},` around a refusal part. */
 const REFUSAL_PART = 32;
 
+/**
+ * The same for `"reasoning_content":"",` around an assistant message's scratchpad.
+ *
+ * Not in the SDK's types, and passed back by the caller who keeps it: gpt-oss and DeepSeek in
+ * thinking mode want the analysis behind a tool call on the next request. Left uncounted, the
+ * guard came up short by the whole scratchpad on exactly the runs that follow that rule.
+ */
+const REASONING_KEY = 23;
+
+/** The same for `"reasoning":"",`, OpenRouter's spelling of it. */
+const REASONING_ALT_KEY = 15;
+
 /** The divisor behind `estimateTokens`, applied here to a character count rather than a string. */
 const CHARS_PER_TOKEN = 4;
 
@@ -90,6 +102,12 @@ function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
     chars += NAME_KEY + message.name.length;
   if ("tool_call_id" in message && typeof message.tool_call_id === "string")
     chars += TOOL_CALL_ID_KEY + message.tool_call_id.length;
+  const { reasoning_content: reasoning, reasoning: alternate } = message as {
+    reasoning_content?: unknown;
+    reasoning?: unknown;
+  };
+  if (typeof reasoning === "string") chars += REASONING_KEY + reasoning.length;
+  if (typeof alternate === "string") chars += REASONING_ALT_KEY + alternate.length;
   if ("tool_calls" in message && Array.isArray(message.tool_calls)) {
     chars += TOOL_CALLS_KEY;
     for (const call of message.tool_calls) {

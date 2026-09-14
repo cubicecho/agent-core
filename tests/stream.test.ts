@@ -71,6 +71,8 @@ describe("streamTurn", () => {
     expect(thinking).toEqual(["hmm ", "so"]);
     // The scratchpad is reported, never assembled into the answer.
     expect(turn.content).toBe("answer");
+    // But kept beside it, for the models that want it passed back behind a tool call.
+    expect(turn.reasoning).toBe("hmm so");
   });
 
   it("reassembles tool calls arriving in pieces, in index order", async () => {
