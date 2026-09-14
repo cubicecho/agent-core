@@ -9,6 +9,22 @@ Full prose, worked examples and the reasoning behind each seam are in README.md;
 
 ## Exports
 
+### agent-loop
+
+The loop above a turn: send, run the tools the model asked for, send again, until it stops asking.
+
+- `AgentLoopHooks` (type) — The hooks a loop runs around one question.
+- `AgentLoopOptions` (type) — What `runAgentLoop` takes.
+- `AgentLoopResult` (type) — What a finished loop hands back.
+- `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
+- `parseToolArguments` — A tool call's arguments as the object the tool is handed.
+- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
+- `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
+- `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
+- `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
+- `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
+- `ToolCallRequest` (type) — One call the model made, as `dispatch` is handed it.
+
 ### capabilities
 
 What an endpoint turned out not to support, and answering it when it says so.
@@ -36,6 +52,23 @@ The contract between whatever holds the tools and the loop that offers them to a
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `resetClients` — Forgets every cached client and listing.
 - `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
+
+### compaction
+
+Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded into a summary the model writes itself.
+
+- `COMPACT_AT` — The fraction of the window in use before a summary is worth its own round trip.
+- `CompactionOptions` (type) — What `planCompaction` takes.
+- `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
+- `compactTranscript` — The transcript with the plan's stretch replaced by one system message holding its summary.
+- `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
+- `PruneOptions` (type) — What `pruneToolResults` takes.
+- `planCompaction` — Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
+- `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
+- `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
+- `SUMMARY_PROMPT` — The summariser's instruction when the caller gives none.
+- `summariser` — A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
+- `summaryInput` — What the summariser is handed for a plan: the earlier summary if there was one, then each message as its role and at most 4000 characters of its text.
 
 ### config
 
@@ -107,6 +140,7 @@ Everything about a request failing that is not about what the request said.
 - `EndpointSilent` — The endpoint stopped answering mid-request.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
+- `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
 - `requestTokens` — What this request will cost the window, in tokens, near enough.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 - `sleep` — A delay an abort cuts short, rejecting rather than resolving early.

@@ -31,6 +31,8 @@ only, Node >=22.
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
+| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, `parseToolArguments`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
+| `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
@@ -174,6 +176,120 @@ refuses instead — one round trip later — and `runTurn` reads that refusal ba
 `isOverflow` and raises the same `ContextOverflow`, carrying the endpoint's own wording and the
 original error as `cause`. A rate limit borrows those words and means the opposite ("Request too
 large for gpt-4o ... on tokens per min"); that is ruled out and waited through as the 429 it is.
+
+## The loop
+
+`runAgentLoop` is the part of an agent that three servers had each written, and that had drifted
+the way the turn had before `runTurn`: one noticed a turn cut off at the ceiling and two did not,
+one tested the ceiling's spelling the other way round, one sent a reasoning effort and two never
+did. What it does not know is what the run is for — the prompt, the tools, and what a tool call
+*does* are the caller's.
+
+```ts
+import { runAgentLoop, emit } from "@cubicecho/agent-core";
+
+const { turn, messages, usage, loaded } = await runAgentLoop({
+  config,                         // Endpoint & ModelParams & { maxToolIterations, toolDiscovery?, maxRetries?, contextLength? }
+  system,                         // sent as the first message; on-demand mode appends the catalogue
+  messages: history,              // ending in the question; not written to
+  tools,                          // every tool the run may reach
+  catalog,                        // the same, name-only, for on-demand loading
+  preselected,                    // from `preselect`, if a small model chose
+  dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
+  hooks: { run, context: { session: { id } } },
+  signal,
+  onEvent: (event) => emit(runId, event),
+});
+```
+
+Each step is one `runTurn` with the body from `buildBody`, so everything `negotiate` answers is
+answered here too, and a request that is too big throws `ContextOverflow` whichever side found
+out. Between steps the loop runs the calls: sequentially by default, or together with
+`parallel: true`, which also makes an identical call — the same name and arguments, byte for byte
+— once for the run. A call that threw is forgotten rather than cached, so asking again is a real
+retry. What a tool throws is what the model reads, and so is an argument string that did not
+parse; `parseToolArguments` is strict, and is the seam a lenient one replaces.
+
+With `toolDiscovery: "ondemand"` and a catalogue, the request declares `load_tools` and what has
+been loaded, and the catalogue rides on the system prompt marked with what is. A model that calls
+a catalogued tool without loading it first is right about what it wants, and gets it loaded and
+run. A preselection shapes the first step alone: those tools, no catalogue, no `load_tools` —
+a model with the menu still in front of it shops, reloading what it has or picking a sibling —
+and everything is back from the second step on.
+
+`beforeStep` is handed the transcript before each request and may return a replacement, which is
+where compaction goes (below). Hooks are gathered once, onto the question, and never written into
+the transcript that comes back; `afterTurn` is told the reply without the run waiting on it.
+
+`resolveApiKey` is exported and not applied, because which key an endpoint gets is a rule a
+consumer states and a library guessing it could send one where it was not meant to go. The rule
+it encodes is the conservative one: an endpoint's own key wins; one that names a base URL of its
+own, different from the settings it inherits from, gets `NO_KEY` rather than the operator's key or
+`$OPENAI_API_KEY`; anything else inherits.
+
+## Fields this interface cannot spell
+
+`ModelParams` has `temperature`, `maxTokens` and `reasoningEffort`. Everything else a model card or
+a server asks for — `top_k`, `min_p`, `repeat_penalty`, llama.cpp's `id_slot`, `cache_prompt` and
+`reasoning_budget` — goes in `extraBody`, which `buildBody` merges in last. It can override
+`temperature` but not `model`, `messages`, `stream` or `tools`, which are the loop's.
+
+A local server ignores a field it does not know. OpenAI refuses it — `Unrecognized request
+argument supplied: min_p` — and so do some proxies, as `Unknown parameter: 'min_p'`. Given the
+names it may drop as `droppable` (`runTurn` takes the same option, and `runAgentLoop` passes the
+`extraBody` keys),
+`negotiate` reads either wording, latches the name off for that model on that endpoint, and sends
+again without it, with a notice naming it. A nested name is dropped at its top-level field. A
+refused field nobody said was droppable is passed on, since dropping it would change the request
+behind the caller's back.
+
+On a llama.cpp server started with `--parallel`, pin each session to a slot with
+`extraBody: { id_slot: n }`. The slot keeps that session's KV cache warm, which is the difference
+between a cached prefill on every turn and a full one — but only while the prefix stays the same
+from turn to turn; see #63, and the caution on compaction below.
+
+Ollama's `options` object is not read on its OpenAI-compatible `/v1` route, so sampling set there
+does nothing; send the fields at the top level.
+
+## Keeping a long run inside its window
+
+Two ways to make a transcript smaller, cheap first.
+
+`pruneToolResults(messages, { keepLast: 5, maxChars: 256 })` replaces every tool result but the
+latest five with a stub — `[result cleared, 10,412 chars]`. A 40k-character `read_file` is 10k
+tokens on every turn after it, and by then the model has usually taken what it wanted; the stub
+keeps the call answered and says how much was there.
+
+`planCompaction(messages, { limit, used })` says where to fold the oldest stretch into a summary,
+once `used` (the last turn's prompt tokens, or the estimate) is past three quarters of the window.
+The kept tail fills at most 35% of it and starts on a user message, since a transcript resuming
+mid-exchange is one servers refuse; leading system prompts are never folded, and an earlier
+summary is continued rather than summarised. `compactTranscript` writes the summary and tells
+`beforeCompact` hooks what is going while it does. A hook cannot veto it. Because the cut lands on
+a user message, one long tool run under a single question has nothing to fold — pruning is what
+keeps that one going.
+
+```ts
+beforeStep: async (messages, step) => {
+  const plan = planCompaction(messages, { limit: config.contextLength ?? 0, used: lastPromptTokens });
+  if (!plan) return;
+  return compactTranscript(
+    pruneToolResults(messages),
+    plan,
+    summariser(config, config.model, { signal }),
+    { hooks: { run, context } },
+  );
+},
+```
+
+**Both rewrite the prefix.** A prompt cache matches from the first token, so a transcript whose
+early messages change is re-processed whole — on a local server that is the entire prefill, every
+time. Run them rarely and together, at the point `planCompaction` says the window is filling, so
+the cache is lost once rather than a little on every turn. Pruning on every step is the expensive
+way to save tokens.
+
+`pruneToolResults` keeps the transcript's indexes, so a plan made before pruning still applies to
+what it returns, as above.
 
 ## Watching a run
 
@@ -352,3 +468,9 @@ up a week is still picked up without a restart.
   its `fold` fix: two blocks in different steps are not one block.
 - `retry` — `kanban_server`'s, which is the only one of the three with the `ContextOverflow`
   guard. `min-agent` had no retry layer at all.
+- `agent-loop` — `task_server`'s `length` notice and abort checks, `min-agent`'s parallel dispatch
+  with its dedupe (as an option) and its handling of nameless call fragments and empty stored
+  arguments, and the ceiling test `task_server` and `kanban_server` agreed on rather than
+  `min-agent`'s inverted one.
+- `compaction` — `min-agent`'s arithmetic and `SUMMARY_PROMPT`, the only implementation of the
+  three. Pruning had none.

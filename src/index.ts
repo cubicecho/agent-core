@@ -11,6 +11,19 @@
  */
 
 export {
+  type AgentLoopHooks,
+  type AgentLoopOptions,
+  type AgentLoopResult,
+  buildBody,
+  parseToolArguments,
+  preselect,
+  preview,
+  resolveApiKey,
+  runAgentLoop,
+  type ToolCallOutcome,
+  type ToolCallRequest,
+} from "./agent-loop.ts";
+export {
   type Capabilities,
   capabilitiesFor,
   type ModelCapabilities,
@@ -29,6 +42,20 @@ export {
   resetClients,
   timeoutMs,
 } from "./client.ts";
+export {
+  COMPACT_AT,
+  type CompactionOptions,
+  type CompactionPlan,
+  compactTranscript,
+  KEEP_RATIO,
+  type PruneOptions,
+  planCompaction,
+  pruneToolResults,
+  SUMMARY_LEAD,
+  SUMMARY_PROMPT,
+  summariser,
+  summaryInput,
+} from "./compaction.ts";
 export type {
   AgentConfig,
   Endpoint,
@@ -81,6 +108,7 @@ export {
   EndpointSilent,
   isOverflow,
   isTransient,
+  messageTokens,
   requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
