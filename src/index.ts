@@ -42,6 +42,7 @@ export {
   type ModelInfo,
   NO_KEY,
   resetClients,
+  servedWindow,
   timeoutMs,
 } from "./client.ts";
 export {

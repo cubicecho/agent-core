@@ -27,7 +27,7 @@ only, Node >=22.
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
-| `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
+| `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
@@ -175,6 +175,16 @@ const turn = await runTurn(client, supports, build, {
   onNotice: (message) => emit(runId, { kind: "notice", text: message }),
 });
 ```
+
+`contextLimitFor` answers the operator's number when there is one. Otherwise it asks for the window
+the server is actually serving the model in (`servedWindow`): llama.cpp's `/props`
+(`default_generation_settings.n_ctx`) and LM Studio's `/api/v0/models` (`loaded_context_length`).
+That differs from the trained window in the case the guard exists for, a 256k model started at `-c
+16384`. A server with neither route is latched and not asked again. Failing both, it reads the
+`/v1/models` listing: `max_model_len` from vLLM, `context_length` from OpenRouter, and llama.cpp's
+`meta.n_ctx_train`, which is only the trained window. Ollama reports no window on any route this
+reads, and truncates an over-long prompt rather than refusing it, so on Ollama pass `contextLength`
+or there is no guard at all.
 
 The body is sized once, not per attempt: a downgraded request is strictly smaller than the one
 before it and the transcript does not change between retries. A `ContextOverflow` from this is

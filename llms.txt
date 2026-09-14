@@ -53,6 +53,7 @@ The contract between whatever holds the tools and the loop that offers them to a
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `resetClients` — Forgets every cached client and listing.
+- `servedWindow` — The window a local server is actually serving a model in, which its listing does not say.
 - `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
 
 ### compaction
