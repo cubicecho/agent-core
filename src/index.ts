@@ -115,7 +115,9 @@ export {
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";
 export {
+  type AskJsonOptions,
   ask,
+  askJson,
   clean,
   listLines,
   parseJson,
@@ -156,6 +158,7 @@ export {
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
+  PRESELECT_SCHEMA,
   PRESELECT_SYSTEM,
   preselectInput,
   preselection,

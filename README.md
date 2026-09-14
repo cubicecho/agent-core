@@ -24,7 +24,7 @@ only, Node >=22.
 | `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
-| `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
+| `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
@@ -150,6 +150,29 @@ still talking is never cut off however long it takes, and one that has stopped a
 `EndpointSilent` rather than hanging the run. `timeoutMs(config)` returns `undefined` for a
 `requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering
 slowly needs.
+
+## Structured side tasks
+
+`askJson` is `ask` for an answer with a shape. It sends the schema as `response_format` of type
+`json_schema`, which llama.cpp compiles into a grammar and vLLM, LM Studio, Ollama and OpenAI each
+hold the reply to, so a small model that wraps JSON in prose on its own cannot do so here. The
+schema is normalised the way a tool's parameters are, and relaxed where the endpoint could not
+build a grammar, because llama.cpp reads both with the same converter. It also rides on the system
+prompt, and the reply goes through `parseJson` either way.
+
+```ts
+const picked = await askJson<{ tools: string[] }>(config, small, system, request, PRESELECT_SCHEMA, {
+  name: "preselection",
+  onNotice,
+});                                              // undefined when no JSON came back
+```
+
+A model that refuses the field latches `structuredOutput` off, per `(endpoint, model)` like the
+other refusals here, and is asked in words from then on. A server that finds the *schema* invalid
+is not latched: that error is the caller's to see. `strict` defaults to true, which OpenAI takes to
+mean every property required and `additionalProperties: false`; a looser schema wants it off there.
+`preselect` is its first user, answering `{ tools: [...] }`, and `preselection` still takes the
+bare array an older prompt produced.
 
 ## Sizing a request before sending it
 

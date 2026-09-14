@@ -19,6 +19,7 @@ export interface ModelSnapshot {
   legacyTokenLimit: boolean;
   chosenTemperature: boolean;
   refusedFields: string[];
+  structuredOutput: boolean;
   /** Takes the no-thinking hints `ask` sends. */
   thinkingHints: boolean;
 }
@@ -44,6 +45,7 @@ const optimisticModel = (): ModelSnapshot => ({
   legacyTokenLimit: true,
   chosenTemperature: true,
   refusedFields: [],
+  structuredOutput: true,
   thinkingHints: true,
 });
 
@@ -52,6 +54,7 @@ const refusedAnything = (model: ModelSnapshot) =>
   !model.legacyTokenLimit ||
   !model.chosenTemperature ||
   !model.thinkingHints ||
+  !model.structuredOutput ||
   model.refusedFields.length > 0;
 
 /**
@@ -77,6 +80,7 @@ export function exportCapabilities(): CapabilitySnapshot {
         legacyTokenLimit: refused.legacyTokenLimit,
         chosenTemperature: refused.chosenTemperature,
         refusedFields: [...refused.refusedFields].sort(),
+        structuredOutput: refused.structuredOutput,
       };
       if (refusedAnything(model)) models[name] = model;
     }
@@ -128,6 +132,7 @@ export function importCapabilities(snapshot: unknown): boolean {
       if (model.reasoningEffort === false) refused.reasoningEffort = false;
       if (model.legacyTokenLimit === false) refused.legacyTokenLimit = false;
       if (model.chosenTemperature === false) refused.chosenTemperature = false;
+      if (model.structuredOutput === false) refused.structuredOutput = false;
       if (Array.isArray(model.refusedFields)) {
         for (const field of model.refusedFields) {
           if (typeof field === "string") refused.refusedFields.add(field);

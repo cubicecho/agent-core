@@ -81,6 +81,13 @@ export interface ModelCapabilities {
    * refusal naming `messages` is a broken request, not a field the model can do without.
    */
   refusedFields: Set<string>;
+  /**
+   * Takes a `response_format` of type `json_schema`, which `askJson` sends. An older model, or a
+   * proxy in front of one, refuses the field outright; the answer is to ask in words and parse the
+   * reply, which is what every structured answer did before. The model's rather than the
+   * endpoint's because one key reaches models that differ here, the way they differ on effort.
+   */
+  structuredOutput: boolean;
 }
 
 /**
@@ -139,6 +146,7 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
       legacyTokenLimit: true,
       chosenTemperature: true,
       refusedFields: new Set(),
+      structuredOutput: true,
     };
     supports.models.set(model, known);
   }
@@ -183,6 +191,14 @@ const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): 
 
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
 const REJECTS_USAGE = /stream_options/i;
+
+/**
+ * `response_format` or its `json_schema` type refused, rather than the schema in it. A server
+ * that validates the schema and finds it wanting — `Invalid schema for response_format` — is
+ * telling the caller about their schema, and falling back to words for good would hide that.
+ */
+const rejectsResponseFormat = (detail: string) =>
+  /response_format|json_schema/i.test(detail) && !/invalid schema/i.test(detail);
 
 /**
  * A refusal of the *value* rather than of the field, which names the field either way.
@@ -403,6 +419,9 @@ export async function negotiate<T>(
       } else if (named?.refused.chosenTemperature && refusesChosenTemperature(detail)) {
         named.refused.chosenTemperature = false;
         onNotice?.(`${named.name} takes only its own temperature; retrying without ours`);
+      } else if (named?.refused.structuredOutput && rejectsResponseFormat(detail)) {
+        named.refused.structuredOutput = false;
+        onNotice?.(`${named.name} does not take response_format; asking for JSON in words instead`);
       } else if (named && refusesDroppable(detail, optional, named.refused)) {
         const fields = unknownFields(detail).filter(
           (field) => optional.has(field) && !named.refused.refusedFields.has(field),

@@ -298,9 +298,23 @@ const PRESELECT_PROMPT_CHARS = 2000;
  */
 export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
   "You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON " +
-  "array of the names the request is likely to need — exact names from the catalogue, at most " +
-  `${maxPerLoad}, and as few as could do the job. Reply with \`[]\` if the request can be ` +
-  "answered without tools. Reply with the array alone — no prose, no explanation.";
+  'object whose "tools" array holds the names the request is likely to need — exact names from ' +
+  `the catalogue, at most ${maxPerLoad}, and as few as could do the job. Reply with ` +
+  '`{"tools": []}` if the request can be answered without tools. Reply with the object alone — ' +
+  "no prose, no explanation.";
+
+/**
+ * The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
+ *
+ * An object around the array rather than the array, because a structured answer's root has to be
+ * an object — OpenAI's strict mode and every tool-schema normaliser insist.
+ */
+export const PRESELECT_SCHEMA = {
+  type: "object",
+  properties: { tools: { type: "array", items: { type: "string" } } },
+  required: ["tools"],
+  additionalProperties: false,
+};
 
 /** The preselection system prompt at the default cap, for a caller that never changes it. */
 export const PRESELECT_SYSTEM = preselectSystem();
@@ -325,7 +339,8 @@ export const preselectInput = (
 /**
  * Resolves a preselection against the catalogue: unknown names dropped, count capped.
  *
- * @param names What the preselector replied. Unvalidated: a non-array gives none, and entries
+ * @param names What the preselector replied: `{ tools: [...] }` as `PRESELECT_SCHEMA` has it, or
+ * the bare array an older prompt asked for. Unvalidated: anything else gives none, and entries
  * that are not strings are dropped.
  * @param catalog The servers to resolve against.
  * @param maxPerLoad The most to keep, defaulting to `MAX_PER_LOAD`. The same number
@@ -336,7 +351,11 @@ export function preselection(
   catalog: CatalogServer[],
   maxPerLoad = MAX_PER_LOAD,
 ): string[] {
-  if (!Array.isArray(names)) return [];
-  const wanted = names.filter((name): name is string => typeof name === "string");
+  const list =
+    names && typeof names === "object" && !Array.isArray(names)
+      ? (names as { tools?: unknown }).tools
+      : names;
+  if (!Array.isArray(list)) return [];
+  const wanted = list.filter((name): name is string => typeof name === "string");
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
 }

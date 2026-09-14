@@ -19,7 +19,7 @@ import {
 } from "./hooks.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
-import { ask, parseJson, tryAsk } from "./side-task.ts";
+import { askJson, tryAsk } from "./side-task.ts";
 import type { Turn, TurnUsage } from "./stream.ts";
 import { parseToolArguments, recoverToolCalls, type ToolCall } from "./tool-calls.ts";
 import {
@@ -30,6 +30,7 @@ import {
   LOAD_TOOLS_DEFINITION,
   loadResult,
   MAX_PER_LOAD,
+  PRESELECT_SCHEMA,
   preselectInput,
   preselection,
   preselectSystem,
@@ -181,14 +182,17 @@ export async function preselect(
   const reply = await tryAsk(
     "preselect",
     () =>
-      ask(config, model, preselectSystem(maxPerLoad), preselectInput(catalog, prompt), {
-        maxTokens,
-        signal,
-        onNotice,
-      }),
+      askJson<unknown>(
+        config,
+        model,
+        preselectSystem(maxPerLoad),
+        preselectInput(catalog, prompt),
+        PRESELECT_SCHEMA,
+        { name: "preselection", maxTokens, signal, onNotice },
+      ),
     { onNotice },
   );
-  return reply === undefined ? [] : preselection(parseJson<unknown>(reply), catalog, maxPerLoad);
+  return preselection(reply, catalog, maxPerLoad);
 }
 
 /** One call the model made, as `dispatch` is handed it. */

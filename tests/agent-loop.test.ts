@@ -194,6 +194,11 @@ describe("preselect", () => {
   it("hands back the catalogued names the small model picked", async () => {
     create.mockResolvedValue({ choices: [{ message: { content: '["s__read", "nope"]' } }] });
     expect(await preselect(config, "small", catalog, "read it")).toEqual(["s__read"]);
+    expect(create.mock.calls[0][0]).toMatchObject({
+      response_format: { type: "json_schema", json_schema: { name: "preselection" } },
+    });
+    create.mockResolvedValue({ choices: [{ message: { content: '{"tools": ["s__read"]}' } }] });
+    expect(await preselect(config, "small", catalog, "read it")).toEqual(["s__read"]);
   });
 
   it("picks nothing without a model, and nothing when the call fails", async () => {

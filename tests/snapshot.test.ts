@@ -55,6 +55,7 @@ describe("capability snapshots", () => {
             legacyTokenLimit: false,
             chosenTemperature: true,
             refusedFields: ["min_p"],
+            structuredOutput: true,
             thinkingHints: true,
           },
           small: {
@@ -62,6 +63,7 @@ describe("capability snapshots", () => {
             legacyTokenLimit: true,
             chosenTemperature: true,
             refusedFields: [],
+            structuredOutput: true,
             thinkingHints: false,
           },
         },
