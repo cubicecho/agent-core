@@ -70,6 +70,11 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
    * `request` has to know what this model refused before it can build one that avoids it.
    */
   model?: string;
+  /**
+   * The body fields a refusal may take away when the endpoint has never heard of them — the keys
+   * of `extraBody`, ordinarily. See `NegotiateOptions.droppable`; it needs `model` too.
+   */
+  droppable?: Iterable<string>;
 }
 
 /**
@@ -92,7 +97,7 @@ export async function runTurn(
     supports: Capabilities,
     model: ModelCapabilities | undefined,
   ) => OpenAI.ChatCompletionCreateParamsStreaming,
-  { maxRetries = 0, onNotice, contextLimit = 0, model, ...stream }: RunTurnOptions = {},
+  { maxRetries = 0, onNotice, contextLimit = 0, model, droppable, ...stream }: RunTurnOptions = {},
 ): Promise<Turn> {
   // Sized once rather than per build. `request` is called again for every downgrade and every
   // retry, but a downgraded body is strictly smaller than the one before it and the transcript
@@ -123,7 +128,7 @@ export async function runTurn(
         supports,
         (capabilities, box, forModel) =>
           streamTurn(client, measured(capabilities, forModel), { ...stream, produced: box }),
-        { produced, onNotice, model },
+        { produced, onNotice, model, droppable },
       );
     } catch (error) {
       // The abort is read before the classification, not after. A run stopped by its operator

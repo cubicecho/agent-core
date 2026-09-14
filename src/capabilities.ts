@@ -71,6 +71,16 @@ export interface ModelCapabilities {
    * refuses any other value, including the one a settings row has been showing all along.
    */
   chosenTemperature: boolean;
+  /**
+   * Request fields the model's endpoint refused by name — `min_p` to OpenAI, say — which a body
+   * builder leaves out of what `extraBody` asks for. Only ever grows, which is this set's way of
+   * latching off.
+   *
+   * Only the fields a caller offered as droppable reach it (see `NegotiateOptions.droppable`),
+   * because a name read out of an error string is not otherwise something to stop sending: a
+   * refusal naming `messages` is a broken request, not a field the model can do without.
+   */
+  refusedFields: Set<string>;
 }
 
 /**
@@ -130,7 +140,12 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
 export function modelCapabilitiesFor(supports: Capabilities, model: string): ModelCapabilities {
   let known = supports.models.get(model);
   if (!known) {
-    known = { reasoningEffort: true, legacyTokenLimit: true, chosenTemperature: true };
+    known = {
+      reasoningEffort: true,
+      legacyTokenLimit: true,
+      chosenTemperature: true,
+      refusedFields: new Set(),
+    };
     supports.models.set(model, known);
   }
   return known;
@@ -146,11 +161,14 @@ export function resetCapabilities() {
  * Read positionally and only against another reading of the same two objects: what it answers is
  * whether anything moved while the request was out, and a flag added to either interface later is
  * compared without an edit here. `models` is not one of them — it is the second level, not a
- * flag, and the map is the same object throughout.
+ * flag, and the map is the same object throughout. `refusedFields` is read by its size, since the
+ * set is the same object on both readings and only ever grows.
  */
-const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): boolean[] => [
+const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): unknown[] => [
   ...Object.values(supports).filter((value) => typeof value === "boolean"),
-  ...(model ? Object.values(model) : []),
+  ...(model
+    ? Object.values(model).map((value) => (value instanceof Set ? value.size : value))
+    : []),
 ];
 
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
@@ -224,7 +242,37 @@ const NAMES_TEMPERATURE = /(['"`])temperature\1|\btemperature\s+(?:is|does|must|
 const refusesChosenTemperature = (detail: string) =>
   NAMES_TEMPERATURE.test(detail) && /only the default/i.test(detail);
 
-/** What `negotiate` takes besides the request. Both optional, both about telling someone. */
+/**
+ * The fields a refusal names as ones the endpoint has never heard of, in the two wordings OpenAI
+ * has used: `Unrecognized request argument supplied: min_p` (or `arguments`, listing several) and
+ * `Unknown parameter: 'min_p'.` A nested name — `'chat_template_kwargs.enable_thinking'` — is
+ * answered at its top-level field, which is the only level a body builder leaves things out at.
+ */
+function unknownFields(detail: string): string[] {
+  const listed = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i)?.[1];
+  const quoted = detail.match(/unknown parameter:\s*(['"`])([^'"`]+)\1/i)?.[2];
+  const names = listed ? listed.split(",") : quoted ? [quoted] : [];
+  return names
+    .map(
+      (name) =>
+        name
+          .trim()
+          .replace(/^['"`]|['"`.]+$/g, "")
+          .split(/[.[]/)[0],
+    )
+    .filter(Boolean);
+}
+
+/** Whether a refusal names a droppable field this model has not already refused. */
+const refusesDroppable = (
+  detail: string,
+  droppable: ReadonlySet<string>,
+  refused: ModelCapabilities,
+) =>
+  droppable.size > 0 &&
+  unknownFields(detail).some((field) => droppable.has(field) && !refused.refusedFields.has(field));
+
+/** What `negotiate` takes besides the request. All optional. */
 export interface NegotiateOptions {
   /**
    * The flag `send` will be given, for a caller that has to read it after `negotiate` returns.
@@ -255,6 +303,16 @@ export interface NegotiateOptions {
    * model per endpoint, or one that only ever meets the endpoint's own refusals, needs no edit.
    */
   model?: string;
+  /**
+   * The request fields a refusal may take away when the endpoint says it has never heard of
+   * them — what `extraBody` added, ordinarily. Such a name is latched into the model's
+   * `refusedFields` and the request is sent again, which `send` is expected to build without it.
+   *
+   * Opt-in by name, because the answer is to stop sending the field, and a name out of an error
+   * string that `send` does not know how to leave out would only be refused again. Needs `model`,
+   * since the latch is the model's.
+   */
+  droppable?: Iterable<string>;
 }
 
 /**
@@ -298,8 +356,9 @@ export async function negotiate<T>(
     produced: Produced,
     model: ModelCapabilities | undefined,
   ) => Promise<T>,
-  { produced = { any: false }, onNotice, model: name }: NegotiateOptions = {},
+  { produced = { any: false }, onNotice, model: name, droppable }: NegotiateOptions = {},
 ): Promise<T> {
+  const optional = new Set(droppable);
   // The name and what it has refused, bound together because the notices below need both. They
   // exist or are absent as one — the second is resolved from the first — but that is a fact
   // about two locals, and narrowing one of those tells TypeScript nothing about the other.
@@ -334,6 +393,14 @@ export async function negotiate<T>(
       } else if (named?.refused.chosenTemperature && refusesChosenTemperature(detail)) {
         named.refused.chosenTemperature = false;
         onNotice?.(`${named.name} takes only its own temperature; retrying without ours`);
+      } else if (named && refusesDroppable(detail, optional, named.refused)) {
+        const fields = unknownFields(detail).filter(
+          (field) => optional.has(field) && !named.refused.refusedFields.has(field),
+        );
+        for (const field of fields) named.refused.refusedFields.add(field);
+        onNotice?.(
+          `${named.name} does not take ${fields.join(", ")}; retrying without ${fields.length > 1 ? "them" : "it"}`,
+        );
       } else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) {
         throw error;
       }

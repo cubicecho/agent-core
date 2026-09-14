@@ -59,7 +59,8 @@ const modelThatRefuses = (...refusals: Error[]) => {
   const asked: ModelCapabilities[] = [];
   const send = vi.fn(
     async (_supports: Capabilities, _produced: Produced, model: ModelCapabilities | undefined) => {
-      if (model) asked.push({ ...model });
+      // The set is copied too: it is the one field a later refusal changes in place.
+      if (model) asked.push({ ...model, refusedFields: new Set(model.refusedFields) });
       const refusal = refusals.shift();
       if (refusal) throw refusal;
       return "answered";
@@ -221,6 +222,7 @@ describe("modelCapabilitiesFor", () => {
       reasoningEffort: true,
       legacyTokenLimit: true,
       chosenTemperature: true,
+      refusedFields: new Set(),
     });
     model.reasoningEffort = false;
     expect(modelCapabilitiesFor(supports, "gpt-5").reasoningEffort).toBe(false);
@@ -334,11 +336,13 @@ describe("negotiate, for a model", () => {
     const supports = openai();
     const { send, asked } = modelThatRefuses(WANTS_COMPLETION_LIMIT, OWN_TEMPERATURE);
     await expect(negotiate(supports, send, { model: "gpt-5" })).resolves.toBe("answered");
-    expect(asked).toEqual([
-      { reasoningEffort: true, legacyTokenLimit: true, chosenTemperature: true },
-      { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: true },
-      { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: false },
-    ]);
+    expect(asked).toEqual(
+      [
+        { reasoningEffort: true, legacyTokenLimit: true, chosenTemperature: true },
+        { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: true },
+        { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: false },
+      ].map((flags) => ({ ...flags, refusedFields: new Set() })),
+    );
   });
 
   it("answers the endpoint's refusal and the model's in the one loop", async () => {
@@ -396,6 +400,73 @@ describe("negotiate, for a model", () => {
     const { send } = modelThatRefuses(NO_EFFORT, NO_EFFORT);
     await expect(negotiate(openai(), send, { model: "gpt-4o" })).rejects.toThrow(
       "reasoning_effort",
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("negotiate, for a field the caller can do without", () => {
+  const vllm = () => capabilitiesFor("http://vllm:8000/v1");
+  const UNRECOGNIZED = new Error("400 Unrecognized request argument supplied: min_p");
+  const UNKNOWN = new Error("400 Unknown parameter: 'chat_template_kwargs.enable_thinking'.");
+  const SEVERAL = new Error("400 Unrecognized request arguments supplied: id_slot, min_p");
+
+  it("drops a named droppable field and remembers it for the model", async () => {
+    const supports = vllm();
+    const notices: string[] = [];
+    const { send, asked } = modelThatRefuses(UNRECOGNIZED);
+    await expect(
+      negotiate(supports, send, {
+        model: "qwen",
+        droppable: ["min_p", "top_k"],
+        onNotice: (message) => notices.push(message),
+      }),
+    ).resolves.toBe("answered");
+    expect(asked.map((model) => [...model.refusedFields])).toEqual([[], ["min_p"]]);
+    expect(notices).toEqual(["qwen does not take min_p; retrying without it"]);
+    expect(modelCapabilitiesFor(supports, "qwen").refusedFields.has("min_p")).toBe(true);
+    expect(modelCapabilitiesFor(supports, "llama").refusedFields.size).toBe(0);
+  });
+
+  it("answers a nested name at its top-level field", async () => {
+    const supports = vllm();
+    const { send } = modelThatRefuses(UNKNOWN);
+    await negotiate(supports, send, { model: "qwen", droppable: ["chat_template_kwargs"] });
+    expect([...modelCapabilitiesFor(supports, "qwen").refusedFields]).toEqual([
+      "chat_template_kwargs",
+    ]);
+  });
+
+  it("drops every droppable field a refusal lists, in one retry", async () => {
+    const supports = vllm();
+    const notices: string[] = [];
+    const { send } = modelThatRefuses(SEVERAL);
+    await negotiate(supports, send, {
+      model: "qwen",
+      droppable: ["id_slot", "min_p"],
+      onNotice: (message) => notices.push(message),
+    });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(notices).toEqual(["qwen does not take id_slot, min_p; retrying without them"]);
+  });
+
+  it("passes on a field that is not the caller's to drop", async () => {
+    const { send } = modelThatRefuses(UNRECOGNIZED);
+    await expect(negotiate(vllm(), send, { model: "qwen", droppable: ["top_k"] })).rejects.toThrow(
+      "min_p",
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the refusal on when no model was named", async () => {
+    const { send } = modelThatRefuses(UNRECOGNIZED);
+    await expect(negotiate(vllm(), send, { droppable: ["min_p"] })).rejects.toThrow("min_p");
+  });
+
+  it("gives up on a server that refuses the field it was not sent", async () => {
+    const { send } = modelThatRefuses(UNRECOGNIZED, UNRECOGNIZED);
+    await expect(negotiate(vllm(), send, { model: "qwen", droppable: ["min_p"] })).rejects.toThrow(
+      "min_p",
     );
     expect(send).toHaveBeenCalledTimes(2);
   });

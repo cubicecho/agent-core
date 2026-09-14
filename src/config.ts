@@ -32,8 +32,28 @@ export interface Endpoint {
 /** What to ask the model for. */
 export interface ModelParams {
   model: string;
+  /** The reply's ceiling. Zero or less sends none, leaving it to the server. */
   maxTokens: number;
   temperature: number;
+  /**
+   * `reasoning_effort` for a model that deliberates. Absent or `"off"` sends none, which is the
+   * only value a server that has never heard of reasoning accepts — a setting that means "leave
+   * the field out" rather than a level to ask for.
+   */
+  reasoningEffort?: string;
+  /**
+   * Request fields this interface cannot spell, merged into the body last by `buildBody`.
+   *
+   * What a model card asks for and nothing here names: `top_k`, `min_p`, `repeat_penalty` —
+   * what actually stops a small model looping — and a server's own fields, such as llama.cpp's
+   * `id_slot`, which pins a session to one slot of a `--parallel` server so its KV cache is
+   * still warm on the next turn. A local server ignores a field it does not know; OpenAI refuses
+   * one by name, and `negotiate` drops that name for the model and sends the request again.
+   * `model`, `messages`, `stream` and `tools` are the loop's and are not overridden from here.
+   * Ollama's `options` object is not read on its `/v1` route, so sampling there has to go in as
+   * top-level fields like any other.
+   */
+  extraBody?: Record<string, unknown>;
 }
 
 /** How tools reach the model, and how long it may keep calling them. */
