@@ -69,6 +69,14 @@ type ReasoningDelta = OpenAI.ChatCompletionChunk.Choice.Delta & {
   reasoning?: string | null;
 };
 
+/** A tool call being put back together, under the index the server gave it if it gave one. */
+interface PartialCall {
+  index: number | undefined;
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 /**
  * Whether the model has said anything a second attempt would say twice.
  *
@@ -159,7 +167,9 @@ export async function streamTurn(
   async function collect(): Promise<Turn> {
     const stream = await client.chat.completions.create(body, { signal: linked });
     const content: string[] = [];
-    const calls = new Map<number, { id: string; name: string; arguments: string }>();
+    // In arrival order, sorted by index at the end; a call from a server that sent none keeps
+    // its place in the order they arrived.
+    const calls: PartialCall[] = [];
     const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
     let finishReason = "";
 
@@ -206,12 +216,40 @@ export async function streamTurn(
       // Tool calls arrive in pieces, keyed by position: the id in one chunk, the name in
       // another, the arguments spread across the next several.
       for (const part of delta.tool_calls ?? []) {
-        const call = calls.get(part.index) ?? { id: "", name: "", arguments: "" };
+        const call = fragmentOf(part);
         if (part.id) call.id = part.id;
         if (part.function?.name) call.name += part.function.name;
         if (part.function?.arguments) call.arguments += part.function.arguments;
-        calls.set(part.index, call);
       }
+    }
+
+    /**
+     * The call a fragment belongs to.
+     *
+     * By `index` where the server sent a number, which the SDK types as required and servers have
+     * nonetheless left out: keyed on `undefined`, every call joined into one whose name and
+     * arguments were all of theirs run together. Without one, by `id`; failing that, a fragment
+     * naming a function opens a call and a bare run of arguments continues the latest. A server
+     * that sends whole calls one per chunk at index `0` makes the same mistake the other way, so
+     * a different id, or a name after arguments have begun, opens a new call under that index.
+     */
+    function fragmentOf(part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall): PartialCall {
+      const index = typeof part.index === "number" ? part.index : undefined;
+      const name = part.function?.name;
+      const known =
+        index !== undefined
+          ? calls.findLast((call) => call.index === index)
+          : part.id
+            ? calls.find((call) => call.id === part.id)
+            : name
+              ? undefined
+              : calls.at(-1);
+      const another =
+        known && ((part.id && known.id && part.id !== known.id) || (name && known.arguments));
+      if (known && !another) return known;
+      const call: PartialCall = { index, id: "", name: "", arguments: "" };
+      calls.push(call);
+      return call;
     }
 
     // An aborted stream ends its iteration rather than throwing, so without this a turn cut off
@@ -220,16 +258,24 @@ export async function streamTurn(
     // says you have to know this.
     linked.throwIfAborted();
 
+    const minted = new Set<string>();
     return {
       content: content.join(""),
-      toolCalls: [...calls.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([index, call]) => ({
-          // A server that streams a call without an id still needs one for the result to answer.
-          id: call.id || `call_${index}`,
-          type: "function" as const,
-          function: { name: call.name, arguments: call.arguments },
-        })),
+      toolCalls: calls
+        .map((call, order) => ({ call, order }))
+        .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order)
+        .map(({ call }, position) => {
+          // A server that streams a call without an id still needs one for the result to answer,
+          // and two calls it put under one index must not be answered as one.
+          let id = call.id || `call_${call.index ?? position}`;
+          if (minted.has(id)) id = `call_${position}_${minted.size}`;
+          minted.add(id);
+          return {
+            id,
+            type: "function" as const,
+            function: { name: call.name, arguments: call.arguments },
+          };
+        }),
       usage,
       finishReason,
     };

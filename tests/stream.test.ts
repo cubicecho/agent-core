@@ -94,6 +94,49 @@ describe("streamTurn", () => {
     ]);
   });
 
+  it("keeps calls apart on a server that sends no index", async () => {
+    // The SDK types `index` as required; a compat layer that leaves it out used to have every
+    // call put back together as one, names and arguments run together.
+    const part = (fields: Record<string, unknown>): Chunk =>
+      chunk({ choices: [{ delta: { tool_calls: [fields] } }] });
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          part({ id: "a", function: { name: "first" } }),
+          part({ function: { arguments: '{"x":' } }),
+          part({ function: { arguments: "1}" } }),
+          part({ function: { name: "second", arguments: "{}" } }),
+          part({ id: "c", function: { name: "third" } }),
+          part({ id: "c", function: { arguments: "{}" } }),
+        ),
+      ),
+      body,
+    );
+    expect(turn.toolCalls.map((call) => [call.function.name, call.function.arguments])).toEqual([
+      ["first", '{"x":1}'],
+      ["second", "{}"],
+      ["third", "{}"],
+    ]);
+    expect(new Set(turn.toolCalls.map((call) => call.id)).size).toBe(3);
+  });
+
+  it("keeps whole calls apart when a server sends every one at index 0", async () => {
+    const whole = (fields: Record<string, unknown>): Chunk =>
+      chunk({ choices: [{ delta: { tool_calls: [{ index: 0, ...fields }] } }] });
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          whole({ id: "a", function: { name: "first", arguments: "{}" } }),
+          whole({ id: "b", function: { name: "second", arguments: "{}" } }),
+          whole({ function: { name: "third", arguments: "{}" } }),
+        ),
+      ),
+      body,
+    );
+    expect(turn.toolCalls.map((call) => call.function.name)).toEqual(["first", "second", "third"]);
+    expect(new Set(turn.toolCalls.map((call) => call.id)).size).toBe(3);
+  });
+
   it("mints an id for a server that streams a call without one", async () => {
     const turn = await streamTurn(
       clientOf(() =>
