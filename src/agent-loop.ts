@@ -370,7 +370,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       })
     : { context: "", notes: [] };
 
-  const usage: TurnUsage = { prompt: 0, completion: 0, total: 0 } as TurnUsage;
+  const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
   const toolCalls: ToolCallOutcome[] = [];
   const answered = new Map<string, Promise<string>>();
 
