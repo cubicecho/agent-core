@@ -72,6 +72,48 @@ describe("runTurn", () => {
     expect(notices[0]).toContain("(1/2)");
   });
 
+  it("waits for a model that is still loading without spending the retry budget", async () => {
+    vi.useFakeTimers();
+    const notices: string[] = [];
+    // The shape llama.cpp answers with while the weights are still being mapped.
+    const loading = () =>
+      new OpenAI.APIError(
+        503,
+        { code: 503, message: "Loading model", type: "unavailable_error" },
+        undefined,
+        undefined,
+      );
+    let calls = 0;
+    const create = vi.fn(() => (++calls <= 20 ? Promise.reject(loading()) : chunks(text("up"))));
+    const turn = runTurn(clientOf(create), supports(), body, {
+      model: "qwen",
+      onNotice: (n) => notices.push(n),
+    });
+    await vi.advanceTimersByTimeAsync(20 * 3000);
+    await expect(turn).resolves.toMatchObject({ content: "up" });
+    expect(create).toHaveBeenCalledTimes(21);
+    // Once, not per poll.
+    expect(notices).toEqual(["qwen is still loading — waiting up to 120s"]);
+  });
+
+  it("gives up on a model that never finishes loading", async () => {
+    vi.useFakeTimers();
+    const create = vi.fn(() => Promise.reject(apiError(503, "Loading model")));
+    const turn = runTurn(clientOf(create), supports(), body, { loadingTimeoutMs: 10_000 });
+    const settled = expect(turn).rejects.toThrow("Loading model");
+    await vi.advanceTimersByTimeAsync(12_000);
+    await settled;
+    expect(create).toHaveBeenCalledTimes(5);
+  });
+
+  it("keeps a plain 503 on the ordinary backoff", async () => {
+    vi.useFakeTimers();
+    const create = vi.fn(() => Promise.reject(apiError(503, "service unavailable")));
+    const turn = runTurn(clientOf(create), supports(), body);
+    await expect(turn).rejects.toThrow("service unavailable");
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
   it("gives up when the budget is spent", async () => {
     vi.useFakeTimers();
     const create = vi.fn().mockRejectedValue(lost());

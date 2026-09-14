@@ -407,6 +407,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         model: config.model,
         droppable: Object.keys(config.extraBody ?? {}),
         maxRetries,
+        ...(config.loadingTimeoutSeconds === undefined
+          ? {}
+          : { loadingTimeoutMs: Math.max(0, config.loadingTimeoutSeconds) * 1000 }),
         contextLimit: config.contextLength ?? 0,
         signal,
         idleMs: timeoutMs(config),

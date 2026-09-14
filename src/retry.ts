@@ -236,6 +236,33 @@ export function isTransient(error: unknown): boolean {
 }
 
 /**
+ * Whether a failure is a local server still loading the model, rather than one failing to serve.
+ *
+ * llama.cpp answers 503 `Loading model` with type `unavailable_error` from the moment it starts
+ * until the weights are mapped, and a router build says the same while it swaps models. That is
+ * thirty to ninety seconds for a large model from a cold page cache, and `backoffMs` gives up
+ * inside fifteen: sized for a busy host, not for one reading a file. A plain 503 is not this.
+ *
+ * @param error The rejection, as caught.
+ */
+export function isModelLoading(error: unknown): boolean {
+  if (!(error instanceof OpenAI.APIError) || error.status !== 503) return false;
+  const body = error.error as { type?: unknown; message?: unknown } | undefined;
+  return (
+    body?.type === "unavailable_error" ||
+    /loading model|model is loading|unavailable_error/i.test(
+      `${error.message} ${body?.message ?? ""}`,
+    )
+  );
+}
+
+/** How long to wait between asking a loading server again. */
+export const LOADING_POLL_MS = 3000;
+
+/** How long `runTurn` waits for a model to load unless told otherwise. */
+export const LOADING_TIMEOUT_MS = 120_000;
+
+/**
  * Exponential, with jitter so several tasks failing at once do not return in lockstep.
  *
  * @param attempt Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.

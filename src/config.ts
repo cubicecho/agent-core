@@ -90,6 +90,12 @@ export interface ToolPolicy {
 /** How many times a lost or refused request is worth sending again. See `retry.ts`. */
 export interface RetryPolicy {
   maxRetries: number;
+  /**
+   * How long to wait for a local server that says it is still loading the model, absent two
+   * minutes and zero not at all. Separate from `maxRetries`, which is sized for a request that
+   * was lost rather than for weights being read off a disk. See `isModelLoading`.
+   */
+  loadingTimeoutSeconds?: number;
 }
 
 /**

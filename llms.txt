@@ -140,8 +140,11 @@ Everything about a request failing that is not about what the request said.
 - `ContextOverflow` — The request was bigger than the model will read.
 - `compact` — 1234 → "1.2k".
 - `EndpointSilent` — The endpoint stopped answering mid-request.
+- `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
+- `LOADING_POLL_MS` — How long to wait between asking a loading server again.
+- `LOADING_TIMEOUT_MS` — How long `runTurn` waits for a model to load unless told otherwise.
 - `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
 - `requestTokens` — What this request will cost the window, in tokens, near enough.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
