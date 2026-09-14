@@ -15,7 +15,6 @@ export {
   type AgentLoopOptions,
   type AgentLoopResult,
   buildBody,
-  parseToolArguments,
   preselect,
   preview,
   resolveApiKey,
@@ -132,6 +131,12 @@ export {
   type TurnUsage,
 } from "./stream.ts";
 export { estimateTokens } from "./tokens.ts";
+export {
+  parseToolArguments,
+  recoverToolCalls,
+  ToolArgumentsError,
+  type ToolCall,
+} from "./tool-calls.ts";
 export {
   carryOver,
   catalogList,

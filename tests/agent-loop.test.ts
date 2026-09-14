@@ -8,14 +8,18 @@ vi.mock("../src/client.ts", async (importOriginal) => ({
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { buildBody, parseToolArguments, preselect, preview, resolveApiKey, runAgentLoop } =
-  await import("../src/agent-loop.ts");
+const { buildBody, preselect, preview, resolveApiKey, runAgentLoop } = await import(
+  "../src/agent-loop.ts"
+);
 const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await import(
   "../src/capabilities.ts"
 );
 const { LOAD_TOOLS } = await import("../src/tool-loading.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;
+type Turn = import("../src/stream.ts").Turn;
+type ToolCall = import("../src/tool-calls.ts").ToolCall;
+type ToolCallRequest = import("../src/agent-loop.ts").ToolCallRequest;
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
 const stream = (...list: unknown[]) => ({
@@ -177,17 +181,10 @@ describe("resolveApiKey", () => {
   });
 });
 
-describe("preview and parseToolArguments", () => {
+describe("preview", () => {
   it("cuts long text and says how long it was", () => {
     expect(preview("abc", 5)).toBe("abc");
     expect(preview("abcdefgh", 5)).toBe("abcde… (8 chars)");
-  });
-
-  it("reads an object, reads empty as none, and refuses anything else", () => {
-    expect(parseToolArguments('{"a":1}')).toEqual({ a: 1 });
-    expect(parseToolArguments("  ")).toEqual({});
-    expect(() => parseToolArguments("[1]")).toThrow("not an object");
-    expect(() => parseToolArguments("{nope")).toThrow("invalid tool arguments");
   });
 });
 
@@ -293,6 +290,98 @@ describe("runAgentLoop", () => {
     const result = await runAgentLoop({ config, messages: question, dispatch });
     expect(dispatch).not.toHaveBeenCalled();
     expect(result.messages.at(-1)).not.toHaveProperty("tool_calls");
+  });
+
+  it("hands the tool repaired arguments and replays them as JSON", async () => {
+    create
+      .mockReturnValueOnce(calls(["a", "{'x': True,}"], ["a", "{nope"]))
+      .mockReturnValueOnce(says("done"));
+    const dispatch = vi.fn(async (_call: ToolCallRequest) => "ok");
+    const result = await runAgentLoop({ config, messages: question, tools: [tool("a")], dispatch });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0]).toMatchObject({ args: { x: true }, raw: "{'x': True,}" });
+    const replayed = (result.messages[1] as OpenAI.ChatCompletionAssistantMessageParam).tool_calls;
+    expect(replayed?.map((c) => (c as ToolCall).function.arguments)).toEqual(['{"x":true}', "{}"]);
+    expect(result.messages[3]).toMatchObject({ content: expect.stringContaining("invalid tool") });
+    expect(result.toolCalls).toEqual([
+      { name: "a", ok: true },
+      { name: "a", ok: false },
+    ]);
+  });
+
+  it("tells a call cut off at the ceiling to raise maxTokens", async () => {
+    create
+      .mockReturnValueOnce(
+        stream({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  { index: 0, id: "c0", function: { name: "a", arguments: '{"x": "lo' } },
+                ],
+              },
+              finish_reason: "length",
+            },
+          ],
+        }),
+      )
+      .mockReturnValueOnce(says("done"));
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+    });
+    expect(result.messages[2]).toMatchObject({
+      content: expect.stringContaining("raise maxTokens"),
+    });
+  });
+
+  it("runs tool calls written as text, and says the parser does not match", async () => {
+    create
+      .mockReturnValueOnce(
+        says('Checking.\n<tool_call>\n{"name": "a", "arguments": {"x": 1}}\n</tool_call>'),
+      )
+      .mockReturnValueOnce(says("done"));
+    const dispatch = vi.fn(async (_call: ToolCallRequest) => "ok");
+    const notices: string[] = [];
+    const turns: Turn[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch,
+      onTurn: (turn) => turns.push(turn),
+      onEvent: (event) => event.kind === "notice" && notices.push(event.text ?? ""),
+    });
+    expect(dispatch.mock.calls[0][0]).toMatchObject({
+      id: "call_recovered_0",
+      name: "a",
+      args: { x: 1 },
+    });
+    expect(result.messages[1]).toMatchObject({ role: "assistant", content: "Checking." });
+    expect(result.messages[2]).toMatchObject({ role: "tool", tool_call_id: "call_recovered_0" });
+    expect(turns[0].toolCalls).toHaveLength(1);
+    expect(notices[0]).toContain("recovered 1 tool call the model wrote as text");
+  });
+
+  it("leaves a call written as text alone when recovery is off, or no tools exist", async () => {
+    const text = '{"name": "a", "arguments": {}}';
+    create
+      .mockReturnValueOnce(says(text))
+      .mockReturnValueOnce(says(`<tool_call>${text}</tool_call>`));
+    const dispatch = vi.fn();
+    const off = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch,
+      recoverToolCalls: false,
+    });
+    expect(off.turn.content).toBe(text);
+    const bare = await runAgentLoop({ config, messages: question, dispatch });
+    expect(bare.turn.toolCalls).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("stops between calls once aborted", async () => {

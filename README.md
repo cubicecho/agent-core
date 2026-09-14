@@ -31,7 +31,8 @@ only, Node >=22.
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
-| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, `parseToolArguments`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
+| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
+| `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
@@ -214,8 +215,26 @@ answered here too, and a request that is too big throws `ContextOverflow` whiche
 out. Between steps the loop runs the calls: sequentially by default, or together with
 `parallel: true`, which also makes an identical call — the same name and arguments, byte for byte
 — once for the run. A call that threw is forgotten rather than cached, so asking again is a real
-retry. What a tool throws is what the model reads, and so is an argument string that did not
-parse; `parseToolArguments` is strict, and is the seam a lenient one replaces.
+retry. What a tool throws is what the model reads, and so are arguments that did not parse.
+
+Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
+JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
+`True` and `None`, bare keys, a trailing comma — is repaired, without touching what is inside a
+string. What still is not an object throws a `ToolArgumentsError` whose `kind` is `truncated` when
+the turn stopped at the ceiling, with a message telling the model so, and `malformed` otherwise.
+The repaired JSON is what the transcript keeps, and an unreadable call is replayed as `{}`, because
+a server that parses replayed arguments refuses the originals on every later request. `dispatch`
+is still handed the model's own text as `raw`, and the parallel dedupe compares repaired arguments,
+so `{'a': 1}` and `{"a": 1}` are one call.
+
+A server whose tool-call parser was written for another template streams the model's call as
+plain text, and the run ends on a reply that is nothing but a call nobody made. Unless
+`recoverToolCalls: false`, a turn with no calls, some text, and tools to call is passed through
+`recoverToolCalls`, which finds `<tool_call>` blocks (Hermes, Qwen, Qwen3-Coder's markup),
+`[TOOL_CALLS]` (Mistral, both spellings) and `<|python_tag|>` (Llama 3) after the last `</think>`,
+and — naming only tools that exist — a reply that is only a JSON call or holds one fenced one.
+Found calls are run as `call_recovered_0` onward, the text is what is left, `onTurn` and the
+result see the turn that way, and a notice says so, since the real fix is the server's parser.
 
 With `toolDiscovery: "ondemand"` and a catalogue, the request declares `load_tools` and what has
 been loaded, and the catalogue rides on the system prompt marked with what is. A model that calls

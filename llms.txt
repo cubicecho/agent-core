@@ -17,7 +17,6 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
 - `AgentLoopResult` (type) — What a finished loop hands back.
 - `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
-- `parseToolArguments` — A tool call's arguments as the object the tool is handed.
 - `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 - `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
@@ -185,6 +184,15 @@ Reading one streamed turn back into a message.
 ### tokens
 
 - `estimateTokens` — Rough token count.
+
+### tool-calls
+
+Reading what a model meant by a tool call when it did not write one cleanly.
+
+- `parseToolArguments` — A tool call's arguments as the object the tool is handed.
+- `recoverToolCalls` — Tool calls a model wrote into its reply as text, taken out of it and made into calls.
+- `ToolArgumentsError` — Tool arguments that could not be read as an object, with why.
+- `ToolCall` (type) — A tool call as the loop handles it, recovered or streamed.
 
 ### tool-loading
 
