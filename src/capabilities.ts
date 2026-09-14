@@ -1,4 +1,4 @@
-import { endpointKey } from "./client.ts";
+import { endpointId } from "./client.ts";
 import { errorMessage } from "./errors.ts";
 import { isGrammarError } from "./schema-compat.ts";
 import type { Produced } from "./stream.ts";
@@ -86,13 +86,13 @@ export interface ModelCapabilities {
 /**
  * What each endpoint cannot do, remembered for the life of the process.
  *
- * Keyed by `endpointKey`, because these are facts about the server on the other end and not
- * about this one. A llama.cpp box that cannot compile a grammar and a cloud API that can are
- * both reachable from one settings row over its lifetime — an operator retargets it from Ollama
- * this afternoon to OpenAI this evening — and the first one's refusal must not quietly strip
- * pattern/format from the second one's requests, or silently cost it its token counts, for the
- * rest of the process. Bounded by the number of endpoints ever configured, which is a settings
- * row's worth.
+ * Keyed by `endpointId` — `endpointKey` hashed, so a snapshot holds no key — because these are
+ * facts about the server on the other end and not about this one. A llama.cpp box that cannot
+ * compile a grammar and a cloud API that can are both reachable from one settings row over its
+ * lifetime — an operator retargets it from Ollama this afternoon to OpenAI this evening — and the
+ * first one's refusal must not quietly strip pattern/format from the second one's requests, or
+ * silently cost it its token counts, for the rest of the process. Bounded by the number of
+ * endpoints ever configured, which is a settings row's worth.
  *
  * The API key is part of that identity, the same as it is for the client pool and the model
  * listings. A router — LiteLLM, OpenRouter, a gateway with several boxes behind it — is free to
@@ -115,13 +115,7 @@ const capabilities = new Map<string, Capabilities>();
  * one that passes `undefined` share an entry rather than holding two.
  */
 export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities {
-  const key = endpointKey({ baseUrl, apiKey });
-  let known = capabilities.get(key);
-  if (!known) {
-    known = { strictSchemas: true, usageInStream: true, models: new Map() };
-    capabilities.set(key, known);
-  }
-  return known;
+  return capabilitiesById(endpointId({ baseUrl, apiKey }));
 }
 
 /**
@@ -147,6 +141,22 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
       refusedFields: new Set(),
     };
     supports.models.set(model, known);
+  }
+  return known;
+}
+
+/** Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`. */
+export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabilities;
+
+/**
+ * The capabilities of the endpoint with this `endpointId`, created optimistic if unseen — the way
+ * `importCapabilities` reaches an endpoint it has only a digest for.
+ */
+export function capabilitiesById(id: string): Capabilities {
+  let known = capabilities.get(id);
+  if (!known) {
+    known = { strictSchemas: true, usageInStream: true, models: new Map() };
+    capabilities.set(id, known);
   }
   return known;
 }

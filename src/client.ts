@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import type { Endpoint } from "./config.ts";
 
@@ -178,6 +179,18 @@ const LISTING_MISS_MS = 30_000;
  */
 export const endpointKey = (config: { baseUrl: string; apiKey?: string }) =>
   JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
+
+/**
+ * `endpointKey` hashed, for the remembered facts that can leave the process.
+ *
+ * What an endpoint refused is exported by `exportCapabilities` to be written into a settings row
+ * or a file, and a key inside that blob is a credential copied somewhere nobody meant to keep one.
+ * A digest identifies the same endpoint on the next boot without saying what the key was.
+ *
+ * @param config Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
+ */
+export const endpointId = (config: { baseUrl: string; apiKey?: string }) =>
+  createHash("sha256").update(endpointKey(config)).digest("hex");
 
 /**
  * Asks an endpoint what it serves, and remembers the answer.

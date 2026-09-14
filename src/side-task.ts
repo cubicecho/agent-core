@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { capabilitiesFor, type ModelCapabilities, negotiate } from "./capabilities.ts";
-import { endpointKey, getClient } from "./client.ts";
+import { endpointId, getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { isTransient } from "./retry.ts";
@@ -29,7 +29,7 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  * The models that turned out not to take the hints, by endpoint and model.
  *
  * Keyed rather than global for the reason the client cache is keyed, and on the same
- * `endpointKey` it is: a refusal is a fact about what is on the other end, not about this
+ * endpoint it is, by `endpointId`: a refusal is a fact about what is on the other end, not about this
  * process. A llama.cpp box and a cloud API are both reachable from one consumer over its
  * lifetime, and the first one's refusal must not stop the second from ever being asked.
  *
@@ -43,7 +43,11 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  */
 const noHints = new Set<string>();
 
-const hintKey = (config: Endpoint, model: string) => JSON.stringify([endpointKey(config), model]);
+/** An (endpoint, model) pair as `noHints` holds it: `[endpointId, model]`, stringified. */
+export const hintKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
+
+/** The pairs that refused the hints, the live set, for `exportCapabilities` and `importCapabilities`. */
+export const refusedHints = (): Set<string> => noHints;
 
 /** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
 export const resetHints = () => noHints.clear();
@@ -158,7 +162,7 @@ export async function ask(
       onNotice,
     });
 
-  const key = hintKey(config, model);
+  const key = hintKey(endpointId(config), model);
   const hints = !noHints.has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {

@@ -34,6 +34,7 @@ only, Node >=22.
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
+| `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
@@ -481,6 +482,22 @@ same zero each time. Half a minute later it asks again, so a model pulled onto a
 up a week is still picked up without a restart.
 
 `resetAll` drops all four, and `reset.ts` names each seam separately for a test that wants one.
+
+The latches can outlive the process as well, because otherwise every restart spends one refused
+request per endpoint and model learning the same facts again. `exportCapabilities` returns every
+refusal as a JSON-safe `CapabilitySnapshot`, and `importCapabilities` takes one back:
+
+```ts
+importCapabilities(settings.capabilities);          // on boot; false if the version moved on
+// ...
+settings.capabilities = exportCapabilities();       // on shutdown, or after a notice
+```
+
+A snapshot names endpoints by `endpointId`, a SHA-256 digest of the URL and key, so it can be
+written to a settings row or a file without a credential going with it. Importing merges and only
+latches off, the same as a refusal does. A snapshot of another `version` is ignored. How old is too
+old is left to the consumer, who can read `savedAt` first: a server upgraded between boots may
+accept what it used to refuse, and nothing latched ever unlatches without a reset.
 
 ## Where the merged behaviour came from
 

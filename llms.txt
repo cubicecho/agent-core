@@ -171,6 +171,17 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `SideTaskOptions` (type) — What a side task may be given.
 - `tryAsk` — A side task is never worth failing the work it supports.
 
+### snapshot
+
+What endpoints and models refused, carried across a restart.
+
+- `CAPABILITY_SNAPSHOT_VERSION` — The version `importCapabilities` accepts.
+- `CapabilitySnapshot` (type) — Every latched refusal in the process, JSON-safe.
+- `EndpointSnapshot` (type) — What one endpoint refused, and under it what each of its models did.
+- `exportCapabilities` — Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
+- `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
+- `ModelSnapshot` (type) — What one model on an endpoint refused.
+
 ### stream
 
 Reading one streamed turn back into a message.

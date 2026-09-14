@@ -124,6 +124,14 @@ export {
   tryAsk,
 } from "./side-task.ts";
 export {
+  CAPABILITY_SNAPSHOT_VERSION,
+  type CapabilitySnapshot,
+  type EndpointSnapshot,
+  exportCapabilities,
+  importCapabilities,
+  type ModelSnapshot,
+} from "./snapshot.ts";
+export {
   type Produced,
   type StreamTurnOptions,
   streamTurn,
