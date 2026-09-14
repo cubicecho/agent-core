@@ -3,6 +3,7 @@ import {
   type Capabilities,
   capabilitiesFor,
   type ModelCapabilities,
+  modelCapabilitiesFor,
   negotiate,
 } from "./capabilities.ts";
 import { endpointId, getClient } from "./client.ts";
@@ -150,8 +151,16 @@ async function complete(
   { maxTokens = 512, temperature = 0.3, signal, onNotice }: SideTaskOptions,
   format?: (supports: Capabilities, refused: ModelCapabilities) => Record<string, unknown>,
 ): Promise<string> {
-  const send = (hints: boolean, supports: Capabilities, refused: ModelCapabilities | undefined) =>
-    getClient(config).chat.completions.create(
+  // Whether the last request carried an effort, which `negotiate` decides and not this function.
+  let sentEffort = false;
+  const send = (
+    hints: boolean,
+    effort: boolean,
+    supports: Capabilities,
+    refused: ModelCapabilities | undefined,
+  ) => {
+    sentEffort = effort && refused?.reasoningEffort !== false;
+    return getClient(config).chat.completions.create(
       {
         model,
         // The reasoning models want the ceiling spelled the other way, and they are exactly the
@@ -167,19 +176,22 @@ async function complete(
           { role: "user", content: user },
         ],
         ...(hints ? NO_THINKING : {}),
-        ...(hints && refused?.reasoningEffort !== false ? { reasoning_effort: "none" } : {}),
+        // Not gated on `hints`: a model that refuses `chat_template_kwargs` may still read the
+        // effort, and the two latches would otherwise contradict each other.
+        ...(sentEffort ? { reasoning_effort: "none" } : {}),
         ...(format && refused ? format(supports, refused) : {}),
       } as OpenAI.ChatCompletionCreateParamsNonStreaming,
       { signal },
     );
+  };
 
   // The endpoint's own object, not one of this module's: what a model refuses is the same fact
   // whether a run or a side task found it out, and the point of latching it is that only one of
   // them has to pay for it. Nothing here sends tools or `stream_options`; the grammar flag is in
   // play only for `askJson`, whose schema a llama.cpp server compiles the way it does a tool's.
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
-  const attempt = (hints: boolean) =>
-    negotiate(supports, (latched, _produced, refused) => send(hints, latched, refused), {
+  const attempt = (hints: boolean, effort: boolean) =>
+    negotiate(supports, (latched, _produced, refused) => send(hints, effort, latched, refused), {
       model,
       onNotice,
     });
@@ -188,15 +200,23 @@ async function complete(
   const hints = !noHints.has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {
-    response = await attempt(hints);
+    response = await attempt(hints, true);
   } catch (error) {
     // Whatever is left after `negotiate` has answered everything it knows: on this path that is
     // the hints it does not, which is `chat_template_kwargs` and an effort the model has but
-    // does not offer as `none`.
-    if (!hints || !rejectedTheRequest(error)) throw error;
-    onNotice?.(`${model} rejected the no-thinking hints; retrying without them`);
-    noHints.add(key);
-    response = await attempt(false);
+    // does not offer as `none`. Or a 400 about something else entirely, which is why the
+    // notice says what was tried rather than what was wrong.
+    const effort = sentEffort;
+    if (!(hints || effort) || !rejectedTheRequest(error)) throw error;
+    onNotice?.(`${model} rejected a request carrying the no-thinking hints; retrying without them`);
+    response = await attempt(false, false);
+    // Latched on the finding, not the hypothesis: a context overflow is a 400 `negotiate` does
+    // not recognise too, and it fails the retry the same way, leaving the next call to try the
+    // hints again. When both went out the refusal cannot say which, so the one `negotiate`
+    // cannot latch is blamed; if it was the effort after all, the next call is left with only
+    // the effort to drop and latches that instead.
+    if (hints) noHints.add(key);
+    else modelCapabilitiesFor(supports, model).reasoningEffort = false;
   }
 
   const message = response.choices[0]?.message;
