@@ -114,6 +114,11 @@ export interface RunUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * How much of `promptTokens` the endpoint served from its prompt cache. Optional so a caller
+   * emitting usage before this field existed still compiles; absent reads the same as zero.
+   */
+  cachedTokens?: number;
 }
 
 /**
