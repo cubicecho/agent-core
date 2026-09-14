@@ -166,6 +166,13 @@ const turn = await runTurn(client, supports, build, {
 });
 ```
 
+What is weighed is the prompt plus the reply ceiling the body carries, under whichever spelling
+was chosen, because that is what the endpoint weighs: a 30k prompt into a 32k window with
+`max_tokens: 4096` is refused there, so it is refused here. A body with no ceiling reserves
+nothing, and the server gives the reply whatever the prompt leaves. A consumer that subtracted
+`maxTokens` from the limit itself before calling in no longer needs to, and doing both reserves
+the ceiling twice.
+
 The body is sized once, not per attempt: a downgraded request is strictly smaller than the one
 before it and the transcript does not change between retries. A `ContextOverflow` from this is
 neither a capability `negotiate` can answer nor something `isTransient` accepts, so it leaves

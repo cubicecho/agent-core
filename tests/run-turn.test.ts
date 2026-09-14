@@ -280,6 +280,31 @@ describe("contextLimit", () => {
     ).resolves.toMatchObject({ content: "ok" });
   });
 
+  it("counts the reply ceiling against the window, under either spelling", async () => {
+    // About 2.5k tokens of prompt: fits 8192 alone, not with 6000 reserved for the reply.
+    const prompt = { role: "user" as const, content: "x".repeat(10_000) };
+    for (const ceiling of [{ max_tokens: 6000 }, { max_completion_tokens: 6000 }]) {
+      const create = vi.fn();
+      const request = () => ({ model: "m", messages: [prompt], stream: true as const, ...ceiling });
+      const error = await runTurn(clientOf(create), supports(), request, {
+        contextLimit: 8192,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ContextOverflow);
+      expect((error as Error).message).toContain("plus 6.0k reserved for the reply");
+      expect(create).not.toHaveBeenCalled();
+    }
+    const create = vi.fn().mockReturnValue(chunks(text("ok")));
+    const request = () => ({
+      model: "m",
+      messages: [prompt],
+      stream: true as const,
+      max_tokens: 1000,
+    });
+    await expect(
+      runTurn(clientOf(create), supports(), request, { contextLimit: 8192 }),
+    ).resolves.toMatchObject({ content: "ok" });
+  });
+
   it("sends whatever it is given when no limit was set", async () => {
     const create = vi.fn().mockReturnValue(chunks(text("ok")));
     await expect(runTurn(clientOf(create), supports(), big)).resolves.toMatchObject({
