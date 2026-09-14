@@ -123,7 +123,7 @@ describe("streamTurn", () => {
       clientOf(() => chunks(usage(10, 1), usage(10, 2), usage(10, 3))),
       body,
     );
-    expect(turn.usage).toEqual({ prompt: 10, completion: 3, total: 13 });
+    expect(turn.usage).toEqual({ prompt: 10, completion: 3, total: 13, cached: 0 });
   });
 
   it("reports zero usage from a server that never sends any", async () => {
@@ -131,7 +131,25 @@ describe("streamTurn", () => {
       clientOf(() => chunks(text("hi"))),
       body,
     );
-    expect(turn.usage).toEqual({ prompt: 0, completion: 0, total: 0 });
+    expect(turn.usage).toEqual({ prompt: 0, completion: 0, total: 0, cached: 0 });
+  });
+
+  it("reads a cache hit in either spelling", async () => {
+    const report = (extra: Record<string, unknown>): Chunk =>
+      chunk({
+        choices: [],
+        usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105, ...extra },
+      } as Partial<Chunk>);
+    const openai = await streamTurn(
+      clientOf(() => chunks(report({ prompt_tokens_details: { cached_tokens: 80 } }))),
+      body,
+    );
+    expect(openai.usage.cached).toBe(80);
+    const deepseek = await streamTurn(
+      clientOf(() => chunks(report({ prompt_cache_hit_tokens: 64 }))),
+      body,
+    );
+    expect(deepseek.usage.cached).toBe(64);
   });
 
   it("sets produced once the model has said something, and not before", async () => {

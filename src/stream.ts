@@ -17,7 +17,23 @@ export interface TurnUsage {
   prompt: number;
   completion: number;
   total: number;
+  /**
+   * How much of `prompt` came from the endpoint's prompt cache — a part of it, not in addition.
+   *
+   * The only way a caller can tell whether the prefix it is careful to keep still is actually
+   * being reused: a prefix that stops hitting the cache otherwise shows up as a bill and nothing
+   * else. Zero is also what a server that does not report it sends.
+   */
+  cached: number;
 }
+
+/**
+ * The usage fields a cache report arrives in, none of them in every server's reply.
+ *
+ * `prompt_tokens_details.cached_tokens` is OpenAI's, and what OpenRouter, vLLM and recent
+ * llama.cpp copy; `prompt_cache_hit_tokens` is DeepSeek's.
+ */
+type CacheUsage = OpenAI.CompletionUsage & { prompt_cache_hit_tokens?: number | null };
 
 /** One streamed turn, put back together into the shape a loop and a transcript work with. */
 export interface Turn {
@@ -144,7 +160,7 @@ export async function streamTurn(
     const stream = await client.chat.completions.create(body, { signal: linked });
     const content: string[] = [];
     const calls = new Map<number, { id: string; name: string; arguments: string }>();
-    const usage: TurnUsage = { prompt: 0, completion: 0, total: 0 };
+    const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
     let finishReason = "";
 
     for await (const chunk of stream) {
@@ -159,6 +175,9 @@ export async function streamTurn(
         usage.prompt = chunk.usage.prompt_tokens ?? 0;
         usage.completion = chunk.usage.completion_tokens ?? 0;
         usage.total = chunk.usage.total_tokens ?? 0;
+        const reported = chunk.usage as CacheUsage;
+        usage.cached =
+          reported.prompt_tokens_details?.cached_tokens ?? reported.prompt_cache_hit_tokens ?? 0;
       }
       // One choice, because that is what an agent loop asks for. A body with `n` above one
       // keeps only the first; nothing here is built to reassemble several at once.
