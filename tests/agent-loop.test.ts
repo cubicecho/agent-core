@@ -249,7 +249,7 @@ describe("runAgentLoop", () => {
       role: "system",
       content: "be brief",
     });
-    expect(result.usage).toEqual({ prompt: 10, completion: 2, total: 12 });
+    expect(result.usage).toEqual({ prompt: 10, completion: 2, total: 12, cached: 0 });
     expect(events.map((e) => e.kind)).toEqual([
       "turn",
       "tool-call",
