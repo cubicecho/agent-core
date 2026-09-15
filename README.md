@@ -504,6 +504,18 @@ Either one given something that is not a number above zero keeps what was there,
 `configureEvents` does, so a `0` threaded through for "no opinion" does not switch recall off.
 `resetHooks` (and `resetAll`) puts the default back.
 
+The preface said above the blocks moves the same way. `HOOK_PREFACE` names no host, so a host that
+wants its own name says so once with `configureHooks({ preface })`, and a `preface` passed to
+`withContext` (or on `runAgentLoop`'s `hooks`) wins over it for one request. An empty string is a
+preface of nothing — the blocks lead the question on their own, with no blank line above them —
+and anything that is not a string keeps what was there:
+
+```ts
+configureHooks({ preface: "Added by my-host's hooks — background, not the user's words:" });
+const request = withContext(messages, messages.length - 1, gathered.context); // says it
+withContext(messages, messages.length - 1, gathered.context, ""); // says nothing
+```
+
 Neither function rejects. A hook failing is an outcome, and a runner that throws outright is
 noted once for its event and costs only that event's context. `notify` takes no signal: a reader
 who leaves once the turn is answered has not asked for it not to be remembered.

@@ -5,6 +5,7 @@ import {
   configureHooks,
   gather,
   HOOK_CONTEXT_TOKENS,
+  HOOK_PREFACE,
   type HookOutcome,
   type HookRunner,
   notify,
@@ -101,6 +102,14 @@ describe("withContext", () => {
     expect(withContext(history, 3, "ctx", "From min-agent:")[3].content).toBe(
       "From min-agent:\n\nctx\n\nnow",
     );
+  });
+
+  it("says HOOK_PREFACE until something moves it", () => {
+    expect(withContext(history, 3, "ctx")[3].content).toBe(`${HOOK_PREFACE}\n\nctx\n\nnow`);
+  });
+
+  it("says nothing above the blocks for an empty preface, not a blank line", () => {
+    expect(withContext(history, 3, "ctx", "")[3].content).toBe("ctx\n\nnow");
   });
 
   it("adds a part to a question that is already a list of parts", () => {
@@ -207,7 +216,10 @@ describe("the budget", () => {
   });
 
   it("follows configureHooks for every call that does not give its own", async () => {
-    expect(configureHooks({ contextTokens: 500 })).toEqual({ contextTokens: 500 });
+    expect(configureHooks({ contextTokens: 500 })).toEqual({
+      contextTokens: 500,
+      preface: HOOK_PREFACE,
+    });
     expect(spent(assembleContext([hungry("a"), hungry("b")]))).toBe(500);
     const run: HookRunner = async () => [hungry("a")];
     expect(spent(await gather(run, ["beforeTurn"], { session: { id: "s1" } }))).toBe(500);
@@ -229,7 +241,7 @@ describe("the budget", () => {
   it("ignores a budget that is not a number above zero, wherever it is given", () => {
     configureHooks({ contextTokens: 500 });
     for (const bad of [0, -1, Number.NaN, "900" as never]) {
-      expect(configureHooks({ contextTokens: bad })).toEqual({ contextTokens: 500 });
+      expect(configureHooks({ contextTokens: bad }).contextTokens).toBe(500);
       expect(spent(assembleContext([hungry("a")], bad))).toBe(500);
     }
   });
@@ -238,6 +250,46 @@ describe("the budget", () => {
     configureHooks({ contextTokens: 500 });
     resetHooks();
     expect(spent(assembleContext([hungry("a")]))).toBe(HOOK_CONTEXT_TOKENS);
+  });
+});
+
+describe("the preface", () => {
+  afterEach(resetHooks);
+
+  const history: OpenAI.ChatCompletionMessageParam[] = [{ role: "user", content: "now" }];
+
+  it("follows configureHooks for every call that does not give its own", () => {
+    expect(configureHooks({ preface: "From min-agent:" })).toEqual({
+      contextTokens: HOOK_CONTEXT_TOKENS,
+      preface: "From min-agent:",
+    });
+    expect(withContext(history, 0, "ctx")[0].content).toBe("From min-agent:\n\nctx\n\nnow");
+    expect(withContext(history, 0, "ctx", undefined)[0].content).toBe(
+      "From min-agent:\n\nctx\n\nnow",
+    );
+  });
+
+  it("gives way to a preface passed for one call, an empty one included", () => {
+    configureHooks({ preface: "From min-agent:" });
+    expect(withContext(history, 0, "ctx", "From kanban:")[0].content).toBe(
+      "From kanban:\n\nctx\n\nnow",
+    );
+    expect(withContext(history, 0, "ctx", "")[0].content).toBe("ctx\n\nnow");
+  });
+
+  it("turns off for an empty string, and ignores anything that is not a string", () => {
+    expect(configureHooks({ preface: "" }).preface).toBe("");
+    expect(withContext(history, 0, "ctx")[0].content).toBe("ctx\n\nnow");
+    for (const bad of [undefined, null, 0, { text: "x" }] as never[]) {
+      expect(configureHooks({ preface: bad }).preface).toBe("");
+    }
+  });
+
+  it("is left alone by a budget-only call, and goes back to HOOK_PREFACE on resetHooks", () => {
+    configureHooks({ preface: "From min-agent:" });
+    expect(configureHooks({ contextTokens: 500 }).preface).toBe("From min-agent:");
+    resetHooks();
+    expect(configureHooks()).toEqual({ contextTokens: HOOK_CONTEXT_TOKENS, preface: HOOK_PREFACE });
   });
 });
 

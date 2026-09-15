@@ -222,7 +222,7 @@ export interface AgentLoopHooks {
   events?: readonly HookEvent[];
   /** The shared context budget. Absent is `configureHooks`'s. */
   maxTokens?: number;
-  /** Said above the context blocks. Absent is `HOOK_PREFACE`. */
+  /** Said above the context blocks. Absent is `configureHooks`'s; empty is none. */
   preface?: string;
   /** Hears each note, from before the request and from `afterTurn`. */
   onNote?: (note: HookNote) => void;

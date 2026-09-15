@@ -15,6 +15,7 @@ const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await impor
   "../src/capabilities.ts"
 );
 const { LOAD_TOOLS } = await import("../src/tool-loading.ts");
+const { configureHooks, resetHooks } = await import("../src/hooks.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
@@ -587,6 +588,39 @@ describe("runAgentLoop", () => {
     const [event, context] = run.mock.calls[1] as unknown as [string, Record<string, unknown>];
     expect(event).toBe("afterTurn");
     expect(context).toMatchObject({ reply: "the answer", turn: { index: 1 } });
+  });
+
+  it("says configureHooks' preface above the hooks' context, unless the loop gives its own", async () => {
+    const run = async (event: string) => [
+      {
+        serverId: "m",
+        label: "memory",
+        hookId: "h",
+        event,
+        ok: true,
+        text: "you like tea",
+        inject: true,
+        maxTokens: 500,
+      },
+    ];
+    const sentQuestion = async (preface?: string) => {
+      create.mockReset().mockReturnValueOnce(says("ok"));
+      await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => "ok",
+        hooks: { run: run as never, context: { session: { id: "s1" } }, preface },
+      });
+      return (create.mock.calls[0][0] as Body).messages[0].content as string;
+    };
+    configureHooks({ preface: "From min-agent:" });
+    try {
+      expect(await sentQuestion()).toMatch(/^From min-agent:\n\n<context source="memory">/);
+      expect(await sentQuestion("From kanban:")).toMatch(/^From kanban:\n\n<context/);
+      expect(await sentQuestion("")).toMatch(/^<context source="memory">/);
+    } finally {
+      resetHooks();
+    }
   });
 
   it("lets beforeStep replace the transcript", async () => {
