@@ -28,6 +28,7 @@ import {
   inCatalog,
   LOAD_TOOLS,
   LOAD_TOOLS_DEFINITION,
+  loadedTools,
   loadResult,
   MAX_PER_LOAD,
   PRESELECT_SCHEMA,
@@ -324,9 +325,10 @@ const accumulate = (total: TurnUsage, turn: TurnUsage) => {
  * whatever `runTurn` throws — `ContextOverflow` among them, however it was found out.
  *
  * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system
- * prompt and marks what is loaded, a catalogued tool called without being loaded is loaded and
- * run rather than refused, and a preselection shapes the first step. A turn cut off at
- * `maxTokens` is said so as a notice, because it otherwise reads exactly like a finished one.
+ * prompt unchanged from step to step, loaded tools are appended to the tool array in load order,
+ * a catalogued tool called without being loaded is loaded and run rather than refused, and a
+ * preselection shapes the first step. A turn cut off at `maxTokens` is said so as a notice,
+ * because it otherwise reads exactly like a finished one.
  *
  * @param options The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
@@ -350,8 +352,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const preselected = onDemand ? [...(options.preselected ?? [])] : [];
   for (const name of preselected) loaded.add(name);
   const used = new Set<string>();
-  const byName = (names: ReadonlySet<string>) =>
-    tools.filter((tool) => tool.type === "function" && names.has(tool.function.name));
+  const definitions = new Map<string, OpenAI.ChatCompletionTool>();
+  for (const tool of tools) {
+    if (tool.type === "function" && !definitions.has(tool.function.name)) {
+      definitions.set(tool.function.name, tool);
+    }
+  }
+  // In the order the names are given, not the order of `tools`: `loaded` is a set, which iterates
+  // in the order things were added, so a load appends and never reshuffles what went before.
+  const byName = (names: Iterable<string>) =>
+    [...names].flatMap((name) => definitions.get(name) ?? []);
 
   let messages = [...options.messages];
   // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
@@ -381,10 +391,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     const declared = routed
       ? byName(new Set(preselected))
       : onDemand
-        ? [LOAD_TOOLS_DEFINITION, ...byName(loaded)]
+        ? loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded))
         : tools;
-    const prompt =
-      onDemand && !routed ? `${system}\n\n${catalogPrompt(catalog, loaded)}`.trim() : system;
+    // Unmarked, so the system prompt is the same text on every step and a load does not throw
+    // away the cache for the whole transcript. What is loaded is said in `declared` and in the
+    // `load_tools` result instead. The preselected first step is the one exception, by design.
+    const prompt = onDemand && !routed ? `${system}\n\n${catalogPrompt(catalog)}`.trim() : system;
     const request: OpenAI.ChatCompletionMessageParam[] = [
       ...(prompt ? [{ role: "system" as const, content: prompt }] : []),
       ...withContext(
@@ -519,8 +531,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         if (!args) throw unreadable;
         if (onDemand && name === LOAD_TOOLS) {
           const resolved = expandNames(requestedNames(args), catalog);
+          content = loadResult(resolved, catalog, loaded);
           for (const hit of resolved.matched) loaded.add(hit);
-          content = loadResult(resolved, catalog);
           ok = resolved.matched.length > 0;
         } else {
           // A model that skips `load_tools` and calls a catalogued tool by name is right about

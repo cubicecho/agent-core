@@ -173,6 +173,7 @@ export {
   inCatalog,
   LOAD_TOOLS,
   LOAD_TOOLS_DEFINITION,
+  loadedTools,
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,

@@ -5,6 +5,7 @@ import {
   catalogPrompt,
   expandNames,
   inCatalog,
+  loadedTools,
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
@@ -82,6 +83,34 @@ test("the catalogue lists names only, marking what is already loaded", () => {
   // Descriptions are the expensive half; they arrive on load, not here.
   expect(prompt).not.toContain("does gmail__read_email");
   expect(catalogPrompt([])).toBe("");
+});
+
+test("the catalogue marks nothing unless asked, so it reads the same after a load", () => {
+  expect(catalogPrompt(catalog)).not.toContain("(loaded)");
+  expect(catalogPrompt(catalog)).toBe(catalogPrompt(catalog));
+});
+
+test("loading a tool already loaded says so instead of loading it again", () => {
+  const resolved = expandNames(["gmail__send_email", "files__read_file"], catalog);
+  const report = loadResult(resolved, catalog, new Set(["gmail__send_email"]));
+  expect(report).toContain("Loaded 1 tool(s)");
+  expect(report).toContain("files__read_file: does files__read_file");
+  expect(report).not.toContain("gmail__send_email: does");
+  expect(report).toContain("Already loaded and in your tool list: gmail__send_email");
+  expect(loadResult(resolved, catalog)).toContain("Loaded 2 tool(s)");
+});
+
+test("loaded definitions are appended in load order, never moved", () => {
+  const definition = (name: string) => ({
+    type: "function" as const,
+    function: { name, parameters: { type: "object" } },
+  });
+  const [a, b, c] = [definition("a"), definition("b"), definition("c")];
+  const previous = [c, a];
+  const names = (list: { type: string; function?: { name: string } }[]) =>
+    list.map((item) => item.function?.name);
+  expect(names(loadedTools(previous, [b, a, b]))).toEqual(["c", "a", "b"]);
+  expect(names(previous)).toEqual(["c", "a"]);
 });
 
 test("a preselection is resolved against the catalogue and capped", () => {

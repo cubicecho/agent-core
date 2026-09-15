@@ -54,14 +54,15 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
 });
 
 /**
- * The catalogue as a plain grouped listing of names, loaded ones marked.
+ * The catalogue as a plain grouped listing of names, loaded ones marked if asked.
  *
  * A server with no tools is dropped rather than titled: a pool hands one over whenever a
  * server is connected but has nothing to offer, and a label with nothing under it reads as a
  * listing that got cut off.
  *
  * @param catalog The connected servers. Ones with no tools are dropped.
- * @param loaded Names already loaded, marked in the listing rather than removed from it.
+ * @param loaded Names to mark `(loaded)` rather than remove. Absent marks nothing, which keeps the
+ * listing the same text for the whole run.
  */
 export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
   return catalog
@@ -78,13 +79,20 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
 /**
  * The catalogue block appended to the system prompt. Names only — descriptions arrive on load.
  *
- * Loaded tools stay in the list, marked. Removing them reads as the tool having vanished the
- * moment it was loaded, and the model loads again to get it back; hoisting them into a separate
- * "already loaded" section splits a server's tools apart, and the model picks a sibling from
- * the longer list instead.
+ * `runAgentLoop` passes no `loaded`, so the block is the same text on every step. The system
+ * prompt is the head of the request, and marking each load there threw away the prompt cache for
+ * the whole transcript on every `load_tools` call. What is loaded is said where it does not move
+ * the prefix instead: in the tool array, appended in load order (`loadedTools`), and in the
+ * `load_tools` result, which answers a repeat load with "already loaded" (`loadResult`).
+ *
+ * Loaded tools are never removed from the list. That reads as the tool having vanished the moment
+ * it was loaded, and the model loads again to get it back; hoisting them into a separate "already
+ * loaded" section splits a server's tools apart, and the model picks a sibling from the longer
+ * list instead.
  *
  * @param catalog The connected servers. A catalogue with no tools in it produces an empty string.
- * @param loaded Names already loaded, marked in the listing.
+ * @param loaded Names to mark `(loaded)`, for a caller that rebuilds its prompt per load and does
+ * not mind the cache. Absent marks nothing.
  */
 export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
   const list = catalogList(catalog, loaded);
@@ -95,15 +103,44 @@ export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<str
     "# Tool catalogue",
     "",
     "These tools exist but are not loaded. Call `load_tools` with the names you need, then call",
-    "them on the step after. Names are descriptive; load a tool to see its parameters. A name",
-    "marked `(loaded)` is already in your tool list — call it directly, do not load it again. Do",
-    "not load tools the task does not need, and do not mention this mechanism in your answer.",
+    "them on the step after. Names are descriptive; load a tool to see its parameters. A tool",
+    "already in your tool list is loaded — call it directly, do not load it again. Do not load",
+    "tools the task does not need, and do not mention this mechanism in your answer.",
     "",
     list,
   ].join("\n");
 }
 
 const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server.tools);
+
+/**
+ * A tool array with newly loaded definitions appended, in the order they were loaded.
+ *
+ * Never re-sorted and never rebuilt from a set. A template renders the tool array into the
+ * prompt near its head, and a load that moved an earlier definition moved everything after it,
+ * so the cache was lost from there on every load; appended, the definitions already sent stay
+ * a prefix of the new array.
+ *
+ * @param previous What the last request declared, `load_tools` included. Not written to.
+ * @param matched The definitions to add. Ones whose name is already declared, here or earlier in
+ * this list, are skipped rather than moved.
+ */
+export function loadedTools(
+  previous: readonly OpenAI.ChatCompletionTool[],
+  matched: readonly OpenAI.ChatCompletionTool[],
+): OpenAI.ChatCompletionTool[] {
+  const nameOf = (tool: OpenAI.ChatCompletionTool) =>
+    tool.type === "function" ? tool.function.name : undefined;
+  const declared = new Set(previous.map(nameOf));
+  const tools = [...previous];
+  for (const tool of matched) {
+    const name = nameOf(tool);
+    if (name !== undefined && declared.has(name)) continue;
+    declared.add(name);
+    tools.push(tool);
+  }
+  return tools;
+}
 
 /**
  * The most a single `load_tools` call may pull in.
@@ -216,19 +253,33 @@ export function expandNames(
 /**
  * What `load_tools` reports back: the descriptions, now that they are worth their tokens.
  *
+ * A name that was loaded before this call is reported as already loaded rather than loaded
+ * again. The catalogue no longer marks what is loaded — see `catalogPrompt` — so this is where a
+ * model that asks twice finds out it need not have, and is told to call the tool instead.
+ *
  * @param expanded What `expandNames` resolved: the matches, the misses, and the over-broad asks.
  * @param catalog The servers, read for the descriptions now worth their tokens.
+ * @param loaded What was loaded before this call. Absent reports every match as newly loaded.
  */
 export function loadResult(
   { matched, unknown, overBroad, deferred, maxPerLoad }: ReturnType<typeof expandNames>,
   catalog: CatalogServer[],
+  loaded?: ReadonlySet<string>,
 ): string {
   const byName = new Map(flatten(catalog).map((tool) => [tool.name, tool.description]));
   const lines: string[] = [];
+  const fresh = matched.filter((name) => !loaded?.has(name));
+  const again = matched.filter((name) => loaded?.has(name));
 
-  if (matched.length) {
-    lines.push(`Loaded ${matched.length} tool(s); they are callable on your next step.`, "");
-    for (const name of matched) lines.push(`${name}: ${byName.get(name) ?? ""}`.trim());
+  if (fresh.length) {
+    lines.push(`Loaded ${fresh.length} tool(s); they are callable on your next step.`, "");
+    for (const name of fresh) lines.push(`${name}: ${byName.get(name) ?? ""}`.trim());
+  }
+  if (again.length) {
+    if (lines.length) lines.push("");
+    lines.push(
+      `Already loaded and in your tool list: ${again.join(", ")}. Call them directly; do not load them again.`,
+    );
   }
   for (const { name, hits } of overBroad) {
     if (lines.length) lines.push("");

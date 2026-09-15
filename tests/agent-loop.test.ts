@@ -481,12 +481,38 @@ describe("runAgentLoop", () => {
         dispatch,
       });
       expect(declared()).toEqual([[LOAD_TOOLS], [LOAD_TOOLS, "s__read"], [LOAD_TOOLS, "s__read"]]);
-      const system = (create.mock.calls[1][0] as Body).messages[0].content as string;
-      expect(system).toContain("sys");
-      expect(system).toContain("s__read (loaded)");
+      const systems = create.mock.calls.map(([body]) => (body as Body).messages[0].content);
+      expect(systems[0]).toContain("sys");
+      // The head of the prompt does not move when a tool is loaded, so the cache survives it.
+      expect(new Set(systems).size).toBe(1);
+      expect(systems[0]).not.toContain("(loaded)");
       expect(dispatch).toHaveBeenCalledTimes(1);
       expect(result.loaded).toEqual(["s__read"]);
       expect(result.used).toEqual(["s__read"]);
+    });
+
+    it("appends loads in the order they happen, and answers a repeat load", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+      });
+      // `s__read` comes first in `tools`, and is still declared after `s__write`, which was loaded
+      // first: a reordered array moves every definition after the change.
+      expect(declared()).toEqual([
+        [LOAD_TOOLS],
+        [LOAD_TOOLS, "s__write"],
+        [LOAD_TOOLS, "s__write", "s__read"],
+      ]);
+      const second = result.messages.filter((message) => message.role === "tool")[1];
+      expect(second.content).toContain("Loaded 1 tool(s)");
+      expect(second.content).toContain("Already loaded and in your tool list: s__write");
     });
 
     it("loads and runs a catalogued tool called without loading it", async () => {
