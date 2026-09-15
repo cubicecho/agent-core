@@ -307,7 +307,10 @@ Found calls are run as `call_recovered_0` onward, the text is what is left, `onT
 result see the turn that way, and a notice says so, since the real fix is the server's parser.
 
 With `toolDiscovery: "ondemand"` and a catalogue, the request declares `load_tools` and what has
-been loaded, and the catalogue rides on the system prompt marked with what is. A model that calls
+been loaded, appended in the order it was loaded, and the catalogue rides on the system prompt
+unmarked, the same text on every step. Marking loads there rewrote the head of the prompt and lost
+the prompt cache for the whole transcript on each one; a model that loads a tool twice is told in
+the `load_tools` result that it already has it. A model that calls
 a catalogued tool without loading it first is right about what it wants, and gets it loaded and
 run. A preselection shapes the first step alone: those tools, no catalogue, no `load_tools` —
 a model with the menu still in front of it shops, reloading what it has or picking a sibling —
