@@ -1,3 +1,10 @@
+# [2.9.0](https://github.com/cubicecho/agent-core/compare/v2.8.1...v2.9.0) (2026-09-15)
+
+
+### Features
+
+* configureHooks({ preface }) sets the preface for every call that does not give its own ([4780ddc](https://github.com/cubicecho/agent-core/commit/4780ddc8c69e8879789a70a63e5cb0d9ca37f72a)), closes [#98](https://github.com/cubicecho/agent-core/issues/98)
+
 ## [2.8.1](https://github.com/cubicecho/agent-core/compare/v2.8.0...v2.8.1) (2026-09-15)
 
 
