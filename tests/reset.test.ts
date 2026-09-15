@@ -16,7 +16,7 @@ vi.mock("openai", async () => {
 });
 
 const OpenAI = (await import("openai")).default;
-const { getClient } = await import("../src/client.ts");
+const { configureClients, getClient } = await import("../src/client.ts");
 const { capabilitiesFor } = await import("../src/capabilities.ts");
 const { emit, history } = await import("../src/events.ts");
 const { configureHooks, HOOK_PREFACE } = await import("../src/hooks.ts");
@@ -75,6 +75,12 @@ describe("resetAll", () => {
     expect(history("run-a")).toHaveLength(1);
     resetAll();
     expect(history("run-a")).toEqual([]);
+  });
+
+  it("puts the client pool's bounds back", () => {
+    configureClients({ maxClients: 1, listingMissMs: 1 });
+    resetAll();
+    expect(configureClients()).toEqual({ maxClients: 32, listingMissMs: 30_000 });
   });
 
   it("puts the hooks' budget and preface back", () => {

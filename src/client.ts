@@ -38,7 +38,7 @@ export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): numb
 const clients = new Map<string, OpenAI>();
 
 /**
- * How many endpoints' clients are kept at once.
+ * How many endpoints' clients are kept at once, until `configureClients` moves it.
  *
  * This is a backstop rather than a design. The key includes the API key, and every argument in
  * this file for what bounds these caches is "a settings row's worth" — true of the deployments
@@ -52,6 +52,71 @@ const clients = new Map<string, OpenAI>();
  * constraint.
  */
 const MAX_CLIENTS = 32;
+
+/** How long a model an endpoint did not list stays unlisted before it is asked about again. */
+const LISTING_MISS_MS = 30_000;
+
+/** What the client pool is held to across a process. Every field optional; see `configureClients`. */
+export interface ClientPoolOptions {
+  /** How many endpoints' clients are kept at once. The least recently asked for goes first. */
+  maxClients?: number;
+  /**
+   * How long, in milliseconds, a model an endpoint did not list — or a server that answered
+   * without a served window — is taken at its word before the endpoint is asked again.
+   */
+  listingMissMs?: number;
+}
+
+/** The numbers this module was written with. */
+const CLIENT_DEFAULTS: Required<ClientPoolOptions> = {
+  maxClients: MAX_CLIENTS,
+  listingMissMs: LISTING_MISS_MS,
+};
+
+/** What is in force now. Read where it is used, so a change applies from the next call. */
+let poolLimits: Required<ClientPoolOptions> = { ...CLIENT_DEFAULTS };
+
+/**
+ * Drops the least recently asked-for clients until the pool fits. Nothing is closed on the way
+ * out: the SDK holds no handle a caller can release, and an evicted client is garbage once
+ * whatever request is still in flight on it has finished — dropping the reference is the whole
+ * of the eviction.
+ */
+const evict = () => {
+  for (const oldest of clients.keys()) {
+    if (clients.size <= poolLimits.maxClients) break;
+    clients.delete(oldest);
+  }
+};
+
+/**
+ * Changes what the client pool is held to, for a process whose endpoints are not shaped like the
+ * deployments these defaults were chosen for.
+ *
+ * Module-level for the same reason `configureEvents` is: the pool is one module-level thing, and
+ * its size is a deployment's setting, said once at startup. A multi-tenant host keying on a key
+ * per user raises `maxClients` so its tenants stop evicting each other's connection pools; a dev
+ * box shortens `listingMissMs` so a model it has just pulled is seen sooner.
+ *
+ * A `maxClients` below the pool's current size evicts down to it at once, least recently asked
+ * for first, as the next `getClient` would have. A shorter `listingMissMs` applies to misses
+ * already remembered, since each is a timestamp compared against it when read.
+ *
+ * @param options The bounds to change. A field left out — or given anything that is not a number
+ * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
+ * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
+ * about again until `resetClients`.
+ * @returns Everything in force afterwards, including what this call did not change.
+ */
+export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
+  for (const [name, value] of Object.entries(options)) {
+    if (typeof value === "number" && value > 0) {
+      poolLimits[name as keyof ClientPoolOptions] = value;
+    }
+  }
+  evict();
+  return { ...poolLimits };
+}
 
 /** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
 export const FIRST_TOKEN_FACTOR = 5;
@@ -80,7 +145,7 @@ export const firstTokenMs = (
  * The pool is per *deployment*, not per request: what belongs in this map is an endpoint an
  * operator configured, and everything cached in this package is bounded on that reading. A
  * consumer that mints an API key per user still gets a working client, but it is churning
- * connection pools rather than sharing them and holding every one of them — `MAX_CLIENTS` keeps
+ * connection pools rather than sharing them and holding every one of them — `maxClients` keeps
  * that from being unbounded, and it is the point at which a client of your own, built and held
  * per tenant, is the better answer than this.
  *
@@ -102,13 +167,7 @@ export function getClient(config: Endpoint): OpenAI {
   }
   const client = new OpenAI({ baseURL: config.baseUrl, apiKey, timeout, maxRetries: 0 });
   clients.set(key, client);
-  // Nothing is closed on the way out. The SDK holds no handle a caller can release, and an
-  // evicted client is garbage once whatever request is still in flight on it has finished —
-  // dropping the reference is the whole of the eviction.
-  for (const oldest of clients.keys()) {
-    if (clients.size <= MAX_CLIENTS) break;
-    clients.delete(oldest);
-  }
+  evict();
   return client;
 }
 
@@ -175,19 +234,16 @@ const listings = new Map<string, ModelInfo[]>();
  * match the configured name, an OpenRouter `:free` suffix, a typo in a settings row — and there
  * every call fetches the listing, re-reads it, finds the same absence and answers the same zero.
  *
- * Remembering the miss for a moment answers both: within `LISTING_MISS_MS` nobody is asked, and
+ * Remembering the miss for a moment answers both: within `listingMissMs` nobody is asked, and
  * after it the endpoint is asked again, so an `ollama pull` on a box that has been up a week is
  * picked up within the minute instead of at the next restart. Bounded by the (endpoint, model)
  * pairs actually asked about, which is the bound the listings themselves have.
  */
 const misses = new Map<string, number>();
 
-/** How long a model an endpoint did not list stays unlisted before it is asked about again. */
-const LISTING_MISS_MS = 30_000;
-
 /**
  * What counts as one endpoint, everywhere in this package that has to remember something about
- * one — this file's listings, `capabilities`, and the no-thinking hints in `side-task`.
+ * one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
  *
  * The URL and the key together, because the key is part of what is on the other end rather than
  * only how it is paid for: a router is free to send two keys to two different backends, and then
@@ -195,7 +251,9 @@ const LISTING_MISS_MS = 30_000;
  * endpoint with no key and one that passes `undefined` are one entry rather than two.
  *
  * Stringified rather than joined on a separator, for the reason `getClient` gives: no character
- * is impossible in a URL or a key, and two endpoints must never collide on one entry.
+ * is impossible in a URL or a key, and two endpoints must never collide on one entry. A host
+ * keeping its own per-endpoint state keys it on this rather than on a copy of it, so the two
+ * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
  *
  * @param config Read for `baseUrl` and `apiKey` alone, and the key is optional here where
  * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
@@ -210,7 +268,8 @@ export const endpointKey = (config: { baseUrl: string; apiKey?: string }) =>
  *
  * What an endpoint refused is exported by `exportCapabilities` to be written into a settings row
  * or a file, and a key inside that blob is a credential copied somewhere nobody meant to keep one.
- * A digest identifies the same endpoint on the next boot without saying what the key was.
+ * A digest identifies the same endpoint on the next boot without saying what the key was, and it
+ * is how a host finds its own endpoint's entry in a `CapabilitySnapshot`.
  *
  * @param config Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  */
@@ -221,7 +280,7 @@ export const endpointId = (config: { baseUrl: string; apiKey?: string }) =>
  * Served windows found by asking a server's own API, keyed on endpoint and model together.
  *
  * A model's entry stays until `resetClients`, like a listing; a server that answered without one
- * is asked again after `LISTING_MISS_MS`, like a listing that did not name the model.
+ * is asked again after `listingMissMs`, like a listing that did not name the model.
  */
 const served = new Map<string, { window: number; at: number }>();
 
@@ -277,7 +336,8 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
   if (unserved.has(endpoint)) return 0;
   const key = JSON.stringify([endpoint, config.model]);
   const known = served.get(key);
-  if (known && (known.window > 0 || Date.now() - known.at < LISTING_MISS_MS)) return known.window;
+  if (known && (known.window > 0 || Date.now() - known.at < poolLimits.listingMissMs))
+    return known.window;
 
   let window = 0;
   try {
@@ -359,8 +419,8 @@ export async function contextLimitFor(
     const asked = misses.get(missKey);
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the endpoint is asked, and a caller sizing a window per turn pays a round
-    // trip for each of them; `LISTING_MISS_MS` is how long that answer is allowed to stand.
-    if (asked !== undefined && Date.now() - asked < LISTING_MISS_MS) return 0;
+    // trip for each of them; `listingMissMs` is how long that answer is allowed to stand.
+    if (asked !== undefined && Date.now() - asked < poolLimits.listingMissMs) return 0;
     // A failure is not remembered: an endpoint that was down when the last run started is not
     // an endpoint with no models, and a window nobody could ask about is not a failed run.
     try {
@@ -378,8 +438,12 @@ export async function contextLimitFor(
   return listed()?.contextLength ?? 0;
 }
 
-/** Forgets every cached client and listing. For tests, and for a settings change under test. */
+/**
+ * Forgets every cached client and listing, and puts `configureClients` back to the defaults. For
+ * tests, and for a settings change under test.
+ */
 export function resetClients() {
+  poolLimits = { ...CLIENT_DEFAULTS };
   clients.clear();
   listings.clear();
   misses.clear();
