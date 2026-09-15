@@ -55,8 +55,9 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
   /**
    * What the model will read, in tokens. Zero — the default — sends whatever it is given.
    *
-   * With a limit, the request is sized before it is sent and a `ContextOverflow` is raised here
-   * rather than by the endpoint one round trip later. It is opt-in because the number is the
+   * With a limit, the request is sized before it is sent — the prompt plus the reply ceiling
+   * the body carries, since that is what the endpoint weighs — and a `ContextOverflow` is raised
+   * here rather than by the endpoint one round trip later. It is opt-in because the number is the
    * caller's to find: `contextLimitFor` asks the endpoint, an operator's own setting overrides
    * it, and neither is something a turn should be doing network I/O to discover. A limit below
    * `SMALLEST_LIKELY_WINDOW` is not believed — a model with a window that small is rare enough
@@ -129,12 +130,19 @@ export async function runTurn(
     if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
       sized = true;
       const needed = requestTokens(body);
+      // The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with
+      // `n_predict` in, OpenAI with the ceiling — so a prompt that fits the window but not the
+      // window less the ceiling was let through here to be refused one round trip later, which
+      // is the trip this guard exists to save. Read off the body under whichever spelling was
+      // chosen. No ceiling reserves nothing: the server then gives the reply what is left.
+      const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
       // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
       // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
       // loops on the first attempt instead of being sent again to be refused again.
-      if (needed > contextLimit) {
+      if (needed + reserve > contextLimit) {
+        const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : "";
         throw new ContextOverflow(
-          `the request is about ${compact(needed)} tokens, over this model's ${compact(contextLimit)}`,
+          `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
         );
       }
     }

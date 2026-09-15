@@ -86,6 +86,9 @@ test("the catalogue lists names only, marking what is already loaded", () => {
 
 test("a preselection is resolved against the catalogue and capped", () => {
   expect(preselection(["gmail__send_email", "invented"], catalog)).toEqual(["gmail__send_email"]);
+  expect(preselection({ tools: ["gmail__send_email", "invented"] }, catalog)).toEqual([
+    "gmail__send_email",
+  ]);
   // A model that answers with prose instead of an array selects nothing at all.
   expect(preselection("gmail__send_email", catalog)).toEqual([]);
 });
@@ -166,6 +169,7 @@ test("an over-broad wildcard comes back with the names it would have loaded", ()
 test("a malformed preselection reply means no preselection, not a failure", () => {
   expect(preselection(undefined, catalog)).toEqual([]);
   expect(preselection({ names: ["gmail__send_email"] }, catalog)).toEqual([]);
+  expect(preselection({ tools: "gmail__send_email" }, catalog)).toEqual([]);
   expect(preselection(["", 7, null], catalog)).toEqual([]);
 });
 

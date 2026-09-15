@@ -1,3 +1,24 @@
+# [2.5.0](https://github.com/cubicecho/agent-core/compare/v2.4.0...v2.5.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* latch the no-thinking hints only once dropping them worked ([576b402](https://github.com/cubicecho/agent-core/commit/576b4022d2dfa64fab334e9333a1613d1ca1aee8)), closes [#61](https://github.com/cubicecho/agent-core/issues/61)
+* reserve the reply ceiling in runTurn's pre-flight guard ([83ea11d](https://github.com/cubicecho/agent-core/commit/83ea11de992efd0ed34695db1a4d2166b8f25104)), closes [#68](https://github.com/cubicecho/agent-core/issues/68)
+* start runAgentLoop's usage total with cached at zero ([7ceaa15](https://github.com/cubicecho/agent-core/commit/7ceaa150d0fc25de226cc250a4a48e6e2e2975c1))
+
+
+### Features
+
+* agent loop, extraBody latch, and compaction ([#82](https://github.com/cubicecho/agent-core/issues/82)) ([c12137a](https://github.com/cubicecho/agent-core/commit/c12137a204fe94f2418d86176d785693e999f9b5)), closes [#78](https://github.com/cubicecho/agent-core/issues/78) [#80](https://github.com/cubicecho/agent-core/issues/80) [#79](https://github.com/cubicecho/agent-core/issues/79)
+* askJson, structured side tasks negotiated through response_format ([f3d148b](https://github.com/cubicecho/agent-core/commit/f3d148bb27dd7b37ef25452160b28d961882ee8f)), closes [#77](https://github.com/cubicecho/agent-core/issues/77)
+* export and import latched capabilities across restarts ([b949b9c](https://github.com/cubicecho/agent-core/commit/b949b9c0da5662f58a0e4719366b4ad8dca4f701)), closes [#74](https://github.com/cubicecho/agent-core/issues/74)
+* extraBody on ModelParams, and a latch for the fields a model refuses by name ([3532580](https://github.com/cubicecho/agent-core/commit/3532580242def919b92c2ef3e5f728eb74b37413)), closes [#78](https://github.com/cubicecho/agent-core/issues/78)
+* repair tool arguments and recover tool calls written as text ([4b6e858](https://github.com/cubicecho/agent-core/commit/4b6e858819abb24d2bcee8986def71ffa4d2fa86)), closes [#75](https://github.com/cubicecho/agent-core/issues/75) [#76](https://github.com/cubicecho/agent-core/issues/76)
+* report cached prompt tokens in turn usage ([bd98d18](https://github.com/cubicecho/agent-core/commit/bd98d182870a420e32f9a260802476d9fbf9ed4c)), closes [#62](https://github.com/cubicecho/agent-core/issues/62)
+* runAgentLoop, buildBody, preselect, preview and resolveApiKey ([343f161](https://github.com/cubicecho/agent-core/commit/343f161db0835034ad4c9b9c23fc9707cdb04ac0)), closes [#80](https://github.com/cubicecho/agent-core/issues/80)
+* tool-result pruning and transcript compaction ([6c80ca0](https://github.com/cubicecho/agent-core/commit/6c80ca03bc012991d1e34d2caa6bbe0d973c8f9c)), closes [#79](https://github.com/cubicecho/agent-core/issues/79)
+
 # [2.4.0](https://github.com/cubicecho/agent-core/compare/v2.3.0...v2.4.0) (2026-09-13)
 
 

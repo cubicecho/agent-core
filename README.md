@@ -24,15 +24,17 @@ only, Node >=22.
 | `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
-| `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. |
-| `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
+| `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can. |
+| `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
-| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, `parseToolArguments`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
+| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
+| `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
+| `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
@@ -159,6 +161,29 @@ off for the stream; it runs until the headers arrive, which is the end of prefil
 abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, side
 tasks and model listings, the same way.
 
+## Structured side tasks
+
+`askJson` is `ask` for an answer with a shape. It sends the schema as `response_format` of type
+`json_schema`, which llama.cpp compiles into a grammar and vLLM, LM Studio, Ollama and OpenAI each
+hold the reply to, so a small model that wraps JSON in prose on its own cannot do so here. The
+schema is normalised the way a tool's parameters are, and relaxed where the endpoint could not
+build a grammar, because llama.cpp reads both with the same converter. It also rides on the system
+prompt, and the reply goes through `parseJson` either way.
+
+```ts
+const picked = await askJson<{ tools: string[] }>(config, small, system, request, PRESELECT_SCHEMA, {
+  name: "preselection",
+  onNotice,
+});                                              // undefined when no JSON came back
+```
+
+A model that refuses the field latches `structuredOutput` off, per `(endpoint, model)` like the
+other refusals here, and is asked in words from then on. A server that finds the *schema* invalid
+is not latched: that error is the caller's to see. `strict` defaults to true, which OpenAI takes to
+mean every property required and `additionalProperties: false`; a looser schema wants it off there.
+`preselect` is its first user, answering `{ tools: [...] }`, and `preselection` still takes the
+bare array an older prompt produced.
+
 ## Sizing a request before sending it
 
 `runTurn` will refuse a request that cannot fit rather than spending a round trip finding out:
@@ -185,6 +210,13 @@ That differs from the trained window in the case the guard exists for, a 256k mo
 `meta.n_ctx_train`, which is only the trained window. Ollama reports no window on any route this
 reads, and truncates an over-long prompt rather than refusing it, so on Ollama pass `contextLength`
 or there is no guard at all.
+
+What is weighed is the prompt plus the reply ceiling the body carries, under whichever spelling
+was chosen, because that is what the endpoint weighs: a 30k prompt into a 32k window with
+`max_tokens: 4096` is refused there, so it is refused here. A body with no ceiling reserves
+nothing, and the server gives the reply whatever the prompt leaves. A consumer that subtracted
+`maxTokens` from the limit itself before calling in no longer needs to, and doing both reserves
+the ceiling twice.
 
 The body is sized once, not per attempt: a downgraded request is strictly smaller than the one
 before it and the transcript does not change between retries. A `ContextOverflow` from this is
@@ -235,8 +267,26 @@ answered here too, and a request that is too big throws `ContextOverflow` whiche
 out. Between steps the loop runs the calls: sequentially by default, or together with
 `parallel: true`, which also makes an identical call — the same name and arguments, byte for byte
 — once for the run. A call that threw is forgotten rather than cached, so asking again is a real
-retry. What a tool throws is what the model reads, and so is an argument string that did not
-parse; `parseToolArguments` is strict, and is the seam a lenient one replaces.
+retry. What a tool throws is what the model reads, and so are arguments that did not parse.
+
+Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
+JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
+`True` and `None`, bare keys, a trailing comma — is repaired, without touching what is inside a
+string. What still is not an object throws a `ToolArgumentsError` whose `kind` is `truncated` when
+the turn stopped at the ceiling, with a message telling the model so, and `malformed` otherwise.
+The repaired JSON is what the transcript keeps, and an unreadable call is replayed as `{}`, because
+a server that parses replayed arguments refuses the originals on every later request. `dispatch`
+is still handed the model's own text as `raw`, and the parallel dedupe compares repaired arguments,
+so `{'a': 1}` and `{"a": 1}` are one call.
+
+A server whose tool-call parser was written for another template streams the model's call as
+plain text, and the run ends on a reply that is nothing but a call nobody made. Unless
+`recoverToolCalls: false`, a turn with no calls, some text, and tools to call is passed through
+`recoverToolCalls`, which finds `<tool_call>` blocks (Hermes, Qwen, Qwen3-Coder's markup),
+`[TOOL_CALLS]` (Mistral, both spellings) and `<|python_tag|>` (Llama 3) after the last `</think>`,
+and — naming only tools that exist — a reply that is only a JSON call or holds one fenced one.
+Found calls are run as `call_recovered_0` onward, the text is what is left, `onTurn` and the
+result see the turn that way, and a notice says so, since the real fix is the server's parser.
 
 With `toolDiscovery: "ondemand"` and a catalogue, the request declares `load_tools` and what has
 been loaded, and the catalogue rides on the system prompt marked with what is. A model that calls
@@ -437,6 +487,26 @@ Neither function rejects. A hook failing is an outcome, and a runner that throws
 noted once for its event and costs only that event's context. `notify` takes no signal: a reader
 who leaves once the turn is answered has not asked for it not to be remembered.
 
+### Untrusted text
+
+Hook context is not the only text in a prompt that nobody vouched for. A fetched page, an email, a
+submitted card and a tool result all reach the model in the same words as the operator's own, and
+`untrusted` gives the model a fence it can see around them. Put `UNTRUSTED_PREFACE` in the system
+prompt once, where it costs the prompt cache nothing, and wrap each piece where it is pasted in:
+
+```ts
+import { UNTRUSTED_PREFACE, untrusted } from "@cubicecho/agent-core";
+
+const system = `${instructions}\n\n${UNTRUSTED_PREFACE}`;
+const content = `Summarise this page.\n\n${untrusted(page, { source: url })}`;
+```
+
+Any `untrusted` tag inside the text, opening or closing and in any case, has its `<` escaped, so a
+page that writes `</untrusted>` followed by an instruction leaves that instruction inside the
+block. This is one layer and not a defence on its own. A model can still be talked out of a fence,
+and the tool policy is what decides what the text can make the agent do. `withContext` does not
+fence hook blocks this way, because they have to stay identical to the MCP pool's `contextBlocks`.
+
 ## The config seam
 
 Nothing here imports a config type from a consumer, and no function asks for a whole
@@ -483,6 +553,22 @@ same zero each time. Half a minute later it asks again, so a model pulled onto a
 up a week is still picked up without a restart.
 
 `resetAll` drops all four, and `reset.ts` names each seam separately for a test that wants one.
+
+The latches can outlive the process as well, because otherwise every restart spends one refused
+request per endpoint and model learning the same facts again. `exportCapabilities` returns every
+refusal as a JSON-safe `CapabilitySnapshot`, and `importCapabilities` takes one back:
+
+```ts
+importCapabilities(settings.capabilities);          // on boot; false if the version moved on
+// ...
+settings.capabilities = exportCapabilities();       // on shutdown, or after a notice
+```
+
+A snapshot names endpoints by `endpointId`, a SHA-256 digest of the URL and key, so it can be
+written to a settings row or a file without a credential going with it. Importing merges and only
+latches off, the same as a refusal does. A snapshot of another `version` is ignored. How old is too
+old is left to the consumer, who can read `savedAt` first: a server upgraded between boots may
+accept what it used to refuse, and nothing latched ever unlatches without a reset.
 
 ## Where the merged behaviour came from
 
