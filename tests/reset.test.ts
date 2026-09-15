@@ -19,7 +19,7 @@ const OpenAI = (await import("openai")).default;
 const { configureClients, getClient } = await import("../src/client.ts");
 const { capabilitiesFor } = await import("../src/capabilities.ts");
 const { emit, history } = await import("../src/events.ts");
-const { configureHooks } = await import("../src/hooks.ts");
+const { configureHooks, HOOK_PREFACE } = await import("../src/hooks.ts");
 const { ask } = await import("../src/side-task.ts");
 const { resetAll } = await import("../src/reset.ts");
 
@@ -83,9 +83,9 @@ describe("resetAll", () => {
     expect(configureClients()).toEqual({ maxClients: 32, listingMissMs: 30_000 });
   });
 
-  it("puts the hooks' budget back", () => {
-    configureHooks({ contextTokens: 10 });
+  it("puts the hooks' budget and preface back", () => {
+    configureHooks({ contextTokens: 10, preface: "" });
     resetAll();
-    expect(configureHooks()).toEqual({ contextTokens: 2000 });
+    expect(configureHooks()).toEqual({ contextTokens: 2000, preface: HOOK_PREFACE });
   });
 });

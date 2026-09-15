@@ -10,9 +10,9 @@ import { resetHints } from "./side-task.ts";
  * Five modules here keep state for the life of the process, each for a good reason and each
  * with its own seam: the pooled clients and their model listings, the endpoints that turned
  * out not to take `stream_options` or a grammar, the models that refused the no-thinking
- * hints, the event bus, and the hooks' configured budget. `resetClients`, `resetCapabilities`,
- * `resetHints`, `resetEvents` and `resetHooks` stay exported, because a test that means to clear
- * one thing should say so.
+ * hints, the event bus, and the hooks' configured budget and preface. `resetClients`,
+ * `resetCapabilities`, `resetHints`, `resetEvents` and `resetHooks` stay exported, because a
+ * test that means to clear one thing should say so.
  *
  * This is for the other case, which is every teardown. What they hold is *latched
  * refusals* — a fact one test taught the process about an endpoint, still true as far as the
