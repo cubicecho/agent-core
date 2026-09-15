@@ -1,3 +1,10 @@
+# [2.10.0](https://github.com/cubicecho/agent-core/compare/v2.9.0...v2.10.0) (2026-09-15)
+
+
+### Features
+
+* export endpointKey and endpointId, and configureClients({ maxClients, listingMissMs }) ([fd68fca](https://github.com/cubicecho/agent-core/commit/fd68fcaa8bc89fb710ad2b14442fd6854ea31eb5)), closes [#97](https://github.com/cubicecho/agent-core/issues/97)
+
 # [2.9.0](https://github.com/cubicecho/agent-core/compare/v2.8.1...v2.9.0) (2026-09-15)
 
 
