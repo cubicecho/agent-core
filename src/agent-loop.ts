@@ -19,8 +19,9 @@ import {
 } from "./hooks.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
-import { ask, parseJson, tryAsk } from "./side-task.ts";
+import { askJson, tryAsk } from "./side-task.ts";
 import type { Turn, TurnUsage } from "./stream.ts";
+import { parseToolArguments, recoverToolCalls, type ToolCall } from "./tool-calls.ts";
 import {
   catalogPrompt,
   expandNames,
@@ -29,6 +30,7 @@ import {
   LOAD_TOOLS_DEFINITION,
   loadResult,
   MAX_PER_LOAD,
+  PRESELECT_SCHEMA,
   preselectInput,
   preselection,
   preselectSystem,
@@ -180,45 +182,26 @@ export async function preselect(
   const reply = await tryAsk(
     "preselect",
     () =>
-      ask(config, model, preselectSystem(maxPerLoad), preselectInput(catalog, prompt), {
-        maxTokens,
-        signal,
-        onNotice,
-      }),
+      askJson<unknown>(
+        config,
+        model,
+        preselectSystem(maxPerLoad),
+        preselectInput(catalog, prompt),
+        PRESELECT_SCHEMA,
+        { name: "preselection", maxTokens, signal, onNotice },
+      ),
     { onNotice },
   );
-  return reply === undefined ? [] : preselection(parseJson<unknown>(reply), catalog, maxPerLoad);
-}
-
-/**
- * A tool call's arguments as the object the tool is handed. Empty is no arguments.
- *
- * Strict: anything but a JSON object throws, with the start of what the model wrote, and the
- * loop hands that message back to the model as the tool's result so it can try again.
- *
- * @param raw The `arguments` string exactly as the model streamed it.
- */
-export function parseToolArguments(raw: string): Record<string, unknown> {
-  if (!raw.trim()) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`model produced invalid tool arguments: ${raw.slice(0, 200)}`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`model produced tool arguments that are not an object: ${raw.slice(0, 200)}`);
-  }
-  return parsed as Record<string, unknown>;
+  return preselection(reply, catalog, maxPerLoad);
 }
 
 /** One call the model made, as `dispatch` is handed it. */
 export interface ToolCallRequest {
   id: string;
   name: string;
-  /** Parsed by `parseToolArguments`. */
+  /** Parsed by `parseToolArguments`, repairs and all. */
   args: Record<string, unknown>;
-  /** The arguments as the model wrote them. */
+  /** The arguments as the model wrote them, before any repair. */
   raw: string;
 }
 
@@ -301,13 +284,20 @@ export interface AgentLoopOptions {
   signal?: AbortSignal;
   /** Told what the run is doing, as the events a watcher reads. */
   onEvent?: (event: RunEventInput) => void;
-  /** Each turn as it comes back, before its tools run. */
+  /**
+   * Takes tool calls a model wrote into its reply as text and runs them as calls, with a notice
+   * saying so. On by default: a server whose tool-call parser does not match the model's template
+   * otherwise ends the run on a reply that is only a call nobody made. Off leaves such a reply as
+   * the answer. See `recoverToolCalls`.
+   */
+  recoverToolCalls?: boolean;
+  /** Each turn as it comes back, before its tools run. Recovered calls are in it as calls. */
   onTurn?: (turn: Turn, step: number) => void;
 }
 
 /** What a finished loop hands back. */
 export interface AgentLoopResult {
-  /** The last turn: the one that asked for no tools. */
+  /** The last turn: the one that asked for no tools, as `onTurn` was handed it. */
   turn: Turn;
   /** The transcript, with every assistant turn and tool result the run added. No system prompt. */
   messages: OpenAI.ChatCompletionMessageParam[];
@@ -343,7 +333,13 @@ const accumulate = (total: TurnUsage, turn: TurnUsage) => {
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const { config, system = "", tools = [], catalog = [], dispatch, hooks, signal } = options;
-  const { onEvent, onTurn, beforeStep, parallel = false } = options;
+  const {
+    onEvent,
+    onTurn,
+    beforeStep,
+    parallel = false,
+    recoverToolCalls: recover = true,
+  } = options;
   const client = getClient(config);
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
@@ -431,18 +427,46 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }
     // A call with no name is a fragment the server never finished sending: nothing to run, and
     // an assistant message naming it would be answered by nothing.
-    const calls = turn.toolCalls.filter((call) => call.function.name);
-    onTurn?.({ ...turn, toolCalls: calls }, step);
+    let calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
+    let content = turn.content;
+    if (recover && !calls.length && content && (tools.length > 0 || onDemand)) {
+      const names = tools.flatMap((tool) => (tool.type === "function" ? [tool.function.name] : []));
+      const recovered = recoverToolCalls(content, {
+        names: onDemand ? [...names, LOAD_TOOLS] : names,
+      });
+      if (recovered.toolCalls.length) {
+        calls = recovered.toolCalls;
+        content = recovered.content;
+        notice(
+          `recovered ${calls.length} tool call${calls.length === 1 ? "" : "s"} the model wrote as text; the server's tool-call parser does not match this model's template`,
+        );
+      }
+    }
+    const shown: Turn = { ...turn, content, toolCalls: calls };
+    onTurn?.(shown, step);
+
+    // Read before the assistant message is written, so what is replayed on every later request
+    // is the repaired JSON: a server that parses replayed arguments refuses the almost-JSON, and
+    // one that could not be read at all is replayed as no arguments.
+    const parsed = calls.map((call) => {
+      try {
+        const args = parseToolArguments(call.function.arguments, {
+          finishReason: turn.finishReason,
+        });
+        return { call, args, normal: JSON.stringify(args) };
+      } catch (error) {
+        return { call, error, normal: "{}" };
+      }
+    });
 
     messages.push({
       role: "assistant",
-      content: turn.content || null,
-      ...(calls.length
+      content: content || null,
+      ...(parsed.length
         ? {
-            tool_calls: calls.map((call) => ({
+            tool_calls: parsed.map(({ call, normal }) => ({
               ...call,
-              // Replayed on every later request, and a server that parses it refuses an empty one.
-              function: { ...call.function, arguments: call.function.arguments || "{}" },
+              function: { ...call.function, arguments: normal },
             })),
           }
         : {}),
@@ -472,7 +496,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         );
       }
       return {
-        turn,
+        turn: shown,
         messages,
         usage,
         toolCalls,
@@ -482,13 +506,13 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       };
     }
 
-    const run = async (call: OpenAI.ChatCompletionMessageFunctionToolCall) => {
+    const run = async ({ call, args, error: unreadable, normal }: (typeof parsed)[number]) => {
       const { name, arguments: raw } = call.function;
       onEvent?.({ kind: "tool-call", name, text: preview(raw) });
       let content: string;
       let ok = true;
       try {
-        const args = parseToolArguments(raw);
+        if (!args) throw unreadable;
         if (onDemand && name === LOAD_TOOLS) {
           const resolved = expandNames(requestedNames(args), catalog);
           for (const hit of resolved.matched) loaded.add(hit);
@@ -501,7 +525,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           used.add(name);
           const request = { id: call.id, name, args, raw };
           content = parallel
-            ? await once(answered, `${name} ${raw}`, () => dispatch(request, signal))
+            ? await once(answered, `${name} ${normal}`, () => dispatch(request, signal))
             : await dispatch(request, signal);
         }
       } catch (error) {
@@ -516,9 +540,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     const outcomes: Awaited<ReturnType<typeof run>>[] = [];
     if (parallel) {
       signal?.throwIfAborted();
-      outcomes.push(...(await Promise.all(calls.map(run))));
+      outcomes.push(...(await Promise.all(parsed.map(run))));
     } else {
-      for (const call of calls) {
+      for (const call of parsed) {
         signal?.throwIfAborted();
         outcomes.push(await run(call));
       }

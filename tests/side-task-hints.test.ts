@@ -22,7 +22,7 @@ const endpoint = (baseUrl: string) => ({ baseUrl, apiKey: "", requestTimeoutSeco
 const call = (config: ReturnType<typeof endpoint>, model = "m") =>
   ask(config, model, "system", "user");
 /** Whether the hints rode along on the nth call. */
-const sentHints = (nth: number) => "reasoning_effort" in create.mock.calls[nth][0];
+const sentHints = (nth: number) => "chat_template_kwargs" in create.mock.calls[nth][0];
 
 const apiError = (status: number, message = "rejected") =>
   new OpenAI.APIError(status, { error: { message } }, message, undefined);
@@ -64,7 +64,9 @@ describe("no-thinking hints", () => {
     await ask(endpoint("http://picky/v1"), "m", "system", "user", {
       onNotice: (message) => notices.push(message),
     });
-    expect(notices).toEqual(["m rejected the no-thinking hints; retrying without them"]);
+    expect(notices).toEqual([
+      "m rejected a request carrying the no-thinking hints; retrying without them",
+    ]);
 
     // A library that writes to the console has decided for its consumer where operator text
     // goes. The retry still happens; it just says so through the seam or not at all.
@@ -86,6 +88,49 @@ describe("no-thinking hints", () => {
     await call(endpoint("http://picky/v1"));
     expect(create).toHaveBeenCalledTimes(3);
     expect(sentHints(2)).toBe(false);
+  });
+
+  it("does not latch on a 400 that dropping them did not fix", async () => {
+    // A context overflow is a 400 `negotiate` does not recognise, as the hints are. Latching
+    // before the retry had shown anything cost every later side task on the model its hints.
+    const overflow = apiError(400, "This model's maximum context length is 4096 tokens");
+    create.mockRejectedValueOnce(overflow).mockRejectedValueOnce(overflow);
+    await expect(call(endpoint("http://small/v1"))).rejects.toThrow("maximum context length");
+    expect(create).toHaveBeenCalledTimes(2);
+
+    create.mockResolvedValue(reply);
+    await call(endpoint("http://small/v1"));
+    expect(sentHints(2)).toBe(true);
+    expect(body(2).reasoning_effort).toBe("none");
+  });
+
+  it("keeps sending the effort to a model that refused only the template kwargs", async () => {
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await call(endpoint("http://vllm/v1"));
+    expect(body(1)).not.toHaveProperty("reasoning_effort");
+
+    await call(endpoint("http://vllm/v1"));
+    expect(sentHints(2)).toBe(false);
+    expect(body(2).reasoning_effort).toBe("none");
+    const supports = capabilitiesFor("http://vllm/v1");
+    expect(modelCapabilitiesFor(supports, "m").reasoningEffort).toBe(true);
+  });
+
+  it("latches the effort when it is all that is left to drop", async () => {
+    // Both refused in wordings `negotiate` does not know: the first call blames the kwargs, the
+    // next is left with only the effort, and after that neither goes out.
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
+    await call(endpoint("http://odd/v1"));
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
+    await call(endpoint("http://odd/v1"));
+    expect(body(2).reasoning_effort).toBe("none");
+    expect(body(3)).not.toHaveProperty("reasoning_effort");
+
+    create.mockResolvedValue(reply);
+    await call(endpoint("http://odd/v1"));
+    expect(create).toHaveBeenCalledTimes(5);
+    expect(body(4)).not.toHaveProperty("reasoning_effort");
+    expect(sentHints(4)).toBe(false);
   });
 
   it("keeps offering them after a failure that says nothing about the request", async () => {
@@ -134,8 +179,8 @@ describe("no-thinking hints", () => {
     await watched("other-model");
 
     expect(notices).toEqual([
-      "picky-model rejected the no-thinking hints; retrying without them",
-      "other-model rejected the no-thinking hints; retrying without them",
+      "picky-model rejected a request carrying the no-thinking hints; retrying without them",
+      "other-model rejected a request carrying the no-thinking hints; retrying without them",
     ]);
   });
 

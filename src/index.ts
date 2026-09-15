@@ -15,7 +15,6 @@ export {
   type AgentLoopOptions,
   type AgentLoopResult,
   buildBody,
-  parseToolArguments,
   preselect,
   preview,
   resolveApiKey,
@@ -118,7 +117,9 @@ export {
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";
 export {
+  type AskJsonOptions,
   ask,
+  askJson,
   clean,
   listLines,
   parseJson,
@@ -127,6 +128,14 @@ export {
   tryAsk,
 } from "./side-task.ts";
 export {
+  CAPABILITY_SNAPSHOT_VERSION,
+  type CapabilitySnapshot,
+  type EndpointSnapshot,
+  exportCapabilities,
+  importCapabilities,
+  type ModelSnapshot,
+} from "./snapshot.ts";
+export {
   type Produced,
   type StreamTurnOptions,
   streamTurn,
@@ -134,6 +143,12 @@ export {
   type TurnUsage,
 } from "./stream.ts";
 export { estimateTokens } from "./tokens.ts";
+export {
+  parseToolArguments,
+  recoverToolCalls,
+  ToolArgumentsError,
+  type ToolCall,
+} from "./tool-calls.ts";
 export {
   carryOver,
   catalogList,
@@ -145,6 +160,7 @@ export {
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
+  PRESELECT_SCHEMA,
   PRESELECT_SYSTEM,
   preselectInput,
   preselection,
