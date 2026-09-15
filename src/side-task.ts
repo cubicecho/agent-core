@@ -1,9 +1,15 @@
 import OpenAI from "openai";
-import { capabilitiesFor, type ModelCapabilities, negotiate } from "./capabilities.ts";
-import { endpointKey, getClient } from "./client.ts";
+import {
+  type Capabilities,
+  capabilitiesFor,
+  type ModelCapabilities,
+  negotiate,
+} from "./capabilities.ts";
+import { endpointId, getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { isTransient } from "./retry.ts";
+import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 
 /**
  * One-shot calls that support a run without being one: picking tools, naming a session,
@@ -29,7 +35,7 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  * The models that turned out not to take the hints, by endpoint and model.
  *
  * Keyed rather than global for the reason the client cache is keyed, and on the same
- * `endpointKey` it is: a refusal is a fact about what is on the other end, not about this
+ * endpoint it is, by `endpointId`: a refusal is a fact about what is on the other end, not about this
  * process. A llama.cpp box and a cloud API are both reachable from one consumer over its
  * lifetime, and the first one's refusal must not stop the second from ever being asked.
  *
@@ -43,7 +49,11 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  */
 const noHints = new Set<string>();
 
-const hintKey = (config: Endpoint, model: string) => JSON.stringify([endpointKey(config), model]);
+/** An (endpoint, model) pair as `noHints` holds it: `[endpointId, model]`, stringified. */
+export const hintKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
+
+/** The pairs that refused the hints, the live set, for `exportCapabilities` and `importCapabilities`. */
+export const refusedHints = (): Set<string> => noHints;
 
 /** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
 export const resetHints = () => noHints.clear();
@@ -118,14 +128,29 @@ export interface SideTaskOptions {
  * @param user The input it applies to.
  * @param options Reply ceiling, temperature, cancellation, notices.
  */
-export async function ask(
+export function ask(
   config: Endpoint,
   model: string,
   system: string,
   user: string,
-  { maxTokens = 512, temperature = 0.3, signal, onNotice }: SideTaskOptions = {},
+  options: SideTaskOptions = {},
 ): Promise<string> {
-  const send = (hints: boolean, refused: ModelCapabilities | undefined) =>
+  return complete(config, model, system, user, options);
+}
+
+/**
+ * The request `ask` and `askJson` share, with `format` deciding the extra body fields from what
+ * the model and the endpoint have refused, rebuilt on every re-send.
+ */
+async function complete(
+  config: Endpoint,
+  model: string,
+  system: string,
+  user: string,
+  { maxTokens = 512, temperature = 0.3, signal, onNotice }: SideTaskOptions,
+  format?: (supports: Capabilities, refused: ModelCapabilities) => Record<string, unknown>,
+): Promise<string> {
+  const send = (hints: boolean, supports: Capabilities, refused: ModelCapabilities | undefined) =>
     getClient(config).chat.completions.create(
       {
         model,
@@ -143,22 +168,23 @@ export async function ask(
         ],
         ...(hints ? NO_THINKING : {}),
         ...(hints && refused?.reasoningEffort !== false ? { reasoning_effort: "none" } : {}),
+        ...(format && refused ? format(supports, refused) : {}),
       } as OpenAI.ChatCompletionCreateParamsNonStreaming,
       { signal },
     );
 
   // The endpoint's own object, not one of this module's: what a model refuses is the same fact
   // whether a run or a side task found it out, and the point of latching it is that only one of
-  // them has to pay for it. Nothing here sends tools or `stream_options`, so the two
-  // endpoint-level flags are not in play — the model's three are the whole of what this meets.
+  // them has to pay for it. Nothing here sends tools or `stream_options`; the grammar flag is in
+  // play only for `askJson`, whose schema a llama.cpp server compiles the way it does a tool's.
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const attempt = (hints: boolean) =>
-    negotiate(supports, (_supports, _produced, refused) => send(hints, refused), {
+    negotiate(supports, (latched, _produced, refused) => send(hints, latched, refused), {
       model,
       onNotice,
     });
 
-  const key = hintKey(config, model);
+  const key = hintKey(endpointId(config), model);
   const hints = !noHints.has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {
@@ -180,6 +206,69 @@ export async function ask(
   if (answer) return answer;
   const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
   return typeof reasoning === "string" ? stripThinking(reasoning).trim() : "";
+}
+
+/** What `askJson` takes besides a side task's options. */
+export interface AskJsonOptions extends SideTaskOptions {
+  /** What the schema is called in the request, `answer` by default. Letters, digits, `_` and `-`. */
+  name?: string;
+  /**
+   * Asks the server to hold the reply to the schema exactly, true by default. OpenAI's strict mode
+   * wants every property required and `additionalProperties: false`; a schema written otherwise
+   * wants this off there.
+   */
+  strict?: boolean;
+}
+
+/**
+ * A side task whose answer is JSON matching a schema, parsed. Undefined when no JSON came back.
+ * Throws like any request.
+ *
+ * Sends `response_format` with the schema, which a llama.cpp server compiles into a grammar and
+ * vLLM, LM Studio, Ollama and OpenAI each hold the reply to, so a small model that wraps JSON in
+ * prose cannot. The schema is normalised as a tool's parameters are, and relaxed where the endpoint
+ * could not build a grammar, since the same converter reads both. A model that refuses the field
+ * latches it off and is asked in words: the schema rides on the system prompt either way, and
+ * the reply goes through `parseJson`, which finds the JSON in whatever came back.
+ *
+ * @param config Where to send it and how long to wait.
+ * @param model The model to ask.
+ * @param system The instruction. The schema is appended to it.
+ * @param user The input it applies to.
+ * @param schema The JSON Schema of the answer. Its root is held to an object, as a tool's is.
+ * @param options A side task's options, plus the schema's `name` and whether it is `strict`.
+ */
+export async function askJson<T>(
+  config: Endpoint,
+  model: string,
+  system: string,
+  user: string,
+  schema: Record<string, unknown>,
+  { name = "answer", strict = true, ...options }: AskJsonOptions = {},
+): Promise<T | undefined> {
+  const tool = (parameters: Record<string, unknown>): OpenAI.ChatCompletionTool => ({
+    type: "function",
+    function: { name, parameters },
+  });
+  const [sanitized] = sanitizeTools([tool(schema)]);
+  const shapeOf = (definition: OpenAI.ChatCompletionTool | undefined) =>
+    definition?.type === "function" ? (definition.function.parameters ?? {}) : {};
+  const instruction = `${system}\n\nReply with JSON alone, matching this JSON Schema:\n${JSON.stringify(shapeOf(sanitized))}`;
+  const reply = await complete(config, model, instruction, user, options, (supports, refused) =>
+    refused.structuredOutput
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name,
+              strict,
+              schema: shapeOf(supports.strictSchemas ? sanitized : relaxTools([sanitized])[0]),
+            },
+          },
+        }
+      : {},
+  );
+  return parseJson<T>(reply);
 }
 
 /**
