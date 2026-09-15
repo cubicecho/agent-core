@@ -17,7 +17,6 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
 - `AgentLoopResult` (type) — What a finished loop hands back.
 - `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
-- `parseToolArguments` — A tool call's arguments as the object the tool is handed.
 - `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 - `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
@@ -46,11 +45,14 @@ The contract between whatever holds the tools and the loop that offers them to a
 ### client
 
 - `contextLimitFor` — How much a model will read, in tokens.
+- `FIRST_TOKEN_FACTOR` — How many idle windows the first chunk gets when `firstTokenSeconds` is not given.
+- `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for an endpoint, built once and kept.
 - `listModels` — Asks an endpoint what it serves, and remembers the answer.
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `resetClients` — Forgets every cached client and listing.
+- `servedWindow` — The window a local server is actually serving a model in, which its listing does not say.
 - `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
 
 ### compaction
@@ -124,6 +126,8 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `resetHooks` — Test seam: puts `configureHooks` back to the defaults, so one test's budget is not the next's.
 - `turnIndex` — Which turn of a session begins at a point, from 0: the user messages ahead of it.
 - `turnMessages` — A stretch of a transcript as a hook reads it: what the user and the assistant said, and nothing else.
+- `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
+- `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 - `withContext` — The request, with the hooks' context added to this turn's question.
 
 ### reset
@@ -138,8 +142,11 @@ Everything about a request failing that is not about what the request said.
 - `ContextOverflow` — The request was bigger than the model will read.
 - `compact` — 1234 → "1.2k".
 - `EndpointSilent` — The endpoint stopped answering mid-request.
+- `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
+- `LOADING_POLL_MS` — How long to wait between asking a loading server again.
+- `LOADING_TIMEOUT_MS` — How long `runTurn` waits for a model to load unless told otherwise.
 - `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
 - `requestTokens` — What this request will cost the window, in tokens, near enough.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
@@ -164,13 +171,26 @@ JSON Schema compatibility for llama.cpp-backed servers.
 
 One-shot calls that support a run without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
 
+- `AskJsonOptions` (type) — What `askJson` takes besides a side task's options.
 - `ask` — Runs a side task and returns the reply text, thinking stripped.
+- `askJson` — A side task whose answer is JSON matching a schema, parsed.
 - `clean` — Strips the quoting and list punctuation models decorate short answers with.
 - `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
 - `parseJson` — Models are asked for JSON and often answer with prose around it, or a fenced block.
 - `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
 - `SideTaskOptions` (type) — What a side task may be given.
 - `tryAsk` — A side task is never worth failing the work it supports.
+
+### snapshot
+
+What endpoints and models refused, carried across a restart.
+
+- `CAPABILITY_SNAPSHOT_VERSION` — The version `importCapabilities` accepts.
+- `CapabilitySnapshot` (type) — Every latched refusal in the process, JSON-safe.
+- `EndpointSnapshot` (type) — What one endpoint refused, and under it what each of its models did.
+- `exportCapabilities` — Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
+- `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
+- `ModelSnapshot` (type) — What one model on an endpoint refused.
 
 ### stream
 
@@ -199,6 +219,15 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 
 - `estimateTokens` — Rough token count.
 
+### tool-calls
+
+Reading what a model meant by a tool call when it did not write one cleanly.
+
+- `parseToolArguments` — A tool call's arguments as the object the tool is handed.
+- `recoverToolCalls` — Tool calls a model wrote into its reply as text, taken out of it and made into calls.
+- `ToolArgumentsError` — Tool arguments that could not be read as an object, with why.
+- `ToolCall` (type) — A tool call as the loop handles it, recovered or streamed.
+
 ### tool-loading
 
 - `carryOver` — The tools to start the next turn with: recently used, newest last, capped.
@@ -211,6 +240,7 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `loadResult` — What `load_tools` reports back: the descriptions, now that they are worth their tokens.
 - `MAX_CARRIED` — The most a conversation carries between turns.
 - `MAX_PER_LOAD` — The most a single `load_tools` call may pull in.
+- `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
 - `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
 - `preselectInput` — The user message for a preselection call: the catalogue, then the request.
 - `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.

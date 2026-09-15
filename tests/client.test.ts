@@ -7,11 +7,22 @@ vi.mock("openai", () => ({
   },
 }));
 
-const { contextLimitFor, getClient, listModels, resetClients } = await import("../src/client.ts");
+const { contextLimitFor, firstTokenMs, getClient, listModels, resetClients } = await import(
+  "../src/client.ts"
+);
 
 const endpoint = { baseUrl: "http://local/v1", apiKey: "", requestTimeoutSeconds: 60 };
 /** What a listing endpoint answers with: the OpenAI shape plus whatever window key it uses. */
-const listing = (...models: { id: string; context_length?: number }[]) => ({ data: models });
+const listing = (...models: ({ id: string } & Record<string, unknown>)[]) => ({ data: models });
+
+/** A fetch answering each native route with a body, and 404 for any route not given. */
+const routes = (answers: Record<string, unknown>) =>
+  vi.fn(async (url: string) => {
+    const path = new URL(url).pathname;
+    return path in answers
+      ? new Response(JSON.stringify(answers[path]), { status: 200 })
+      : new Response("not found", { status: 404 });
+  });
 
 /**
  * `MAX_CLIENTS` in `src/client.ts`, which is not exported: the number is a backstop rather than
@@ -28,16 +39,72 @@ describe("contextLimitFor", () => {
     vi.useFakeTimers();
     resetClients();
     list.mockReset();
+    // A server with neither native route, which is what every test below not about them wants.
+    vi.stubGlobal("fetch", routes({}));
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("reads the window off the endpoint's listing", async () => {
-    list.mockResolvedValue(listing({ id: "qwen", context_length: 32768 }));
+    // vLLM's spelling, top-level.
+    list.mockResolvedValue(listing({ id: "qwen", max_model_len: 32768 }));
     await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
     expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads llama.cpp's trained window from under meta, where nothing better answers", async () => {
+    list.mockResolvedValue(
+      listing({ id: "qwen", owned_by: "llamacpp", meta: { n_vocab: 151936, n_ctx_train: 262144 } }),
+    );
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(262144);
+  });
+
+  it("prefers the window llama.cpp is serving over the one the model was trained with", async () => {
+    // A 256k model started at `-c 16384`: the listing says one, `/props` the other.
+    list.mockResolvedValue(listing({ id: "qwen", meta: { n_ctx_train: 262144 } }));
+    const fetch = routes({ "/props": { default_generation_settings: { n_ctx: 16384 } } });
+    vi.stubGlobal("fetch", fetch);
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(16384);
+    expect(fetch.mock.calls[0]?.[0]).toBe("http://local/props?model=qwen");
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("reads the window LM Studio has the model loaded in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes({
+        "/api/v0/models": {
+          data: [
+            { id: "other", loaded_context_length: 4096 },
+            { id: "qwen", max_context_length: 131072, loaded_context_length: 32768 },
+          ],
+        },
+      }),
+    );
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
+  });
+
+  it("stops asking a server that has neither route", async () => {
+    const fetch = routes({});
+    vi.stubGlobal("fetch", fetch);
+    list.mockResolvedValue(listing({ id: "qwen", max_model_len: 32768 }));
+    await contextLimitFor({ ...endpoint, model: "qwen" });
+    await contextLimitFor({ ...endpoint, model: "llama" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not remember a server it could not reach", async () => {
+    const fetch = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    vi.stubGlobal("fetch", fetch);
+    list.mockResolvedValue(listing({ id: "qwen", max_model_len: 32768 }));
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
+    await contextLimitFor({ ...endpoint, model: "qwen" });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("takes the operator's own number without asking anyone", async () => {
@@ -159,5 +226,17 @@ describe("getClient", () => {
     getClient(box(MAX_CLIENTS));
     expect(getClient(box(0))).toBe(first);
     expect(getClient(box(1))).not.toBe(second);
+  });
+});
+
+describe("firstTokenMs", () => {
+  it("is five idle windows unless the endpoint names its own", () => {
+    expect(firstTokenMs({ requestTimeoutSeconds: 60 })).toBe(300_000);
+    expect(firstTokenMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 600 })).toBe(600_000);
+  });
+
+  it("is no limit where there is none to multiply, or it is turned off", () => {
+    expect(firstTokenMs({})).toBeUndefined();
+    expect(firstTokenMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 0 })).toBeUndefined();
   });
 });

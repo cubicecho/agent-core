@@ -72,6 +72,48 @@ describe("runTurn", () => {
     expect(notices[0]).toContain("(1/2)");
   });
 
+  it("waits for a model that is still loading without spending the retry budget", async () => {
+    vi.useFakeTimers();
+    const notices: string[] = [];
+    // The shape llama.cpp answers with while the weights are still being mapped.
+    const loading = () =>
+      new OpenAI.APIError(
+        503,
+        { code: 503, message: "Loading model", type: "unavailable_error" },
+        undefined,
+        undefined,
+      );
+    let calls = 0;
+    const create = vi.fn(() => (++calls <= 20 ? Promise.reject(loading()) : chunks(text("up"))));
+    const turn = runTurn(clientOf(create), supports(), body, {
+      model: "qwen",
+      onNotice: (n) => notices.push(n),
+    });
+    await vi.advanceTimersByTimeAsync(20 * 3000);
+    await expect(turn).resolves.toMatchObject({ content: "up" });
+    expect(create).toHaveBeenCalledTimes(21);
+    // Once, not per poll.
+    expect(notices).toEqual(["qwen is still loading — waiting up to 120s"]);
+  });
+
+  it("gives up on a model that never finishes loading", async () => {
+    vi.useFakeTimers();
+    const create = vi.fn(() => Promise.reject(apiError(503, "Loading model")));
+    const turn = runTurn(clientOf(create), supports(), body, { loadingTimeoutMs: 10_000 });
+    const settled = expect(turn).rejects.toThrow("Loading model");
+    await vi.advanceTimersByTimeAsync(12_000);
+    await settled;
+    expect(create).toHaveBeenCalledTimes(5);
+  });
+
+  it("keeps a plain 503 on the ordinary backoff", async () => {
+    vi.useFakeTimers();
+    const create = vi.fn(() => Promise.reject(apiError(503, "service unavailable")));
+    const turn = runTurn(clientOf(create), supports(), body);
+    await expect(turn).rejects.toThrow("service unavailable");
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
   it("gives up when the budget is spent", async () => {
     vi.useFakeTimers();
     const create = vi.fn().mockRejectedValue(lost());
@@ -277,6 +319,31 @@ describe("contextLimit", () => {
     const create = vi.fn().mockReturnValue(chunks(text("ok")));
     await expect(
       runTurn(clientOf(create), supports(), body, { contextLimit: 8192 }),
+    ).resolves.toMatchObject({ content: "ok" });
+  });
+
+  it("counts the reply ceiling against the window, under either spelling", async () => {
+    // About 2.5k tokens of prompt: fits 8192 alone, not with 6000 reserved for the reply.
+    const prompt = { role: "user" as const, content: "x".repeat(10_000) };
+    for (const ceiling of [{ max_tokens: 6000 }, { max_completion_tokens: 6000 }]) {
+      const create = vi.fn();
+      const request = () => ({ model: "m", messages: [prompt], stream: true as const, ...ceiling });
+      const error = await runTurn(clientOf(create), supports(), request, {
+        contextLimit: 8192,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ContextOverflow);
+      expect((error as Error).message).toContain("plus 6.0k reserved for the reply");
+      expect(create).not.toHaveBeenCalled();
+    }
+    const create = vi.fn().mockReturnValue(chunks(text("ok")));
+    const request = () => ({
+      model: "m",
+      messages: [prompt],
+      stream: true as const,
+      max_tokens: 1000,
+    });
+    await expect(
+      runTurn(clientOf(create), supports(), request, { contextLimit: 8192 }),
     ).resolves.toMatchObject({ content: "ok" });
   });
 

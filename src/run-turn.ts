@@ -5,8 +5,11 @@ import {
   backoffMs,
   ContextOverflow,
   compact,
+  isModelLoading,
   isOverflow,
   isTransient,
+  LOADING_POLL_MS,
+  LOADING_TIMEOUT_MS,
   requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
@@ -52,8 +55,9 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
   /**
    * What the model will read, in tokens. Zero — the default — sends whatever it is given.
    *
-   * With a limit, the request is sized before it is sent and a `ContextOverflow` is raised here
-   * rather than by the endpoint one round trip later. It is opt-in because the number is the
+   * With a limit, the request is sized before it is sent — the prompt plus the reply ceiling
+   * the body carries, since that is what the endpoint weighs — and a `ContextOverflow` is raised
+   * here rather than by the endpoint one round trip later. It is opt-in because the number is the
    * caller's to find: `contextLimitFor` asks the endpoint, an operator's own setting overrides
    * it, and neither is something a turn should be doing network I/O to discover. A limit below
    * `SMALLEST_LIKELY_WINDOW` is not believed — a model with a window that small is rare enough
@@ -75,6 +79,15 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
    * of `extraBody`, ordinarily. See `NegotiateOptions.droppable`; it needs `model` too.
    */
   droppable?: Iterable<string>;
+  /**
+   * How long to wait on a server answering that the model is still loading, `LOADING_TIMEOUT_MS`
+   * unless given; zero gives up on the first such answer like any other 503.
+   *
+   * Polled every `LOADING_POLL_MS` without spending `maxRetries`, and announced once rather than
+   * per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
+   * has to swap in, meets this on its first request every time.
+   */
+  loadingTimeoutMs?: number;
 }
 
 /**
@@ -97,7 +110,15 @@ export async function runTurn(
     supports: Capabilities,
     model: ModelCapabilities | undefined,
   ) => OpenAI.ChatCompletionCreateParamsStreaming,
-  { maxRetries = 0, onNotice, contextLimit = 0, model, droppable, ...stream }: RunTurnOptions = {},
+  {
+    maxRetries = 0,
+    onNotice,
+    contextLimit = 0,
+    model,
+    droppable,
+    loadingTimeoutMs = LOADING_TIMEOUT_MS,
+    ...stream
+  }: RunTurnOptions = {},
 ): Promise<Turn> {
   // Sized once rather than per build. `request` is called again for every downgrade and every
   // retry, but a downgraded body is strictly smaller than the one before it and the transcript
@@ -109,18 +130,28 @@ export async function runTurn(
     if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
       sized = true;
       const needed = requestTokens(body);
+      // The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with
+      // `n_predict` in, OpenAI with the ceiling — so a prompt that fits the window but not the
+      // window less the ceiling was let through here to be refused one round trip later, which
+      // is the trip this guard exists to save. Read off the body under whichever spelling was
+      // chosen. No ceiling reserves nothing: the server then gives the reply what is left.
+      const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
       // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
       // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
       // loops on the first attempt instead of being sent again to be refused again.
-      if (needed > contextLimit) {
+      if (needed + reserve > contextLimit) {
+        const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : "";
         throw new ContextOverflow(
-          `the request is about ${compact(needed)} tokens, over this model's ${compact(contextLimit)}`,
+          `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
         );
       }
     }
     return body;
   };
 
+  // When the server first said it was loading. Unset until then, and never reset: a model that
+  // loads, fails and loads again has had its allowance.
+  let loadingSince: number | undefined;
   for (let attempt = 0; ; attempt++) {
     const produced: Produced = { any: false };
     try {
@@ -147,6 +178,22 @@ export async function runTurn(
       // rules it out, and it goes on to be retried below as the 429 it is.
       if (!(error instanceof ContextOverflow) && isOverflow(errorMessage(error))) {
         throw new ContextOverflow(errorMessage(error), { cause: error });
+      }
+      if (isModelLoading(error) && loadingTimeoutMs > 0) {
+        const now = Date.now();
+        if (loadingSince === undefined) {
+          loadingSince = now;
+          onNotice?.(
+            `${model ?? "the model"} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`,
+          );
+        }
+        if (now - loadingSince < loadingTimeoutMs) {
+          // Not an attempt: the request was never looked at, and a two-minute load would
+          // otherwise have to be bought with a retry budget meant for dropped connections.
+          attempt--;
+          await sleep(LOADING_POLL_MS, stream.signal);
+          continue;
+        }
       }
       if (attempt >= maxRetries || !isTransient(error)) throw error;
       const wait = backoffMs(attempt);

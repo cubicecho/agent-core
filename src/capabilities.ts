@@ -1,4 +1,4 @@
-import { endpointKey } from "./client.ts";
+import { endpointId } from "./client.ts";
 import { errorMessage } from "./errors.ts";
 import { isGrammarError } from "./schema-compat.ts";
 import type { Produced } from "./stream.ts";
@@ -81,18 +81,25 @@ export interface ModelCapabilities {
    * refusal naming `messages` is a broken request, not a field the model can do without.
    */
   refusedFields: Set<string>;
+  /**
+   * Takes a `response_format` of type `json_schema`, which `askJson` sends. An older model, or a
+   * proxy in front of one, refuses the field outright; the answer is to ask in words and parse the
+   * reply, which is what every structured answer did before. The model's rather than the
+   * endpoint's because one key reaches models that differ here, the way they differ on effort.
+   */
+  structuredOutput: boolean;
 }
 
 /**
  * What each endpoint cannot do, remembered for the life of the process.
  *
- * Keyed by `endpointKey`, because these are facts about the server on the other end and not
- * about this one. A llama.cpp box that cannot compile a grammar and a cloud API that can are
- * both reachable from one settings row over its lifetime — an operator retargets it from Ollama
- * this afternoon to OpenAI this evening — and the first one's refusal must not quietly strip
- * pattern/format from the second one's requests, or silently cost it its token counts, for the
- * rest of the process. Bounded by the number of endpoints ever configured, which is a settings
- * row's worth.
+ * Keyed by `endpointId` — `endpointKey` hashed, so a snapshot holds no key — because these are
+ * facts about the server on the other end and not about this one. A llama.cpp box that cannot
+ * compile a grammar and a cloud API that can are both reachable from one settings row over its
+ * lifetime — an operator retargets it from Ollama this afternoon to OpenAI this evening — and the
+ * first one's refusal must not quietly strip pattern/format from the second one's requests, or
+ * silently cost it its token counts, for the rest of the process. Bounded by the number of
+ * endpoints ever configured, which is a settings row's worth.
  *
  * The API key is part of that identity, the same as it is for the client pool and the model
  * listings. A router — LiteLLM, OpenRouter, a gateway with several boxes behind it — is free to
@@ -115,13 +122,7 @@ const capabilities = new Map<string, Capabilities>();
  * one that passes `undefined` share an entry rather than holding two.
  */
 export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities {
-  const key = endpointKey({ baseUrl, apiKey });
-  let known = capabilities.get(key);
-  if (!known) {
-    known = { strictSchemas: true, usageInStream: true, models: new Map() };
-    capabilities.set(key, known);
-  }
-  return known;
+  return capabilitiesById(endpointId({ baseUrl, apiKey }));
 }
 
 /**
@@ -145,8 +146,25 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
       legacyTokenLimit: true,
       chosenTemperature: true,
       refusedFields: new Set(),
+      structuredOutput: true,
     };
     supports.models.set(model, known);
+  }
+  return known;
+}
+
+/** Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`. */
+export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabilities;
+
+/**
+ * The capabilities of the endpoint with this `endpointId`, created optimistic if unseen — the way
+ * `importCapabilities` reaches an endpoint it has only a digest for.
+ */
+export function capabilitiesById(id: string): Capabilities {
+  let known = capabilities.get(id);
+  if (!known) {
+    known = { strictSchemas: true, usageInStream: true, models: new Map() };
+    capabilities.set(id, known);
   }
   return known;
 }
@@ -173,6 +191,14 @@ const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): 
 
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
 const REJECTS_USAGE = /stream_options/i;
+
+/**
+ * `response_format` or its `json_schema` type refused, rather than the schema in it. A server
+ * that validates the schema and finds it wanting — `Invalid schema for response_format` — is
+ * telling the caller about their schema, and falling back to words for good would hide that.
+ */
+const rejectsResponseFormat = (detail: string) =>
+  /response_format|json_schema/i.test(detail) && !/invalid schema/i.test(detail);
 
 /**
  * A refusal of the *value* rather than of the field, which names the field either way.
@@ -393,6 +419,9 @@ export async function negotiate<T>(
       } else if (named?.refused.chosenTemperature && refusesChosenTemperature(detail)) {
         named.refused.chosenTemperature = false;
         onNotice?.(`${named.name} takes only its own temperature; retrying without ours`);
+      } else if (named?.refused.structuredOutput && rejectsResponseFormat(detail)) {
+        named.refused.structuredOutput = false;
+        onNotice?.(`${named.name} does not take response_format; asking for JSON in words instead`);
       } else if (named && refusesDroppable(detail, optional, named.refused)) {
         const fields = unknownFields(detail).filter(
           (field) => optional.has(field) && !named.refused.refusedFields.has(field),

@@ -15,7 +15,6 @@ export {
   type AgentLoopOptions,
   type AgentLoopResult,
   buildBody,
-  parseToolArguments,
   preselect,
   preview,
   resolveApiKey,
@@ -35,11 +34,14 @@ export {
 export type { CatalogServer } from "./catalog.ts";
 export {
   contextLimitFor,
+  FIRST_TOKEN_FACTOR,
+  firstTokenMs,
   getClient,
   listModels,
   type ModelInfo,
   NO_KEY,
   resetClients,
+  servedWindow,
   timeoutMs,
 } from "./client.ts";
 export {
@@ -98,6 +100,8 @@ export {
   resetHooks,
   turnIndex,
   turnMessages,
+  UNTRUSTED_PREFACE,
+  untrusted,
   withContext,
 } from "./hooks.ts";
 export { resetAll } from "./reset.ts";
@@ -106,8 +110,11 @@ export {
   ContextOverflow,
   compact,
   EndpointSilent,
+  isModelLoading,
   isOverflow,
   isTransient,
+  LOADING_POLL_MS,
+  LOADING_TIMEOUT_MS,
   messageTokens,
   requestTokens,
   SMALLEST_LIKELY_WINDOW,
@@ -116,7 +123,9 @@ export {
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";
 export {
+  type AskJsonOptions,
   ask,
+  askJson,
   clean,
   listLines,
   parseJson,
@@ -124,6 +133,14 @@ export {
   type SideTaskOptions,
   tryAsk,
 } from "./side-task.ts";
+export {
+  CAPABILITY_SNAPSHOT_VERSION,
+  type CapabilitySnapshot,
+  type EndpointSnapshot,
+  exportCapabilities,
+  importCapabilities,
+  type ModelSnapshot,
+} from "./snapshot.ts";
 export {
   type Produced,
   type StreamTurnOptions,
@@ -143,6 +160,12 @@ export {
 } from "./thinking.ts";
 export { estimateTokens } from "./tokens.ts";
 export {
+  parseToolArguments,
+  recoverToolCalls,
+  ToolArgumentsError,
+  type ToolCall,
+} from "./tool-calls.ts";
+export {
   carryOver,
   catalogList,
   catalogPrompt,
@@ -153,6 +176,7 @@ export {
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
+  PRESELECT_SCHEMA,
   PRESELECT_SYSTEM,
   preselectInput,
   preselection,
