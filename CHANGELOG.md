@@ -1,3 +1,17 @@
+# [2.7.0](https://github.com/cubicecho/agent-core/compare/v2.6.0...v2.7.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* start runAgentLoop's usage total with cached at zero ([e6c1e0f](https://github.com/cubicecho/agent-core/commit/e6c1e0fb5adb746de626ae675c1d940140b5968b))
+
+
+### Features
+
+* find the window llama.cpp and LM Studio are actually serving ([ab04c51](https://github.com/cubicecho/agent-core/commit/ab04c51e26b4b0536fc5cb8ddea96873c51ebe7c)), closes [#67](https://github.com/cubicecho/agent-core/issues/67)
+* give a streamed turn's first token its own wait ([a942154](https://github.com/cubicecho/agent-core/commit/a9421541899105847aa7e5cad22649f56defedd8)), closes [#71](https://github.com/cubicecho/agent-core/issues/71)
+* wait for a local server that is still loading the model ([ebb645a](https://github.com/cubicecho/agent-core/commit/ebb645aad93ca54d0a4bb7398f4eb59c31d7bfae)), closes [#72](https://github.com/cubicecho/agent-core/issues/72)
+
 # [2.6.0](https://github.com/cubicecho/agent-core/compare/v2.5.0...v2.6.0) (2026-09-15)
 
 
