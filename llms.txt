@@ -45,11 +45,14 @@ The contract between whatever holds the tools and the loop that offers them to a
 ### client
 
 - `contextLimitFor` — How much a model will read, in tokens.
+- `FIRST_TOKEN_FACTOR` — How many idle windows the first chunk gets when `firstTokenSeconds` is not given.
+- `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for an endpoint, built once and kept.
 - `listModels` — Asks an endpoint what it serves, and remembers the answer.
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `resetClients` — Forgets every cached client and listing.
+- `servedWindow` — The window a local server is actually serving a model in, which its listing does not say.
 - `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
 
 ### compaction
@@ -139,8 +142,11 @@ Everything about a request failing that is not about what the request said.
 - `ContextOverflow` — The request was bigger than the model will read.
 - `compact` — 1234 → "1.2k".
 - `EndpointSilent` — The endpoint stopped answering mid-request.
+- `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
+- `LOADING_POLL_MS` — How long to wait between asking a loading server again.
+- `LOADING_TIMEOUT_MS` — How long `runTurn` waits for a model to load unless told otherwise.
 - `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
 - `requestTokens` — What this request will cost the window, in tokens, near enough.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.

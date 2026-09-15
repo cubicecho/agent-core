@@ -34,11 +34,14 @@ export {
 export type { CatalogServer } from "./catalog.ts";
 export {
   contextLimitFor,
+  FIRST_TOKEN_FACTOR,
+  firstTokenMs,
   getClient,
   listModels,
   type ModelInfo,
   NO_KEY,
   resetClients,
+  servedWindow,
   timeoutMs,
 } from "./client.ts";
 export {
@@ -107,8 +110,11 @@ export {
   ContextOverflow,
   compact,
   EndpointSilent,
+  isModelLoading,
   isOverflow,
   isTransient,
+  LOADING_POLL_MS,
+  LOADING_TIMEOUT_MS,
   messageTokens,
   requestTokens,
   SMALLEST_LIKELY_WINDOW,

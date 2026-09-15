@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
 import { type Capabilities, capabilitiesFor, type ModelCapabilities } from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
-import { getClient, NO_KEY, timeoutMs } from "./client.ts";
+import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import type { RunEventInput } from "./events.ts";
@@ -403,9 +403,13 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         model: config.model,
         droppable: Object.keys(config.extraBody ?? {}),
         maxRetries,
+        ...(config.loadingTimeoutSeconds === undefined
+          ? {}
+          : { loadingTimeoutMs: Math.max(0, config.loadingTimeoutSeconds) * 1000 }),
         contextLimit: config.contextLength ?? 0,
         signal,
         idleMs: timeoutMs(config),
+        firstChunkMs: firstTokenMs(config) ?? 0,
         onNotice: notice,
         onThinking: (text) => onEvent?.({ kind: "thinking", text }),
         onOutput: (text) => onEvent?.({ kind: "output", text }),

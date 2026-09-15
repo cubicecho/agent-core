@@ -5,8 +5,11 @@ import {
   backoffMs,
   ContextOverflow,
   compact,
+  isModelLoading,
   isOverflow,
   isTransient,
+  LOADING_POLL_MS,
+  LOADING_TIMEOUT_MS,
   requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
@@ -76,6 +79,15 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
    * of `extraBody`, ordinarily. See `NegotiateOptions.droppable`; it needs `model` too.
    */
   droppable?: Iterable<string>;
+  /**
+   * How long to wait on a server answering that the model is still loading, `LOADING_TIMEOUT_MS`
+   * unless given; zero gives up on the first such answer like any other 503.
+   *
+   * Polled every `LOADING_POLL_MS` without spending `maxRetries`, and announced once rather than
+   * per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
+   * has to swap in, meets this on its first request every time.
+   */
+  loadingTimeoutMs?: number;
 }
 
 /**
@@ -98,7 +110,15 @@ export async function runTurn(
     supports: Capabilities,
     model: ModelCapabilities | undefined,
   ) => OpenAI.ChatCompletionCreateParamsStreaming,
-  { maxRetries = 0, onNotice, contextLimit = 0, model, droppable, ...stream }: RunTurnOptions = {},
+  {
+    maxRetries = 0,
+    onNotice,
+    contextLimit = 0,
+    model,
+    droppable,
+    loadingTimeoutMs = LOADING_TIMEOUT_MS,
+    ...stream
+  }: RunTurnOptions = {},
 ): Promise<Turn> {
   // Sized once rather than per build. `request` is called again for every downgrade and every
   // retry, but a downgraded body is strictly smaller than the one before it and the transcript
@@ -129,6 +149,9 @@ export async function runTurn(
     return body;
   };
 
+  // When the server first said it was loading. Unset until then, and never reset: a model that
+  // loads, fails and loads again has had its allowance.
+  let loadingSince: number | undefined;
   for (let attempt = 0; ; attempt++) {
     const produced: Produced = { any: false };
     try {
@@ -155,6 +178,22 @@ export async function runTurn(
       // rules it out, and it goes on to be retried below as the 429 it is.
       if (!(error instanceof ContextOverflow) && isOverflow(errorMessage(error))) {
         throw new ContextOverflow(errorMessage(error), { cause: error });
+      }
+      if (isModelLoading(error) && loadingTimeoutMs > 0) {
+        const now = Date.now();
+        if (loadingSince === undefined) {
+          loadingSince = now;
+          onNotice?.(
+            `${model ?? "the model"} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`,
+          );
+        }
+        if (now - loadingSince < loadingTimeoutMs) {
+          // Not an attempt: the request was never looked at, and a two-minute load would
+          // otherwise have to be bought with a retry budget meant for dropped connections.
+          attempt--;
+          await sleep(LOADING_POLL_MS, stream.signal);
+          continue;
+        }
       }
       if (attempt >= maxRetries || !isTransient(error)) throw error;
       const wait = backoffMs(attempt);

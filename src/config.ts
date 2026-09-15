@@ -19,7 +19,13 @@ export interface Endpoint {
   /** Empty is normal — a local server ignores it. See `getClient` for what is sent instead. */
   apiKey: string;
   /**
-   * Zero, less, or absent means no limit — what a local model answering slowly needs.
+   * How long an endpoint may go quiet. Zero, less, or absent means no limit — what a local model
+   * answering slowly needs.
+   *
+   * Not the whole request, which may take as long as the model keeps talking. On a streamed turn
+   * it is the silence allowed between chunks, the idle watchdog; the wait for the first chunk is
+   * `firstTokenSeconds`. On a call that does not stream, a side task or a model listing, it is
+   * the SDK's timer, which runs until the response headers arrive.
    *
    * Optional because a consumer that has no timeout to give should not have to invent one. Two
    * of the three servers this was extracted from carry no such field, and requiring it made
@@ -27,6 +33,18 @@ export interface Endpoint {
    * number standing in for an absent one.
    */
   requestTimeoutSeconds?: number;
+  /**
+   * How long a streamed turn may wait for its first chunk. Absent is five times
+   * `requestTimeoutSeconds`; zero or less is no limit.
+   *
+   * Its own number because the first wait is prefill, and on a local server prefill of a long
+   * prompt is tens of seconds on a GPU and minutes on a CPU, where the gap between tokens is a
+   * fraction of a second. A server loading the model on demand, Ollama after `keep_alive` or LM
+   * Studio just in time, holds the request open for the same reason. One number for both waits
+   * was either too slow to notice a wedged stream or tight enough to abandon a prefill, and a
+   * retry pays for that prefill again from nothing.
+   */
+  firstTokenSeconds?: number;
 }
 
 /** What to ask the model for. */
@@ -72,6 +90,12 @@ export interface ToolPolicy {
 /** How many times a lost or refused request is worth sending again. See `retry.ts`. */
 export interface RetryPolicy {
   maxRetries: number;
+  /**
+   * How long to wait for a local server that says it is still loading the model, absent two
+   * minutes and zero not at all. Separate from `maxRetries`, which is sized for a request that
+   * was lost rather than for weights being read off a disk. See `isModelLoading`.
+   */
+  loadingTimeoutSeconds?: number;
 }
 
 /**

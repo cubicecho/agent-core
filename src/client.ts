@@ -53,6 +53,24 @@ const clients = new Map<string, OpenAI>();
  */
 const MAX_CLIENTS = 32;
 
+/** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
+export const FIRST_TOKEN_FACTOR = 5;
+
+/**
+ * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
+ *
+ * @param config Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
+ */
+export const firstTokenMs = (
+  config: Pick<Endpoint, "requestTimeoutSeconds" | "firstTokenSeconds">,
+): number | undefined => {
+  if (config.firstTokenSeconds === undefined) {
+    const idle = timeoutMs(config);
+    return idle === undefined ? undefined : idle * FIRST_TOKEN_FACTOR;
+  }
+  return config.firstTokenSeconds > 0 ? config.firstTokenSeconds * 1000 : undefined;
+};
+
 /**
  * The client for an endpoint, built once and kept.
  *
@@ -95,12 +113,13 @@ export function getClient(config: Endpoint): OpenAI {
 }
 
 /**
- * The context window, spelled every way a server spells it.
+ * The context window, spelled every way a server spells it at the top of a listing entry.
  *
  * None of these is in the OpenAI listing schema, so every server that says anything says it as
- * an extra key of its own: `context_length` is llama.cpp and LM Studio, `max_model_len` vLLM,
- * `n_ctx` the raw llama bindings. Whichever turns up first is taken — a server reporting two
- * of them is reporting the same number twice.
+ * an extra key of its own: `max_model_len` is vLLM, `context_length` OpenRouter, `n_ctx` the raw
+ * llama bindings. Whichever turns up first is taken — a server reporting two of them is
+ * reporting the same number twice. llama.cpp puts its number under `meta` instead, and LM Studio
+ * and Ollama put none on this route at all; see `servedWindow`.
  */
 const CONTEXT_KEYS = [
   "context_length",
@@ -110,13 +129,19 @@ const CONTEXT_KEYS = [
   "n_ctx",
 ];
 
+const positive = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
+
 function contextLengthOf(model: object): number {
   const record = model as Record<string, unknown>;
   for (const key of CONTEXT_KEYS) {
-    const value = record[key];
-    if (typeof value === "number" && value > 0) return value;
+    const value = positive(record[key]);
+    if (value) return value;
   }
-  return 0;
+  // llama.cpp's, and the window the model was trained with rather than the one it is served in:
+  // a 256k model started at `-c 16384` lists 262144 here. Better than nothing, and why the
+  // served window is asked for first. `meta` is `null` while the model loads.
+  const meta = record.meta as Record<string, unknown> | null | undefined;
+  return positive(meta?.n_ctx_train);
 }
 
 /** A model an endpoint offers, and what it says the model will read. Zero means it did not say. */
@@ -193,6 +218,96 @@ export const endpointId = (config: { baseUrl: string; apiKey?: string }) =>
   createHash("sha256").update(endpointKey(config)).digest("hex");
 
 /**
+ * Served windows found by asking a server's own API, keyed on endpoint and model together.
+ *
+ * A model's entry stays until `resetClients`, like a listing; a server that answered without one
+ * is asked again after `LISTING_MISS_MS`, like a listing that did not name the model.
+ */
+const served = new Map<string, { window: number; at: number }>();
+
+/** Endpoints that answered both probes with a refusal, and are not asked again. */
+const unserved = new Set<string>();
+
+/** How long a probe may take before the window is taken from the listing instead. */
+const PROBE_TIMEOUT_MS = 10_000;
+
+/** The server root behind an OpenAI-compatible base URL, which is where the native APIs live. */
+const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+
+/** A route this server does not have, rather than one that failed to answer. */
+const NOT_THERE = new Set([404, 405, 501]);
+
+/**
+ * Asks one native endpoint. `missing` is a server without the route; `body` is absent for that
+ * and for any other refusal, and a server that could not be reached throws.
+ */
+async function probe(
+  config: Endpoint,
+  path: string,
+): Promise<{ missing: boolean; body?: unknown }> {
+  const apiKey = config.apiKey || undefined;
+  const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
+    headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+    signal: AbortSignal.timeout(timeoutMs(config) ?? PROBE_TIMEOUT_MS),
+  });
+  if (!response.ok) return { missing: NOT_THERE.has(response.status) };
+  try {
+    return { missing: false, body: await response.json() };
+  } catch {
+    return { missing: false };
+  }
+}
+
+/**
+ * The window a local server is actually serving a model in, which its listing does not say.
+ *
+ * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
+ * Studio on `/api/v0/models` as `loaded_context_length` while the model is loaded. Both differ
+ * from the trained window in the case that matters, a model started in a smaller one than it was
+ * built for, and reading the trained one lets an overflow through the guard meant to catch it.
+ * Ollama reports nothing on either; an operator there has to declare the window.
+ *
+ * Zero where no answer was found. A server without either route, which is every hosted API, is
+ * latched and not asked again; one that could not be reached is not remembered at all.
+ *
+ * @param config The endpoint, plus the model whose window is wanted.
+ */
+export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
+  const endpoint = endpointKey(config);
+  if (unserved.has(endpoint)) return 0;
+  const key = JSON.stringify([endpoint, config.model]);
+  const known = served.get(key);
+  if (known && (known.window > 0 || Date.now() - known.at < LISTING_MISS_MS)) return known.window;
+
+  let window = 0;
+  try {
+    // Named, for a llama.cpp router serving several models; a single-model server ignores it.
+    const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`);
+    const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })
+      ?.default_generation_settings;
+    window = positive(settings?.n_ctx);
+    if (!window) {
+      const lmstudio = await probe(config, "/api/v0/models");
+      const { data } = (lmstudio.body ?? {}) as { data?: unknown };
+      const entry = Array.isArray(data)
+        ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find(
+            (model) => model?.id === config.model,
+          )
+        : undefined;
+      window = positive(entry?.loaded_context_length);
+      if (props.missing && lmstudio.missing) {
+        unserved.add(endpoint);
+        return 0;
+      }
+    }
+  } catch {
+    return 0;
+  }
+  served.set(key, { window, at: Date.now() });
+  return window;
+}
+
+/**
  * Asks an endpoint what it serves, and remembers the answer.
  *
  * @param config The endpoint to ask. Remembered per base URL and key, not per model.
@@ -214,10 +329,11 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * happily load a 256k model at `-c 16384` and go on listing it as 256k — and a run refused on
  * the honest-looking number is a run that fails at the endpoint instead.
  *
- * Otherwise the endpoint's listing is asked — once, and again whenever it does not name this
- * model, since a model can arrive after the first listing was taken. A server that will not
- * list models still has to be able to run a turn: a failure here is an unknown window, not a
- * failed run.
+ * Otherwise the window the server is actually serving the model in, where it has an API that
+ * says (`servedWindow`), and failing that the endpoint's listing — asked once, and again whenever
+ * it does not name this model, since a model can arrive after the first listing was taken. A
+ * server that will not list models still has to be able to run a turn: a failure here is an
+ * unknown window, not a failed run.
  *
  * @param config The endpoint, plus the model whose window is wanted.
  * @param declared The operator's own number. Above zero it wins and the endpoint is not asked.
@@ -227,6 +343,8 @@ export async function contextLimitFor(
   declared = 0,
 ): Promise<number> {
   if (declared > 0) return declared;
+  const window = await servedWindow(config);
+  if (window > 0) return window;
   const key = endpointKey(config);
   const listed = () => listings.get(key)?.find((model) => model.id === config.model);
   // The listing is asked for again when it does not name this model, rather than only when
@@ -265,4 +383,6 @@ export function resetClients() {
   clients.clear();
   listings.clear();
   misses.clear();
+  served.clear();
+  unserved.clear();
 }

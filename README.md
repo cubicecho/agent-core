@@ -27,8 +27,8 @@ only, Node >=22.
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
-| `client` | A pooled `OpenAI` client per endpoint, plus the context-window listing and its cache. |
-| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
+| `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. |
+| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
@@ -145,11 +145,21 @@ is worth another attempt. The content-free `{"role":"assistant"}` most servers o
 does not set it: nothing has been shown to anybody yet, so an endpoint that primes the stream and
 then wedges is retried like one that never answered at all.
 
-`idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is
-still talking is never cut off however long it takes, and one that has stopped answering raises
+`idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is still
+talking is never cut off however long it takes, and one that has stopped answering raises
 `EndpointSilent` rather than hanging the run. `timeoutMs(config)` returns `undefined` for a
-`requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering
-slowly needs.
+`requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering slowly
+needs.
+
+The first chunk gets its own allowance, `firstChunkMs`, because the first wait is prefill: tens of
+seconds for a long prompt on a local GPU, minutes on a CPU, and longer again when the server is
+loading the model on demand. It holds until a chunk carries something, so an empty
+`{"role":"assistant"}` sent before the prompt is read does not start the idle clock.
+`firstTokenMs(config)` reads `firstTokenSeconds` off the endpoint, and five times
+`requestTimeoutSeconds` where that is absent. With a watchdog armed, the SDK's own timer is switched
+off for the stream; it runs until the headers arrive, which is the end of prefill, and used to
+abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, side
+tasks and model listings, the same way.
 
 ## Structured side tasks
 
@@ -191,6 +201,16 @@ const turn = await runTurn(client, supports, build, {
 });
 ```
 
+`contextLimitFor` answers the operator's number when there is one. Otherwise it asks for the window
+the server is actually serving the model in (`servedWindow`): llama.cpp's `/props`
+(`default_generation_settings.n_ctx`) and LM Studio's `/api/v0/models` (`loaded_context_length`).
+That differs from the trained window in the case the guard exists for, a 256k model started at `-c
+16384`. A server with neither route is latched and not asked again. Failing both, it reads the
+`/v1/models` listing: `max_model_len` from vLLM, `context_length` from OpenRouter, and llama.cpp's
+`meta.n_ctx_train`, which is only the trained window. Ollama reports no window on any route this
+reads, and truncates an over-long prompt rather than refusing it, so on Ollama pass `contextLength`
+or there is no guard at all.
+
 What is weighed is the prompt plus the reply ceiling the body carries, under whichever spelling
 was chosen, because that is what the endpoint weighs: a 30k prompt into a 32k window with
 `max_tokens: 4096` is refused there, so it is refused here. A body with no ceiling reserves
@@ -209,6 +229,14 @@ refuses instead — one round trip later — and `runTurn` reads that refusal ba
 original error as `cause`. A rate limit borrows those words and means the opposite ("Request too
 large for gpt-4o ... on tokens per min"); that is ruled out and waited through as the 429 it is.
 
+A server still loading the model is waited for on its own clock. llama.cpp answers 503 `Loading
+model` (type `unavailable_error`) until the weights are mapped, thirty to ninety seconds for a large
+model from a cold cache, and a router build says the same while it swaps models; `backoffMs` would
+give up inside fifteen. `isModelLoading` recognises it, and `runTurn` polls every `LOADING_POLL_MS`
+for up to `loadingTimeoutMs` (two minutes by default, zero to turn it off) without spending
+`maxRetries`, with one notice at the start. `runAgentLoop` reads it as `loadingTimeoutSeconds` off
+the config. A 503 that says nothing about loading stays on the ordinary backoff.
+
 ## The loop
 
 `runAgentLoop` is the part of an agent that three servers had each written, and that had drifted
@@ -221,7 +249,7 @@ did. What it does not know is what the run is for — the prompt, the tools, and
 import { runAgentLoop, emit } from "@cubicecho/agent-core";
 
 const { turn, messages, usage, loaded } = await runAgentLoop({
-  config,                         // Endpoint & ModelParams & { maxToolIterations, toolDiscovery?, maxRetries?, contextLength? }
+  config,                         // Endpoint & ModelParams & { maxToolIterations, toolDiscovery?, maxRetries?, loadingTimeoutSeconds?, contextLength? }
   system,                         // sent as the first message; on-demand mode appends the catalogue
   messages: history,              // ending in the question; not written to
   tools,                          // every tool the run may reach
