@@ -1,3 +1,10 @@
+## [2.8.1](https://github.com/cubicecho/agent-core/compare/v2.8.0...v2.8.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* keep the on-demand catalogue fixed so a load does not bust the prompt cache ([d7ed508](https://github.com/cubicecho/agent-core/commit/d7ed5086ff0f3864863dae1fde83b18038640c87)), closes [#63](https://github.com/cubicecho/agent-core/issues/63)
+
 # [2.8.0](https://github.com/cubicecho/agent-core/compare/v2.7.0...v2.8.0) (2026-09-15)
 
 
