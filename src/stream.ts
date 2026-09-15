@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { EndpointSilent } from "./retry.ts";
+import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from "./thinking.ts";
 
 /**
  * Reading one streamed turn back into a message.
@@ -58,6 +59,17 @@ export interface Turn {
    * handed over rather than raised.
    */
   finishReason: string;
+  /**
+   * The model's scratchpad, as `onThinking` was told it, `""` where it deliberated in silence or
+   * not at all.
+   *
+   * Kept because some models want it back. gpt-oss and DeepSeek in thinking mode read the
+   * analysis behind a tool call off the assistant message on the next request, so a caller
+   * talking to one stores it as `reasoning_content` on that message for as long as the message
+   * ends in a tool call, and drops it once the model has given a final answer. A model that
+   * does not ask for it is better off without it: it is context, paid for on every turn.
+   */
+  reasoning: string;
 }
 
 /**
@@ -68,6 +80,14 @@ type ReasoningDelta = OpenAI.ChatCompletionChunk.Choice.Delta & {
   reasoning_content?: string | null;
   reasoning?: string | null;
 };
+
+/** A tool call being put back together, under the index the server gave it if it gave one. */
+interface PartialCall {
+  index: number | undefined;
+  id: string;
+  name: string;
+  arguments: string;
+}
 
 /** The largest delay a timer takes, which is as close to none as the SDK's timeout option goes. */
 const NO_SDK_TIMEOUT = 2 ** 31 - 1;
@@ -110,7 +130,21 @@ export interface StreamTurnOptions {
   firstChunkMs?: number;
   /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
   produced?: Produced;
-  /** The model's scratchpad, as it arrives. */
+  /**
+   * The fences that mark a scratchpad written into `content`, `DEFAULT_FENCES` unless given.
+   *
+   * Text inside one goes to `onThinking` and `reasoning` rather than `onOutput` and `content`.
+   * `ALL_FENCES` adds `<thinking>` and `<reasoning>`, which a model can also be quoting; an
+   * empty list reads `content` as all answer.
+   */
+  fences?: readonly Fence[];
+  /**
+   * The chat template opened the first fence in the prompt, so the reply starts inside it.
+   * Without this the scratchpad is still moved out of `content` once the closing tag arrives,
+   * but `onOutput` will have been told it first.
+   */
+  startInReasoning?: boolean;
+  /** The model's scratchpad, as it arrives, from its own field or from a fence in `content`. */
   onThinking?: (delta: string) => void;
   /** The model's answer, as it arrives. */
   onOutput?: (delta: string) => void;
@@ -135,7 +169,16 @@ export interface StreamTurnOptions {
 export async function streamTurn(
   client: OpenAI,
   body: OpenAI.ChatCompletionCreateParamsStreaming,
-  { signal, idleMs, firstChunkMs, produced, onThinking, onOutput }: StreamTurnOptions = {},
+  {
+    signal,
+    idleMs,
+    firstChunkMs,
+    produced,
+    fences = DEFAULT_FENCES,
+    startInReasoning,
+    onThinking,
+    onOutput,
+  }: StreamTurnOptions = {},
 ): Promise<Turn> {
   // Silence, not duration: the timer is rearmed on every chunk, so a model that is still
   // talking is never cut off however long it takes, and one that has stopped talking does not
@@ -185,8 +228,16 @@ export async function streamTurn(
       signal: linked,
       ...(watched ? { timeout: NO_SDK_TIMEOUT } : {}),
     });
-    const content: string[] = [];
-    const calls = new Map<number, { id: string; name: string; arguments: string }>();
+    // The field's reasoning here, the fenced kind in the splitter, which can still move text
+    // already read as answer into reasoning when a closing tag turns up with no opening one.
+    const reasoning: string[] = [];
+    const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
+    const report = (parts: Split[]) => {
+      for (const part of parts) (part.kind === "reasoning" ? onThinking : onOutput)?.(part.text);
+    };
+    // In arrival order, sorted by index at the end; a call from a server that sent none keeps
+    // its place in the order they arrived.
+    const calls: PartialCall[] = [];
     const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
     let finishReason = "";
 
@@ -228,20 +279,48 @@ export async function streamTurn(
       const carried = Boolean(thinking || delta.content || delta.tool_calls?.length);
       if (carried && !talking) rearm(true);
       if (produced && carried) produced.any = true;
-      if (thinking) onThinking?.(thinking);
-      if (delta.content) {
-        content.push(delta.content);
-        onOutput?.(delta.content);
+      if (thinking) {
+        reasoning.push(thinking);
+        onThinking?.(thinking);
       }
+      if (delta.content) report(splitter.push(delta.content));
       // Tool calls arrive in pieces, keyed by position: the id in one chunk, the name in
       // another, the arguments spread across the next several.
       for (const part of delta.tool_calls ?? []) {
-        const call = calls.get(part.index) ?? { id: "", name: "", arguments: "" };
+        const call = fragmentOf(part);
         if (part.id) call.id = part.id;
         if (part.function?.name) call.name += part.function.name;
         if (part.function?.arguments) call.arguments += part.function.arguments;
-        calls.set(part.index, call);
       }
+    }
+
+    /**
+     * The call a fragment belongs to.
+     *
+     * By `index` where the server sent a number, which the SDK types as required and servers have
+     * nonetheless left out: keyed on `undefined`, every call joined into one whose name and
+     * arguments were all of theirs run together. Without one, by `id`; failing that, a fragment
+     * naming a function opens a call and a bare run of arguments continues the latest. A server
+     * that sends whole calls one per chunk at index `0` makes the same mistake the other way, so
+     * a different id, or a name after arguments have begun, opens a new call under that index.
+     */
+    function fragmentOf(part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall): PartialCall {
+      const index = typeof part.index === "number" ? part.index : undefined;
+      const name = part.function?.name;
+      const known =
+        index !== undefined
+          ? calls.findLast((call) => call.index === index)
+          : part.id
+            ? calls.find((call) => call.id === part.id)
+            : name
+              ? undefined
+              : calls.at(-1);
+      const another =
+        known && ((part.id && known.id && part.id !== known.id) || (name && known.arguments));
+      if (known && !another) return known;
+      const call: PartialCall = { index, id: "", name: "", arguments: "" };
+      calls.push(call);
+      return call;
     }
 
     // An aborted stream ends its iteration rather than throwing, so without this a turn cut off
@@ -249,19 +328,32 @@ export async function streamTurn(
     // complete one, and a truncated answer is recorded as the output. Nothing about the API
     // says you have to know this.
     linked.throwIfAborted();
+    // What was held back as a possible tag. A reply that ended inside a fence stays reasoning:
+    // cut off at the ceiling mid-scratchpad, it has no answer, and promoting the deliberation to
+    // one is how a truncated turn gets recorded as output.
+    report(splitter.finish());
 
+    const minted = new Set<string>();
     return {
-      content: content.join(""),
-      toolCalls: [...calls.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([index, call]) => ({
-          // A server that streams a call without an id still needs one for the result to answer.
-          id: call.id || `call_${index}`,
-          type: "function" as const,
-          function: { name: call.name, arguments: call.arguments },
-        })),
+      content: splitter.output,
+      toolCalls: calls
+        .map((call, order) => ({ call, order }))
+        .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order)
+        .map(({ call }, position) => {
+          // A server that streams a call without an id still needs one for the result to answer,
+          // and two calls it put under one index must not be answered as one.
+          let id = call.id || `call_${call.index ?? position}`;
+          if (minted.has(id)) id = `call_${position}_${minted.size}`;
+          minted.add(id);
+          return {
+            id,
+            type: "function" as const,
+            function: { name: call.name, arguments: call.arguments },
+          };
+        }),
       usage,
       finishReason,
+      reasoning: reasoning.join("") + splitter.reasoning,
     };
   }
 }

@@ -22,8 +22,9 @@ only, Node >=22.
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`. |
 | `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. |
-| `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
+| `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, fenced reasoning taken out of the answer, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
+| `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
@@ -80,11 +81,28 @@ for: a router is free to send two keys to two different backends, and then what 
 refused is not a fact about the other. Absent and empty read the same, so a local server with no
 key is one entry however its caller spells it.
 
-`Turn` is `content`, `toolCalls`, `usage` and `finishReason`. The last is worth reading: a turn
-cut off at the token ceiling comes back looking exactly like a finished one, with truncated prose
-or — the case that bites — a tool call whose `arguments` stop mid-JSON, so the caller meets a
-parse failure with nothing to attribute it to. `finishReason` is `"length"` there, `""` where the
-endpoint never said.
+`Turn` is `content`, `toolCalls`, `usage`, `finishReason` and `reasoning`. The fourth is worth
+reading: a turn cut off at the token ceiling comes back looking exactly like a finished one, with
+truncated prose or — the case that bites — a tool call whose `arguments` stop mid-JSON, so the
+caller meets a parse failure with nothing to attribute it to. `finishReason` is `"length"` there,
+`""` where the endpoint never said.
+
+`reasoning` is the scratchpad `onThinking` was told, kept because two common families want it
+back. gpt-oss and DeepSeek in thinking mode read the analysis behind a tool call off the assistant
+message on the next request: store it as `reasoning_content` on that message while it ends in a
+tool call, and drop it once the model has answered. Any other model is better off without it,
+since it is context paid for on every turn. `requestTokens` counts it either way.
+
+A server without a reasoning parser leaves the scratchpad in `content`, fenced, and then it is shown
+as output, stored and sent back. `streamTurn` routes text inside a fence to `onThinking` and
+`reasoning` instead, holding back the tail of a chunk that could be half a tag. `DEFAULT_FENCES` is
+`<think>`, gpt-oss harmony's analysis channel served raw, and Kimi's `◁think▷`, none of which a
+model writes as an answer; `ALL_FENCES` adds `<thinking>` and `<reasoning>`, which it can be
+quoting, and is what the side tasks use. Pass `fences: []` to read `content` as all answer. A reply
+cut off inside a fence has an empty `content`, not the deliberation promoted to one. A template that
+opens `<think>` in the prompt leaves only the closing tag, so everything before it is moved to
+`reasoning` when it arrives; `startInReasoning: true` says so up front, so `onOutput` is never told
+it at all.
 
 ## What the model refuses, rather than the server
 

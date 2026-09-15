@@ -71,6 +71,64 @@ describe("streamTurn", () => {
     expect(thinking).toEqual(["hmm ", "so"]);
     // The scratchpad is reported, never assembled into the answer.
     expect(turn.content).toBe("answer");
+    // But kept beside it, for the models that want it passed back behind a tool call.
+    expect(turn.reasoning).toBe("hmm so");
+  });
+
+  it("routes a scratchpad fenced in content to thinking, not to the answer", async () => {
+    const thinking: string[] = [];
+    const output: string[] = [];
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("<thi"), text("nk>hmm</th"), text("ink>ans"), text("wer"))),
+      body,
+      { onThinking: (delta) => thinking.push(delta), onOutput: (delta) => output.push(delta) },
+    );
+    expect(turn.content).toBe("answer");
+    expect(turn.reasoning).toBe("hmm");
+    expect(thinking.join("")).toBe("hmm");
+    expect(output.join("")).toBe("answer");
+  });
+
+  it("keeps a scratchpad cut off at the ceiling out of the answer", async () => {
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          text("<think>still weighing"),
+          chunk({ choices: [{ delta: {}, finish_reason: "length" }] }),
+        ),
+      ),
+      body,
+    );
+    expect(turn).toMatchObject({
+      content: "",
+      reasoning: "still weighing",
+      finishReason: "length",
+    });
+  });
+
+  it("starts in the scratchpad when the template opened the fence", async () => {
+    const output: string[] = [];
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("hmm</think>"), text("answer"))),
+      body,
+      {
+        startInReasoning: true,
+        onOutput: (delta) => output.push(delta),
+      },
+    );
+    expect(turn).toMatchObject({ content: "answer", reasoning: "hmm" });
+    expect(output).toEqual(["answer"]);
+  });
+
+  it("reads content as all answer when given no fences", async () => {
+    const turn = await streamTurn(
+      clientOf(() => chunks(text("<think>x</think>y"))),
+      body,
+      {
+        fences: [],
+      },
+    );
+    expect(turn.content).toBe("<think>x</think>y");
   });
 
   it("reassembles tool calls arriving in pieces, in index order", async () => {
@@ -92,6 +150,49 @@ describe("streamTurn", () => {
       { id: "a", type: "function", function: { name: "first", arguments: '{"x":1}' } },
       { id: "b", type: "function", function: { name: "second", arguments: "{}" } },
     ]);
+  });
+
+  it("keeps calls apart on a server that sends no index", async () => {
+    // The SDK types `index` as required; a compat layer that leaves it out used to have every
+    // call put back together as one, names and arguments run together.
+    const part = (fields: Record<string, unknown>): Chunk =>
+      chunk({ choices: [{ delta: { tool_calls: [fields] } }] });
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          part({ id: "a", function: { name: "first" } }),
+          part({ function: { arguments: '{"x":' } }),
+          part({ function: { arguments: "1}" } }),
+          part({ function: { name: "second", arguments: "{}" } }),
+          part({ id: "c", function: { name: "third" } }),
+          part({ id: "c", function: { arguments: "{}" } }),
+        ),
+      ),
+      body,
+    );
+    expect(turn.toolCalls.map((call) => [call.function.name, call.function.arguments])).toEqual([
+      ["first", '{"x":1}'],
+      ["second", "{}"],
+      ["third", "{}"],
+    ]);
+    expect(new Set(turn.toolCalls.map((call) => call.id)).size).toBe(3);
+  });
+
+  it("keeps whole calls apart when a server sends every one at index 0", async () => {
+    const whole = (fields: Record<string, unknown>): Chunk =>
+      chunk({ choices: [{ delta: { tool_calls: [{ index: 0, ...fields }] } }] });
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          whole({ id: "a", function: { name: "first", arguments: "{}" } }),
+          whole({ id: "b", function: { name: "second", arguments: "{}" } }),
+          whole({ function: { name: "third", arguments: "{}" } }),
+        ),
+      ),
+      body,
+    );
+    expect(turn.toolCalls.map((call) => call.function.name)).toEqual(["first", "second", "third"]);
+    expect(new Set(turn.toolCalls.map((call) => call.id)).size).toBe(3);
   });
 
   it("mints an id for a server that streams a call without one", async () => {
