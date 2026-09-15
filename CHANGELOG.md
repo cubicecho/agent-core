@@ -1,3 +1,17 @@
+# [2.8.0](https://github.com/cubicecho/agent-core/compare/v2.7.0...v2.8.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* keep streamed tool calls apart on a server that sends no index ([f5af0d7](https://github.com/cubicecho/agent-core/commit/f5af0d70f9d4315af692e3c398e4ae76b100e615)), closes [#73](https://github.com/cubicecho/agent-core/issues/73)
+* start runAgentLoop's usage total with cached at zero ([00d666c](https://github.com/cubicecho/agent-core/commit/00d666c695a6af457ae2ffdb8b23b68a4c57de39))
+
+
+### Features
+
+* keep a turn's reasoning, and count it when it is passed back ([aebf31c](https://github.com/cubicecho/agent-core/commit/aebf31cbb62d46d4676228404d90f432ba93c60f)), closes [#69](https://github.com/cubicecho/agent-core/issues/69)
+* take a scratchpad fenced in content out of the answer ([f1e418d](https://github.com/cubicecho/agent-core/commit/f1e418d8d6176c0101c682d379dd0288975715ba)), closes [#70](https://github.com/cubicecho/agent-core/issues/70)
+
 # [2.7.0](https://github.com/cubicecho/agent-core/compare/v2.6.0...v2.7.0) (2026-09-15)
 
 
