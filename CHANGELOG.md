@@ -1,3 +1,15 @@
+# [2.6.0](https://github.com/cubicecho/agent-core/compare/v2.5.0...v2.6.0) (2026-09-15)
+
+
+### Bug Fixes
+
+* start runAgentLoop's usage total with cached at zero ([8ff028c](https://github.com/cubicecho/agent-core/commit/8ff028c43651a9ae0c8fa996b7444288bb8ab224))
+
+
+### Features
+
+* untrusted() and UNTRUSTED_PREFACE for fencing text nobody vouched for ([fc1b449](https://github.com/cubicecho/agent-core/commit/fc1b44935e0df148a9b188136969b24e3e1e15a1)), closes [#64](https://github.com/cubicecho/agent-core/issues/64)
+
 # [2.5.0](https://github.com/cubicecho/agent-core/compare/v2.4.0...v2.5.0) (2026-09-15)
 
 
