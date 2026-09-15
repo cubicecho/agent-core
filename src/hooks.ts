@@ -154,6 +154,15 @@ export interface Gathered {
  */
 export const HOOK_CONTEXT_TOKENS = 2000;
 
+/**
+ * Said once, above the blocks, so the model reads them as background rather than instructions.
+ * Names no host; `configureHooks` sets another for a process that wants to, and `withContext`
+ * for one request.
+ */
+export const HOOK_PREFACE =
+  "The <context> blocks below were added for this message by the host's hooks. They are " +
+  "background the user did not write and may not be relevant. The user's message follows them.";
+
 /** What hooks are held to across a process. Every field optional; see `configureHooks`. */
 export interface HookOptions {
   /**
@@ -161,40 +170,53 @@ export interface HookOptions {
    * held to its own `maxTokens` inside it.
    */
   contextTokens?: number;
+  /**
+   * Said above the context blocks, when a call does not give its own. Empty says nothing, and the
+   * blocks lead the question on their own.
+   */
+  preface?: string;
 }
 
-/** The numbers this module was written with. */
-const HOOK_DEFAULTS: Required<HookOptions> = { contextTokens: HOOK_CONTEXT_TOKENS };
+/** The settings this module was written with. */
+const HOOK_DEFAULTS: Required<HookOptions> = {
+  contextTokens: HOOK_CONTEXT_TOKENS,
+  preface: HOOK_PREFACE,
+};
 
 /** What is in force now. Read where it is used, so a change applies from the next request. */
-let hookLimits: Required<HookOptions> = { ...HOOK_DEFAULTS };
+let hookSettings: Required<HookOptions> = { ...HOOK_DEFAULTS };
 
 /**
  * Changes what hooks are held to, for a process whose windows are not the size these defaults
- * were chosen for.
+ * were chosen for, or whose host wants its own name above the context.
  *
- * Module-level for the same reason `configureEvents` is: a budget is a deployment's setting, said
- * once at startup. A caller that sizes it per model or per agent — a 128k window can afford more
- * recall than an 8k one — passes `maxTokens` to `gather` instead, which wins over this.
+ * Module-level for the same reason `configureEvents` is: a budget and a preface are a deployment's
+ * settings, said once at startup. A caller that sizes the budget per model or per agent — a 128k
+ * window can afford more recall than an 8k one — passes `maxTokens` to `gather` instead, and a
+ * `preface` passed to `withContext` or `runAgentLoop`'s hooks wins over this one the same way.
  *
- * @param options The limits to change. A field left out — or given anything that is not a number
- * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
- * above zero, and lifts the shared budget entirely.
+ * @param options The settings to change. A field left out keeps what it has, and so does one given
+ * the wrong kind of value — `contextTokens` anything but a number above zero, `preface` anything
+ * but a string — so a half-built config narrows nothing. `Infinity` is a number above zero, and
+ * lifts the shared budget entirely. An empty `preface` is a string, and turns the preface off.
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
-  for (const [name, value] of Object.entries(options)) {
-    if (typeof value === "number" && value > 0) hookLimits[name as keyof HookOptions] = value;
+  const { contextTokens, preface } = options;
+  if (typeof contextTokens === "number" && contextTokens > 0) {
+    hookSettings.contextTokens = contextTokens;
   }
-  return { ...hookLimits };
+  if (typeof preface === "string") hookSettings.preface = preface;
+  return { ...hookSettings };
 }
 
 /**
- * Test seam: puts `configureHooks` back to the defaults, so one test's budget is not the next's.
+ * Test seam: puts `configureHooks` back to the defaults, so one test's budget or preface is not the
+ * next's.
  * `resetAll` calls it.
  */
 export const resetHooks = () => {
-  hookLimits = { ...HOOK_DEFAULTS };
+  hookSettings = { ...HOOK_DEFAULTS };
 };
 
 /**
@@ -203,15 +225,7 @@ export const resetHooks = () => {
  * turn every hook's context off.
  */
 const budget = (given?: number) =>
-  typeof given === "number" && given > 0 ? given : hookLimits.contextTokens;
-
-/**
- * Said once, above the blocks, so the model reads them as background rather than instructions.
- * Names no host; `withContext` takes another for one that wants to.
- */
-export const HOOK_PREFACE =
-  "The <context> blocks below were added for this message by the host's hooks. They are " +
-  "background the user did not write and may not be relevant. The user's message follows them.";
+  typeof given === "number" && given > 0 ? given : hookSettings.contextTokens;
 
 const attribute = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
@@ -270,18 +284,19 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
  * session once a compaction has folded the head into a summary. Anything but a user message there
  * leaves the request as it was.
  * @param context What `assembleContext` built. Empty returns `history` itself.
- * @param preface Said above the blocks. Defaults to `HOOK_PREFACE`.
+ * @param preface Said above the blocks. Absent is what `configureHooks` last set — `HOOK_PREFACE`
+ * unless something moved it. Empty says nothing, rather than leaving a blank line where it was.
  * @returns `history` when there was nothing to add or nowhere to add it, otherwise a new array.
  */
 export function withContext(
   history: OpenAI.ChatCompletionMessageParam[],
   index: number,
   context: string,
-  preface = HOOK_PREFACE,
+  preface = hookSettings.preface,
 ): OpenAI.ChatCompletionMessageParam[] {
   const message = history[index];
   if (!context || message?.role !== "user") return history;
-  const lead = `${preface}\n\n${context}\n\n`;
+  const lead = preface ? `${preface}\n\n${context}\n\n` : `${context}\n\n`;
   const content: OpenAI.ChatCompletionUserMessageParam["content"] =
     typeof message.content === "string"
       ? `${lead}${message.content}`
