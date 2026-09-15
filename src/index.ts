@@ -33,7 +33,11 @@ export {
 } from "./capabilities.ts";
 export type { CatalogServer } from "./catalog.ts";
 export {
+  type ClientPoolOptions,
+  configureClients,
   contextLimitFor,
+  endpointId,
+  endpointKey,
   FIRST_TOKEN_FACTOR,
   firstTokenMs,
   getClient,

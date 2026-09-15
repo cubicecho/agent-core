@@ -44,14 +44,18 @@ The contract between whatever holds the tools and the loop that offers them to a
 
 ### client
 
+- `ClientPoolOptions` (type) — What the client pool is held to across a process.
+- `configureClients` — Changes what the client pool is held to, for a process whose endpoints are not shaped like the deployments these defaults were chosen for.
 - `contextLimitFor` — How much a model will read, in tokens.
+- `endpointId` — `endpointKey` hashed, for the remembered facts that can leave the process.
+- `endpointKey` — What counts as one endpoint, everywhere in this package that has to remember something about one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
 - `FIRST_TOKEN_FACTOR` — How many idle windows the first chunk gets when `firstTokenSeconds` is not given.
 - `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for an endpoint, built once and kept.
 - `listModels` — Asks an endpoint what it serves, and remembers the answer.
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
-- `resetClients` — Forgets every cached client and listing.
+- `resetClients` — Forgets every cached client and listing, and puts `configureClients` back to the defaults.
 - `servedWindow` — The window a local server is actually serving a model in, which its listing does not say.
 - `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
 

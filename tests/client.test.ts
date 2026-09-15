@@ -7,9 +7,17 @@ vi.mock("openai", () => ({
   },
 }));
 
-const { contextLimitFor, firstTokenMs, getClient, listModels, resetClients } = await import(
-  "../src/client.ts"
-);
+const {
+  configureClients,
+  contextLimitFor,
+  endpointId,
+  endpointKey,
+  firstTokenMs,
+  getClient,
+  listModels,
+  NO_KEY,
+  resetClients,
+} = await import("../src/client.ts");
 
 const endpoint = { baseUrl: "http://local/v1", apiKey: "", requestTimeoutSeconds: 60 };
 /** What a listing endpoint answers with: the OpenAI shape plus whatever window key it uses. */
@@ -25,11 +33,11 @@ const routes = (answers: Record<string, unknown>) =>
   });
 
 /**
- * `MAX_CLIENTS` in `src/client.ts`, which is not exported: the number is a backstop rather than
- * something a caller sets, and a test that reads it from the module cannot fail when it moves.
+ * `MAX_CLIENTS` in `src/client.ts`, the default `configureClients` starts from. Written out rather
+ * than read back from the module, so a test cannot pass when the default moves.
  */
 const MAX_CLIENTS = 32;
-/** `LISTING_MISS_MS`, which is not exported either. A miss expires *at* it, not after it. */
+/** `LISTING_MISS_MS`, likewise. A miss expires *at* it, not after it. */
 const LISTING_MISS_MS = 30_000;
 
 describe("contextLimitFor", () => {
@@ -226,6 +234,96 @@ describe("getClient", () => {
     getClient(box(MAX_CLIENTS));
     expect(getClient(box(0))).toBe(first);
     expect(getClient(box(1))).not.toBe(second);
+  });
+});
+
+describe("configureClients", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetClients();
+    list.mockReset();
+    vi.stubGlobal("fetch", routes({}));
+  });
+
+  afterEach(() => {
+    resetClients();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const box = (n: number) => ({ ...endpoint, baseUrl: `http://box-${n}/v1` });
+
+  it("starts from the defaults and says what is in force", () => {
+    expect(configureClients()).toEqual({ maxClients: MAX_CLIENTS, listingMissMs: LISTING_MISS_MS });
+    expect(configureClients({ maxClients: 64 })).toEqual({
+      maxClients: 64,
+      listingMissMs: LISTING_MISS_MS,
+    });
+  });
+
+  it("ignores anything that is not a number above zero", () => {
+    configureClients({ maxClients: 4, listingMissMs: 1000 });
+    for (const bad of [0, -1, Number.NaN, "8" as never, undefined]) {
+      expect(configureClients({ maxClients: bad, listingMissMs: bad })).toEqual({
+        maxClients: 4,
+        listingMissMs: 1000,
+      });
+    }
+  });
+
+  it("keeps more clients once raised", () => {
+    configureClients({ maxClients: MAX_CLIENTS * 2 });
+    const first = getClient(box(0));
+    for (let n = 1; n < MAX_CLIENTS * 2; n++) getClient(box(n));
+    expect(getClient(box(0))).toBe(first);
+  });
+
+  it("evicts down at once when lowered below the pool, least recently asked for first", () => {
+    const clients = [0, 1, 2, 3].map((n) => getClient(box(n)));
+    getClient(box(0));
+    configureClients({ maxClients: 2 });
+    // Asked for again, box 0 is younger than 1 and 2, so what survives is 3 and 0.
+    expect(getClient(box(3))).toBe(clients[3]);
+    expect(getClient(box(0))).toBe(clients[0]);
+    expect(getClient(box(1))).not.toBe(clients[1]);
+  });
+
+  it("asks about a missed model again after the configured window", async () => {
+    configureClients({ listingMissMs: 1000 });
+    list.mockResolvedValue(listing({ id: "qwen", context_length: 32768 }));
+    await expect(contextLimitFor({ ...endpoint, model: "llama" })).resolves.toBe(0);
+    vi.advanceTimersByTime(999);
+    await contextLimitFor({ ...endpoint, model: "llama" });
+    expect(list).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    await contextLimitFor({ ...endpoint, model: "llama" });
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("goes back to the defaults on resetClients", () => {
+    configureClients({ maxClients: 1, listingMissMs: 1 });
+    resetClients();
+    expect(configureClients()).toEqual({ maxClients: MAX_CLIENTS, listingMissMs: LISTING_MISS_MS });
+  });
+});
+
+describe("endpointKey and endpointId", () => {
+  it("read an absent or empty key as NO_KEY, and nothing but the URL and key", () => {
+    const key = JSON.stringify(["http://local/v1", NO_KEY]);
+    expect(endpointKey({ baseUrl: "http://local/v1" })).toBe(key);
+    expect(endpointKey({ ...endpoint })).toBe(key);
+    expect(endpointId({ baseUrl: "http://local/v1", apiKey: "" })).toBe(
+      endpointId({ baseUrl: "http://local/v1" }),
+    );
+    expect(endpointId({ baseUrl: "http://local/v1", apiKey: "sk-1" })).toMatch(/^[0-9a-f]{64}$/);
+    expect(endpointId({ baseUrl: "http://local/v1", apiKey: "sk-1" })).not.toContain("sk-1");
+  });
+
+  it("are exported from the package root", async () => {
+    const root = await import("../src/index.ts");
+    expect(root.endpointKey).toBe(endpointKey);
+    expect(root.endpointId).toBe(endpointId);
+    expect(root.configureClients).toBe(configureClients);
   });
 });
 

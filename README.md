@@ -573,6 +573,25 @@ OpenRouter `:free` suffix, a typo) would otherwise fetch the listing on every ca
 same zero each time. Half a minute later it asks again, so a model pulled onto a box that has been
 up a week is still picked up without a restart.
 
+Both numbers are defaults. `configureClients` moves them for the process, the way `configureEvents`
+and `configureHooks` do — a multi-tenant host raising the pool so tenants stop evicting each other,
+a dev box shortening the miss window so a model it has just pulled shows up sooner:
+
+```ts
+import { configureClients } from "@cubicecho/agent-core";
+
+configureClients({ maxClients: 256, listingMissMs: 2_000 });
+```
+
+A field left out, or given anything that is not a number above zero, keeps what it has, and the
+call returns everything in force. Lowering `maxClients` below the pool's current size evicts down to
+it at once, least recently used first. `resetClients` (and `resetAll`) puts the defaults back.
+
+A host that keeps per-endpoint state of its own should key it on `endpointKey` — the JSON of the base
+URL and the key, an absent key read as `NO_KEY` — rather than rebuilding that string, so the two
+cannot drift. `endpointKey` holds the key in the clear; `endpointId`, its SHA-256 digest, is the one
+that is safe to write down.
+
 `resetAll` drops all four, and `reset.ts` names each seam separately for a test that wants one.
 
 The latches can outlive the process as well, because otherwise every restart spends one refused
