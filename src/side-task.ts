@@ -79,6 +79,19 @@ function rejectedTheRequest(error: unknown): boolean {
   return error.status === 400 || error.status === 422;
 }
 
+/**
+ * The input a side task applies its instruction to: text, or the content parts a vision model
+ * reads.
+ *
+ * A string is the ordinary case and stays the cheapest thing to write. The array is what an
+ * image needs, because a page, a screenshot or a photo reaches an OpenAI-compatible server only
+ * as an `image_url` part alongside the text — there is no other spelling for it, and a caller
+ * with one otherwise has to leave this module and build the request itself. Nothing here reads
+ * the parts: they are handed to the SDK as given, so a server that cannot see an image refuses
+ * the request rather than silently answering about the text alone.
+ */
+export type SideTaskInput = string | OpenAI.ChatCompletionContentPart[];
+
 /** What a side task may be given. All optional — one given none of them still runs. */
 export interface SideTaskOptions {
   /** Ceiling on the reply, default 512. These answers are meant to be short. */
@@ -108,14 +121,14 @@ export interface SideTaskOptions {
  * @param config Where to send it and how long to wait.
  * @param model The model to ask, usually smaller than the one running the work.
  * @param system The instruction.
- * @param user The input it applies to.
+ * @param user The input it applies to. Content parts where the model is being shown an image.
  * @param options Reply ceiling, temperature, cancellation, notices.
  */
 export function ask(
   config: Endpoint,
   model: string,
   system: string,
-  user: string,
+  user: SideTaskInput,
   options: SideTaskOptions = {},
 ): Promise<string> {
   return complete(config, model, system, user, options);
@@ -129,7 +142,7 @@ async function complete(
   config: Endpoint,
   model: string,
   system: string,
-  user: string,
+  user: SideTaskInput,
   { maxTokens = 512, temperature = 0.3, signal, onNotice }: SideTaskOptions,
   format?: (supports: Capabilities, refused: ModelCapabilities) => Record<string, unknown>,
 ): Promise<string> {
@@ -239,7 +252,7 @@ export interface AskJsonOptions extends SideTaskOptions {
  * @param config Where to send it and how long to wait.
  * @param model The model to ask.
  * @param system The instruction. The schema is appended to it.
- * @param user The input it applies to.
+ * @param user The input it applies to. Content parts where the model is being shown an image.
  * @param schema The JSON Schema of the answer. Its root is held to an object, as a tool's is.
  * @param options A side task's options, plus the schema's `name` and whether it is `strict`.
  */
@@ -247,7 +260,7 @@ export async function askJson<T>(
   config: Endpoint,
   model: string,
   system: string,
-  user: string,
+  user: SideTaskInput,
   schema: Record<string, unknown>,
   { name = "answer", strict = true, ...options }: AskJsonOptions = {},
 ): Promise<T | undefined> {
