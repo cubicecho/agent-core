@@ -134,6 +134,7 @@ export {
   listLines,
   parseJson,
   resetHints,
+  type SideTaskInput,
   type SideTaskOptions,
   tryAsk,
 } from "./side-task.ts";
