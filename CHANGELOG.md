@@ -1,3 +1,16 @@
+# [2.13.0](https://github.com/cubicecho/agent-core/compare/v2.12.0...v2.13.0) (2026-09-17)
+
+
+### Bug Fixes
+
+* write the tool-dedupe separator as \0 rather than a raw NUL byte ([5ae3489](https://github.com/cubicecho/agent-core/commit/5ae34896a34b3d250071771f4554c92b05a29d10))
+
+
+### Features
+
+* compaction as a stored fold record, not only a rewritten array ([97fde6a](https://github.com/cubicecho/agent-core/commit/97fde6a52b9d5fbc8fcb4bb974db0d292f02ed46))
+* declare tools in a stable order, so the same set meets the same cache ([98254fa](https://github.com/cubicecho/agent-core/commit/98254fa9696c3fd3dc88841e5a53b7bea7acc23b))
+
 # [2.12.0](https://github.com/cubicecho/agent-core/compare/v2.11.0...v2.12.0) (2026-09-17)
 
 
