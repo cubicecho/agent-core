@@ -22,6 +22,7 @@ const { emit, history } = await import("../src/events.ts");
 const { configureHooks, HOOK_PREFACE } = await import("../src/hooks.ts");
 const { ask } = await import("../src/side-task.ts");
 const { resetAll } = await import("../src/reset.ts");
+const { calibrate, charsPerTokenFor } = await import("../src/calibration.ts");
 
 const endpoint = { baseUrl: "http://local/v1", apiKey: "", requestTimeoutSeconds: 60 };
 const reply = { choices: [{ message: { content: "ok" } }] };
@@ -68,6 +69,20 @@ describe("resetAll", () => {
     await ask(endpoint, "qwen", "system", "user");
     // Offered again, because nothing here knows any more that they were ever refused.
     expect(sentHints(2)).toBe(true);
+  });
+
+  it("forgets what each model's characters per token were measured at", () => {
+    const supports = capabilitiesFor(endpoint.baseUrl);
+    const body = {
+      model: "m",
+      stream: true as const,
+      messages: [{ role: "user" as const, content: "x".repeat(2000) }],
+    };
+    calibrate(supports, body, 1000);
+    expect(charsPerTokenFor(supports, "m")).not.toBe(4);
+    resetAll();
+    // The same endpoint object, so it is the readings that were dropped and not only the latches.
+    expect(charsPerTokenFor(supports, "m")).toBe(4);
   });
 
   it("forgets the runs on the bus", async () => {

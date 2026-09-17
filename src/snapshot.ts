@@ -20,6 +20,11 @@ export interface ModelSnapshot {
   chosenTemperature: boolean;
   refusedFields: string[];
   structuredOutput: boolean;
+  /**
+   * Continues a trailing assistant message. Absent in a snapshot taken before it was latched, which
+   * reads as not refused.
+   */
+  assistantPrefill: boolean;
   /** Takes the no-thinking hints `ask` sends. */
   thinkingHints: boolean;
 }
@@ -46,6 +51,7 @@ const optimisticModel = (): ModelSnapshot => ({
   chosenTemperature: true,
   refusedFields: [],
   structuredOutput: true,
+  assistantPrefill: true,
   thinkingHints: true,
 });
 
@@ -55,6 +61,7 @@ const refusedAnything = (model: ModelSnapshot) =>
   !model.chosenTemperature ||
   !model.thinkingHints ||
   !model.structuredOutput ||
+  !model.assistantPrefill ||
   model.refusedFields.length > 0;
 
 /**
@@ -81,6 +88,7 @@ export function exportCapabilities(): CapabilitySnapshot {
         chosenTemperature: refused.chosenTemperature,
         refusedFields: [...refused.refusedFields].sort(),
         structuredOutput: refused.structuredOutput,
+        assistantPrefill: refused.assistantPrefill,
       };
       if (refusedAnything(model)) models[name] = model;
     }
@@ -133,6 +141,7 @@ export function importCapabilities(snapshot: unknown): boolean {
       if (model.legacyTokenLimit === false) refused.legacyTokenLimit = false;
       if (model.chosenTemperature === false) refused.chosenTemperature = false;
       if (model.structuredOutput === false) refused.structuredOutput = false;
+      if (model.assistantPrefill === false) refused.assistantPrefill = false;
       if (Array.isArray(model.refusedFields)) {
         for (const field of model.refusedFields) {
           if (typeof field === "string") refused.refusedFields.add(field);

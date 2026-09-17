@@ -1,3 +1,6 @@
+import type { TurnUsage } from "./stream.ts";
+import { LOAD_TOOLS } from "./tool-loading.ts";
+
 /**
  * What a run is doing, while it is doing it.
  *
@@ -100,7 +103,11 @@ export type RunEventKind =
   | "tool-result"
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
   | "notice"
-  /** What the run has cost so far, as the endpoint reported it at the end of a turn. */
+  /**
+   * What the run has cost so far, at the end of every turn, and what that one turn did. Sent
+   * whether or not the endpoint reported tokens, since the timings and the cache comparison are
+   * measured either way.
+   */
   | "usage"
   /** The run ended. Always last, and always sent. */
   | "done";
@@ -119,6 +126,18 @@ export interface RunUsage {
    * emitting usage before this field existed still compiles; absent reads the same as zero.
    */
   cachedTokens?: number;
+  /**
+   * The turn that carried this report, on its own rather than added in — the half `runMetrics`
+   * reads, since a total says nothing about which turn was slow or where the cache broke. Absent
+   * from a caller emitting usage of its own.
+   */
+  turn?: TurnReport;
+}
+
+/** One turn's usage and measurements as a `usage` event carries them. */
+export interface TurnReport extends TurnUsage {
+  /** Why the model stopped, as `Turn.finishReason` says it; `length` is a turn cut short. */
+  finishReason: string;
 }
 
 /**
@@ -480,4 +499,192 @@ export function fold(events: RunEvent[]): RunEvent[] {
   }
   close();
   return blocks;
+}
+
+/** Why a turn's cache broke, as `TurnUsage.cacheBreakReason` names it. */
+type CacheBreakReason = NonNullable<TurnUsage["cacheBreakReason"]>;
+
+/**
+ * A run summed and derived from its events: what it cost, where the time went, and why.
+ *
+ * The counts are always there, zero when nothing happened. Every other field is absent where no
+ * turn reported what it is made of, and summed over the turns that did where only some did —
+ * a mean of a number a server never sent would be a number nobody measured.
+ */
+export interface RunMetrics {
+  /** The caller's own `step` events. */
+  steps: number;
+  /** Turns of the agent loop, one per `usage` report. */
+  turns: number;
+  /** Model requests, which is turns plus the continuations joined onto them. */
+  requests: number;
+  /** Tool results, `load_tools` included. */
+  toolCalls: number;
+  /** Tool results that came back not ok, by tool name. */
+  toolErrors: Record<string, number>;
+  /** `load_tools` calls. */
+  loadCalls: number;
+  /**
+   * Tools `load_tools` loaded that were not loaded already. Filled by `runAgentLoop`, which sees
+   * the resolution; the events carry only its text.
+   */
+  toolsLoaded?: number;
+  /** Tools the model asked `load_tools` for that it already had, filled the same way. */
+  redundantLoads?: number;
+  /** Names the model asked `load_tools` for that are in no catalogue, filled the same way. */
+  unknownToolNames?: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  /** Summed over the turns that reported a cache count. */
+  uncachedTokens?: number;
+  reasoningTokens?: number;
+  /** Cached over prompt tokens, across only the turns that reported a cache count. */
+  cacheHitRatio?: number;
+  /** Turns whose cache fell short of what the turn before left it. */
+  cacheBreaks: number;
+  /** Those turns by what the loop changed. */
+  cacheBreakReasons: Partial<Record<CacheBreakReason, number>>;
+  /** Turns cut off at `maxTokens` after any continuation. */
+  truncatedTurns: number;
+  /** From the first event to the last, which a still-running run keeps moving. */
+  wallMs?: number;
+  /** Prefill time summed over the turns. */
+  promptMs?: number;
+  /** Decode time summed over the turns. */
+  predictedMs?: number;
+  /**
+   * Time from each tool call to its result, summed per call — so calls run in parallel can add up
+   * to more than the wall time they took.
+   */
+  toolMs?: number;
+  /** The longest any one turn took, retries and continuations in. */
+  slowestTurnMs?: number;
+  /** The mean time to first token over the turns that produced one. */
+  firstTokenMs?: number;
+  draftTotal?: number;
+  draftAccepted?: number;
+  /** Accepted over drafted. */
+  draftAcceptance?: number;
+  /** The biggest prompt any turn reported. */
+  largestPrompt?: number;
+  /** `largestPrompt` over the window `runMetrics` was told, for how close the run came. */
+  largestPromptShare?: number;
+  /**
+   * How it ended, read off `done` and the last turn: `truncated` is an answer the ceiling cut off.
+   * A failure does not say whether it was an error, a stop or the tool budget — that is in the
+   * host's own `done` text.
+   */
+  outcome?: "answered" | "truncated" | "failed";
+}
+
+/** What `runMetrics` takes besides the events. */
+export interface RunMetricsOptions {
+  /** The window the run was served, for `largestPromptShare`. Absent or zero leaves it out. */
+  contextLength?: number;
+}
+
+/**
+ * A run's totals, timings and cache findings, derived from the events it emitted.
+ *
+ * A sibling of `fold` rather than part of it. `fold` hands back events, and a client renders
+ * what it returns as blocks; a summary is another shape, and folding one in would give every
+ * consumer of `fold` a block it does not know how to draw. Derived from the `usage` reports' own
+ * `turn` rather than the running totals, so a run with several loops in it — a question per loop —
+ * adds up the same as one with a single loop.
+ *
+ * @param events A run's events in `seq` order, from `history` or collected from `watch`. A backlog
+ * that has lost its oldest events to the cap sums what it still has.
+ * @param options The served window, for how full the run came to it.
+ */
+export function runMetrics(
+  events: RunEvent[],
+  { contextLength }: RunMetricsOptions = {},
+): RunMetrics {
+  const metrics: RunMetrics = {
+    steps: 0,
+    turns: 0,
+    requests: 0,
+    toolCalls: 0,
+    toolErrors: {},
+    loadCalls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    cacheBreaks: 0,
+    cacheBreakReasons: {},
+    truncatedTurns: 0,
+  };
+  /** Adds to a field that is absent until something reports it. */
+  const add = (field: keyof RunMetrics, value: number | undefined) => {
+    if (value === undefined) return;
+    const known = metrics as unknown as Record<string, number | undefined>;
+    known[field] = (known[field] ?? 0) + value;
+  };
+  let reportedPrompt = 0;
+  let reportedCached = 0;
+  let firstTokens = 0;
+  // Calls waiting for their results, by tool name, oldest first.
+  const pending = new Map<string, number[]>();
+  let last: TurnReport | undefined;
+
+  for (const event of events) {
+    if (event.kind === "step") metrics.steps++;
+    else if (event.kind === "tool-call") {
+      if (event.name === LOAD_TOOLS) metrics.loadCalls++;
+      const waiting = pending.get(event.name) ?? [];
+      waiting.push(event.at);
+      pending.set(event.name, waiting);
+    } else if (event.kind === "tool-result") {
+      metrics.toolCalls++;
+      if (event.ok === false)
+        metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
+      const called = pending.get(event.name)?.shift();
+      if (called !== undefined) add("toolMs", event.at - called);
+    } else if (event.kind === "usage" && event.usage?.turn) {
+      const turn = event.usage.turn;
+      last = turn;
+      metrics.turns++;
+      metrics.requests += 1 + (turn.continuations ?? 0);
+      metrics.promptTokens += turn.prompt;
+      metrics.completionTokens += turn.completion;
+      metrics.cachedTokens += turn.cached;
+      if (turn.uncached !== undefined) {
+        add("uncachedTokens", turn.uncached);
+        reportedPrompt += turn.prompt;
+        reportedCached += turn.cached;
+      }
+      add("reasoningTokens", turn.reasoningTokens);
+      add("promptMs", turn.promptMs);
+      add("predictedMs", turn.predictedMs);
+      add("draftTotal", turn.draftTotal);
+      add("draftAccepted", turn.draftAccepted);
+      if (turn.cacheBroken) {
+        metrics.cacheBreaks++;
+        const reason = turn.cacheBreakReason ?? "none-known";
+        metrics.cacheBreakReasons[reason] = (metrics.cacheBreakReasons[reason] ?? 0) + 1;
+      }
+      if (turn.finishReason === "length") metrics.truncatedTurns++;
+      if (turn.wallMs !== undefined)
+        metrics.slowestTurnMs = Math.max(metrics.slowestTurnMs ?? 0, turn.wallMs);
+      if (turn.firstTokenMs !== undefined) {
+        add("firstTokenMs", turn.firstTokenMs);
+        firstTokens++;
+      }
+      if (turn.prompt > 0)
+        metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
+    } else if (event.kind === "done") {
+      metrics.outcome =
+        event.ok === false ? "failed" : last?.finishReason === "length" ? "truncated" : "answered";
+    }
+  }
+
+  if (events.length > 1) metrics.wallMs = events[events.length - 1].at - events[0].at;
+  if (reportedPrompt > 0) metrics.cacheHitRatio = reportedCached / reportedPrompt;
+  if (metrics.firstTokenMs !== undefined) metrics.firstTokenMs /= firstTokens;
+  if (metrics.draftTotal && metrics.draftAccepted !== undefined)
+    metrics.draftAcceptance = metrics.draftAccepted / metrics.draftTotal;
+  if (metrics.largestPrompt !== undefined && contextLength && contextLength > 0)
+    metrics.largestPromptShare = metrics.largestPrompt / contextLength;
+  return metrics;
 }

@@ -13,7 +13,16 @@ import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from "./thinkin
  * this loop long before the loop itself was.
  */
 
-/** What a turn cost. Zero throughout means the server did not say. */
+/**
+ * What a turn cost, and how it went. Zero throughout the four counts means the server did not say.
+ *
+ * The four counts are always there, as they always were. Everything after them is absent rather
+ * than zero when nothing reported or measured it, because a zero cache hit and a server that says
+ * nothing about its cache are different findings, and a consumer drawing one as the other is
+ * explaining a slow turn with a number nobody sent. Which layer fills each is said on the field:
+ * `streamTurn` reads what the endpoint sends, `runTurn` measures the attempts, and
+ * `runAgentLoop` compares one request with the one before it.
+ */
 export interface TurnUsage {
   prompt: number;
   completion: number;
@@ -23,10 +32,100 @@ export interface TurnUsage {
    *
    * The only way a caller can tell whether the prefix it is careful to keep still is actually
    * being reused: a prefix that stops hitting the cache otherwise shows up as a bill and nothing
-   * else. Zero is also what a server that does not report it sends.
+   * else. Zero is also what a server that does not report it sends; `uncached` is the field whose
+   * presence says the count was reported. llama.cpp's `timings.cache_n` stands in for it where the
+   * usage block has none.
    */
   cached: number;
+  /**
+   * `prompt` less `cached`: the tokens actually prefilled, and the number a cache miss moves.
+   * Present only where both a cache count and the prompt were reported, so its absence is how a
+   * zero `cached` reads as unknown.
+   */
+  uncached?: number;
+  /** How much of `completion` was reasoning, where the usage block breaks it out. Never estimated. */
+  reasoningTokens?: number;
+  /** Prefill time, from llama.cpp's `timings`. On a local box it dominates once the cache misses. */
+  promptMs?: number;
+  /** Prefill speed, from the same `timings`. */
+  promptTokensPerSecond?: number;
+  /** Decode time, from the same `timings`. */
+  predictedMs?: number;
+  /** Decode speed, from the same `timings`. */
+  tokensPerSecond?: number;
+  /**
+   * Tokens a draft model or MTP head proposed, from the same `timings`. Against `draftAccepted`,
+   * whether speculative decoding is paying for itself.
+   */
+  draftTotal?: number;
+  /** How many of `draftTotal` the target model kept. */
+  draftAccepted?: number;
+  /**
+   * From sending the request to the first chunk that carried anything, measured by `streamTurn`.
+   * The latency a watcher feels, and absent on a turn that said nothing at all.
+   */
+  firstTokenMs?: number;
+  /** The whole turn as `runTurn` saw it, queue, retries, downgrades and loading wait included. */
+  wallMs?: number;
+  /** How many times `runTurn` sent a lost request again. A downgrade is not a retry. */
+  retries?: number;
+  /** How many of those were the endpoint going silent, rather than refusing or dropping it. */
+  timeouts?: number;
+  /** How many requests `continueTurn` joined onto the first. Absent on a turn not continued. */
+  continuations?: number;
+  /**
+   * What this request should have reused of the one before it in the loop: that request's prompt
+   * and its reply, which is what a cache holds once the reply is generated. Filled by
+   * `runAgentLoop` from the second request on, where the previous prompt was reported.
+   */
+  cacheExpected?: number;
+  /**
+   * `cached` came in under nine tenths of the previous request's prompt — the part of
+   * `cacheExpected` no re-rendering of the reply can disturb. Present only where both sides were
+   * reported, so a server that says nothing about its cache is never accused of losing it.
+   */
+  cacheBroken?: boolean;
+  /**
+   * What the loop changed that would explain `cacheBroken`, the earliest in the prompt first,
+   * since a change there is the one that costs the rest. `none-known` is the server's doing — an
+   * eviction, another client on the slot — or a change the loop cannot see. Only on a broken turn.
+   */
+  cacheBreakReason?: "tools-changed" | "system-changed" | "history-rewritten" | "none-known";
+  /** How many tools the request declared, filled by `runAgentLoop`. */
+  toolsDeclared?: number;
+  /**
+   * The declared tool block's estimated tokens. A chat template renders it ahead of the system
+   * prompt, so this is what every change to the tool list costs the cache.
+   */
+  toolSchemaTokens?: number;
 }
+
+/** llama.cpp's per-response `timings`, which Lemonade and other servers fronting it pass through. */
+interface Timings {
+  cache_n?: number;
+  prompt_ms?: number;
+  prompt_per_second?: number;
+  predicted_ms?: number;
+  predicted_per_second?: number;
+  draft_n?: number;
+  draft_n_accepted?: number;
+}
+
+/**
+ * The fields of `timings` a turn reports, under the names `TurnUsage` gives them. A value that is
+ * not a finite number is left out rather than guessed at.
+ */
+const TIMINGS: readonly [keyof Timings, keyof TurnUsage][] = [
+  ["prompt_ms", "promptMs"],
+  ["prompt_per_second", "promptTokensPerSecond"],
+  ["predicted_ms", "predictedMs"],
+  ["predicted_per_second", "tokensPerSecond"],
+  ["draft_n", "draftTotal"],
+  ["draft_n_accepted", "draftAccepted"],
+];
+
+const isCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
 
 /**
  * The usage fields a cache report arrives in, none of them in every server's reply.
@@ -35,6 +134,9 @@ export interface TurnUsage {
  * llama.cpp copy; `prompt_cache_hit_tokens` is DeepSeek's.
  */
 type CacheUsage = OpenAI.CompletionUsage & { prompt_cache_hit_tokens?: number | null };
+
+/** A chunk as llama.cpp sends its last one, with `timings` beside `usage`. */
+type TimedChunk = OpenAI.ChatCompletionChunk & { timings?: Timings };
 
 /** One streamed turn, put back together into the shape a loop and a transcript work with. */
 export interface Turn {
@@ -201,7 +303,8 @@ export async function streamTurn(
 
   try {
     rearm(false);
-    return await collect();
+    const started = Date.now();
+    return await collect(started);
   } catch (error) {
     // The caller's own stop has to stay distinguishable from ours: one is a run that was called
     // off, the other is an endpoint that stopped answering and may be worth retrying. Getting
@@ -219,7 +322,7 @@ export async function streamTurn(
     clearTimeout(idle);
   }
 
-  async function collect(): Promise<Turn> {
+  async function collect(started: number): Promise<Turn> {
     // The SDK's own timer runs until the headers arrive, which for a stream is the end of
     // prefill, and it was set from the idle number. Where a watchdog is armed it covers that
     // wait already, with the allowance meant for it, so the SDK is told to leave it alone.
@@ -239,6 +342,10 @@ export async function streamTurn(
     // its place in the order they arrived.
     const calls: PartialCall[] = [];
     const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
+    // The usage block's own cache count wins over llama.cpp's, which is the same number in the
+    // servers that send both; kept apart so the order the two arrive in does not decide.
+    let cacheReport: number | undefined;
+    let cacheTimings: number | undefined;
     let finishReason = "";
 
     for await (const chunk of stream) {
@@ -255,8 +362,19 @@ export async function streamTurn(
         usage.completion = chunk.usage.completion_tokens ?? 0;
         usage.total = chunk.usage.total_tokens ?? 0;
         const reported = chunk.usage as CacheUsage;
-        usage.cached =
-          reported.prompt_tokens_details?.cached_tokens ?? reported.prompt_cache_hit_tokens ?? 0;
+        const hit =
+          reported.prompt_tokens_details?.cached_tokens ?? reported.prompt_cache_hit_tokens;
+        if (isCount(hit)) cacheReport = hit;
+        const reasoned = reported.completion_tokens_details?.reasoning_tokens;
+        if (isCount(reasoned)) usage.reasoningTokens = reasoned;
+      }
+      const { timings } = chunk as TimedChunk;
+      if (timings) {
+        for (const [from, to] of TIMINGS) {
+          const value = timings[from];
+          if (isCount(value)) (usage as unknown as Record<string, number>)[to] = value;
+        }
+        if (isCount(timings.cache_n)) cacheTimings = timings.cache_n;
       }
       // One choice, because that is what an agent loop asks for. A body with `n` above one
       // keeps only the first; nothing here is built to reassemble several at once.
@@ -277,7 +395,10 @@ export async function streamTurn(
       // has accumulated, and losing a retry is the safer half of that trade. Set before the
       // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
       const carried = Boolean(thinking || delta.content || delta.tool_calls?.length);
-      if (carried && !talking) rearm(true);
+      if (carried && !talking) {
+        rearm(true);
+        usage.firstTokenMs = Date.now() - started;
+      }
       if (produced && carried) produced.any = true;
       if (thinking) {
         reasoning.push(thinking);
@@ -332,6 +453,12 @@ export async function streamTurn(
     // cut off at the ceiling mid-scratchpad, it has no answer, and promoting the deliberation to
     // one is how a truncated turn gets recorded as output.
     report(splitter.finish());
+
+    const cached = cacheReport ?? cacheTimings;
+    if (cached !== undefined) {
+      usage.cached = cached;
+      if (usage.prompt > 0) usage.uncached = Math.max(0, usage.prompt - cached);
+    }
 
     const minted = new Set<string>();
     return {

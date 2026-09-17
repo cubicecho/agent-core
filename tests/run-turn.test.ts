@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from "../src/capabilities.ts";
-import { ContextOverflow } from "../src/retry.ts";
+import { ContextOverflow, EndpointSilent } from "../src/retry.ts";
 import { runTurn } from "../src/run-turn.ts";
 
 type Chunk = OpenAI.ChatCompletionChunk;
@@ -70,6 +70,21 @@ describe("runTurn", () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(notices).toEqual([expect.stringContaining("socket hang up")]);
     expect(notices[0]).toContain("(1/2)");
+  });
+
+  it("reports what the turn cost in attempts and time on its usage", async () => {
+    vi.useFakeTimers();
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(lost())
+      .mockRejectedValueOnce(new EndpointSilent("no first token"))
+      .mockReturnValue(chunks(text("third")));
+    const turn = runTurn(clientOf(create), supports(), body, { maxRetries: 3 });
+    await runOutTheClock();
+    const { usage } = await turn;
+    expect(usage).toMatchObject({ retries: 2, timeouts: 1 });
+    // The backoff slept through is in it: the wall time is the turn's, not the last attempt's.
+    expect(usage.wallMs).toBeGreaterThan(0);
   });
 
   it("waits for a model that is still loading without spending the retry budget", async () => {

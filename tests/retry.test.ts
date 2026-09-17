@@ -7,6 +7,7 @@ import {
   EndpointSilent,
   isOverflow,
   isTransient,
+  messageTokens,
   requestTokens,
   sleep,
 } from "../src/retry.ts";
@@ -88,6 +89,26 @@ test("a request is sized from what is actually sent, tools included", () => {
   });
   expect(bare).toBeGreaterThan(100);
   expect(withTools).toBeGreaterThan(bare);
+});
+
+test("a request is sized at the characters per token it is given, and at four otherwise", () => {
+  const message = { role: "user" as const, content: "x".repeat(1000) };
+  const body = {
+    model: "m",
+    stream: true as const,
+    messages: [message],
+    tools: [{ type: "function" as const, function: { name: "t", parameters: { type: "object" } } }],
+  };
+  const atFour = requestTokens(body);
+  expect(requestTokens(body, { charsPerToken: 4 })).toBe(atFour);
+  // Half the characters per token is about twice the tokens, tools included.
+  expect(requestTokens(body, { charsPerToken: 2 })).toBeGreaterThanOrEqual(2 * atFour - 2);
+  expect(messageTokens(message, { charsPerToken: 2 })).toBeGreaterThanOrEqual(
+    2 * messageTokens(message) - 1,
+  );
+  // Nothing usable is the fallback, not a division by zero.
+  expect(requestTokens(body, { charsPerToken: 0 })).toBe(atFour);
+  expect(requestTokens(body, { charsPerToken: -3 })).toBe(atFour);
 });
 
 test("a transcript costs more the longer it gets, and the walk sees every part of it", () => {

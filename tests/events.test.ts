@@ -1,7 +1,17 @@
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureEvents, emit, endRun, fold, history, resetEvents, watch } from "../src/events.ts";
+import {
+  configureEvents,
+  emit,
+  endRun,
+  fold,
+  history,
+  resetEvents,
+  runMetrics,
+  watch,
+} from "../src/events.ts";
+import { LOAD_TOOLS } from "../src/tool-loading.ts";
 
 beforeEach(() => resetEvents());
 afterEach(() => {
@@ -384,5 +394,150 @@ describe("fold", () => {
     const blocks = fold(history("r"));
     blocks[0].text = "REDACTED";
     expect(history("r").map((event) => event.text)).toEqual(["a", "b"]);
+  });
+});
+
+describe("runMetrics", () => {
+  it("counts nothing and measures nothing for a run with no turns", () => {
+    const metrics = runMetrics([]);
+    expect(metrics).toEqual({
+      steps: 0,
+      turns: 0,
+      requests: 0,
+      toolCalls: 0,
+      toolErrors: {},
+      loadCalls: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cachedTokens: 0,
+      cacheBreaks: 0,
+      cacheBreakReasons: {},
+      truncatedTurns: 0,
+    });
+  });
+
+  it("sums a run's turns, times its tools and weighs what only some turns reported", () => {
+    vi.useFakeTimers({ now: 1000 });
+    const at = (ms: number) => vi.setSystemTime(1000 + ms);
+    emit("r", { kind: "step", name: "plan" });
+    emit("r", {
+      kind: "usage",
+      usage: {
+        promptTokens: 100,
+        completionTokens: 10,
+        totalTokens: 110,
+        turn: {
+          prompt: 100,
+          completion: 10,
+          total: 110,
+          cached: 0,
+          uncached: 100,
+          wallMs: 900,
+          firstTokenMs: 300,
+          promptMs: 200,
+          draftTotal: 10,
+          draftAccepted: 5,
+          finishReason: "tool_calls",
+        },
+      },
+    });
+    at(100);
+    emit("r", { kind: "tool-call", name: LOAD_TOOLS });
+    emit("r", { kind: "tool-call", name: "read" });
+    at(150);
+    emit("r", { kind: "tool-result", name: LOAD_TOOLS, ok: true });
+    at(400);
+    emit("r", { kind: "tool-result", name: "read", ok: false });
+    emit("r", {
+      kind: "usage",
+      usage: {
+        promptTokens: 400,
+        completionTokens: 30,
+        totalTokens: 430,
+        turn: {
+          prompt: 300,
+          completion: 20,
+          total: 320,
+          cached: 30,
+          uncached: 270,
+          wallMs: 1200,
+          firstTokenMs: 500,
+          continuations: 1,
+          cacheBroken: true,
+          cacheBreakReason: "tools-changed",
+          finishReason: "length",
+        },
+      },
+    });
+    // A turn from a server that says nothing of its cache or its timings.
+    emit("r", {
+      kind: "usage",
+      usage: {
+        promptTokens: 400,
+        completionTokens: 30,
+        totalTokens: 430,
+        turn: { prompt: 500, completion: 5, total: 505, cached: 0, finishReason: "stop" },
+      },
+    });
+    at(2000);
+    emit("r", { kind: "done", ok: true });
+
+    const metrics = runMetrics(history("r"), { contextLength: 1000 });
+    expect(metrics).toMatchObject({
+      steps: 1,
+      turns: 3,
+      requests: 4,
+      toolCalls: 2,
+      toolErrors: { read: 1 },
+      loadCalls: 1,
+      promptTokens: 900,
+      completionTokens: 35,
+      cachedTokens: 30,
+      uncachedTokens: 370,
+      cacheBreaks: 1,
+      cacheBreakReasons: { "tools-changed": 1 },
+      truncatedTurns: 1,
+      wallMs: 2000,
+      promptMs: 200,
+      toolMs: 350,
+      slowestTurnMs: 1200,
+      firstTokenMs: 400,
+      draftTotal: 10,
+      draftAccepted: 5,
+      draftAcceptance: 0.5,
+      largestPrompt: 500,
+      largestPromptShare: 0.5,
+      outcome: "answered",
+    });
+    // Over the 400 prompt tokens whose cache was reported, not the 900 of all of them.
+    expect(metrics.cacheHitRatio).toBeCloseTo(30 / 400);
+    // No turn reported these, so nothing is made up for them.
+    expect(metrics).not.toHaveProperty("reasoningTokens");
+    expect(metrics).not.toHaveProperty("predictedMs");
+  });
+
+  it("reads the outcome off the last turn and the run's end", () => {
+    const turn = (finishReason: string) => ({
+      kind: "usage" as const,
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        turn: { prompt: 0, completion: 0, total: 0, cached: 0, finishReason },
+      },
+    });
+    emit("cut", turn("length"));
+    emit("cut", { kind: "done", ok: true });
+    expect(runMetrics(history("cut")).outcome).toBe("truncated");
+    emit("broke", turn("stop"));
+    emit("broke", { kind: "done", ok: false });
+    expect(runMetrics(history("broke")).outcome).toBe("failed");
+    emit("running", turn("stop"));
+    expect(runMetrics(history("running"))).not.toHaveProperty("outcome");
+  });
+
+  it("ignores usage a caller emitted without a turn report", () => {
+    emit("r", { kind: "usage", usage: { promptTokens: 10, completionTokens: 1, totalTokens: 11 } });
+    expect(runMetrics(history("r"))).toMatchObject({ turns: 0, promptTokens: 0 });
   });
 });

@@ -22,6 +22,7 @@ export {
   type ToolCallOutcome,
   type ToolCallRequest,
 } from "./agent-loop.ts";
+export { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
 export {
   type Capabilities,
   capabilitiesFor,
@@ -69,6 +70,11 @@ export type {
   RetryPolicy,
   ToolPolicy,
 } from "./config.ts";
+export {
+  type ContinueTurnOptions,
+  continueTurn,
+  isContinuable,
+} from "./continuation.ts";
 export { errorMessage } from "./errors.ts";
 export {
   configureEvents,
@@ -80,8 +86,12 @@ export {
   type RunEvent,
   type RunEventInput,
   type RunEventKind,
+  type RunMetrics,
+  type RunMetricsOptions,
   type RunUsage,
   resetEvents,
+  runMetrics,
+  type TurnReport,
   watch,
 } from "./events.ts";
 export {
@@ -111,6 +121,7 @@ export {
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,
+  CHARS_PER_TOKEN,
   ContextOverflow,
   compact,
   EndpointSilent,
@@ -120,9 +131,12 @@ export {
   LOADING_POLL_MS,
   LOADING_TIMEOUT_MS,
   messageTokens,
+  requestChars,
   requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
+  type TokenEstimateOptions,
+  toolsChars,
 } from "./retry.ts";
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";

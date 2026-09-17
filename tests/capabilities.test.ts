@@ -224,6 +224,7 @@ describe("modelCapabilitiesFor", () => {
       chosenTemperature: true,
       refusedFields: new Set(),
       structuredOutput: true,
+      assistantPrefill: true,
     });
     model.reasoningEffort = false;
     expect(modelCapabilitiesFor(supports, "gpt-5").reasoningEffort).toBe(false);
@@ -342,7 +343,12 @@ describe("negotiate, for a model", () => {
         { reasoningEffort: true, legacyTokenLimit: true, chosenTemperature: true },
         { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: true },
         { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: false },
-      ].map((flags) => ({ ...flags, refusedFields: new Set(), structuredOutput: true })),
+      ].map((flags) => ({
+        ...flags,
+        refusedFields: new Set(),
+        structuredOutput: true,
+        assistantPrefill: true,
+      })),
     );
   });
 

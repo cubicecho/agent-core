@@ -24,6 +24,14 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
 - `ToolCallRequest` (type) — One call the model made, as `dispatch` is handed it.
 
+### calibration
+
+How many characters a token is worth on one model, learned from what its endpoint reports.
+
+- `calibrate` — Takes one reading from a request that was answered, so the next one to this model is sized by it.
+- `charsPerTokenFor` — The characters per token to size a request to this model with, `CHARS_PER_TOKEN` until a turn has reported one.
+- `resetCalibration` — Forgets every reading, so the next request is sized at `CHARS_PER_TOKEN` again.
+
 ### capabilities
 
 What an endpoint turned out not to support, and answering it when it says so.
@@ -86,6 +94,14 @@ What this package needs to know about a caller's configuration.
 - `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
 - `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
 
+### continuation
+
+Picking up an answer the token ceiling cut off, instead of keeping half of it.
+
+- `ContinueTurnOptions` (type) — What `continueTurn` takes besides what `runTurn` does.
+- `continueTurn` — Carries on an answer the token ceiling cut off, by sending the transcript again with the answer so far as a trailing assistant message, and joins the pieces into one turn.
+- `isContinuable` — Whether a turn is one a continuation can finish: cut off at the ceiling, with an answer begun and no tool call in it.
+
 ### errors
 
 - `errorMessage` — What went wrong, as a string.
@@ -103,8 +119,12 @@ What a run is doing, while it is doing it.
 - `RunEvent` (type) — One thing that happened in a run, as a watcher receives it.
 - `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
 - `RunEventKind` (type) — Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it.
+- `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
+- `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
 - `RunUsage` (type) — What a run has spent, counted from the start of the run rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
 - `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
+- `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
+- `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
 - `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
 
 ### hooks
@@ -143,6 +163,7 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 Everything about a request failing that is not about what the request said.
 
 - `backoffMs` — Exponential, with jitter so several tasks failing at once do not return in lockstep.
+- `CHARS_PER_TOKEN` — The divisor behind `estimateTokens`, applied here to a character count rather than a string.
 - `ContextOverflow` — The request was bigger than the model will read.
 - `compact` — 1234 → "1.2k".
 - `EndpointSilent` — The endpoint stopped answering mid-request.
@@ -152,9 +173,12 @@ Everything about a request failing that is not about what the request said.
 - `LOADING_POLL_MS` — How long to wait between asking a loading server again.
 - `LOADING_TIMEOUT_MS` — How long `runTurn` waits for a model to load unless told otherwise.
 - `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
+- `requestChars` — How many characters a request is worth: the walk `requestTokens` divides, without the division.
 - `requestTokens` — What this request will cost the window, in tokens, near enough.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 - `sleep` — A delay an abort cuts short, rejecting rather than resolving early.
+- `TokenEstimateOptions` (type) — What the two token estimates below take besides what they measure.
+- `toolsChars` — How many characters a tool array is worth, measured once per array.
 
 ### run-turn
 
@@ -205,7 +229,7 @@ Reading one streamed turn back into a message.
 - `StreamTurnOptions` (type) — What `streamTurn` takes besides the request body.
 - `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
 - `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.
-- `TurnUsage` (type) — What a turn cost.
+- `TurnUsage` (type) — What a turn cost, and how it went.
 
 ### thinking
 
