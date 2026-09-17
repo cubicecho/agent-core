@@ -87,6 +87,7 @@ export {
 export {
   assembleContext,
   configureHooks,
+  consult,
   type Gathered,
   gather,
   HOOK_CONTEXT_TOKENS,

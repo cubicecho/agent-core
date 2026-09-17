@@ -379,7 +379,7 @@ once `used` (the last turn's prompt tokens, or the estimate) is past three quart
 The kept tail fills at most 35% of it and starts on a user message, since a transcript resuming
 mid-exchange is one servers refuse; leading system prompts are never folded, and an earlier
 summary is continued rather than summarised. `compactTranscript` writes the summary and tells
-`beforeCompact` hooks what is going while it does. A hook cannot veto it. Because the cut lands on
+`beforeCompact` hooks what is going while it does. Because the cut lands on
 a user message, one long tool run under a single question has nothing to fold — pruning is what
 keeps that one going.
 
@@ -394,6 +394,21 @@ beforeStep: async (messages, step) => {
     { hooks: { run, context } },
   );
 },
+```
+
+A hook can ask for a compaction not to happen — its runner sets `veto` on the outcome — and by default
+nobody listens: the hooks run beside the summary, so a slow one costs the run nothing. Pass
+`honourVeto: true` with the hooks and they run first — the summary waits on them — and a veto from
+any hook that ran leaves the transcript as it was, with a note naming the hook. One that failed
+vetoes nothing. A compaction passed `forced: true`, because a request was already refused as too
+big, goes ahead regardless: a veto there only trades the summary for a `ContextOverflow`.
+`consult` is the same wait for a host that compacts its own way.
+
+```ts
+const compacted = await compactTranscript(messages, plan, summarise, {
+  hooks: { run, context, onNote, honourVeto: true },
+  forced: retryingAfterOverflow, // the last request came back as a ContextOverflow
+});
 ```
 
 **Both rewrite the prefix.** A prompt cache matches from the first token, so a transcript whose

@@ -1,6 +1,13 @@
 import type OpenAI from "openai";
 import type { Endpoint } from "./config.ts";
-import { type HookContext, type HookNote, type HookRunner, notify, turnMessages } from "./hooks.ts";
+import {
+  consult,
+  type HookContext,
+  type HookNote,
+  type HookRunner,
+  notify,
+  turnMessages,
+} from "./hooks.ts";
 import { messageTokens } from "./retry.ts";
 import { ask, type SideTaskOptions } from "./side-task.ts";
 
@@ -233,15 +240,25 @@ export const summariser =
  *
  * `beforeCompact` is told what is being folded while the summary is written, beside it rather
  * than ahead of it — a memory server filing it is not a rescue worth making the run wait for, and
- * `notify` never rejects. A hook cannot veto the compaction: `HookOutcome` has no way to say so,
- * and a run over its window has no better option anyway. An empty summary folds nothing, and the
- * transcript comes back as it was. Rewrites the prefix; see the module comment on when to run it.
+ * `notify` never rejects. A host that wants its hooks able to stop a compaction sets
+ * `honourVeto`, and then they run first and the summary waits on them: any `ok` outcome carrying
+ * `veto` leaves the transcript as it was, and each vetoing hook is noted by name. A `forced`
+ * compaction ignores a veto and runs the hooks beside the summary as before, because a run already
+ * past its window has no better option — a veto there only trades the summary for a
+ * `ContextOverflow`. An empty summary folds nothing either. Rewrites the prefix; see the module
+ * comment on when to run it.
  *
  * @param messages The transcript the plan was made for. Not written to.
  * @param plan What `planCompaction` returned for it.
- * @param summarise Writes the summary from `summaryInput`'s text. See `summariser`.
+ * @param summarise Writes the summary from `summaryInput`'s text. See `summariser`. Not called
+ * when a hook vetoes.
  * @param options Hooks to tell. `context` is extended with `compacting` and `range`, whose
- * indexes are the plan's.
+ * indexes are the plan's. `honourVeto` waits for the hooks and lets one stop the compaction; off
+ * by default, which adds no latency. `forced` says the window is already exceeded — the caller
+ * caught a `ContextOverflow`, or is compacting to make a refused request fit — and overrides
+ * `honourVeto`.
+ * @returns `messages` itself when nothing was folded — a veto or an empty summary — otherwise a
+ * new array.
  */
 export async function compactTranscript(
   messages: Message[],
@@ -249,24 +266,33 @@ export async function compactTranscript(
   summarise: (text: string) => Promise<string>,
   {
     hooks,
+    forced = false,
   }: {
-    hooks?: { run: HookRunner; context: HookContext; onNote?: (note: HookNote) => void };
+    hooks?: {
+      run: HookRunner;
+      context: HookContext;
+      onNote?: (note: HookNote) => void;
+      honourVeto?: boolean;
+    };
+    forced?: boolean;
   } = {},
 ): Promise<Message[]> {
-  const [summary] = await Promise.all([
-    summarise(summaryInput(plan)),
-    hooks &&
-      notify(
-        hooks.run,
-        "beforeCompact",
-        {
-          ...hooks.context,
-          compacting: turnMessages(hooks.context.session.id, messages, plan.from, plan.cut),
-          range: { from: plan.from, through: plan.cut },
-        },
-        hooks.onNote,
-      ),
-  ]);
+  const context: HookContext | undefined = hooks && {
+    ...hooks.context,
+    compacting: turnMessages(hooks.context.session.id, messages, plan.from, plan.cut),
+    range: { from: plan.from, through: plan.cut },
+  };
+  let summary: string;
+  if (hooks && context && hooks.honourVeto && !forced) {
+    const { vetoed } = await consult(hooks.run, "beforeCompact", context, hooks.onNote);
+    if (vetoed) return messages;
+    summary = await summarise(summaryInput(plan));
+  } else {
+    [summary] = await Promise.all([
+      summarise(summaryInput(plan)),
+      hooks && context && notify(hooks.run, "beforeCompact", context, hooks.onNote),
+    ]);
+  }
   if (!summary.trim()) return messages;
   return [
     ...messages.slice(0, plan.from).filter((message) => !isSummary(message)),

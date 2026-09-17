@@ -138,6 +138,114 @@ describe("compactTranscript", () => {
     );
   });
 
+  describe("a veto", () => {
+    const vetoing = () =>
+      vi.fn(async () => [
+        { serverId: "m", label: "Memory", hookId: "file", event: "beforeCompact", ok: true },
+        {
+          serverId: "g",
+          label: "Guard",
+          hookId: "keep",
+          event: "beforeCompact",
+          ok: true,
+          veto: true,
+        },
+        {
+          serverId: "b",
+          label: "Broken",
+          hookId: "x",
+          event: "beforeCompact",
+          ok: false,
+          veto: true,
+          error: "down",
+        },
+      ]);
+
+    it("is ignored unless the host asks, and the summary is written beside the hooks", async () => {
+      let hooksDone = false;
+      const run = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        hooksDone = true;
+        return [
+          {
+            serverId: "g",
+            label: "Guard",
+            hookId: "keep",
+            event: "beforeCompact",
+            ok: true,
+            veto: true,
+          },
+        ];
+      });
+      const summarise = vi.fn(async () => {
+        expect(hooksDone).toBe(false);
+        return "notes";
+      });
+      const out = await compactTranscript(messages, plan, summarise, {
+        hooks: { run: run as never, context: { session: { id: "s" } } },
+      });
+      expect(out).not.toBe(messages);
+      expect(summarise).toHaveBeenCalledOnce();
+    });
+
+    it("leaves the transcript alone, writes no summary, and names the hook", async () => {
+      const summarise = vi.fn(async () => "notes");
+      const heard: unknown[] = [];
+      const out = await compactTranscript(messages, plan, summarise, {
+        hooks: {
+          run: vetoing() as never,
+          context: { session: { id: "s" } },
+          onNote: (note) => heard.push(note),
+          honourVeto: true,
+        },
+      });
+      expect(out).toBe(messages);
+      expect(summarise).not.toHaveBeenCalled();
+      expect(heard).toEqual([
+        { event: "beforeCompact", source: "Guard", hookId: "keep", veto: true },
+        { event: "beforeCompact", source: "Broken", hookId: "x", error: "down" },
+      ]);
+    });
+
+    it("waits for the hooks and goes ahead when none of them vetoes", async () => {
+      const order: string[] = [];
+      const run = vi.fn(async () => {
+        order.push("hooks");
+        return [
+          { serverId: "m", label: "Memory", hookId: "file", event: "beforeCompact", ok: true },
+        ];
+      });
+      const summarise = vi.fn(async () => {
+        order.push("summary");
+        return "notes";
+      });
+      const out = await compactTranscript(messages, plan, summarise, {
+        hooks: { run: run as never, context: { session: { id: "s" } }, honourVeto: true },
+      });
+      expect(order).toEqual(["hooks", "summary"]);
+      expect(out.at(1)).toEqual({ role: "system", content: `${SUMMARY_LEAD}notes` });
+    });
+
+    it("does not stop a compaction forced by an overflow", async () => {
+      const summarise = vi.fn(async () => "notes");
+      const heard: unknown[] = [];
+      const out = await compactTranscript(messages, plan, summarise, {
+        hooks: {
+          run: vetoing() as never,
+          context: { session: { id: "s" } },
+          onNote: (note) => heard.push(note),
+          honourVeto: true,
+        },
+        forced: true,
+      });
+      expect(out).not.toBe(messages);
+      expect(summarise).toHaveBeenCalledOnce();
+      expect(heard).toEqual([
+        { event: "beforeCompact", source: "Broken", hookId: "x", error: "down" },
+      ]);
+    });
+  });
+
   it("folds nothing on an empty summary", async () => {
     expect(await compactTranscript(messages, plan, async () => "  ")).toBe(messages);
   });
