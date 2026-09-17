@@ -1,3 +1,11 @@
+# [2.12.0](https://github.com/cubicecho/agent-core/compare/v2.11.0...v2.12.0) (2026-09-17)
+
+
+### Features
+
+* calibrated token estimates, per-turn and per-run metrics, and continuing a cut-off answer ([8b361c2](https://github.com/cubicecho/agent-core/commit/8b361c24435106be39f86a7674ecc231d468ac9d)), closes [#90](https://github.com/cubicecho/agent-core/issues/90) [#91](https://github.com/cubicecho/agent-core/issues/91) [#93](https://github.com/cubicecho/agent-core/issues/93)
+* let a beforeCompact hook veto a compaction when the host asks ([b71aaf1](https://github.com/cubicecho/agent-core/commit/b71aaf1a936f4821c6f8d9e9de0857c7af183c8a)), closes [#83](https://github.com/cubicecho/agent-core/issues/83)
+
 # [2.11.0](https://github.com/cubicecho/agent-core/compare/v2.10.0...v2.11.0) (2026-09-17)
 
 
