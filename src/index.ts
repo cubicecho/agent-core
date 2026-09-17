@@ -197,10 +197,12 @@ export {
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
+  orderTools,
   PRESELECT_SCHEMA,
   PRESELECT_SYSTEM,
   preselectInput,
   preselection,
   preselectSystem,
   requestedNames,
+  type ToolOrder,
 } from "./tool-loading.ts";

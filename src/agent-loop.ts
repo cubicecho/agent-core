@@ -34,11 +34,13 @@ import {
   loadedTools,
   loadResult,
   MAX_PER_LOAD,
+  orderTools,
   PRESELECT_SCHEMA,
   preselectInput,
   preselection,
   preselectSystem,
   requestedNames,
+  type ToolOrder,
 } from "./tool-loading.ts";
 
 /**
@@ -72,8 +74,11 @@ const RESERVED = new Set(["model", "messages", "stream", "tools"]);
  * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
  * @param messages The request's messages, system prompt included, sent as they are.
- * @param tools The tool definitions. Sanitised here — a lookup for a definition seen before —
- * and relaxed where the endpoint needs it. Empty sends no `tools` field at all.
+ * @param tools The tool definitions. Ordered by name, sanitised here — a lookup for a definition
+ * seen before — and relaxed where the endpoint needs it. Empty sends no `tools` field at all.
+ * @param order How to order them before sending. `true`, the default, is by name, which keeps the
+ * cache when the caller's array is assembled differently from one request to the next. See
+ * `orderTools`.
  */
 export function buildBody(
   config: ModelParams,
@@ -81,8 +86,12 @@ export function buildBody(
   refused: ModelCapabilities | undefined,
   messages: OpenAI.ChatCompletionMessageParam[],
   tools: OpenAI.ChatCompletionTool[] = [],
+  order: ToolOrder = true,
 ): OpenAI.ChatCompletionCreateParamsStreaming {
-  const declared = supports.strictSchemas ? sanitizeTools(tools) : relaxTools(sanitizeTools(tools));
+  const sorted = orderTools(tools, order);
+  const declared = supports.strictSchemas
+    ? sanitizeTools(sorted)
+    : relaxTools(sanitizeTools(sorted));
   const effort = config.reasoningEffort;
   const extra = Object.entries(config.extraBody ?? {}).filter(
     ([field]) => !RESERVED.has(field) && !refused?.refusedFields.has(field),
@@ -255,6 +264,12 @@ export interface AgentLoopOptions {
   /** The same tools as a name-only catalogue. On-demand mode needs it, and is eager without it. */
   catalog?: CatalogServer[];
   /**
+   * How the declared tools are ordered before each request. By name unless told otherwise, so a
+   * run whose tool array was assembled in a different order than last time still meets its cache.
+   * `false` sends them as given. See `orderTools`.
+   */
+  toolOrder?: ToolOrder;
+  /**
    * What `preselect` picked. The first step is sent these and nothing else — no catalogue, no
    * `load_tools` — because a model with the menu still in front of it shops: it reloads what it
    * has or picks a sibling. Everything comes back on the step after.
@@ -415,7 +430,8 @@ function cacheDiagnosis(
  * whatever `runTurn` throws — `ContextOverflow` among them, however it was found out.
  *
  * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system
- * prompt unchanged from step to step, loaded tools are appended to the tool array in load order,
+ * prompt unchanged from step to step, a load adds to the tool array — which every request sends
+ * in the stable order `toolOrder` asks for — and
  * a catalogued tool called without being loaded is loaded and run rather than refused, and a
  * preselection shapes the first step. A turn cut off at `maxTokens` is said so as a notice,
  * because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
@@ -433,6 +449,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     parallel = false,
     recoverToolCalls: recover = true,
     maxContinuations = 0,
+    toolOrder = true,
   } = options;
   const started = Date.now();
   // What the loop emitted, less the token deltas, for `runMetrics` at the end. Stamped here rather
@@ -504,11 +521,17 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     onEvent({ kind: "turn", text: `turn ${step + 1}` });
 
     const routed = preselected.length > 0 && step === 0;
-    const declared = routed
-      ? byName(new Set(preselected))
-      : onDemand
-        ? loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded))
-        : tools;
+    // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
+    // declared — a diagnosis reading an order the server never saw calls an untouched tool array
+    // `tools-changed`.
+    const declared = orderTools(
+      routed
+        ? byName(new Set(preselected))
+        : onDemand
+          ? loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded))
+          : tools,
+      toolOrder,
+    );
     // Unmarked, so the system prompt is the same text on every step and a load does not throw
     // away the cache for the whole transcript. What is loaded is said in `declared` and in the
     // `load_tools` result instead. The preselected first step is the one exception, by design.
@@ -524,7 +547,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     ];
 
     const build = (supported: Capabilities, refused: ModelCapabilities | undefined) =>
-      buildBody(config, supported, refused, request, declared);
+      buildBody(config, supported, refused, request, declared, toolOrder);
     const turnOptions = {
       model: config.model,
       droppable: Object.keys(config.extraBody ?? {}),
