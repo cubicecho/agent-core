@@ -9,6 +9,7 @@ import {
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
+  orderTools,
   PRESELECT_SYSTEM,
   preselectInput,
   preselection,
@@ -111,6 +112,26 @@ test("loaded definitions are appended in load order, never moved", () => {
     list.map((item) => item.function?.name);
   expect(names(loadedTools(previous, [b, a, b]))).toEqual(["c", "a", "b"]);
   expect(names(previous)).toEqual(["c", "a"]);
+});
+
+test("orderTools sorts by name, keeps the definitions themselves, and obeys a comparator", () => {
+  const definition = (name: string) => ({
+    type: "function" as const,
+    function: { name, parameters: { type: "object" } },
+  });
+  const [a, b, c] = [definition("a"), definition("b"), definition("c")];
+  const names = (list: { type: string; function?: { name: string } }[]) =>
+    list.map((item) => item.function?.name);
+  const given = [c, a, b];
+  expect(names(orderTools(given))).toEqual(["a", "b", "c"]);
+  // By identity, so `sanitizeTools` still answers from its cache rather than rebuilding.
+  expect(orderTools(given)[0]).toBe(a);
+  expect(names(given)).toEqual(["c", "a", "b"]);
+  expect(orderTools(given, false)).toBe(given);
+  // Already in order, so nothing is copied.
+  const sorted = [a, b, c];
+  expect(orderTools(sorted)).toBe(sorted);
+  expect(names(orderTools(given, (x, y) => y.localeCompare(x)))).toEqual(["c", "b", "a"]);
 });
 
 test("a preselection is resolved against the catalogue and capped", () => {

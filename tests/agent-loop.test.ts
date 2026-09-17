@@ -181,6 +181,45 @@ describe("buildBody", () => {
     const body = buildBody(config, supports, undefined, messages, [pattern]);
     expect(JSON.stringify(body.tools)).not.toContain("pattern");
   });
+
+  /** The names a built body declares, in the order it declares them. */
+  const names = (body: Body) =>
+    (body.tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name);
+
+  it("declares the same set in the same order however the caller built the array", () => {
+    const supports = capabilitiesFor("http://local/v1");
+    const one = buildBody(config, supports, undefined, messages, [
+      tool("b__x"),
+      tool("a__y"),
+      tool("a__x"),
+    ]);
+    const other = buildBody(config, supports, undefined, messages, [
+      tool("a__x"),
+      tool("b__x"),
+      tool("a__y"),
+    ]);
+    expect(names(one)).toEqual(["a__x", "a__y", "b__x"]);
+    expect(names(other)).toEqual(names(one));
+  });
+
+  it("sends the caller's own order when told to", () => {
+    const supports = capabilitiesFor("http://local/v1");
+    const body = buildBody(config, supports, undefined, messages, [tool("b"), tool("a")], false);
+    expect(names(body)).toEqual(["b", "a"]);
+  });
+
+  it("orders by a comparator of the caller's", () => {
+    const supports = capabilitiesFor("http://local/v1");
+    const body = buildBody(
+      config,
+      supports,
+      undefined,
+      messages,
+      [tool("a"), tool("b"), tool("c")],
+      (a, b) => b.localeCompare(a),
+    );
+    expect(names(body)).toEqual(["c", "b", "a"]);
+  });
 });
 
 describe("resolveApiKey", () => {
@@ -608,6 +647,29 @@ describe("runAgentLoop", () => {
     ]);
   });
 
+  it("declares the tools in name order, and as the host built them when told to", async () => {
+    const tools = [tool("z"), tool("a")];
+    create.mockReturnValueOnce(says("done"));
+    await runAgentLoop({ config, messages: question, tools, dispatch: async () => "ok" });
+    create.mockReturnValueOnce(says("done"));
+    await runAgentLoop({
+      config,
+      messages: question,
+      tools,
+      toolOrder: false,
+      dispatch: async () => "ok",
+    });
+    expect(declared()).toEqual([
+      ["a", "z"],
+      ["z", "a"],
+    ]);
+    // The host's array is read, never rearranged in place.
+    expect(tools.map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name)).toEqual([
+      "z",
+      "a",
+    ]);
+  });
+
   describe("on demand", () => {
     const catalog = [
       {
@@ -669,7 +731,7 @@ describe("runAgentLoop", () => {
       });
     });
 
-    it("appends loads in the order they happen, and answers a repeat load", async () => {
+    it("declares loads in name order however they happened, and answers a repeat load", async () => {
       create
         .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
         .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write"]}']))
@@ -681,12 +743,13 @@ describe("runAgentLoop", () => {
         catalog,
         dispatch: async () => "ok",
       });
-      // `s__read` comes first in `tools`, and is still declared after `s__write`, which was loaded
-      // first: a reordered array moves every definition after the change.
+      // `s__write` was loaded first and is still declared second: the array a request sends is
+      // decided by the names in it, not by the order the loads happened in, so the same pair
+      // renders the same way in a run that loaded them the other way round.
       expect(declared()).toEqual([
         [LOAD_TOOLS],
         [LOAD_TOOLS, "s__write"],
-        [LOAD_TOOLS, "s__write", "s__read"],
+        [LOAD_TOOLS, "s__read", "s__write"],
       ]);
       const second = result.messages.filter((message) => message.role === "tool")[1];
       expect(second.content).toContain("Loaded 1 tool(s)");

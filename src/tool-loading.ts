@@ -116,10 +116,9 @@ const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server
 /**
  * A tool array with newly loaded definitions appended, in the order they were loaded.
  *
- * Never re-sorted and never rebuilt from a set. A template renders the tool array into the
- * prompt near its head, and a load that moved an earlier definition moved everything after it,
- * so the cache was lost from there on every load; appended, the definitions already sent stay
- * a prefix of the new array.
+ * Appended and never rebuilt from a set, so what a load adds is decided by the load and not by
+ * the shape of whatever collection the definitions came out of. Where the appended array ends up
+ * in the request is `orderTools`' business, which the loop applies after this.
  *
  * @param previous What the last request declared, `load_tools` included. Not written to.
  * @param matched The definitions to add. Ones whose name is already declared, here or earlier in
@@ -140,6 +139,47 @@ export function loadedTools(
     tools.push(tool);
   }
   return tools;
+}
+
+/**
+ * How a tool array is ordered before it is sent: `true` by name, `false` as the caller built it,
+ * or a comparator over the two names.
+ */
+export type ToolOrder = boolean | ((a: string, b: string) => number);
+
+/**
+ * The tool array in a stable order, so the same set of tools renders the same way twice.
+ *
+ * A chat template renders the declared tools ahead of the system prompt, which makes the tool
+ * array the first thing a prompt cache has to match — and an array assembled from a map, from
+ * database rows, or from the order servers happened to connect in changes between processes and
+ * between reconnects. Every such change costs the cache for the whole transcript rather than for
+ * the tools alone, and nothing about the request the model sees is different. Ordering by name
+ * makes the array a property of the set instead of of how it was built, at the price of a load
+ * inserting rather than appending. Definitions come back by identity, so `sanitizeTools` still
+ * finds each one in its cache.
+ *
+ * `false` is for a caller that means its order: the model reads the array top to bottom, and a
+ * host may be putting what it wants reached for first at the front.
+ *
+ * @param tools The definitions to order. Not written to.
+ * @param order `true` for name order, `false` to leave it alone, or a comparator over the names.
+ * A tool that is not a function orders as the empty name.
+ * @returns `tools` itself when it is already in that order, so the common case copies nothing.
+ */
+export function orderTools(
+  tools: OpenAI.ChatCompletionTool[],
+  order: ToolOrder = true,
+): OpenAI.ChatCompletionTool[] {
+  if (order === false) return tools;
+  const nameOf = (tool: OpenAI.ChatCompletionTool) =>
+    tool.type === "function" ? tool.function.name : "";
+  // Code-unit order rather than `localeCompare`, whose answer depends on the host's locale —
+  // which is the kind of instability this exists to remove.
+  const compare =
+    typeof order === "function" ? order : (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  const sorted = [...tools].sort((a, b) => compare(nameOf(a), nameOf(b)));
+  return sorted.some((tool, at) => tool !== tools[at]) ? sorted : tools;
 }
 
 /**

@@ -365,8 +365,17 @@ and — naming only tools that exist — a reply that is only a JSON call or hol
 Found calls are run as `call_recovered_0` onward, the text is what is left, `onTurn` and the
 result see the turn that way, and a notice says so, since the real fix is the server's parser.
 
+Every request declares its tools in name order, whichever way the caller assembled the array. A
+chat template renders the tool block ahead of the system prompt, so the tool array is the first
+thing a prompt cache has to match, and an array built from a map, from database rows, or from the
+order servers happened to connect in is a different array on the next boot — the same tools, the
+same run, and the cache for the whole transcript thrown away. Ordering by name makes it a property
+of the set instead. `toolOrder: false` sends the caller's order, for a host that means it — a model
+reads the array top to bottom — and a comparator orders it another way. `orderTools` is the same
+thing for a caller with its own loop, and `buildBody` takes the order as its last argument.
+
 With `toolDiscovery: "ondemand"` and a catalogue, the request declares `load_tools` and what has
-been loaded, appended in the order it was loaded, and the catalogue rides on the system prompt
+been loaded, and the catalogue rides on the system prompt
 unmarked, the same text on every step. Marking loads there rewrote the head of the prompt and lost
 the prompt cache for the whole transcript on each one; a model that loads a tool twice is told in
 the `load_tools` result that it already has it. A model that calls
