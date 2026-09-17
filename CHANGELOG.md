@@ -1,3 +1,10 @@
+# [2.11.0](https://github.com/cubicecho/agent-core/compare/v2.10.0...v2.11.0) (2026-09-17)
+
+
+### Features
+
+* ask and askJson take the content parts a vision model reads ([a940930](https://github.com/cubicecho/agent-core/commit/a9409300a97434fd2c8a4e7994c2bd434259263e))
+
 # [2.10.0](https://github.com/cubicecho/agent-core/compare/v2.9.0...v2.10.0) (2026-09-15)
 
 
