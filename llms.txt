@@ -38,6 +38,8 @@ What an endpoint turned out not to support, and answering it when it says so.
 
 - `Capabilities` (type) — What one endpoint turned out not to support.
 - `capabilitiesFor` — What this endpoint is known not to support.
+- `EFFORT_LADDER` — The efforts this package can place, cheapest first.
+- `effortFor` — What to actually put in `reasoning_effort` for a model that has refused the value asked for.
 - `expireCapabilities` — Forgets every endpoint whose entry is older than this, so the next request finds out again.
 - `ModelCapabilities` (type) — What one model on that endpoint turned out not to support.
 - `modelCapabilitiesFor` — What this model on this endpoint is known not to support.

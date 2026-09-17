@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type Capabilities,
   capabilitiesFor,
+  effortFor,
   expireCapabilities,
   type ModelCapabilities,
   modelCapabilitiesFor,
@@ -60,8 +61,14 @@ const modelThatRefuses = (...refusals: Error[]) => {
   const asked: ModelCapabilities[] = [];
   const send = vi.fn(
     async (_supports: Capabilities, _produced: Produced, model: ModelCapabilities | undefined) => {
-      // The set is copied too: it is the one field a later refusal changes in place.
-      if (model) asked.push({ ...model, refusedFields: new Set(model.refusedFields) });
+      // The sets are copied too: they are the fields a later refusal changes in place.
+      if (model) {
+        asked.push({
+          ...model,
+          refusedFields: new Set(model.refusedFields),
+          refusedEfforts: new Set(model.refusedEfforts),
+        });
+      }
       const refusal = refusals.shift();
       if (refusal) throw refusal;
       return "answered";
@@ -193,6 +200,50 @@ describe("expireCapabilities", () => {
   });
 });
 
+describe("effortFor", () => {
+  const model = () => modelCapabilitiesFor(capabilitiesFor("https://api.openai.com/v1"), "gpt-5");
+
+  it("sends what was asked for until the model says otherwise", () => {
+    expect(effortFor(undefined, "low")).toBe("low");
+    expect(effortFor(model(), "low")).toBe("low");
+  });
+
+  it("sends nothing for an absent or off effort, or a model that cannot reason", () => {
+    expect(effortFor(model(), "")).toBe("");
+    expect(effortFor(model(), undefined)).toBe("");
+    expect(effortFor(model(), "off")).toBe("");
+    const refused = model();
+    refused.reasoningEffort = false;
+    expect(effortFor(refused, "low")).toBe("");
+  });
+
+  it("steps up to the cheapest rung the model has not refused", () => {
+    const refused = model();
+    refused.refusedEfforts.add("none");
+    expect(effortFor(refused, "none")).toBe("minimal");
+    refused.refusedEfforts.add("minimal");
+    expect(effortFor(refused, "none")).toBe("low");
+  });
+
+  it("steps a value the model's published list leaves out, without it being refused first", () => {
+    // Two readings of the same fact, and the list is the one that arrives whole: a model that
+    // lists `low, medium, high` has said what it thinks of `minimal` without being asked.
+    const refused = model();
+    refused.supportedEfforts = ["low", "medium", "high"];
+    expect(effortFor(refused, "minimal")).toBe("low");
+    expect(effortFor(refused, "medium")).toBe("medium");
+  });
+
+  it("hands back what it was given when there is nowhere to step", () => {
+    // The caller's own value goes out and is refused again, where guessing would either reason
+    // less than was asked for or send a rung already known to fail.
+    const refused = model();
+    refused.refusedEfforts.add("high");
+    expect(effortFor(refused, "high")).toBe("high");
+    expect(effortFor(refused, "xhigh")).toBe("xhigh");
+  });
+});
+
 describe("negotiate", () => {
   it("sends once against an endpoint with nothing to say about the request", async () => {
     const { send } = serverThatRefuses();
@@ -286,6 +337,7 @@ describe("modelCapabilitiesFor", () => {
       chosenTemperature: true,
       refusedFields: new Set(),
       structuredOutput: true,
+      refusedEfforts: new Set(),
       assistantPrefill: true,
     });
     model.reasoningEffort = false;
@@ -349,18 +401,71 @@ describe("negotiate, for a model", () => {
     expect(modelCapabilitiesFor(supports, "gpt-5").legacyTokenLimit).toBe(true);
   });
 
-  it("passes on an effort the model does not offer, rather than giving up reasoning", async () => {
+  it("steps a refused effort up to one the model lists, rather than giving up reasoning", async () => {
     // A model that answers this reasons perfectly well — it was handed a value off a list this
-    // package does not know. Dropping the field succeeds at the model's own default effort,
-    // which is neither what the caller asked for nor something it can see, and the drop latches
-    // for every later turn.
+    // package does not know. Dropping the field succeeds at the model's own default effort, which
+    // is neither what the caller asked for nor something it can see, and the drop would latch for
+    // every later turn. The refusal names the floor, so the next request asks for it.
     const supports = openai();
+    const notices: string[] = [];
     const { send } = modelThatRefuses(NO_SUCH_EFFORT);
+    await expect(
+      negotiate(supports, send, { model: "gpt-5", onNotice: (m) => notices.push(m) }),
+    ).resolves.toBe("answered");
+    expect(send).toHaveBeenCalledTimes(2);
+    const refused = modelCapabilitiesFor(supports, "gpt-5");
+    expect(refused.reasoningEffort).toBe(true);
+    expect([...refused.refusedEfforts]).toEqual(["none"]);
+    expect(refused.supportedEfforts).toEqual(["minimal", "low", "medium", "high"]);
+    expect(effortFor(refused, "none")).toBe("minimal");
+    expect(notices).toEqual(["gpt-5 does not reason at none; retrying at minimal"]);
+  });
+
+  it("walks the ladder a rung at a time when the refusal lists nothing", async () => {
+    const supports = openai();
+    const refuse = (value: string) =>
+      new Error(`400 Unsupported value: 'reasoning_effort' does not support '${value}'.`);
+    const { send } = modelThatRefuses(refuse("none"), refuse("minimal"));
+    await expect(negotiate(supports, send, { model: "gpt-5" })).resolves.toBe("answered");
+    const refused = modelCapabilitiesFor(supports, "gpt-5");
+    expect([...refused.refusedEfforts]).toEqual(["none", "minimal"]);
+    expect(refused.supportedEfforts).toBeUndefined();
+    expect(effortFor(refused, "none")).toBe("low");
+  });
+
+  it("gives the refusal back when the ladder runs out, or the value is not on it", async () => {
+    // Never a step *down*: answering a refused `xhigh` with `high` would quietly reason less than
+    // whoever typed it asked for, where stepping up only costs tokens and says so in a notice.
+    const supports = openai();
+    const unplaceable = new Error(
+      "400 Unsupported value: 'reasoning_effort' does not support 'xhigh' with this model.",
+    );
+    const { send } = modelThatRefuses(unplaceable);
+    await expect(negotiate(supports, send, { model: "gpt-5" })).rejects.toThrow("xhigh");
+    expect(send).toHaveBeenCalledTimes(1);
+
+    const topOut = new Error(
+      "400 Unsupported value: 'reasoning_effort' does not support 'high' with this model. " +
+        "Supported values are: 'low', 'medium'.",
+    );
+    const { send: second } = modelThatRefuses(topOut);
+    await expect(negotiate(supports, second, { model: "gpt-4o" })).rejects.toThrow("high");
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops rather than re-sending when the refusal names an effort nobody sent", async () => {
+    // A server that answers every request the same way would otherwise have `negotiate` re-send
+    // for as long as it kept saying it, since the latch it makes is one it has already made.
+    const supports = openai();
+    const refused = modelCapabilitiesFor(supports, "gpt-5");
+    refused.refusedEfforts.add("none");
+    const { send } = modelThatRefuses(NO_SUCH_EFFORT, NO_SUCH_EFFORT, NO_SUCH_EFFORT);
     await expect(negotiate(supports, send, { model: "gpt-5" })).rejects.toThrow(
       "Unsupported value",
     );
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(modelCapabilitiesFor(supports, "gpt-5").reasoningEffort).toBe(true);
+    // One re-send for the list it had not heard, and then out: the second refusal latches nothing
+    // new, so the error is the caller's rather than another lap.
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("still latches a field refusal worded like a value one", async () => {
@@ -409,6 +514,7 @@ describe("negotiate, for a model", () => {
         ...flags,
         refusedFields: new Set(),
         structuredOutput: true,
+        refusedEfforts: new Set(),
         assistantPrefill: true,
       })),
     );

@@ -100,6 +100,22 @@ export interface ModelCapabilities {
    */
   structuredOutput: boolean;
   /**
+   * Efforts this model refused by value rather than by field — a request that named `none` on a
+   * model whose list starts at `minimal`. Only ever grows, which is this set's way of latching.
+   *
+   * Separate from `reasoningEffort` because the two refusals mean opposite things: that one says
+   * the model cannot reason and the field must go, this one says it reasons and was handed an
+   * effort off a list this package does not know. Dropping the field there would run at the
+   * model's own default, which is neither what the caller asked for nor something it can see.
+   */
+  refusedEfforts: Set<string>;
+  /**
+   * The efforts a refusal published as this model's, in ladder order, filtered to the ones
+   * `EFFORT_LADDER` can place. Absent until a refusal lists them, and a model that lists nothing
+   * is walked up the ladder a rung per refusal instead.
+   */
+  supportedEfforts?: string[];
+  /**
    * Continues a trailing assistant message rather than answering afresh, which `continueTurn`
    * relies on. llama.cpp renders one as a prefill and picks up mid-word; hosted OpenAI takes the
    * same request and writes a new reply after it, and some servers refuse it outright — llama.cpp
@@ -166,6 +182,7 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
       chosenTemperature: true,
       refusedFields: new Set(),
       structuredOutput: true,
+      refusedEfforts: new Set(),
       assistantPrefill: true,
     };
     supports.models.set(model, known);
@@ -272,7 +289,8 @@ const rejectsResponseFormat = (detail: string) =>
  * perfectly well; it was handed an effort off a list this package does not know. Dropping the
  * field succeeds, at the model's own default effort, which is neither what the caller asked for
  * nor something it can see — and the drop latches, so every later turn on that model reasons at
- * the default with the setting still reading what the operator typed.
+ * the default with the setting still reading what the operator typed. `stepEffort` answers this
+ * one instead, by naming an effort the model does take.
  */
 const REFUSED_VALUE = /unsupported value|invalid value|supported values/i;
 
@@ -285,6 +303,142 @@ const REFUSED_VALUE = /unsupported value|invalid value|supported values/i;
  */
 const rejectsEffort = (detail: string) =>
   /reasoning_effort/i.test(detail) && !REFUSED_VALUE.test(detail);
+
+/**
+ * The efforts this package can place, cheapest first. A substitution only ever walks *up* it.
+ *
+ * Not a list of what any model takes — `medium` is refused by a model whose list is
+ * `minimal, low, high`, and `xhigh` is real and deliberately absent. It is the order the values
+ * OpenAI has shipped stand in, which is all a step needs to know. A value not on it cannot be
+ * placed, and an unplaceable value is left alone rather than guessed at: stepping down from a
+ * refused `xhigh` to `high` would quietly answer a question with less deliberation than whoever
+ * typed it asked for, where stepping up from `none` to `minimal` only costs tokens and says so.
+ */
+export const EFFORT_LADDER = ["none", "minimal", "low", "medium", "high"] as const;
+
+const rankOf = (effort: string): number =>
+  (EFFORT_LADDER as readonly string[]).indexOf(effort.toLowerCase());
+
+/**
+ * The efforts a refusal lists as this model's: `Supported values are: 'minimal', 'low', 'medium',
+ * and 'high'.` Quoted or bare, separated by commas and a trailing `and` or `or`.
+ */
+function listedEfforts(detail: string): string[] | undefined {
+  const listed = detail.match(
+    /supported values(?:\s+\w+)?\s*(?:are|is|include)?\s*:?\s*([^\n.]+)/i,
+  )?.[1];
+  if (!listed) return undefined;
+  const values = listed
+    .split(/,|\band\b|\bor\b/)
+    .map((value) =>
+      value
+        .trim()
+        .replace(/^['"`]+|['"`]+$/g, "")
+        .toLowerCase(),
+    )
+    .filter((value) => rankOf(value) >= 0);
+  return values.length ? values : undefined;
+}
+
+/**
+ * Which effort a refusal says was refused, in the two shapes the wording takes: the field quoted
+ * then `does not support 'none'`, and `reasoning_effort: none`.
+ *
+ * Read rather than remembered, because `negotiate` builds no request and so does not know what
+ * went out — and a proxy that rewrites the value before passing it on is refusing the one it sent
+ * rather than the one it was given. A refusal that names no value steps nothing: guessing which
+ * rung was refused is how a ladder walks past the value that would have worked.
+ *
+ * @param detail The refusal.
+ * @param supported What the same refusal listed, which the value cannot be one of.
+ */
+function refusedEffortValue(detail: string, supported: readonly string[] = []): string | undefined {
+  const found = detail.match(
+    /reasoning_effort['"`]?\s*(?:does not support|is not supported with|:)\s*['"`]?([\w-]+)/i,
+  )?.[1];
+  const value = found?.toLowerCase();
+  return value && !supported.includes(value) ? value : undefined;
+}
+
+/**
+ * The cheapest effort above this one that the model has not refused, or `undefined` when the
+ * ladder is out of rungs.
+ *
+ * Above, never below: see `EFFORT_LADDER`. Where a refusal published a list that is the whole of
+ * what is tried, so the step lands in one request; where it published none the ladder is walked a
+ * rung at a time, each refusal latching the rung it named.
+ */
+function nextEffort(refused: ModelCapabilities, asked: string): string | undefined {
+  const rank = rankOf(asked);
+  if (rank < 0) return undefined;
+  let best: string | undefined;
+  for (const value of refused.supportedEfforts ?? EFFORT_LADDER) {
+    const at = rankOf(value);
+    if (at <= rank || refused.refusedEfforts.has(value)) continue;
+    if (best === undefined || at < rankOf(best)) best = value;
+  }
+  return best;
+}
+
+/**
+ * What to actually put in `reasoning_effort` for a model that has refused the value asked for.
+ *
+ * The caller's own value, until this model has said that value is not one of its own; then the
+ * cheapest it will take that is at least as much deliberation. A model that takes no effort at
+ * all, and an absent or `"off"` setting, both answer the empty string, which is the body
+ * builders' signal to send no field.
+ *
+ * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model that
+ * has refused nothing.
+ * @param asked What the config asks for. `"off"` and absent mean no effort.
+ */
+export function effortFor(refused: ModelCapabilities | undefined, asked: string | undefined) {
+  if (!asked || asked === "off") return "";
+  if (!refused) return asked;
+  if (!refused.reasoningEffort) return "";
+  const known = refused.supportedEfforts;
+  const listed = known ? known.includes(asked.toLowerCase()) : true;
+  if (listed && !refused.refusedEfforts.has(asked.toLowerCase())) return asked;
+  return nextEffort(refused, asked) ?? asked;
+}
+
+/** What answering a refused effort *value* would latch, and the rung it would try next. */
+interface EffortStep {
+  /** The effort the refusal named, to latch into `refusedEfforts`. */
+  value: string;
+  /** What `effortFor` will send once that is latched, for the notice to name. */
+  next: string;
+  /** The list the refusal published, when it published one. */
+  supported?: string[];
+}
+
+/**
+ * How to answer a refused effort *value*, or `undefined` when there is nothing new to learn or
+ * nowhere left to go — in which case the refusal is the caller's, as it was before this existed.
+ *
+ * Pure, so `negotiate` can work out whether this refusal is one of its own before deciding to
+ * answer it, and latch only in the branch it takes.
+ */
+function planEffortStep(detail: string, refused: ModelCapabilities): EffortStep | undefined {
+  if (!refused.reasoningEffort) return undefined;
+  if (!/reasoning_effort/i.test(detail) || !REFUSED_VALUE.test(detail)) return undefined;
+  const supported = listedEfforts(detail);
+  const value = refusedEffortValue(detail, supported);
+  if (value === undefined) return undefined;
+  // Something has to be new, or a server that answers every request by naming an effort nobody
+  // sent would have `negotiate` re-send for as long as it kept saying it.
+  const fresh = supported?.join() !== refused.supportedEfforts?.join();
+  if (refused.refusedEfforts.has(value) && !fresh) return undefined;
+  const next = nextEffort(
+    {
+      ...refused,
+      refusedEfforts: new Set(refused.refusedEfforts).add(value),
+      supportedEfforts: supported ?? refused.supportedEfforts,
+    },
+    value,
+  );
+  return next === undefined ? undefined : { value, next, ...(supported ? { supported } : {}) };
+}
 
 /**
  * Read only alongside the name it is asking for: `'max_tokens' is not supported with this model.
@@ -466,6 +620,7 @@ export async function negotiate<T>(
     } catch (error) {
       if (produced.any) throw error;
       const detail = errorMessage(error);
+      const stepped = named && planEffortStep(detail, named.refused);
       if (supports.strictSchemas && isGrammarError(detail)) {
         supports.strictSchemas = false;
         onNotice?.("server could not build a grammar; retrying without pattern/format");
@@ -475,6 +630,12 @@ export async function negotiate<T>(
       } else if (named?.refused.reasoningEffort && rejectsEffort(detail)) {
         named.refused.reasoningEffort = false;
         onNotice?.(`${named.name} does not take a reasoning effort; retrying without one`);
+      } else if (named && stepped) {
+        named.refused.refusedEfforts.add(stepped.value);
+        if (stepped.supported) named.refused.supportedEfforts = stepped.supported;
+        onNotice?.(
+          `${named.name} does not reason at ${stepped.value}; retrying at ${stepped.next}`,
+        );
       } else if (named?.refused.legacyTokenLimit && wantsCompletionLimit(detail)) {
         named.refused.legacyTokenLimit = false;
         onNotice?.(

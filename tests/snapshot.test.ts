@@ -55,6 +55,7 @@ describe("capability snapshots", () => {
             reasoningEffort: true,
             legacyTokenLimit: false,
             chosenTemperature: true,
+            refusedEfforts: [],
             refusedFields: ["min_p"],
             structuredOutput: true,
             assistantPrefill: true,
@@ -64,6 +65,7 @@ describe("capability snapshots", () => {
             reasoningEffort: true,
             legacyTokenLimit: true,
             chosenTemperature: true,
+            refusedEfforts: [],
             refusedFields: [],
             structuredOutput: true,
             assistantPrefill: true,
@@ -84,6 +86,21 @@ describe("capability snapshots", () => {
     await ask(config, "small", "system", "user");
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0][0]).not.toHaveProperty("chat_template_kwargs");
+  });
+
+  it("carries which efforts a model refused, and the list it published", () => {
+    // Otherwise every restart spends a request per rung walking the same ladder, which is the
+    // whole reason the snapshot exists.
+    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const refused = modelCapabilitiesFor(supports, "big");
+    refused.refusedEfforts.add("none");
+    refused.supportedEfforts = ["minimal", "low", "medium", "high"];
+    const stored = JSON.parse(JSON.stringify(exportCapabilities()));
+    resetAll();
+    expect(importCapabilities(stored)).toBe(true);
+    const back = modelCapabilitiesFor(capabilitiesFor(config.baseUrl, config.apiKey), "big");
+    expect([...back.refusedEfforts]).toEqual(["none"]);
+    expect(back.supportedEfforts).toEqual(["minimal", "low", "medium", "high"]);
   });
 
   it("carries a model's refusal of a trailing assistant message", () => {

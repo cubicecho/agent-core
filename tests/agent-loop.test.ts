@@ -140,6 +140,22 @@ describe("buildBody", () => {
     expect(body).not.toHaveProperty("tools");
   });
 
+  it("steps an effort the model refused by value up to one it takes", () => {
+    // The refusal that means the opposite of the one above: the model reasons, it just does not
+    // reason at `none`. Sending nothing would run at its own default, which is neither what the
+    // config asks for nor anything an operator reading the settings row can see.
+    const supports = capabilitiesFor("https://api.openai.com/v1");
+    const refused = modelCapabilitiesFor(supports, "m");
+    refused.refusedEfforts.add("none");
+    refused.supportedEfforts = ["minimal", "low", "medium", "high"];
+    const body = buildBody({ ...config, reasoningEffort: "none" }, supports, refused, messages);
+    expect(body).toMatchObject({ reasoning_effort: "minimal" });
+    // Anything the model does list goes out as asked.
+    expect(
+      buildBody({ ...config, reasoningEffort: "high" }, supports, refused, messages),
+    ).toMatchObject({ reasoning_effort: "high" });
+  });
+
   it("sends no ceiling at zero and no effort at off", () => {
     const body = buildBody(
       { ...config, maxTokens: 0, reasoningEffort: "off" },

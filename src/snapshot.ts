@@ -27,6 +27,14 @@ export interface ModelSnapshot {
   assistantPrefill: boolean;
   /** Takes the no-thinking hints `ask` sends. */
   thinkingHints: boolean;
+  /**
+   * Efforts refused by value rather than by field, so a restart does not spend a request per rung
+   * walking the ladder again. Absent in a snapshot taken before they were latched, which reads as
+   * none refused.
+   */
+  refusedEfforts?: string[];
+  /** The efforts a refusal published as this model's, in ladder order. Absent is none published. */
+  supportedEfforts?: string[];
 }
 
 /** What one endpoint refused, and under it what each of its models did. */
@@ -60,6 +68,7 @@ const optimisticModel = (): ModelSnapshot => ({
   structuredOutput: true,
   assistantPrefill: true,
   thinkingHints: true,
+  refusedEfforts: [],
 });
 
 const refusedAnything = (model: ModelSnapshot) =>
@@ -69,7 +78,8 @@ const refusedAnything = (model: ModelSnapshot) =>
   !model.thinkingHints ||
   !model.structuredOutput ||
   !model.assistantPrefill ||
-  model.refusedFields.length > 0;
+  model.refusedFields.length > 0 ||
+  (model.refusedEfforts?.length ?? 0) > 0;
 
 /**
  * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
@@ -102,6 +112,10 @@ export function exportCapabilities(): CapabilitySnapshot {
         refusedFields: [...refused.refusedFields].sort(),
         structuredOutput: refused.structuredOutput,
         assistantPrefill: refused.assistantPrefill,
+        refusedEfforts: [...refused.refusedEfforts].sort(),
+        // Only alongside a refusal, since on its own a published list latches nothing: the model
+        // named it while refusing a rung, and that rung is in `refusedEfforts`.
+        ...(refused.supportedEfforts ? { supportedEfforts: [...refused.supportedEfforts] } : {}),
       };
       if (refusedAnything(model)) models[name] = model;
     }
@@ -161,6 +175,17 @@ export function importCapabilities(snapshot: unknown): boolean {
       if (model.chosenTemperature === false) refused.chosenTemperature = false;
       if (model.structuredOutput === false) refused.structuredOutput = false;
       if (model.assistantPrefill === false) refused.assistantPrefill = false;
+      if (Array.isArray(model.refusedEfforts)) {
+        for (const effort of model.refusedEfforts) {
+          if (typeof effort === "string") refused.refusedEfforts.add(effort);
+        }
+      }
+      // Replaced rather than merged: two lists of what one model takes are two readings of the
+      // same fact, and the stored one is at least as recent as an empty absent.
+      if (Array.isArray(model.supportedEfforts)) {
+        const listed = model.supportedEfforts.filter((value) => typeof value === "string");
+        if (listed.length) refused.supportedEfforts = listed;
+      }
       if (Array.isArray(model.refusedFields)) {
         for (const field of model.refusedFields) {
           if (typeof field === "string") refused.refusedFields.add(field);
