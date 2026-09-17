@@ -87,8 +87,8 @@ function rejectedTheRequest(error: unknown): boolean {
  * image needs, because a page, a screenshot or a photo reaches an OpenAI-compatible server only
  * as an `image_url` part alongside the text — there is no other spelling for it, and a caller
  * with one otherwise has to leave this module and build the request itself. Nothing here reads
- * the parts: they are handed to the SDK as given, so a server that cannot see an image refuses
- * the request rather than silently answering about the text alone.
+ * the parts: they are handed to the SDK as given, and whether a model that cannot see rejects
+ * the image or answers without it is the server's decision, not this module's.
  */
 export type SideTaskInput = string | OpenAI.ChatCompletionContentPart[];
 

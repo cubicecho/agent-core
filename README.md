@@ -202,6 +202,21 @@ mean every property required and `additionalProperties: false`; a looser schema 
 `preselect` is its first user, answering `{ tools: [...] }`, and `preselection` still takes the
 bare array an older prompt produced.
 
+### Showing a side task an image
+
+`ask` and `askJson` take the user turn as a string or as content parts, because an image reaches an
+OpenAI-compatible server only as an `image_url` part beside the text. The parts are sent as given
+and nothing here checks that the model can see: whether a text-only model rejects the image or
+answers without it is up to the server, so pick a vision model.
+
+```ts
+const page: SideTaskInput = [
+  { type: "text", text: "Transcribe this page." },
+  { type: "image_url", image_url: { url: `data:image/png;base64,${png}` } },
+];
+const text = await ask(config, visionModel, "You are an OCR engine.", page);
+```
+
 ## Sizing a request before sending it
 
 `runTurn` will refuse a request that cannot fit rather than spending a round trip finding out:
