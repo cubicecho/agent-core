@@ -1,12 +1,16 @@
 import type OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyCompaction,
   compactTranscript,
   planCompaction,
   pruneToolResults,
+  requestIndex,
+  runCompaction,
   SUMMARY_LEAD,
   summaryInput,
 } from "../src/compaction.ts";
+import { turnMessages } from "../src/hooks.ts";
 
 type Message = OpenAI.ChatCompletionMessageParam;
 
@@ -258,5 +262,124 @@ describe("compactTranscript", () => {
 
   it("folds nothing on an empty summary", async () => {
     expect(await compactTranscript(messages, plan, async () => "  ")).toBe(messages);
+  });
+});
+
+/**
+ * A host that keeps its transcript append-only and its fold on the session row: no system prompt
+ * in the array, no summary message in it either, and the indexes below are the stored ones.
+ */
+describe("a stored fold", () => {
+  /** Twelve messages, user on the even indexes. */
+  const stored: Message[] = Array.from({ length: 12 }, (_, at) =>
+    at % 2 === 0 ? user(`q${at}`) : assistant(`a${at}`),
+  );
+  const window = { limit: 100, used: 100, estimate };
+
+  it("plans from where the caller says the last fold ended", () => {
+    const plan = planCompaction(stored, { ...window, from: 6, previous: "first notes" });
+    expect(plan).toMatchObject({ from: 6, cut: 10, previous: "first notes" });
+    expect(plan?.toSummarise).toEqual(stored.slice(6, 10));
+  });
+
+  it("plans the same cut the scan finds for the same transcript rebuilt", () => {
+    const scanned = [
+      { role: "system", content: "prompt" } as Message,
+      { role: "system", content: `${SUMMARY_LEAD}they like tea` } as Message,
+      ...stored,
+    ];
+    const byScan = planCompaction(scanned, window);
+    const byHand = planCompaction(stored, { ...window, from: 0, previous: "they like tea" });
+    expect(byScan).toMatchObject({ from: 2, previous: "they like tea" });
+    expect(byHand).toMatchObject({ from: 0, previous: "they like tea" });
+    // The two arrays differ by the two system messages at the head, and so do the cuts.
+    expect(byScan?.cut).toBe((byHand?.cut ?? 0) + 2);
+    expect(byScan?.toSummarise).toEqual(byHand?.toSummarise);
+    if (!byScan || !byHand) throw new Error("expected two plans");
+    expect(summaryInput(byScan)).toBe(summaryInput(byHand));
+  });
+
+  it("records the fold compactTranscript would have applied", async () => {
+    const plan = planCompaction(stored, { ...window, from: 0 });
+    if (!plan) throw new Error("expected a plan");
+    const summarise = async () => " first notes ";
+    const record = await runCompaction(stored, plan, summarise);
+    expect(record).toMatchObject({ summary: "first notes", through: plan.cut });
+    expect(Date.parse(record?.at ?? "")).not.toBeNaN();
+    expect(applyCompaction(stored, record, { from: plan.from })).toEqual(
+      await compactTranscript(stored, plan, summarise),
+    );
+  });
+
+  it("stores nothing when a hook vetoes or the summary comes back empty", async () => {
+    const plan = { from: 0, cut: 2, toSummarise: stored.slice(0, 2) };
+    expect(await runCompaction(stored, plan, async () => "   ")).toBeUndefined();
+    const run = vi.fn(async () => [
+      {
+        serverId: "g",
+        label: "Guard",
+        hookId: "keep",
+        event: "beforeCompact",
+        ok: true,
+        veto: true,
+      },
+    ]);
+    const record = await runCompaction(stored, plan, async () => "notes", {
+      hooks: { run: run as never, context: { session: { id: "s" } }, honourVeto: true },
+    });
+    expect(record).toBeUndefined();
+  });
+
+  it("rebuilds a request the next plan can read its own summary out of", async () => {
+    // Cut by hand at six, so the tail is still long enough to need folding a second time.
+    const first = { from: 0, cut: 6, toSummarise: stored.slice(0, 6) };
+    const record = await runCompaction(stored, first, async () => "first notes");
+    if (!record) throw new Error("expected a record");
+    expect(record.through).toBe(6);
+
+    const request = applyCompaction(stored, record);
+    expect(request).toEqual([
+      { role: "system", content: `${SUMMARY_LEAD}first notes` },
+      ...stored.slice(6),
+    ]);
+    expect(applyCompaction(stored, undefined)).toBe(stored);
+
+    // The same second fold, planned over the request by scanning and over the transcript by hand.
+    const scanned = planCompaction(request, window);
+    const byHand = planCompaction(stored, {
+      ...window,
+      from: record.through,
+      previous: record.summary,
+    });
+    expect(scanned?.previous).toBe("first notes");
+    expect(byHand?.previous).toBe("first notes");
+    expect(scanned?.toSummarise).toEqual(byHand?.toSummarise);
+    expect(requestIndex(byHand?.cut ?? 0, record)).toBe(scanned?.cut);
+    // Continued, not summarised again: the notes lead the summariser's input.
+    if (!byHand) throw new Error("expected a plan");
+    expect(summaryInput(byHand)).toMatch(/^Notes so far:\nfirst notes\n\nContinue them/);
+  });
+
+  it("keeps a message's uuid across a fold when the numbering follows the store", async () => {
+    const record = { summary: "first notes", through: 6, at: "" };
+    const request = applyCompaction(stored, record);
+    const before = turnMessages("s", stored, 6, 8);
+    const after = turnMessages("s", request, requestIndex(6, record), requestIndex(8, record), {
+      offset: record.through - 1,
+    });
+    expect(after).toEqual(before);
+    // Without it, the same two messages arrive as two new memories.
+    expect(turnMessages("s", request, 1, 3)[0].uuid).not.toBe(before[0].uuid);
+  });
+
+  it("maps a stored index onto the request the fold left", () => {
+    const record = { through: 6 };
+    expect(requestIndex(7, undefined)).toBe(7);
+    expect(requestIndex(6, record)).toBe(1);
+    expect(requestIndex(11, record)).toBe(6);
+    // Inside the folded stretch, the summary message is what now stands for it.
+    expect(requestIndex(2, record)).toBe(0);
+    // A host that keeps its system prompt in the array says how much sits ahead of the summary.
+    expect(requestIndex(6, record, 1)).toBe(2);
   });
 });

@@ -71,14 +71,19 @@ The contract between whatever holds the tools and the loop that offers them to a
 
 Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded into a summary the model writes itself.
 
+- `applyCompaction` — The transcript as the server should see it: the folded head replaced by its summary.
 - `COMPACT_AT` — The fraction of the window in use before a summary is worth its own round trip.
 - `CompactionOptions` (type) — What `planCompaction` takes.
 - `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
+- `CompactionRecord` (type) — One fold, as a host that keeps its transcript append-only stores it.
+- `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
 - `compactTranscript` — The transcript with the plan's stretch replaced by one system message holding its summary.
 - `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
 - `PruneOptions` (type) — What `pruneToolResults` takes.
 - `planCompaction` — Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
 - `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
+- `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted everything after it.
+- `runCompaction` — The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
 - `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
 - `SUMMARY_PROMPT` — The summariser's instruction when the caller gives none.
 - `summariser` — A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.

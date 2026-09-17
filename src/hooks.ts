@@ -372,17 +372,28 @@ const textOf = (content: unknown): string => {
  * two identical "ok"s one memory. The same message sent twice, after its turn and again when it
  * is compacted, is one.
  *
+ * That position is the array's, which is the host's only while the two agree. Once a compaction
+ * has folded the head of a request into one summary message, the same message sits at a lower
+ * index there than it does in a transcript the host kept whole — so the same turn, sent after it
+ * and again when it is compacted, would arrive under two uuids and be remembered twice. `offset`
+ * is what puts the numbering back on the host's own indexes; passing the stored transcript rather
+ * than the request avoids the question entirely.
+ *
  * @param sessionId Prefixes every uuid, so two sessions never share one.
  * @param messages The transcript, in whatever shape the host stores it, so long as each message
  * has an OpenAI-style `role` and `content`.
  * @param from The first index, inclusive. Below zero reads from the start.
  * @param to The end, exclusive. Absent, or past the end, reads to the end.
+ * @param options `offset` is what the array's first message is numbered as in the uuids — the
+ * stored index of `messages[0]`, when `messages` is a request a fold has shifted. Zero by default,
+ * which numbers by position as before. `from` and `to` stay array indexes either way.
  */
 export function turnMessages(
   sessionId: string,
   messages: readonly { role: string; content?: unknown }[],
   from: number,
   to?: number,
+  { offset = 0 }: { offset?: number } = {},
 ): HookMessage[] {
   const end = Math.min(to ?? messages.length, messages.length);
   const out: HookMessage[] = [];
@@ -392,7 +403,11 @@ export function turnMessages(
     const text = textOf(message.content).trim();
     if (!text) continue;
     const digest = createHash("sha256").update(`${message.role}\0${text}`).digest("hex");
-    out.push({ speaker: message.role, text, uuid: `${sessionId}:${at}:${digest.slice(0, 12)}` });
+    out.push({
+      speaker: message.role,
+      text,
+      uuid: `${sessionId}:${at + offset}:${digest.slice(0, 12)}`,
+    });
   }
   return out;
 }
@@ -400,12 +415,21 @@ export function turnMessages(
 /**
  * Which turn of a session begins at a point, from 0: the user messages ahead of it.
  *
+ * Counted over what it is given, which is the session only while nothing has been folded away — a
+ * compacted request has lost the questions the summary now stands for, and turn eleven counting
+ * itself as turn two is the kind of thing a hook writes into a memory. Count over the stored
+ * transcript, or add what the fold took as `offset`.
+ *
  * @param messages The transcript.
  * @param before Where the turn begins. Absent is the end, which is the index of a turn whose
  * question has not been appended yet.
+ * @param offset Turns already folded away and so not in `messages`. Zero by default.
  */
-export const turnIndex = (messages: readonly { role: string }[], before = messages.length) =>
-  messages.slice(0, before).filter((message) => message.role === "user").length;
+export const turnIndex = (
+  messages: readonly { role: string }[],
+  before = messages.length,
+  offset = 0,
+) => offset + messages.slice(0, before).filter((message) => message.role === "user").length;
 
 /** A runner that rejected, as the one outcome its event can still be noted by. */
 const rejected = (event: HookEvent, error: unknown): HookOutcome => ({
