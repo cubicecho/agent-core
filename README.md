@@ -29,7 +29,7 @@ only, Node >=22.
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. |
-| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
+| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`, `contextTokens`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its endpoint reports: `charsPerTokenFor`, `calibrate`. |
 | `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
 | `config` | The structural interfaces every function here asks for. |
@@ -313,6 +313,35 @@ give up inside fifteen. `isModelLoading` recognises it, and `runTurn` polls ever
 for up to `loadingTimeoutMs` (two minutes by default, zero to turn it off) without spending
 `maxRetries`, with one notice at the start. `runAgentLoop` reads it as `loadingTimeoutSeconds` off
 the config. A 503 that says nothing about loading stays on the ordinary backoff.
+
+### What is filling the window
+
+A total tells an operator a run is close to the edge and nothing about what to do next, so
+`contextTokens` cuts the same body four ways, along the four levers there are: `system` is the
+system and developer messages, which means shortening the prompt; `tools` is the declared schemas,
+which means loading them on demand instead of declaring them whole; `toolResults` is exactly the
+`tool` messages, which is precisely what `pruneToolResults` shrinks; and `history` is everything
+else, which is what compaction folds, the arguments of the calls in it included.
+
+```ts
+const { system, tools, history, toolResults, total } = contextTokens(body, {
+  charsPerToken: charsPerTokenFor(supports, config.model),
+  // Optional: what the endpoint said the prompt cost, once a turn has come back.
+  promptTokens: turn.usage?.prompt_tokens,
+});
+```
+
+The parts are shares of one total rather than four separate estimates, because a readout whose
+parts do not add up to the number beside them is one nobody trusts; the largest part absorbs the
+rounding, so they sum exactly. Nothing in the round trip reports anything finer than a prompt
+count — a completion says how many tokens it read and not a word about where they came from — so
+the proportions are a guess whatever the total is, and `contextChars` is there for a caller that
+wants the exact characters underneath them.
+
+Given a `promptTokens` the total is what was charged and every part is a share of it. Without one
+the total is `requestTokens`, and the tool block is counted the way `requestTokens` and
+`TurnMetrics.toolSchemaTokens` count it rather than shared out, so the breakdown and the metrics
+line cannot disagree about the same tool list.
 
 ## The loop
 
