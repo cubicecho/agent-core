@@ -706,7 +706,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           used.add(name);
           const request = { id: call.id, name, args, raw };
           content = parallel
-            ? await once(answered, `${name} ${normal}`, () => dispatch(request, signal))
+            ? await once(answered, `${name}\0${normal}`, () => dispatch(request, signal))
             : await dispatch(request, signal);
         }
       } catch (error) {
