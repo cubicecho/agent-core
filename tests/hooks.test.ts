@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assembleContext,
   configureHooks,
+  consult,
   gather,
   HOOK_CONTEXT_TOKENS,
   HOOK_PREFACE,
@@ -373,5 +374,48 @@ describe("notify", () => {
     await expect(notify(run, "sessionDelete", { session: { id: "s1" } })).resolves.toEqual([
       { event: "sessionDelete", source: "", hookId: "", error: "sync" },
     ]);
+  });
+});
+
+describe("consult", () => {
+  it("notes failures and vetoes, and reads a veto only off a hook that ran", async () => {
+    const run = vi.fn<HookRunner>(async () => [
+      outcome({ event: "beforeCompact", hookId: "file" }),
+      outcome({ event: "beforeCompact", hookId: "keep", label: "Guard", veto: true }),
+      outcome({ event: "beforeCompact", hookId: "down", ok: false, veto: true, error: "boom" }),
+    ]);
+    const heard: unknown[] = [];
+
+    const said = await consult(run, "beforeCompact", { session: { id: "s1" } }, (note) =>
+      heard.push(note),
+    );
+
+    expect(said).toEqual({
+      vetoed: true,
+      notes: [
+        { event: "beforeCompact", source: "Guard", hookId: "keep", veto: true },
+        { event: "beforeCompact", source: "Memory", hookId: "down", error: "boom" },
+      ],
+    });
+    expect(heard).toEqual(said.notes);
+  });
+
+  it("is no veto when every hook that carried one failed, or the runner threw", async () => {
+    const failed: HookRunner = async () => [
+      outcome({ event: "beforeCompact", ok: false, veto: true, error: "boom" }),
+    ];
+    expect((await consult(failed, "beforeCompact", { session: { id: "s1" } })).vetoed).toBe(false);
+    const threw: HookRunner = () => {
+      throw new Error("sync");
+    };
+    await expect(consult(threw, "beforeCompact", { session: { id: "s1" } })).resolves.toEqual({
+      vetoed: false,
+      notes: [{ event: "beforeCompact", source: "", hookId: "", error: "sync" }],
+    });
+  });
+
+  it("is ignored by notify", async () => {
+    const run: HookRunner = async () => [outcome({ event: "beforeCompact", veto: true })];
+    expect(await notify(run, "beforeCompact", { session: { id: "s1" } })).toEqual([]);
   });
 });

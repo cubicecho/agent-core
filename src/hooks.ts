@@ -107,6 +107,12 @@ export interface HookOutcome {
   inject: boolean;
   /** The most of `text` that is injected, in estimated tokens. */
   maxTokens: number;
+  /**
+   * Asks that what the event announces not happen. Only a `beforeCompact` hook's is read, and
+   * only by a host that waits for it — see `consult` — and never on an outcome that is not `ok`,
+   * since a hook that crashed has not said anything.
+   */
+  veto?: boolean;
 }
 
 /**
@@ -124,6 +130,8 @@ export interface HookNote {
   text?: string;
   /** Why it added nothing: it failed, timed out, or never ran. */
   error?: string;
+  /** Set when the hook vetoed what the event announced, and was waited for. See `consult`. */
+  veto?: true;
 }
 
 /**
@@ -457,7 +465,8 @@ export async function gather(
  * rejects, so a host can fire it without awaiting it.
  *
  * No signal: these run once the turn has been answered, and a reader who stops listening at that
- * point has not asked for the turn not to be remembered.
+ * point has not asked for the turn not to be remembered. Nor is a `veto` read, since whatever it
+ * would stop is already under way; `consult` is the one that waits for it.
  *
  * @param run Runs the event's hooks.
  * @param event `afterTurn`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
@@ -478,4 +487,42 @@ export async function notify(
     .map((outcome) => assembleContext([outcome]).notes[0]);
   for (const note of notes) onNote?.(note);
   return notes;
+}
+
+/**
+ * Runs an event's hooks and waits for their say, for a host that will hold off when one of them
+ * vetoes.
+ *
+ * `notify` runs beside the thing it announces and cannot stop it; this runs ahead of it, so each
+ * hook's time is added to whatever waits on the answer. A host that does not mean to act on a
+ * veto should call `notify` instead. Never rejects: a runner that throws is noted as a failure,
+ * and a failure is not a veto — a memory server that is down has not asked for anything.
+ *
+ * @param run Runs the event's hooks.
+ * @param event What is about to happen. Only `beforeCompact` has anything a veto can stop.
+ * @param context What the hooks are told.
+ * @param onNote Hears each note: every failure, and every veto, naming the hook that made it.
+ * @returns The same notes, and `vetoed` when any `ok` outcome carried `veto`.
+ */
+export async function consult(
+  run: HookRunner,
+  event: HookEvent,
+  context: HookContext,
+  onNote?: (note: HookNote) => void,
+): Promise<{ notes: HookNote[]; vetoed: boolean }> {
+  const outcomes = await runSafely(run, event, context);
+  const notes: HookNote[] = [];
+  for (const outcome of outcomes) {
+    if (!outcome.ok) notes.push(assembleContext([outcome]).notes[0]);
+    else if (outcome.veto === true) {
+      notes.push({
+        event: outcome.event,
+        source: outcome.label,
+        hookId: outcome.hookId,
+        veto: true,
+      });
+    }
+  }
+  for (const note of notes) onNote?.(note);
+  return { notes, vetoed: notes.some((note) => note.veto) };
 }

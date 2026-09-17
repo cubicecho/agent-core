@@ -113,6 +113,7 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 
 - `assembleContext` — Builds the context a set of outcomes adds and the notes that go with it.
 - `configureHooks` — Changes what hooks are held to, for a process whose windows are not the size these defaults were chosen for, or whose host wants its own name above the context.
+- `consult` — Runs an event's hooks and waits for their say, for a host that will hold off when one of them vetoes.
 - `Gathered` (type) — The context a set of outcomes adds to a request, and a note for each hook worth mentioning.
 - `gather` — Runs the hooks ahead of a request and builds what they add to it.
 - `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens.
