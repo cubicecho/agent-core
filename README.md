@@ -370,10 +370,17 @@ const { turn, messages, usage, loaded } = await runAgentLoop({
 
 Each step is one `runTurn` with the body from `buildBody`, so everything `negotiate` answers is
 answered here too, and a request that is too big throws `ContextOverflow` whichever side found
-out. Between steps the loop runs the calls: sequentially by default, or together with
-`parallel: true`, which also makes an identical call — the same name and arguments, byte for byte
-— once for the run. A call that threw is forgotten rather than cached, so asking again is a real
-retry. What a tool throws is what the model reads, and so are arguments that did not parse.
+out. Between steps the loop runs the calls: sequentially by default, or together with `parallel: true`.
+Either way an identical call — the same name and arguments, byte for byte — is made once and its
+answer handed to the repeat, and two still in flight share the request. A call that threw is
+forgotten rather than cached, so asking again is a real retry. What a tool throws is what the model
+reads, and so are arguments that did not parse.
+
+The scope is the step, not the run: between steps other tools have run, and the file the model read
+may be the file it has since written. `dedupeToolCalls: false` dispatches everything, and a
+predicate is asked per call — which is how `send_email` opts out, since twice is two emails and
+nothing in an OpenAI tool definition says which tools those are. A pool that reads the MCP
+`readOnlyHint` and `idempotentHint` annotations can answer it; this package cannot.
 
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
@@ -382,7 +389,7 @@ string. What still is not an object throws a `ToolArgumentsError` whose `kind` i
 the turn stopped at the ceiling, with a message telling the model so, and `malformed` otherwise.
 The repaired JSON is what the transcript keeps, and an unreadable call is replayed as `{}`, because
 a server that parses replayed arguments refuses the originals on every later request. `dispatch`
-is still handed the model's own text as `raw`, and the parallel dedupe compares repaired arguments,
+is still handed the model's own text as `raw`, and the dedupe compares repaired arguments,
 so `{'a': 1}` and `{"a": 1}` are one call.
 
 A server whose tool-call parser was written for another template streams the model's call as
