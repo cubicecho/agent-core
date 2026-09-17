@@ -40,6 +40,17 @@ export interface Capabilities {
    * stopped. Empty until `modelCapabilitiesFor` is asked about a model.
    */
   models: Map<string, ModelCapabilities>;
+  /**
+   * When this entry was opened, as epoch milliseconds: first contact with the endpoint in this
+   * process, or the age an imported snapshot gave it. What `expireCapabilities` measures.
+   *
+   * Not when a flag latched. A flag that latches at all almost always does so on the first
+   * request or two, and an entry that latched nothing has nothing to expire, so the difference
+   * costs at most one retried field somewhat earlier than it was due — which is the direction to
+   * be wrong in. Stamping each latch instead would mean stamping it in four modules and
+   * remembering to in the fifth.
+   */
+  since: number;
 }
 
 /**
@@ -172,15 +183,59 @@ export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabi
 export function capabilitiesById(id: string): Capabilities {
   let known = capabilities.get(id);
   if (!known) {
-    known = { strictSchemas: true, usageInStream: true, models: new Map() };
+    known = { strictSchemas: true, usageInStream: true, models: new Map(), since: Date.now() };
     capabilities.set(id, known);
   }
   return known;
 }
 
-/** Forgets every endpoint's capabilities. For tests, and for a settings change under test. */
-export function resetCapabilities() {
-  capabilities.clear();
+/**
+ * Forgets what one endpoint refused, or every endpoint's when told none.
+ *
+ * A latch never unlatches on its own, so a server upgraded behind the same URL — a newer
+ * llama.cpp that compiles the grammar, a proxy that has learned `stream_options` — keeps being
+ * sent the downgraded request for the life of the process. This is the seam for a consumer that
+ * *knows* it changed: a settings row saved, a health check that reads a new build string, an
+ * operator pressing a button. See `expireCapabilities` for the case where nobody knows.
+ *
+ * @param endpoint Whose to forget, by the same identity `capabilitiesFor` takes. Absent clears
+ * every endpoint, which is what tests and `resetAll` mean by it.
+ * @returns Whether there was anything to forget.
+ */
+export function resetCapabilities(endpoint?: { baseUrl: string; apiKey?: string }): boolean {
+  if (!endpoint) {
+    const held = capabilities.size > 0;
+    capabilities.clear();
+    return held;
+  }
+  return capabilities.delete(endpointId(endpoint));
+}
+
+/**
+ * Forgets every endpoint whose entry is older than this, so the next request finds out again.
+ *
+ * The other half of the problem `resetCapabilities` solves: a server upgraded behind the same URL
+ * with nobody to notice. What an expiry costs is one round trip per endpoint and model — the next
+ * request carries the field again, and a server that still refuses it refuses it once and
+ * `negotiate` re-sends — so at an age measured in hours it is a few requests a day against a
+ * downgrade that would otherwise last as long as the process. That is the trade `exportCapabilities`
+ * exists to avoid paying *per restart*; paying it per day is a different bargain.
+ *
+ * Nothing calls this on a timer. When to sweep is the consumer's, the same way how stale a
+ * snapshot is too stale is, and a sweep costs a walk of one settings row's worth of entries.
+ *
+ * @param maxAgeMs How old an entry may be. Zero or less expires everything.
+ * @param now The clock, for tests.
+ * @returns How many endpoints were forgotten.
+ */
+export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
+  let dropped = 0;
+  for (const [id, known] of capabilities) {
+    if (now - known.since < maxAgeMs) continue;
+    capabilities.delete(id);
+    dropped++;
+  }
+  return dropped;
 }
 
 /**

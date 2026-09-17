@@ -49,6 +49,7 @@ describe("capability snapshots", () => {
       [endpointId(config)]: {
         strictSchemas: false,
         usageInStream: true,
+        since: expect.any(Number),
         models: {
           big: {
             reasoningEffort: true,
@@ -107,6 +108,43 @@ describe("capability snapshots", () => {
     });
     expect(supports.usageInStream).toBe(false);
     expect(capabilitiesFor(config.baseUrl, config.apiKey)).toBe(supports);
+  });
+
+  it("keeps the older age, so importing never makes a latch young again", () => {
+    // Otherwise a consumer that stores a snapshot and reads it back on every boot has an entry
+    // that is permanently minutes old, and `expireCapabilities` never reaches it.
+    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    supports.strictSchemas = false;
+    const stored = JSON.parse(JSON.stringify(exportCapabilities()));
+    const id = endpointId(config);
+    expect(stored.endpoints[id].since).toBe(supports.since);
+
+    resetAll();
+    expect(importCapabilities(stored)).toBe(true);
+    expect(capabilitiesFor(config.baseUrl, config.apiKey).since).toBe(stored.endpoints[id].since);
+
+    // And a second import of a newer snapshot of the same endpoint does not undo that.
+    const fresh = {
+      ...stored,
+      endpoints: { [id]: { ...stored.endpoints[id], since: Date.now() } },
+    };
+    expect(importCapabilities(fresh)).toBe(true);
+    expect(capabilitiesFor(config.baseUrl, config.apiKey).since).toBe(stored.endpoints[id].since);
+  });
+
+  it("treats a snapshot from before ages were written as met now", () => {
+    const id = endpointId(config);
+    const at = Date.now();
+    expect(
+      importCapabilities({
+        version: CAPABILITY_SNAPSHOT_VERSION,
+        savedAt: new Date().toISOString(),
+        endpoints: { [id]: { strictSchemas: false, usageInStream: true, models: {} } },
+      }),
+    ).toBe(true);
+    const restored = capabilitiesFor(config.baseUrl, config.apiKey);
+    expect(restored.strictSchemas).toBe(false);
+    expect(restored.since).toBeGreaterThanOrEqual(at);
   });
 
   it("ignores another version, and anything that is not a snapshot", () => {

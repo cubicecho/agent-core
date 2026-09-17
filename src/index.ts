@@ -26,6 +26,7 @@ export { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts"
 export {
   type Capabilities,
   capabilitiesFor,
+  expireCapabilities,
   type ModelCapabilities,
   modelCapabilitiesFor,
   type NegotiateOptions,

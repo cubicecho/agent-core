@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type Capabilities,
   capabilitiesFor,
+  expireCapabilities,
   type ModelCapabilities,
   modelCapabilitiesFor,
   negotiate,
@@ -88,7 +89,12 @@ beforeEach(() => resetCapabilities());
 describe("capabilitiesFor", () => {
   it("starts optimistic and hands back the same memory each time", () => {
     const supports = capabilitiesFor("http://local/v1");
-    expect(supports).toEqual({ strictSchemas: true, usageInStream: true, models: new Map() });
+    expect(supports).toEqual({
+      strictSchemas: true,
+      usageInStream: true,
+      models: new Map(),
+      since: expect.any(Number),
+    });
     supports.strictSchemas = false;
     expect(capabilitiesFor("http://local/v1").strictSchemas).toBe(false);
   });
@@ -128,6 +134,62 @@ describe("capabilitiesFor", () => {
     capabilitiesFor("http://local/v1").usageInStream = false;
     resetCapabilities();
     expect(capabilitiesFor("http://local/v1").usageInStream).toBe(true);
+  });
+
+  it("forgets one endpoint by name, and says whether it held anything", () => {
+    // The upgrade case: one box behind the URL grew a feature, and the cloud endpoint beside it
+    // is not implicated. A reset that could only clear everything made the caller re-learn the
+    // other's refusals too, which is why nobody called it.
+    capabilitiesFor("http://local/v1").strictSchemas = false;
+    capabilitiesFor("https://api.openai.com/v1").usageInStream = false;
+
+    expect(resetCapabilities({ baseUrl: "http://local/v1" })).toBe(true);
+    expect(capabilitiesFor("http://local/v1").strictSchemas).toBe(true);
+    expect(capabilitiesFor("https://api.openai.com/v1").usageInStream).toBe(false);
+    expect(resetCapabilities({ baseUrl: "http://never-met/v1" })).toBe(false);
+  });
+
+  it("tells one key on a router from another when forgetting one", () => {
+    capabilitiesFor("https://router/v1", "sk-cheap").strictSchemas = false;
+    capabilitiesFor("https://router/v1", "sk-paid").strictSchemas = false;
+    expect(resetCapabilities({ baseUrl: "https://router/v1", apiKey: "sk-cheap" })).toBe(true);
+    expect(capabilitiesFor("https://router/v1", "sk-cheap").strictSchemas).toBe(true);
+    expect(capabilitiesFor("https://router/v1", "sk-paid").strictSchemas).toBe(false);
+  });
+});
+
+describe("expireCapabilities", () => {
+  it("drops what is older than the age and leaves the rest alone", () => {
+    const old = capabilitiesFor("http://local/v1");
+    old.strictSchemas = false;
+    old.since = Date.now() - 60 * 60_000;
+    capabilitiesFor("https://api.openai.com/v1").usageInStream = false;
+
+    expect(expireCapabilities(30 * 60_000)).toBe(1);
+    expect(capabilitiesFor("http://local/v1").strictSchemas).toBe(true);
+    expect(capabilitiesFor("https://api.openai.com/v1").usageInStream).toBe(false);
+  });
+
+  it("takes a clock, and drops everything at an age of zero", () => {
+    const supports = capabilitiesFor("http://local/v1");
+    supports.strictSchemas = false;
+    expect(expireCapabilities(60_000, supports.since + 59_000)).toBe(0);
+    expect(capabilitiesFor("http://local/v1").strictSchemas).toBe(false);
+    expect(expireCapabilities(60_000, supports.since + 60_000)).toBe(1);
+    expect(capabilitiesFor("http://local/v1").strictSchemas).toBe(true);
+    expect(expireCapabilities(0)).toBe(1);
+    expect(expireCapabilities(0)).toBe(0);
+  });
+
+  it("forgets what a model refused along with its endpoint", () => {
+    // The model map hangs off the endpoint, so an endpoint that expires takes with it the
+    // `max_completion_tokens` and `reasoning_effort` latches that are the expensive half.
+    const supports = capabilitiesFor("http://local/v1");
+    modelCapabilitiesFor(supports, "qwen").reasoningEffort = false;
+    expireCapabilities(0);
+    const fresh = capabilitiesFor("http://local/v1");
+    expect(fresh).not.toBe(supports);
+    expect(modelCapabilitiesFor(fresh, "qwen").reasoningEffort).toBe(true);
   });
 });
 
