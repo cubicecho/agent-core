@@ -75,6 +75,27 @@ const messageText = (message: Message): string => {
 const isSummary = (message: Message) =>
   message.role === "system" && textOf(message.content).startsWith(SUMMARY_LEAD);
 
+/** The summary as it sits in a transcript, which is the one shape `isSummary` recognises again. */
+const summaryMessage = (summary: string): Message => ({
+  role: "system",
+  content: `${SUMMARY_LEAD}${summary.trim()}`,
+});
+
+/**
+ * The leading system messages a fold never touches, and the summary an earlier one left among
+ * them. What a caller who keeps its system prompt out of the array knows already, and passes.
+ */
+const systemHead = (messages: Message[]): { from: number; previous?: string } => {
+  let from = 0;
+  let previous: string | undefined;
+  while (from < messages.length && messages[from].role === "system") {
+    if (isSummary(messages[from]))
+      previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
+    from++;
+  }
+  return { from, previous };
+};
+
 /** What `pruneToolResults` takes. */
 export interface PruneOptions {
   /** How many of the latest tool results are left whole, 5 by default. */
@@ -138,6 +159,16 @@ export interface CompactionOptions {
    * an `estimate` of the caller's own.
    */
   charsPerToken?: number;
+  /**
+   * The first message that may be folded. Absent, the leading `system` messages are skipped and
+   * the fold starts after them.
+   */
+  from?: number;
+  /**
+   * The summary an earlier fold left, which this one continues. Absent, it is recovered from a
+   * `SUMMARY_LEAD` system message at the head, if there is one.
+   */
+  previous?: string;
 }
 
 /** Where to cut, as `compactTranscript` takes it. */
@@ -162,8 +193,14 @@ export interface CompactionPlan {
  * than summarised as if it were conversation. No plan comes back when the window is not full
  * enough, or when the only legal cut folds too little to pay for the summary.
  *
+ * Both of those are recovered by reading the transcript, which is what a host whose array holds
+ * everything it sends has to do. A host that keeps its fold as a record beside an append-only
+ * transcript — its system prompt a separate argument, no summary message in the array at all —
+ * knows them exactly, and passes `from` and `previous` instead of hoping the scan agrees.
+ *
  * @param messages The transcript, system prompts included if the caller keeps them in it.
- * @param options The window, what is in use, and the ratios. See `CompactionOptions`.
+ * @param options The window, what is in use, the ratios, and where the last fold ended. See
+ * `CompactionOptions`.
  */
 export function planCompaction(
   messages: Message[],
@@ -174,19 +211,17 @@ export function planCompaction(
     keepRatio = KEEP_RATIO,
     charsPerToken,
     estimate = (message) => messageTokens(message, { charsPerToken }),
+    from: givenFrom,
+    previous: givenPrevious,
   }: CompactionOptions,
 ): CompactionPlan | undefined {
   if (!(limit > 0)) return undefined;
   const cost = used ?? messages.reduce((total, message) => total + estimate(message), 0);
   if (cost < limit * compactAt) return undefined;
 
-  let from = 0;
-  let previous: string | undefined;
-  while (from < messages.length && messages[from].role === "system") {
-    if (isSummary(messages[from]))
-      previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
-    from++;
-  }
+  const head = systemHead(messages);
+  const from = Math.min(Math.max(givenFrom ?? head.from, 0), messages.length);
+  const previous = givenPrevious ?? head.previous;
 
   const budget = limit * keepRatio;
   let kept = 0;
@@ -243,6 +278,139 @@ export const summariser =
     ask(config, model, system, text, { maxTokens, ...options });
 
 /**
+ * One fold, as a host that keeps its transcript append-only stores it.
+ *
+ * The other half of `compactTranscript`: the same work, recorded rather than applied. A host that
+ * persists this beside an untouched transcript still shows the user every message, can undo a fold
+ * by dropping one row, and rebuilds the request with `applyCompaction` — where a host that keeps
+ * only the rewritten array has thrown the originals away.
+ */
+export interface CompactionRecord {
+  /** The model's notes on everything before `through`. Trimmed, and never empty. */
+  summary: string;
+  /** Index into the transcript the plan was made for: the first message still sent whole. */
+  through: number;
+  /** ISO 8601, so the chat can show where history was folded and how stale the notes are. */
+  at: string;
+}
+
+/** What `runCompaction` and `compactTranscript` take beside the plan. */
+export interface CompactionRunOptions {
+  /**
+   * Hooks to tell. `context` is extended with `compacting` and `range`, whose indexes are the
+   * plan's — and so the host's own, for a plan made over a stored transcript. `honourVeto` waits
+   * for the hooks and lets one stop the compaction; off by default, which adds no latency.
+   */
+  hooks?: {
+    run: HookRunner;
+    context: HookContext;
+    onNote?: (note: HookNote) => void;
+    honourVeto?: boolean;
+  };
+  /**
+   * The window is already exceeded — the caller caught a `ContextOverflow`, or is compacting to
+   * make a refused request fit — which overrides `honourVeto`.
+   */
+  forced?: boolean;
+}
+
+/**
+ * The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
+ *
+ * What `compactTranscript` does before it rewrites anything, which is all a host needs when the
+ * fold lives on the session row and the messages stay where they are. Nothing here is persisted or
+ * logged — that is the host's, and so is deciding what to do with a fold that did not happen.
+ *
+ * @param messages The transcript the plan was made for. Read only, and only for the hooks.
+ * @param plan What `planCompaction` returned for it.
+ * @param summarise Writes the summary from `summaryInput`'s text. See `summariser`. Not called
+ * when a hook vetoes.
+ * @param options Hooks to tell and whether the window is already past. See `CompactionRunOptions`.
+ * @returns `undefined` when nothing was folded — a hook vetoed, or the summary came back empty —
+ * so the caller stores nothing and the transcript is still whole.
+ */
+export async function runCompaction(
+  messages: Message[],
+  plan: CompactionPlan,
+  summarise: (text: string) => Promise<string>,
+  { hooks, forced = false }: CompactionRunOptions = {},
+): Promise<CompactionRecord | undefined> {
+  const context: HookContext | undefined = hooks && {
+    ...hooks.context,
+    compacting: turnMessages(hooks.context.session.id, messages, plan.from, plan.cut),
+    range: { from: plan.from, through: plan.cut },
+  };
+  let summary: string;
+  if (hooks && context && hooks.honourVeto && !forced) {
+    const { vetoed } = await consult(hooks.run, "beforeCompact", context, hooks.onNote);
+    if (vetoed) return undefined;
+    summary = await summarise(summaryInput(plan));
+  } else {
+    [summary] = await Promise.all([
+      summarise(summaryInput(plan)),
+      hooks && context && notify(hooks.run, "beforeCompact", context, hooks.onNote),
+    ]);
+  }
+  if (!summary.trim()) return undefined;
+  return { summary: summary.trim(), through: plan.cut, at: new Date().toISOString() };
+}
+
+/**
+ * The transcript as the server should see it: the folded head replaced by its summary.
+ *
+ * The inverse of storing a `CompactionRecord`, and the shape `planCompaction` expects to meet
+ * again — the same `SUMMARY_LEAD`, in a `system` message at the same place — so the next fold
+ * continues these notes rather than summarising them a second time. Any earlier summary message in
+ * the kept head is dropped, since the record's already contains it.
+ *
+ * @param messages The stored transcript, whole. Not written to.
+ * @param record The fold, or `undefined` for a session that has not been compacted, which hands
+ * back `messages` itself.
+ * @param options `from` is the first message the fold was allowed to take — the plan's, for a host
+ * that keeps its system prompts in the array; everything before it is kept ahead of the summary.
+ * Absent, the leading `system` messages are found by scanning, and zero of them is the ordinary
+ * case for a host whose system prompt is a separate argument.
+ */
+export function applyCompaction(
+  messages: Message[],
+  record?: Pick<CompactionRecord, "summary" | "through">,
+  { from }: { from?: number } = {},
+): Message[] {
+  if (!record?.summary.trim()) return messages;
+  const head = Math.min(Math.max(from ?? systemHead(messages).from, 0), record.through);
+  return [
+    ...messages.slice(0, head).filter((message) => !isSummary(message)),
+    summaryMessage(record.summary),
+    ...messages.slice(record.through),
+  ];
+}
+
+/**
+ * Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted
+ * everything after it.
+ *
+ * A transcript that stays append-only and a request that does not are two numberings of the same
+ * conversation, and anything that names a position — `withContext`'s index, a range handed to a
+ * hook — has to say which it is in. An index inside the folded stretch answers with the summary
+ * message that now stands for it.
+ *
+ * @param index The position in the stored transcript.
+ * @param record The fold in force, or `undefined` for a session that has none, which hands the
+ * index straight back.
+ * @param head How many messages the request keeps ahead of the summary — the leading system
+ * prompts, when the host keeps them in the array. Zero, the default, is the stored-fold case,
+ * where the summary is the request's first message.
+ */
+export const requestIndex = (
+  index: number,
+  record?: Pick<CompactionRecord, "through">,
+  head = 0,
+): number => {
+  if (!record) return index;
+  return index < record.through ? head : index - record.through + head + 1;
+};
+
+/**
  * The transcript with the plan's stretch replaced by one system message holding its summary.
  *
  * `beforeCompact` is told what is being folded while the summary is written, beside it rather
@@ -255,15 +423,16 @@ export const summariser =
  * `ContextOverflow`. An empty summary folds nothing either. Rewrites the prefix; see the module
  * comment on when to run it.
  *
+ * `runCompaction` and `applyCompaction` are its two halves, and it is nothing but the two in
+ * order, so a host that stores the fold instead of the array gets the same summary at the same
+ * cut rather than a second implementation that drifts from this one.
+ *
  * @param messages The transcript the plan was made for. Not written to.
  * @param plan What `planCompaction` returned for it.
  * @param summarise Writes the summary from `summaryInput`'s text. See `summariser`. Not called
  * when a hook vetoes.
- * @param options Hooks to tell. `context` is extended with `compacting` and `range`, whose
- * indexes are the plan's. `honourVeto` waits for the hooks and lets one stop the compaction; off
- * by default, which adds no latency. `forced` says the window is already exceeded — the caller
- * caught a `ContextOverflow`, or is compacting to make a refused request fit — and overrides
- * `honourVeto`.
+ * @param options Hooks to tell and whether the window is already past. See
+ * `CompactionRunOptions`.
  * @returns `messages` itself when nothing was folded — a veto or an empty summary — otherwise a
  * new array.
  */
@@ -271,39 +440,9 @@ export async function compactTranscript(
   messages: Message[],
   plan: CompactionPlan,
   summarise: (text: string) => Promise<string>,
-  {
-    hooks,
-    forced = false,
-  }: {
-    hooks?: {
-      run: HookRunner;
-      context: HookContext;
-      onNote?: (note: HookNote) => void;
-      honourVeto?: boolean;
-    };
-    forced?: boolean;
-  } = {},
+  options: CompactionRunOptions = {},
 ): Promise<Message[]> {
-  const context: HookContext | undefined = hooks && {
-    ...hooks.context,
-    compacting: turnMessages(hooks.context.session.id, messages, plan.from, plan.cut),
-    range: { from: plan.from, through: plan.cut },
-  };
-  let summary: string;
-  if (hooks && context && hooks.honourVeto && !forced) {
-    const { vetoed } = await consult(hooks.run, "beforeCompact", context, hooks.onNote);
-    if (vetoed) return messages;
-    summary = await summarise(summaryInput(plan));
-  } else {
-    [summary] = await Promise.all([
-      summarise(summaryInput(plan)),
-      hooks && context && notify(hooks.run, "beforeCompact", context, hooks.onNote),
-    ]);
-  }
-  if (!summary.trim()) return messages;
-  return [
-    ...messages.slice(0, plan.from).filter((message) => !isSummary(message)),
-    { role: "system", content: `${SUMMARY_LEAD}${summary.trim()}` },
-    ...messages.slice(plan.cut),
-  ];
+  const record = await runCompaction(messages, plan, summarise, options);
+  if (!record) return messages;
+  return applyCompaction(messages, record, { from: plan.from });
 }

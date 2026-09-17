@@ -72,6 +72,15 @@ describe("turnMessages", () => {
     expect(turnMessages("s1", transcript, 1, 3)).toEqual([]);
     expect(turnMessages("s1", transcript, -5, 99)).toHaveLength(2);
   });
+
+  it("numbers from the host's own index when it is given one", () => {
+    const [question, answer] = turnMessages("s1", transcript, 0, undefined, { offset: 10 });
+    expect(question.uuid).toMatch(/^s1:10:/);
+    expect(answer.uuid).toMatch(/^s1:13:/);
+    // Only the position moved: the digest is still that message's.
+    const plain = turnMessages("s1", transcript, 0);
+    expect(question.uuid.split(":")[2]).toBe(plain[0].uuid.split(":")[2]);
+  });
 });
 
 describe("turnIndex", () => {
@@ -79,6 +88,11 @@ describe("turnIndex", () => {
     expect(turnIndex([])).toBe(0);
     expect(turnIndex(transcript)).toBe(1);
     expect(turnIndex(transcript, 0)).toBe(0);
+  });
+
+  it("adds the turns a fold took out of the array it is counting", () => {
+    expect(turnIndex(transcript, undefined, 10)).toBe(11);
+    expect(turnIndex([], undefined, 10)).toBe(10);
   });
 });
 

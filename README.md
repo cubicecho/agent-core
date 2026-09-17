@@ -522,6 +522,51 @@ way to save tokens.
 `pruneToolResults` keeps the transcript's indexes, so a plan made before pruning still applies to
 what it returns, as above.
 
+### A fold you store, instead of a transcript you rewrite
+
+`compactTranscript` hands back a new array, which is the whole answer for a host whose transcript
+*is* that array. A host that keeps its messages append-only — rows in a database, every one still
+shown in the chat — wants the other half: what the fold was, as something to store on the session.
+`runCompaction` is `compactTranscript` without the rewrite. It returns `{ summary, through, at }`,
+or `undefined` when a hook vetoed or the summary came back empty, and `compactTranscript` is built
+out of it, so there is one summariser and one cut rather than two that drift.
+
+```ts
+const from = session.fold?.through ?? 0;
+const plan = planCompaction(session.messages, {
+  limit,
+  used,
+  from, // where the last fold ended, rather than scanning for it
+  previous: session.fold?.summary,
+});
+if (!plan) return;
+const fold = await runCompaction(session.messages, plan, summarise, { hooks: { run, context } });
+if (fold) await save(session.id, fold); // the messages themselves are never touched
+```
+
+`planCompaction` takes `from` and `previous` because its defaults are a *recovery*: it skips the
+leading `system` messages, and reads an earlier summary back out of a `SUMMARY_LEAD` message among
+them. A host whose system prompt is a separate argument and whose summary is a column has neither
+in the array, and knows both exactly. Given them, nothing is scanned.
+
+`applyCompaction(messages, fold)` is the way back — the summary as a `system` message, then
+everything from `through` — and it writes the same `SUMMARY_LEAD` `planCompaction` looks for, so
+the next fold continues those notes rather than summarising them a second time. No fold yet hands
+back the messages themselves.
+
+```ts
+const request = [systemMessage, ...applyCompaction(session.messages, session.fold)];
+```
+
+**Two numberings.** A stored transcript keeps its indexes and a folded request does not, so
+anything naming a position has to say which one it means. `requestIndex(index, fold)` maps the
+stored index onto the request — for `withContext`'s index, or a range being shown to a hook.
+`turnMessages` takes an `offset`, the stored index of the array's first message, so a message keeps
+the uuid it had before the fold and a memory server deduping on it files that turn once rather than
+twice; `turnIndex` takes one too, for the turns a fold took out of the array it is counting.
+Planning over the stored transcript, as above, sidesteps both: the plan's indexes are the host's
+already, and so are the ones `runCompaction` hands the `beforeCompact` hooks.
+
 ## Watching a run
 
 `watch` replays what the run has already emitted, then yields what happens next until `done`.
