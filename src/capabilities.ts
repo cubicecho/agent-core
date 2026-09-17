@@ -88,6 +88,14 @@ export interface ModelCapabilities {
    * endpoint's because one key reaches models that differ here, the way they differ on effort.
    */
   structuredOutput: boolean;
+  /**
+   * Continues a trailing assistant message rather than answering afresh, which `continueTurn`
+   * relies on. llama.cpp renders one as a prefill and picks up mid-word; hosted OpenAI takes the
+   * same request and writes a new reply after it, and some servers refuse it outright — llama.cpp
+   * itself does for a template with thinking enabled. Latched off by `continueTurn` on either,
+   * never by `negotiate`, since the refusal is about a request only a continuation sends.
+   */
+  assistantPrefill: boolean;
 }
 
 /**
@@ -147,6 +155,7 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
       chosenTemperature: true,
       refusedFields: new Set(),
       structuredOutput: true,
+      assistantPrefill: true,
     };
     supports.models.set(model, known);
   }

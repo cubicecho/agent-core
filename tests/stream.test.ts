@@ -232,7 +232,14 @@ describe("streamTurn", () => {
       clientOf(() => chunks(text("hi"))),
       body,
     );
-    expect(turn.usage).toEqual({ prompt: 0, completion: 0, total: 0, cached: 0 });
+    // The time to that one token is measured, not reported, so it is the only other field.
+    expect(turn.usage).toEqual({
+      prompt: 0,
+      completion: 0,
+      total: 0,
+      cached: 0,
+      firstTokenMs: expect.any(Number),
+    });
   });
 
   it("reads a cache hit in either spelling", async () => {
@@ -251,6 +258,95 @@ describe("streamTurn", () => {
       body,
     );
     expect(deepseek.usage.cached).toBe(64);
+  });
+
+  it("reads llama.cpp's timings off the last chunk, and leaves out what they do not carry", async () => {
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          text("hi"),
+          chunk({
+            choices: [],
+            usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+            timings: {
+              cache_n: 60,
+              prompt_ms: 400,
+              prompt_per_second: 100,
+              predicted_ms: 1000,
+              predicted_per_second: 20,
+              draft_n: 12,
+              draft_n_accepted: 9,
+            },
+          }),
+        ),
+      ),
+      body,
+    );
+    expect(turn.usage).toMatchObject({
+      prompt: 100,
+      // No usage-side cache count, so `cache_n` stands in for one.
+      cached: 60,
+      uncached: 40,
+      promptMs: 400,
+      promptTokensPerSecond: 100,
+      predictedMs: 1000,
+      tokensPerSecond: 20,
+      draftTotal: 12,
+      draftAccepted: 9,
+    });
+    const bare = await streamTurn(
+      clientOf(() =>
+        chunks(
+          chunk({
+            choices: [],
+            usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+            timings: { prompt_ms: "soon" },
+          }),
+        ),
+      ),
+      body,
+    );
+    expect(bare.usage).toEqual({ prompt: 5, completion: 1, total: 6, cached: 0 });
+  });
+
+  it("prefers the usage's own cache count to the timings', and says what was not cached", async () => {
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          chunk({
+            choices: [],
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 5,
+              total_tokens: 105,
+              prompt_tokens_details: { cached_tokens: 0 },
+              completion_tokens_details: { reasoning_tokens: 3 },
+            },
+            timings: { cache_n: 70 },
+          }),
+        ),
+      ),
+      body,
+    );
+    // A reported zero is a cold cache, which is not the same as no report: `uncached` says so.
+    expect(turn.usage).toMatchObject({ cached: 0, uncached: 100, reasoningTokens: 3 });
+  });
+
+  it("times the first token from the request, not from the first empty chunk", async () => {
+    vi.useFakeTimers();
+    const later = {
+      async *[Symbol.asyncIterator]() {
+        yield chunk({ choices: [{ delta: { role: "assistant" } }] });
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        yield text("hi");
+      },
+    };
+    const turn = streamTurn(
+      clientOf(() => later),
+      body,
+    );
+    await vi.advanceTimersByTimeAsync(300);
+    expect((await turn).usage.firstTokenMs).toBeGreaterThanOrEqual(250);
   });
 
   it("sets produced once the model has said something, and not before", async () => {

@@ -62,6 +62,16 @@ describe("planCompaction", () => {
     expect(plan?.toSummarise).toEqual(long.slice(1, 7));
   });
 
+  it("weighs the transcript at the characters per token it is given", () => {
+    const wordy = [
+      user("x".repeat(100)),
+      ...long.slice(1).map((m) => ({ ...m, content: "x".repeat(100) }) as Message),
+    ];
+    // About 290 tokens at four characters each, under the mark on a 500 window; twice that at two.
+    expect(planCompaction(wordy, { limit: 500 })).toBeUndefined();
+    expect(planCompaction(wordy, { limit: 500, charsPerToken: 2 })).toBeDefined();
+  });
+
   it("trusts a reported count over the estimate", () => {
     expect(planCompaction(long, { limit: 1000, used: 800, estimate })).toBeDefined();
   });

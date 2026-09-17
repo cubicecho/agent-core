@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { estimateTokens } from "./tokens.ts";
 
 /**
  * Everything about a request failing that is not about what the request said.
@@ -80,8 +79,26 @@ const REASONING_KEY = 23;
 /** The same for `"reasoning":"",`, OpenRouter's spelling of it. */
 const REASONING_ALT_KEY = 15;
 
-/** The divisor behind `estimateTokens`, applied here to a character count rather than a string. */
-const CHARS_PER_TOKEN = 4;
+/**
+ * The divisor behind `estimateTokens`, applied here to a character count rather than a string.
+ *
+ * The fallback, not the rule: once a turn has come back with a reported prompt count, `runTurn`
+ * divides by what that endpoint's model was measured at instead. See `charsPerTokenFor`.
+ */
+export const CHARS_PER_TOKEN = 4;
+
+/** What the two token estimates below take besides what they measure. */
+export interface TokenEstimateOptions {
+  /**
+   * The divisor, `CHARS_PER_TOKEN` unless given — `charsPerTokenFor` for a model whose reported
+   * usage has calibrated it. A value that is not a number above zero is ignored.
+   */
+  charsPerToken?: number;
+}
+
+/** The divisor an option asked for, or the fallback when it asked for nothing usable. */
+const divisor = (charsPerToken: number | undefined) =>
+  charsPerToken !== undefined && charsPerToken > 0 ? charsPerToken : CHARS_PER_TOKEN;
 
 /** How many characters one message is worth: its keys, and its content in whichever shape. */
 function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
@@ -132,23 +149,47 @@ function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
  * the array-level memoisation `tests/retry.test.ts` pins, which deliberately holds a mutated array
  * to its first reading. Sizing happens once per turn either way, so the miss costs one walk of the
  * schemas rather than a walk per attempt.
+ *
+ * Characters rather than tokens, so a calibrated divisor applies to the schemas without walking
+ * them again.
  */
-const toolTokens = new WeakMap<OpenAI.ChatCompletionTool[], number>();
+const toolLengths = new WeakMap<OpenAI.ChatCompletionTool[], number>();
 
-function toolsCost(tools: OpenAI.ChatCompletionTool[]): number {
-  const hit = toolTokens.get(tools);
+/**
+ * How many characters a tool array is worth, measured once per array.
+ *
+ * @param tools The tool definitions as they will be sent. An empty array is worth nothing.
+ */
+export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
+  if (!tools.length) return 0;
+  const hit = toolLengths.get(tools);
   if (hit !== undefined) return hit;
   // Schemas are arbitrarily shaped, so this one really is a serialisation — but it happens once
   // per tool array rather than once per turn.
-  const cost = estimateTokens(JSON.stringify(tools));
-  toolTokens.set(tools, cost);
-  return cost;
+  const length = JSON.stringify(tools).length;
+  toolLengths.set(tools, length);
+  return length;
+}
+
+/**
+ * How many characters a request is worth: the walk `requestTokens` divides, without the division.
+ *
+ * What calibration reads a reported prompt count against, since a ratio is only as good as the
+ * character count it was taken over agreeing with the one it is later applied to.
+ *
+ * @param body The request as it was sent, tools included.
+ */
+export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): number {
+  let chars = 0;
+  for (const message of body.messages) chars += messageChars(message);
+  return chars;
 }
 
 /**
  * What this request will cost the window, in tokens, near enough.
  *
- * See `estimateTokens` for why it is characters over four and which way it is wrong on purpose.
+ * See `estimateTokens` for why it is characters over four and which way it is wrong on purpose,
+ * and `charsPerTokenFor` for the divisor a model's own reported usage has measured instead.
  *
  * Summed by walking the body rather than by serialising it. `JSON.stringify` on the messages
  * built the entire transcript into a string on every call and threw it away having read nothing
@@ -161,13 +202,18 @@ function toolsCost(tools: OpenAI.ChatCompletionTool[]): number {
  * over four.
  *
  * @param body The request as it will be sent, tools included.
+ * @param options The divisor, `CHARS_PER_TOKEN` when none is given.
  */
-export const requestTokens = (body: OpenAI.ChatCompletionCreateParamsStreaming) => {
+export const requestTokens = (
+  body: OpenAI.ChatCompletionCreateParamsStreaming,
+  { charsPerToken }: TokenEstimateOptions = {},
+) => {
   // Characters first and the division once at the end, rather than a rounded count per message:
   // `Math.ceil` on every one of a few hundred messages is a few hundred tokens of pure rounding.
-  let chars = 0;
-  for (const message of body.messages) chars += messageChars(message);
-  return Math.ceil(chars / CHARS_PER_TOKEN) + (body.tools?.length ? toolsCost(body.tools) : 0);
+  // The tools are divided on their own, as they were when their tokens were cached, so the
+  // uncalibrated count is the one it always was.
+  const per = divisor(charsPerToken);
+  return Math.ceil(requestChars(body) / per) + Math.ceil(toolsChars(body.tools ?? []) / per);
 };
 
 /**
@@ -177,9 +223,12 @@ export const requestTokens = (body: OpenAI.ChatCompletionCreateParamsStreaming) 
  * tail — where `estimateTokens` on the text alone would leave out the calls and the envelope.
  *
  * @param message The message as it will be sent.
+ * @param options The divisor, `CHARS_PER_TOKEN` when none is given.
  */
-export const messageTokens = (message: OpenAI.ChatCompletionMessageParam) =>
-  Math.ceil(messageChars(message) / CHARS_PER_TOKEN);
+export const messageTokens = (
+  message: OpenAI.ChatCompletionMessageParam,
+  { charsPerToken }: TokenEstimateOptions = {},
+) => Math.ceil(messageChars(message) / divisor(charsPerToken));
 
 /**
  * Servers refuse an over-long request in their own words; these are the ones worth reading as

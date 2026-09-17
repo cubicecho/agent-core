@@ -21,6 +21,7 @@ type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
 type ToolCall = import("../src/tool-calls.ts").ToolCall;
 type ToolCallRequest = import("../src/agent-loop.ts").ToolCallRequest;
+type RunUsage = import("../src/events.ts").RunUsage;
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
 const stream = (...list: unknown[]) => ({
@@ -51,6 +52,34 @@ const calls = (...list: [name: string, args: string][]) =>
       },
     ],
   });
+
+/** A turn that makes these deltas and reports this prompt, with a cache count, and ten tokens out. */
+const reported = (
+  prompt: number,
+  cached: number,
+  delta: Record<string, unknown>,
+  finish = "stop",
+) =>
+  stream(
+    { choices: [{ delta, finish_reason: finish }] },
+    {
+      choices: [],
+      usage: {
+        prompt_tokens: prompt,
+        completion_tokens: 10,
+        total_tokens: prompt + 10,
+        prompt_tokens_details: { cached_tokens: cached },
+      },
+    },
+  );
+/** The same, asking for one call. */
+const reportedCall = (prompt: number, cached: number, name: string, args = "{}") =>
+  reported(
+    prompt,
+    cached,
+    { tool_calls: [{ index: 0, id: "c0", function: { name, arguments: args } }] },
+    "tool_calls",
+  );
 
 const tool = (name: string): OpenAI.ChatCompletionTool => ({
   type: "function",
@@ -255,6 +284,7 @@ describe("runAgentLoop", () => {
     expect(result.usage).toEqual({ prompt: 10, completion: 2, total: 12, cached: 0 });
     expect(events.map((e) => e.kind)).toEqual([
       "turn",
+      "usage",
       "tool-call",
       "tool-result",
       "tool-call",
@@ -276,6 +306,131 @@ describe("runAgentLoop", () => {
       }),
     ).rejects.toThrow("Stopped after 2 tool iterations.");
     expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports every turn on its own usage event, with the cache weighed against the last request", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(reported(130, 108, { content: "done" }));
+    const reports: RunUsage[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      onEvent: (event) => event.kind === "usage" && event.usage && reports.push(event.usage),
+    });
+    expect(reports).toHaveLength(2);
+    expect(reports[0].turn).toMatchObject({
+      prompt: 100,
+      cached: 0,
+      uncached: 100,
+      finishReason: "tool_calls",
+      toolsDeclared: 1,
+      retries: 0,
+    });
+    expect(reports[0].turn?.toolSchemaTokens).toBeGreaterThan(0);
+    // Nothing before the first request to weigh it against.
+    expect(reports[0].turn).not.toHaveProperty("cacheExpected");
+    expect(reports[1]).toMatchObject({ promptTokens: 230, cachedTokens: 108 });
+    expect(reports[1].turn).toMatchObject({
+      cacheExpected: 110,
+      cacheBroken: false,
+      finishReason: "stop",
+    });
+    expect(reports[1].turn).not.toHaveProperty("cacheBreakReason");
+    expect(result.metrics).toMatchObject({
+      turns: 2,
+      requests: 2,
+      toolCalls: 1,
+      promptTokens: 230,
+      cachedTokens: 108,
+      cacheBreaks: 0,
+      outcome: "answered",
+    });
+    expect(result.metrics.wallMs).toBeGreaterThanOrEqual(0);
+    // Loads are only counted where tools load on demand.
+    expect(result.metrics).not.toHaveProperty("toolsLoaded");
+  });
+
+  it("names what broke the cache: a rewritten history, or nothing it knows of", async () => {
+    const reasons = async (
+      beforeStep?: (m: readonly Message[], step: number) => Message[] | undefined,
+    ) => {
+      create
+        .mockReset()
+        .mockReturnValueOnce(reportedCall(100, 0, "a"))
+        .mockReturnValueOnce(reported(130, 4, { content: "done" }));
+      const turns: RunUsage["turn"][] = [];
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool("a")],
+        dispatch: async () => "ok",
+        beforeStep,
+        onEvent: (event) => event.kind === "usage" && turns.push(event.usage?.turn),
+      });
+      expect(result.metrics.cacheBreaks).toBe(1);
+      expect(turns[1]?.cacheBroken).toBe(true);
+      return turns[1]?.cacheBreakReason;
+    };
+    expect(await reasons()).toBe("none-known");
+    expect(
+      await reasons((messages, step) =>
+        step === 1 ? [{ role: "user", content: "shorter" }, ...messages.slice(1)] : undefined,
+      ),
+    ).toBe("history-rewritten");
+  });
+
+  it("says nothing of a break where the endpoint reported no cache count", async () => {
+    create.mockReturnValueOnce(calls(["a", "{}"])).mockReturnValueOnce(says("done"));
+    const turns: RunUsage["turn"][] = [];
+    await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      onEvent: (event) => event.kind === "usage" && turns.push(event.usage?.turn),
+    });
+    // The first turn reported no prompt, so there is nothing for the second to be weighed against.
+    expect(turns[1]).not.toHaveProperty("cacheExpected");
+    expect(turns[1]).not.toHaveProperty("cacheBroken");
+  });
+
+  it("continues an answer cut off at the ceiling when asked to, as one turn", async () => {
+    create.mockReturnValueOnce(says("half", "length")).mockReturnValueOnce(says(" and the rest"));
+    const notices: string[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      dispatch: async () => "",
+      maxContinuations: 2,
+      onEvent: (event) => event.kind === "notice" && notices.push(event.text ?? ""),
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect((create.mock.calls[1][0] as Body).messages.at(-1)).toEqual({
+      role: "assistant",
+      content: "half",
+    });
+    expect(result.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: "half and the rest",
+    });
+    expect(notices).toEqual([]);
+    expect(result.usage).toMatchObject({ prompt: 20, completion: 4 });
+    expect(result.metrics).toMatchObject({
+      turns: 1,
+      requests: 2,
+      truncatedTurns: 0,
+      outcome: "answered",
+    });
+  });
+
+  it("does not continue a cut-off answer unless asked to", async () => {
+    create.mockReturnValueOnce(says("half", "length"));
+    const result = await runAgentLoop({ config, messages: question, dispatch: async () => "" });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(result.metrics).toMatchObject({ truncatedTurns: 1, outcome: "truncated" });
   });
 
   it("says when a turn was cut off at the ceiling", async () => {
@@ -490,6 +645,28 @@ describe("runAgentLoop", () => {
       expect(dispatch).toHaveBeenCalledTimes(1);
       expect(result.loaded).toEqual(["s__read"]);
       expect(result.used).toEqual(["s__read"]);
+    });
+
+    it("counts what the model loaded, and calls a load that moved the tools a cache break", async () => {
+      create
+        .mockReturnValueOnce(reportedCall(100, 0, LOAD_TOOLS, '{"names":["s__read","nope"]}'))
+        .mockReturnValueOnce(reportedCall(160, 0, LOAD_TOOLS, '{"names":["s__read"]}'))
+        .mockReturnValueOnce(reported(190, 170, { content: "done" }));
+      const result = await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+      });
+      expect(result.metrics).toMatchObject({
+        loadCalls: 2,
+        toolsLoaded: 1,
+        redundantLoads: 1,
+        unknownToolNames: 1,
+        cacheBreaks: 1,
+        cacheBreakReasons: { "tools-changed": 1 },
+      });
     });
 
     it("appends loads in the order they happen, and answers a repeat load", async () => {

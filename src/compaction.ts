@@ -130,8 +130,14 @@ export interface CompactionOptions {
   compactAt?: number;
   /** The fraction of `limit` the kept tail may fill. `KEEP_RATIO` by default. */
   keepRatio?: number;
-  /** One message's tokens. `messageTokens` by default. */
+  /** One message's tokens. `messageTokens` by default, divided by `charsPerToken`. */
   estimate?: (message: Message) => number;
+  /**
+   * The divisor the default `estimate` uses — `charsPerTokenFor` the model, for a transcript
+   * weighed the way `runTurn` sizes its requests. `CHARS_PER_TOKEN` when absent; ignored beside
+   * an `estimate` of the caller's own.
+   */
+  charsPerToken?: number;
 }
 
 /** Where to cut, as `compactTranscript` takes it. */
@@ -166,7 +172,8 @@ export function planCompaction(
     used,
     compactAt = COMPACT_AT,
     keepRatio = KEEP_RATIO,
-    estimate = messageTokens,
+    charsPerToken,
+    estimate = (message) => messageTokens(message, { charsPerToken }),
   }: CompactionOptions,
 ): CompactionPlan | undefined {
   if (!(limit > 0)) return undefined;

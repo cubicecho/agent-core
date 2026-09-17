@@ -27,9 +27,11 @@ only, Node >=22.
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
-| `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`. A watcher's backlog is capped and reports its own gaps. |
+| `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`. |
+| `calibration` | How many characters a token is worth on one model, learned from the prompt counts its endpoint reports: `charsPerTokenFor`, `calibrate`. |
+| `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
@@ -86,6 +88,20 @@ reading: a turn cut off at the token ceiling comes back looking exactly like a f
 truncated prose or — the case that bites — a tool call whose `arguments` stop mid-JSON, so the
 caller meets a parse failure with nothing to attribute it to. `finishReason` is `"length"` there,
 `""` where the endpoint never said.
+
+`usage` is `prompt`, `completion`, `total` and `cached`, always there and zero where the server
+sent nothing. Everything else on it is there only when something measured it, and absent rather
+than zero otherwise:
+
+| Field | From |
+| --- | --- |
+| `uncached` | the prompt less `cached`, only where a cache count was reported, so a cold cache and no report read differently |
+| `reasoningTokens` | `completion_tokens_details.reasoning_tokens`; never estimated from the thinking stream |
+| `promptMs`, `promptTokensPerSecond`, `predictedMs`, `tokensPerSecond`, `draftTotal`, `draftAccepted` | llama.cpp's `timings`, which also stands in for `cached` (`cache_n`) where the usage has no cache count |
+| `firstTokenMs` | `streamTurn`, from the request to the first chunk that carried something |
+| `wallMs`, `retries`, `timeouts` | `runTurn`: the whole turn with its backoff, the lost requests sent again, and how many of those went silent |
+| `continuations` | `continueTurn` |
+| `cacheExpected`, `cacheBroken`, `cacheBreakReason`, `toolsDeclared`, `toolSchemaTokens` | `runAgentLoop`, below |
 
 `reasoning` is the scratchpad `onThinking` was told, kept because two common families want it
 back. gpt-oss and DeepSeek in thinking mode read the analysis behind a tool call off the assistant
@@ -149,6 +165,10 @@ field, so truthiness picks the newer spelling for a caller who was told nothing 
 and the newer spelling is exactly the one an older model or a llama.cpp-shaped endpoint rejects.
 `modelCapabilitiesFor` starts a model at `legacyTokenLimit: true`, and an absent model has to read
 the same way it does.
+
+One more model flag is never answered by `negotiate`: `assistantPrefill`, whether the model
+carries on a trailing assistant message rather than answering afresh after it. Only `continueTurn`
+sends one, so only it latches the flag, and it is persisted in a snapshot like the rest.
 
 `runTurn` takes the same option and hands `request` the same second argument. Keying on
 `(endpoint, model)` rather than the model name alone is the part worth keeping: `gpt-4o` at
@@ -251,6 +271,30 @@ nothing, and the server gives the reply whatever the prompt leaves. A consumer t
 `maxTokens` from the limit itself before calling in no longer needs to, and doing both reserves
 the ceiling twice.
 
+How many tokens the body is, is a guess: characters over a divisor. Four is right for English prose
+and wrong for what a tool-using run is made of — JSON schemas and tool results pack closer to two or
+three characters a token — so a request the guard let through was refused anyway. The divisor is
+learned instead. Every turn `runTurn` answers comes back with the endpoint's exact prompt count for a
+body whose characters were already counted, and `calibrate` keeps that ratio per endpoint and model;
+the next request to the same model is sized by `charsPerTokenFor`, which is `CHARS_PER_TOKEN` (4)
+until a turn has reported one. It is the highest of the model's last four readings, which is the
+lowest token count: a count that comes out high refuses a run that would have fit, and one that
+comes out low only costs the round trip the guard was saving. A reading from a request carrying an
+image, or outside one to eight characters a token, is not taken.
+
+`requestTokens` and `messageTokens` take `{ charsPerToken }`, and so does `planCompaction`, so a
+caller sizing its own work can use the same number:
+
+```ts
+const charsPerToken = charsPerTokenFor(capabilitiesFor(config.baseUrl, config.apiKey), config.model);
+const plan = planCompaction(messages, { limit, used, charsPerToken });
+```
+
+The ratio is a measurement rather than a refusal, so it is not a capability latch and is not in
+`exportCapabilities`: it moves every turn, and a restarted process learns it again from its first
+one. llama.cpp's `/tokenize` would count exactly, but only after `/apply-template` renders the
+prompt — two round trips before every guarded request, on one server — so it is not used.
+
 The body is sized once, not per attempt: a downgraded request is strictly smaller than the one
 before it and the transcript does not change between retries. A `ContextOverflow` from this is
 neither a capability `negotiate` can answer nor something `isTransient` accepts, so it leaves
@@ -330,6 +374,55 @@ a catalogued tool without loading it first is right about what it wants, and get
 run. A preselection shapes the first step alone: those tools, no catalogue, no `load_tools` —
 a model with the menu still in front of it shops, reloading what it has or picking a sibling —
 and everything is back from the second step on.
+
+A turn cut off at `maxTokens` is said so as a notice, and with `maxContinuations` above zero it is
+continued first. `continueTurn` is the same thing for a caller with its own loop:
+
+```ts
+let turn = await runTurn(client, supports, build, options);
+turn = await continueTurn(client, supports, build, turn, { ...options, maxContinuations: 2 });
+```
+
+It sends the transcript again with the answer so far as a trailing assistant message, which
+llama.cpp renders as a prefill: the model carries on from the last token, and the cache holds all
+of the prompt and most of the reply. vLLM only does so given `continue_final_message: true` and
+`add_generation_prompt: false` on that request, which nothing here sends yet. The pieces come
+back as one turn — content and reasoning joined, token counts summed, `continuations` counting the
+extra requests, timings summed or weighted, a field only one piece reported dropped. Only an answer
+begun and cut off is continued. A turn cut off in its scratchpad is left alone, since llama.cpp
+refuses a prefill outright on a template with thinking on, and so is one ending in a tool call,
+whose truncated arguments `parseToolArguments` already reports.
+
+Whether it works is latched per model as `assistantPrefill`. A 400 or 422 for the request latches it
+off, and so does a continuation that starts the answer over word for word — how hosted OpenAI, which
+takes a trailing assistant message and ignores it, shows itself. Either way, and on any other
+failure short of a stop, the cut-off answer is kept with a notice. The cap is one continuation for
+`continueTurn` and none for the loop, since it spends a request, and on a server that does not
+continue, one to find out.
+
+Every turn ends in a `usage` event, whether or not the endpoint reported tokens. Its totals are the
+run's so far; its `turn` is that turn's own `TurnUsage` and `finishReason`. The loop adds what only
+it can know: `toolsDeclared` and `toolSchemaTokens` for the tool block it sent, and, from the second
+request on, `cacheExpected` (the previous prompt plus its reply) and — where a cache count was
+reported — `cacheBroken`, a hit short of 90% of the previous prompt. A broken cache is given a
+`cacheBreakReason` read off the request against the one before: `tools-changed`, `system-changed`,
+`history-rewritten` (a compaction or a prune in `beforeStep`), or `none-known` where the new request
+only appended, which points at the server — a slot evicted, a template that re-renders the tail.
+
+`runMetrics(events)` adds a run up from those events — tokens, cache hit ratio and breaks by
+reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft
+acceptance, the largest prompt against a `contextLength`, turns cut off, tool errors by name, and
+an `outcome`. The loop returns it as `metrics`, with the `load_tools` counts only it can see
+(`toolsLoaded`, `redundantLoads`, `unknownToolNames`). It is a sibling of `fold` rather than part
+of it, since `fold`'s blocks are for display and a summary is not one:
+
+```ts
+const metrics = runMetrics(history(runId), { contextLength: config.contextLength });
+```
+
+Counts are always present; every other field is absent where no turn reported what it is made of.
+What it cannot say: whether a failed run was stopped, errored or ran out of tool iterations, and
+whether the host compacted — neither is in the events.
 
 `beforeStep` is handed the transcript before each request and may return a replacement, which is
 where compaction goes (below). Hooks are gathered once, onto the question, and never written into
@@ -594,7 +687,8 @@ with no timeout to give now leaves it out rather than inventing a `0`.
 ## What is kept for the life of the process
 
 Four caches outlive any one run: the `OpenAI` clients, the model listings, the latched
-capabilities, and `side-task`'s no-thinking hints. All four are module-level and keyed on the same
+capabilities, and `side-task`'s no-thinking hints. A fifth, the characters per token each model was
+measured at, is keyed on the endpoint's capabilities object, so it goes with them. All four are module-level and keyed on the same
 notion of an endpoint — its base URL and its API key — and the clients' key carries the request
 timeout as well, since that changes how a request is sent.
 
@@ -634,7 +728,8 @@ URL and the key, an absent key read as `NO_KEY` — rather than rebuilding that 
 cannot drift. `endpointKey` holds the key in the clear; `endpointId`, its SHA-256 digest, is the one
 that is safe to write down.
 
-`resetAll` drops all four, and `reset.ts` names each seam separately for a test that wants one.
+`resetAll` drops all five, and `reset.ts` names each seam separately for a test that wants one —
+`resetCalibration` for the measured ratios.
 
 The latches can outlive the process as well, because otherwise every restart spends one refused
 request per endpoint and model learning the same facts again. `exportCapabilities` returns every

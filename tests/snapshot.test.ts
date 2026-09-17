@@ -56,6 +56,7 @@ describe("capability snapshots", () => {
             chosenTemperature: true,
             refusedFields: ["min_p"],
             structuredOutput: true,
+            assistantPrefill: true,
             thinkingHints: true,
           },
           small: {
@@ -64,6 +65,7 @@ describe("capability snapshots", () => {
             chosenTemperature: true,
             refusedFields: [],
             structuredOutput: true,
+            assistantPrefill: true,
             thinkingHints: false,
           },
         },
@@ -81,6 +83,17 @@ describe("capability snapshots", () => {
     await ask(config, "small", "system", "user");
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0][0]).not.toHaveProperty("chat_template_kwargs");
+  });
+
+  it("carries a model's refusal of a trailing assistant message", () => {
+    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    modelCapabilitiesFor(supports, "big").assistantPrefill = false;
+    const stored = JSON.parse(JSON.stringify(exportCapabilities()));
+    expect(stored.endpoints[endpointId(config)].models.big.assistantPrefill).toBe(false);
+    resetAll();
+    expect(importCapabilities(stored)).toBe(true);
+    const restored = capabilitiesFor(config.baseUrl, config.apiKey);
+    expect(modelCapabilitiesFor(restored, "big").assistantPrefill).toBe(false);
   });
 
   it("only latches off, whatever the snapshot says", () => {

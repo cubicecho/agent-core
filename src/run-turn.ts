@@ -1,10 +1,12 @@
 import type OpenAI from "openai";
+import { calibrate, charsPerTokenFor } from "./calibration.ts";
 import { type Capabilities, type ModelCapabilities, negotiate } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
 import {
   backoffMs,
   ContextOverflow,
   compact,
+  EndpointSilent,
   isModelLoading,
   isOverflow,
   isTransient,
@@ -37,6 +39,10 @@ import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./
  * attempt would say everything twice. That is what `produced` is, one box per attempt — set by
  * a chunk that carried something rather than by a chunk arriving, so the empty opening chunk
  * most servers send does not cost the retry.
+ *
+ * What the turn cost in attempts comes back on its usage — `wallMs`, `retries`, `timeouts` — and
+ * what its prompt was reported at calibrates the ratio the next request to that model is sized
+ * with. See `calibrate`.
  */
 
 /** A retry is not the same event as a downgrade, but a watcher wants to be told about both. */
@@ -125,11 +131,16 @@ export async function runTurn(
   // does not change between attempts — so the first body is the one worth measuring, and
   // measuring the rest would only spend the walk again to reach the same answer.
   let sized = false;
+  // The body the answer was given to, for the calibration once it is in hand.
+  let sent: OpenAI.ChatCompletionCreateParamsStreaming | undefined;
   const measured = (capabilities: Capabilities, forModel: ModelCapabilities | undefined) => {
     const body = request(capabilities, forModel);
+    sent = body;
     if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
       sized = true;
-      const needed = requestTokens(body);
+      const needed = requestTokens(body, {
+        charsPerToken: charsPerTokenFor(supports, body.model),
+      });
       // The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with
       // `n_predict` in, OpenAI with the ceiling — so a prompt that fits the window but not the
       // window less the ceiling was let through here to be refused one round trip later, which
@@ -152,15 +163,21 @@ export async function runTurn(
   // When the server first said it was loading. Unset until then, and never reset: a model that
   // loads, fails and loads again has had its allowance.
   let loadingSince: number | undefined;
+  const started = Date.now();
+  let retries = 0;
+  let timeouts = 0;
   for (let attempt = 0; ; attempt++) {
     const produced: Produced = { any: false };
     try {
-      return await negotiate(
+      const turn = await negotiate(
         supports,
         (capabilities, box, forModel) =>
           streamTurn(client, measured(capabilities, forModel), { ...stream, produced: box }),
         { produced, onNotice, model, droppable },
       );
+      if (sent) calibrate(supports, sent, turn.usage.prompt);
+      Object.assign(turn.usage, { wallMs: Date.now() - started, retries, timeouts });
+      return turn;
     } catch (error) {
       // The abort is read before the classification, not after. A run stopped by its operator
       // can trip the idle watchdog on the way out, and `EndpointSilent` is transient by the
@@ -196,6 +213,8 @@ export async function runTurn(
         }
       }
       if (attempt >= maxRetries || !isTransient(error)) throw error;
+      retries++;
+      if (error instanceof EndpointSilent) timeouts++;
       const wait = backoffMs(attempt);
       // Reported in whatever unit reads as a number: the first backoff is under a second, and
       // "retrying in 0s" is what rounding it to seconds says.

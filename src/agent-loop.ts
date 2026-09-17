@@ -1,10 +1,12 @@
 import type OpenAI from "openai";
+import { charsPerTokenFor } from "./calibration.ts";
 import { type Capabilities, capabilitiesFor, type ModelCapabilities } from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
 import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from "./config.ts";
+import { continueTurn } from "./continuation.ts";
 import { errorMessage } from "./errors.ts";
-import type { RunEventInput } from "./events.ts";
+import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics } from "./events.ts";
 import {
   type Gathered,
   gather,
@@ -17,6 +19,7 @@ import {
   turnMessages,
   withContext,
 } from "./hooks.ts";
+import { toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { askJson, tryAsk } from "./side-task.ts";
@@ -294,6 +297,12 @@ export interface AgentLoopOptions {
   recoverToolCalls?: boolean;
   /** Each turn as it comes back, before its tools run. Recovered calls are in it as calls. */
   onTurn?: (turn: Turn, step: number) => void;
+  /**
+   * How many times an answer cut off at `maxTokens` is continued, zero — the default — for never.
+   * Opt-in because it spends another request, and on a server that does not continue a trailing
+   * assistant message it spends one to find that out. See `continueTurn`.
+   */
+  maxContinuations?: number;
 }
 
 /** What a finished loop hands back. */
@@ -312,12 +321,93 @@ export interface AgentLoopResult {
   used: string[];
   /** The hooks' notes from before the first request. */
   notes: HookNote[];
+  /**
+   * The run summed and derived: what `runMetrics` makes of the events this loop emitted, plus the
+   * `load_tools` findings only the loop sees, `wallMs` from the call to the return, and `outcome`.
+   */
+  metrics: RunMetrics;
 }
 
-/** Every numeric field of one usage added into another. */
+/**
+ * The four token counts of one usage added into another. Only those: the rest are measurements a
+ * sum of would mean nothing, or would mean something only `runMetrics` knows how to weigh.
+ */
 const accumulate = (total: TurnUsage, turn: TurnUsage) => {
-  for (const key of Object.keys(turn) as (keyof TurnUsage)[]) total[key] += turn[key] ?? 0;
+  total.prompt += turn.prompt;
+  total.completion += turn.completion;
+  total.total += turn.total;
+  total.cached += turn.cached;
 };
+
+/** What the loop remembers of one request, to explain the next one's cache. */
+interface Sent {
+  messages: OpenAI.ChatCompletionMessageParam[];
+  tools: string[];
+  /** The prompt the first request of the turn reported, before any continuation was joined. */
+  prompt: number;
+  /** The completion across the whole turn, continuations included. */
+  completion: number;
+}
+
+/** Whether two messages say the same thing, by identity first since most of a transcript is. */
+const sameMessage = (a: OpenAI.ChatCompletionMessageParam, b: OpenAI.ChatCompletionMessageParam) =>
+  a === b || JSON.stringify(a) === JSON.stringify(b);
+
+/** The system messages a request opens with, which a template renders ahead of the history. */
+const leadingSystem = (messages: OpenAI.ChatCompletionMessageParam[]) => {
+  const end = messages.findIndex((message) => message.role !== "system");
+  return messages.slice(0, end === -1 ? messages.length : end);
+};
+
+/**
+ * Where a request stopped matching the one before it, earliest in the rendered prompt first — the
+ * tool block, then the system prompt, then the history — or `none-known` where it only appended.
+ */
+function breakReason(
+  previous: Sent,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  tools: string[],
+): NonNullable<TurnUsage["cacheBreakReason"]> {
+  if (
+    previous.tools.length !== tools.length ||
+    previous.tools.some((name, at) => name !== tools[at])
+  )
+    return "tools-changed";
+  const before = leadingSystem(previous.messages);
+  const now = leadingSystem(messages);
+  if (before.length !== now.length || before.some((message, at) => !sameMessage(message, now[at])))
+    return "system-changed";
+  if (
+    previous.messages.length > messages.length ||
+    previous.messages.some((message, at) => !sameMessage(message, messages[at]))
+  )
+    return "history-rewritten";
+  return "none-known";
+}
+
+/**
+ * The share of the previous prompt a cache that kept its prefix reports as hit. Short of it by
+ * more than this is a break, not the few tokens a template re-renders at the join.
+ */
+const CACHE_KEPT = 0.9;
+
+/**
+ * What one turn's cache should have been and whether it was, against the request before it.
+ * Nothing before the second request, or where the previous prompt was not reported.
+ */
+function cacheDiagnosis(
+  previous: Sent | undefined,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  tools: string[],
+  usage: TurnUsage,
+): Partial<TurnUsage> {
+  if (!previous || !(previous.prompt > 0)) return {};
+  const found: Partial<TurnUsage> = { cacheExpected: previous.prompt + previous.completion };
+  if (usage.uncached === undefined) return found;
+  found.cacheBroken = usage.cached < previous.prompt * CACHE_KEPT;
+  if (found.cacheBroken) found.cacheBreakReason = breakReason(previous, messages, tools);
+  return found;
+}
 
 /**
  * Runs a question to its answer: one `runTurn` per step, the tools it asks for between them,
@@ -328,7 +418,9 @@ const accumulate = (total: TurnUsage, turn: TurnUsage) => {
  * prompt unchanged from step to step, loaded tools are appended to the tool array in load order,
  * a catalogued tool called without being loaded is loaded and run rather than refused, and a
  * preselection shapes the first step. A turn cut off at `maxTokens` is said so as a notice,
- * because it otherwise reads exactly like a finished one.
+ * because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
+ * continued first. Every turn ends in a `usage` event carrying the turn's own report, with the
+ * cache compared against the request before it; see `TurnUsage` and `runMetrics`.
  *
  * @param options The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
@@ -336,16 +428,38 @@ const accumulate = (total: TurnUsage, turn: TurnUsage) => {
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const { config, system = "", tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
-    onEvent,
     onTurn,
     beforeStep,
     parallel = false,
     recoverToolCalls: recover = true,
+    maxContinuations = 0,
   } = options;
+  const started = Date.now();
+  // What the loop emitted, less the token deltas, for `runMetrics` at the end. Stamped here rather
+  // than by the bus, which the loop does not know about.
+  const recorded: RunEvent[] = [];
+  const record = (input: RunEventInput) => {
+    if (input.kind === "thinking" || input.kind === "output") return;
+    recorded.push({
+      runId: "",
+      seq: recorded.length + 1,
+      at: Date.now(),
+      text: "",
+      name: "",
+      step: "",
+      ok: null,
+      usage: null,
+      ...input,
+    });
+  };
+  const onEvent = (input: RunEventInput) => {
+    record(input);
+    options.onEvent?.(input);
+  };
   const client = getClient(config);
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
-  const notice = (text: string) => onEvent?.({ kind: "notice", text });
+  const notice = (text: string) => onEvent({ kind: "notice", text });
 
   const onDemand = config.toolDiscovery === "ondemand" && catalog.length > 0;
   const loaded = new Set(onDemand ? (options.loaded ?? []) : []);
@@ -379,13 +493,15 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
   const toolCalls: ToolCallOutcome[] = [];
   const answered = new Map<string, Promise<string>>();
+  const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
+  let previous: Sent | undefined;
 
   for (let step = 0; step < config.maxToolIterations; step++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
     // end — so the signal is read between steps as well.
     signal?.throwIfAborted();
     messages = (await beforeStep?.(messages, step)) ?? messages;
-    onEvent?.({ kind: "turn", text: `turn ${step + 1}` });
+    onEvent({ kind: "turn", text: `turn ${step + 1}` });
 
     const routed = preselected.length > 0 && step === 0;
     const declared = routed
@@ -407,37 +523,53 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       ),
     ];
 
-    const turn = await runTurn(
-      client,
-      supports,
-      (supported, refused) => buildBody(config, supported, refused, request, declared),
-      {
-        model: config.model,
-        droppable: Object.keys(config.extraBody ?? {}),
-        maxRetries,
-        ...(config.loadingTimeoutSeconds === undefined
-          ? {}
-          : { loadingTimeoutMs: Math.max(0, config.loadingTimeoutSeconds) * 1000 }),
-        contextLimit: config.contextLength ?? 0,
-        signal,
-        idleMs: timeoutMs(config),
-        firstChunkMs: firstTokenMs(config) ?? 0,
-        onNotice: notice,
-        onThinking: (text) => onEvent?.({ kind: "thinking", text }),
-        onOutput: (text) => onEvent?.({ kind: "output", text }),
-      },
-    );
+    const build = (supported: Capabilities, refused: ModelCapabilities | undefined) =>
+      buildBody(config, supported, refused, request, declared);
+    const turnOptions = {
+      model: config.model,
+      droppable: Object.keys(config.extraBody ?? {}),
+      maxRetries,
+      ...(config.loadingTimeoutSeconds === undefined
+        ? {}
+        : { loadingTimeoutMs: Math.max(0, config.loadingTimeoutSeconds) * 1000 }),
+      contextLimit: config.contextLength ?? 0,
+      signal,
+      idleMs: timeoutMs(config),
+      firstChunkMs: firstTokenMs(config) ?? 0,
+      onNotice: notice,
+      onThinking: (text: string) => onEvent({ kind: "thinking", text }),
+      onOutput: (text: string) => onEvent({ kind: "output", text }),
+    };
+    const first = await runTurn(client, supports, build, turnOptions);
+    const names = declared.map((tool) => (tool.type === "function" ? tool.function.name : ""));
+    // Compared before any continuation is joined on: the cache a request meets is the one its own
+    // prompt found, and a continuation's prompt is this request's plus the reply so far.
+    Object.assign(first.usage, cacheDiagnosis(previous, request, names, first.usage), {
+      toolsDeclared: declared.length,
+      toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerTokenFor(supports, config.model)),
+    });
+    const firstPrompt = first.usage.prompt;
+    const turn =
+      maxContinuations > 0
+        ? await continueTurn(client, supports, build, first, { ...turnOptions, maxContinuations })
+        : first;
+    previous = {
+      messages: request,
+      tools: names,
+      prompt: firstPrompt,
+      completion: turn.usage.completion,
+    };
     accumulate(usage, turn.usage);
-    if (turn.usage.total > 0 || turn.usage.prompt > 0 || turn.usage.completion > 0) {
-      onEvent?.({
-        kind: "usage",
-        usage: {
-          promptTokens: usage.prompt,
-          completionTokens: usage.completion,
-          totalTokens: usage.total,
-        },
-      });
-    }
+    onEvent({
+      kind: "usage",
+      usage: {
+        promptTokens: usage.prompt,
+        completionTokens: usage.completion,
+        totalTokens: usage.total,
+        cachedTokens: usage.cached,
+        turn: { ...turn.usage, finishReason: turn.finishReason },
+      },
+    });
     if (turn.finishReason === "length") {
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
@@ -511,6 +643,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           hooks.onNote,
         );
       }
+      const metrics = runMetrics(recorded, { contextLength: config.contextLength });
       return {
         turn: shown,
         messages,
@@ -519,12 +652,18 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         loaded: [...loaded],
         used: [...used],
         notes: gathered.notes,
+        metrics: {
+          ...metrics,
+          ...(onDemand ? loads : {}),
+          wallMs: Date.now() - started,
+          outcome: turn.finishReason === "length" ? "truncated" : "answered",
+        },
       };
     }
 
     const run = async ({ call, args, error: unreadable, normal }: (typeof parsed)[number]) => {
       const { name, arguments: raw } = call.function;
-      onEvent?.({ kind: "tool-call", name, text: preview(raw) });
+      onEvent({ kind: "tool-call", name, text: preview(raw) });
       let content: string;
       let ok = true;
       try {
@@ -532,6 +671,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         if (onDemand && name === LOAD_TOOLS) {
           const resolved = expandNames(requestedNames(args), catalog);
           content = loadResult(resolved, catalog, loaded);
+          for (const hit of resolved.matched)
+            loads[loaded.has(hit) ? "redundantLoads" : "toolsLoaded"]++;
+          loads.unknownToolNames += resolved.unknown.length;
           for (const hit of resolved.matched) loaded.add(hit);
           ok = resolved.matched.length > 0;
         } else {
@@ -549,7 +691,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         content = errorMessage(error);
         ok = false;
       }
-      onEvent?.({ kind: "tool-result", name, ok, text: preview(content) });
+      onEvent({ kind: "tool-result", name, ok, text: preview(content) });
       return { id: call.id, name, ok, content };
     };
 
