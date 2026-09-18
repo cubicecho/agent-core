@@ -280,12 +280,26 @@ export interface AgentLoopOptions {
   /** Runs one tool call and returns what the model reads. What it throws, the model reads too. */
   dispatch: (call: ToolCallRequest, signal?: AbortSignal) => Promise<string>;
   /**
-   * Runs a step's calls together rather than one after another, and makes an identical call —
-   * the same name and arguments, word for word — once for the run, handing a repeat the first
-   * answer. A call that threw is not an answer and is made again. Results still go into the
-   * transcript in the order the model asked.
+   * Runs a step's calls together rather than one after another. Results still go into the
+   * transcript in the order the model asked. See `dedupeToolCalls`, which applies either way.
    */
   parallel?: boolean;
+  /**
+   * Answers an identical repeat of a call — the same name and the same arguments, word for word —
+   * within one step from the first one, rather than dispatching it again.
+   *
+   * On by default, and on whether or not the calls run in `parallel`: a model that asks the same
+   * question twice in one reply gets one answer, and two that are still in flight share the
+   * request. A call that threw is not an answer and is made again. The scope is the step and not
+   * the run, because between steps other tools have run and the file the model read may be the
+   * file it has since written.
+   *
+   * `false` dispatches every call. A predicate is asked per call and is how a tool that does
+   * something rather than reads something opts out — `send_email` twice is two emails, and this
+   * package cannot tell which tools those are. A pool that reads the MCP `readOnlyHint` and
+   * `idempotentHint` annotations can answer it; nothing in an OpenAI tool definition can.
+   */
+  dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
   /** Hooks gathered onto the question before the first request, and told the reply after. */
   hooks?: AgentLoopHooks;
   /**
@@ -450,7 +464,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     recoverToolCalls: recover = true,
     maxContinuations = 0,
     toolOrder = true,
+    dedupeToolCalls = true,
   } = options;
+  const dedupable = typeof dedupeToolCalls === "function" ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
   // What the loop emitted, less the token deltas, for `runMetrics` at the end. Stamped here rather
   // than by the bus, which the loop does not know about.
@@ -509,7 +525,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
   const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
   const toolCalls: ToolCallOutcome[] = [];
-  const answered = new Map<string, Promise<string>>();
   const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
   let previous: Sent | undefined;
 
@@ -684,6 +699,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       };
     }
 
+    // Per step, not per run: the answer to a call made two steps ago was true before the tools in
+    // between ran, and the file the model read may be the file it has since written.
+    const answered = new Map<string, Promise<string>>();
     const run = async ({ call, args, error: unreadable, normal }: (typeof parsed)[number]) => {
       const { name, arguments: raw } = call.function;
       onEvent({ kind: "tool-call", name, text: preview(raw) });
@@ -705,7 +723,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           if (onDemand && inCatalog(catalog, name)) loaded.add(name);
           used.add(name);
           const request = { id: call.id, name, args, raw };
-          content = parallel
+          content = dedupable(request)
             ? await once(answered, `${name}\0${normal}`, () => dispatch(request, signal))
             : await dispatch(request, signal);
         }
@@ -739,8 +757,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
 /**
  * Makes a call at most once per key, sharing the in-flight promise so two identical calls in one
- * step make one request between them. A call that rejected is forgotten, so asking again is a
- * real retry rather than a replayed failure.
+ * step make one request between them whether they run together or one after the other. A call
+ * that rejected is forgotten, so asking again is a real retry rather than a replayed failure.
  */
 async function once(
   answered: Map<string, Promise<string>>,

@@ -670,6 +670,60 @@ describe("runAgentLoop", () => {
     ]);
   });
 
+  it("answers an identical call once when the calls run one after another too", async () => {
+    create
+      .mockReturnValueOnce(calls(["a", "{}"], ["a", '{"n": 1}'], ["a", '{"n":1}']))
+      .mockReturnValueOnce(says("done"));
+    const dispatch = vi.fn(async () => "ok");
+    const result = await runAgentLoop({ config, messages: question, tools: [tool("a")], dispatch });
+    // Three calls, two questions: the repeat is the repaired arguments matching, not the text.
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(result.messages.filter((m) => m.role === "tool")).toHaveLength(3);
+  });
+
+  it("asks again in a later step, where the tools between may have moved the world", async () => {
+    create
+      .mockReturnValueOnce(calls(["a", "{}"]))
+      .mockReturnValueOnce(calls(["a", "{}"]))
+      .mockReturnValueOnce(says("done"));
+    const dispatch = vi.fn(async () => "ok");
+    await runAgentLoop({ config, messages: question, tools: [tool("a")], dispatch });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("dispatches every call where the host turned deduping off", async () => {
+    create.mockReturnValueOnce(calls(["a", "{}"], ["a", "{}"])).mockReturnValueOnce(says("done"));
+    const dispatch = vi.fn(async () => "ok");
+    await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch,
+      dedupeToolCalls: false,
+    });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a tool that does something rather than reads something opt out", async () => {
+    create
+      .mockReturnValueOnce(calls(["send", "{}"], ["send", "{}"], ["read", "{}"], ["read", "{}"]))
+      .mockReturnValueOnce(says("done"));
+    const dispatched: string[] = [];
+    const dispatch = vi.fn(async (call: ToolCallRequest) => {
+      dispatched.push(call.name);
+      return "ok";
+    });
+    await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("send"), tool("read")],
+      dispatch,
+      dedupeToolCalls: (call) => call.name !== "send",
+    });
+    // Two emails, one read.
+    expect(dispatched).toEqual(["send", "send", "read"]);
+  });
+
   describe("on demand", () => {
     const catalog = [
       {
