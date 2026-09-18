@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import {
   type Capabilities,
   capabilitiesFor,
+  effortFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
   negotiate,
@@ -154,7 +155,11 @@ async function complete(
     supports: Capabilities,
     refused: ModelCapabilities | undefined,
   ) => {
-    sentEffort = effort && refused?.reasoningEffort !== false;
+    // `none` is what a side task wants and not always what the model offers: OpenAI's reasoning
+    // models refuse it by value and list `minimal` as their floor. `effortFor` answers with the
+    // cheapest rung this one takes, which `negotiate` has been stepping up as it was refused.
+    const asked = effort ? effortFor(refused, "none") : "";
+    sentEffort = asked !== "";
     return getClient(config).chat.completions.create(
       {
         model,
@@ -173,7 +178,7 @@ async function complete(
         ...(hints ? NO_THINKING : {}),
         // Not gated on `hints`: a model that refuses `chat_template_kwargs` may still read the
         // effort, and the two latches would otherwise contradict each other.
-        ...(sentEffort ? { reasoning_effort: "none" } : {}),
+        ...(sentEffort ? { reasoning_effort: asked } : {}),
         ...(format && refused ? format(supports, refused) : {}),
       } as OpenAI.ChatCompletionCreateParamsNonStreaming,
       { signal },

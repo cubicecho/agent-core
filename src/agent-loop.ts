@@ -1,6 +1,11 @@
 import type OpenAI from "openai";
 import { charsPerTokenFor } from "./calibration.ts";
-import { type Capabilities, capabilitiesFor, type ModelCapabilities } from "./capabilities.ts";
+import {
+  type Capabilities,
+  capabilitiesFor,
+  effortFor,
+  type ModelCapabilities,
+} from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
 import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from "./config.ts";
@@ -69,7 +74,8 @@ const RESERVED = new Set(["model", "messages", "stream", "tools"]);
  * one has to read the same — which is the test one of the three copies had inverted.
  *
  * @param config What to ask for. `maxTokens` of zero or less sends no ceiling; `reasoningEffort`
- * absent or `"off"` sends no effort.
+ * absent or `"off"` sends no effort, and one the model has refused by value is stepped up to the
+ * cheapest it takes by `effortFor`.
  * @param supports What the endpoint has refused, as `negotiate` hands it to `send`.
  * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
@@ -92,7 +98,7 @@ export function buildBody(
   const declared = supports.strictSchemas
     ? sanitizeTools(sorted)
     : relaxTools(sanitizeTools(sorted));
-  const effort = config.reasoningEffort;
+  const effort = effortFor(refused, config.reasoningEffort);
   const extra = Object.entries(config.extraBody ?? {}).filter(
     ([field]) => !RESERVED.has(field) && !refused?.refusedFields.has(field),
   );
@@ -103,9 +109,7 @@ export function buildBody(
         : { max_tokens: config.maxTokens }
       : {}),
     ...(refused?.chosenTemperature === false ? {} : { temperature: config.temperature }),
-    ...(effort && effort !== "off" && refused?.reasoningEffort !== false
-      ? { reasoning_effort: effort as OpenAI.ReasoningEffort }
-      : {}),
+    ...(effort ? { reasoning_effort: effort as OpenAI.ReasoningEffort } : {}),
     ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
     ...Object.fromEntries(extra),
     model: config.model,

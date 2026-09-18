@@ -42,6 +42,12 @@ const NO_EFFORT = apiError(
   400,
   "Unsupported parameter: 'reasoning_effort' is not supported with this model.",
 );
+/** The opposite refusal: the model reasons, it just does not offer the `none` a side task wants. */
+const NO_EFFORT_NONE = apiError(
+  400,
+  "Unsupported value: 'reasoning_effort' does not support 'none' with this model. " +
+    "Supported values are: 'minimal', 'low', 'medium', and 'high'.",
+);
 
 /** What the nth call actually put in the body. */
 const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
@@ -257,6 +263,29 @@ describe("what the model refuses", () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(body(1)).not.toHaveProperty("reasoning_effort");
     expect(body(1).chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it("asks for the cheapest effort the model offers when it will not take none", async () => {
+    // What sent a side task to its own fallback path and then latched the effort off for good:
+    // the request failed outright, and every later call on the model ran with nothing said about
+    // deliberating — on the models most inclined to deliberate.
+    const notices: string[] = [];
+    create.mockRejectedValueOnce(NO_EFFORT_NONE).mockResolvedValue(reply);
+    await expect(
+      ask(endpoint("https://api.openai.com/v1"), "gpt-5", "system", "user", {
+        onNotice: (message) => notices.push(message),
+      }),
+    ).resolves.toBe("ok");
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(body(0).reasoning_effort).toBe("none");
+    expect(body(1).reasoning_effort).toBe("minimal");
+    expect(notices).toEqual(["gpt-5 does not reason at none; retrying at minimal"]);
+    // And the next call starts where this one left off rather than paying for it again.
+    create.mockReset();
+    create.mockResolvedValue(reply);
+    await call(endpoint("https://api.openai.com/v1"), "gpt-5");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(body(0).reasoning_effort).toBe("minimal");
   });
 
   it("does not spend a second call on what it was told the first time", async () => {

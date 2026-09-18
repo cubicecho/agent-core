@@ -132,28 +132,49 @@ again, with the setting still reading `high` and nothing anywhere saying it had 
 So they hang off the endpoint under the name the endpoint knows the model by. Pass `model` and
 the same loop answers both levels; leave it out and nothing changes.
 
-A refusal of the *value* is not one of these, however alike the two read: an effort off a list
-this package does not know, a `max_tokens` larger than the model's ceiling, a temperature out of
-range. Dropping the field answers those too — at the model's own default, latched for the rest of
-the process, with the settings row still reading what was typed and nothing saying it had stopped
-meaning it. They are passed to the caller instead, where whoever typed the number can see it.
+A refusal of the *value* is not one of these, however alike the two read: a `max_tokens` larger
+than the model's ceiling, a temperature out of range. Dropping the field answers those too — at
+the model's own default, latched for the rest of the process, with the settings row still reading
+what was typed and nothing saying it had stopped meaning it. They are passed to the caller
+instead, where whoever typed the number can see it.
+
+The effort is the exception, because there the model has said what it *would* take:
+`Unsupported value: 'reasoning_effort' does not support 'none' with this model. Supported values
+are: 'minimal', 'low', 'medium', and 'high'.` `negotiate` latches the rung that was refused and
+re-sends at the cheapest one above it, which is a request rather than a failure. Where the refusal
+lists nothing it walks `EFFORT_LADDER` — `none`, `minimal`, `low`, `medium`, `high` — a rung per
+refusal. Both latch per `(endpoint, model)` and ride in the snapshot, so a restart does not walk
+the ladder again.
+
+Only ever upward, and only from a value on the ladder. Answering a refused `xhigh` with `high`
+would quietly reason less than whoever typed it asked for; stepping up from `none` only costs
+tokens, and says so in a notice. When the ladder runs out, or the value is not on it, the refusal
+goes to the caller as it did before.
+
+`effortFor(model, asked)` is what a body builder calls to get the value to send — `buildBody` and
+the side tasks both do — and it answers the empty string for a model that takes no effort at all,
+for `"off"` and for an absent setting.
 
 ```ts
-const turn = await negotiate(supports, (supports, produced, model) =>
-  streamTurn(
-    getClient(config),
-    {
-      model: name, messages, stream: true,
-      // Each rebuilt per attempt from what this model has already refused.
-      ...(model?.reasoningEffort ? { reasoning_effort: effort } : {}),
-      ...(model?.legacyTokenLimit === false
-        ? { max_completion_tokens: limit }
-        : { max_tokens: limit }),
-      ...(model?.chosenTemperature ? { temperature } : {}),
-      tools: supports.strictSchemas ? declared : relaxTools(declared),
-    },
-    { produced, signal },
-  ),
+const turn = await negotiate(
+  supports,
+  (supports, produced, model) => {
+    // Each rebuilt per attempt from what this model has already refused.
+    const asked = effortFor(model, effort);
+    return streamTurn(
+      getClient(config),
+      {
+        model: name, messages, stream: true,
+        ...(asked ? { reasoning_effort: asked } : {}),
+        ...(model?.legacyTokenLimit === false
+          ? { max_completion_tokens: limit }
+          : { max_tokens: limit }),
+        ...(model?.chosenTemperature ? { temperature } : {}),
+        tools: supports.strictSchemas ? declared : relaxTools(declared),
+      },
+      { produced, signal },
+    );
+  },
   { model: name },
 );
 ```
