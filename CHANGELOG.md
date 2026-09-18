@@ -1,3 +1,11 @@
+# [2.14.0](https://github.com/cubicecho/agent-core/compare/v2.13.0...v2.14.0) (2026-09-18)
+
+
+### Features
+
+* break a request's tokens into the four parts a consumer can shrink ([8a07073](https://github.com/cubicecho/agent-core/commit/8a0707393db225ec50f317d6d78dedcebb657a0b)), closes [#108](https://github.com/cubicecho/agent-core/issues/108)
+* forget one endpoint's latched capabilities, or let them expire ([0271c91](https://github.com/cubicecho/agent-core/commit/0271c91fc830b27dc6bdf5d0abbdd100f7cee3b2)), closes [#95](https://github.com/cubicecho/agent-core/issues/95)
+
 # [2.13.0](https://github.com/cubicecho/agent-core/compare/v2.12.0...v2.13.0) (2026-09-17)
 
 
