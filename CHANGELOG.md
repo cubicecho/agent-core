@@ -1,3 +1,10 @@
+# [2.17.0](https://github.com/cubicecho/agent-core/compare/v2.16.0...v2.17.0) (2026-09-18)
+
+
+### Features
+
+* pick tools from the catalogue by the request's own words ([6773500](https://github.com/cubicecho/agent-core/commit/677350064b02ee2aeebf6ada0246e0516dc8a560)), closes [#92](https://github.com/cubicecho/agent-core/issues/92)
+
 # [2.16.0](https://github.com/cubicecho/agent-core/compare/v2.15.0...v2.16.0) (2026-09-18)
 
 
