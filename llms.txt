@@ -277,6 +277,10 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `catalogPrompt` — The catalogue block appended to the system prompt.
 - `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
 - `inCatalog` — Whether the catalogue holds a tool by this name.
+- `KEYWORD_DROPOFF` — How far the best unpicked tool must fall below the last picked one for the cut to count clean.
+- `KEYWORD_MIN_SCORE` — The least a best match may score and still be acted on without a model.
+- `KeywordPreselection` (type) — What `preselectByKeywords` found.
+- `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
 - `LOAD_TOOLS` — On-demand tool loading.
 - `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
 - `loadedTools` — A tool array with newly loaded definitions appended, in the order they were loaded.
@@ -286,8 +290,10 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
 - `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
 - `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
+- `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
 - `preselectInput` — The user message for a preselection call: the catalogue, then the request.
 - `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
 - `preselectSystem` — The system prompt a preselector is given, holding it to the cap its answer will be held to.
 - `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
+- `ToolMatch` (type) — One tool's score against a request.
 - `ToolOrder` (type) — How a tool array is ordered before it is sent: `true` by name, `false` as the caller built it, or a comparator over the two names.

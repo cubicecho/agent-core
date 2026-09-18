@@ -450,3 +450,179 @@ export function preselection(
   const wanted = list.filter((name): name is string => typeof name === "string");
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
 }
+
+/**
+ * Saturation and length normalisation for the BM25 score. Robertson's usual values.
+ *
+ * Nothing here is tuned for this corpus, because tuning them against a catalogue of forty short
+ * documents would be fitting noise. `dropoff` and `minScore` are the knobs worth turning.
+ */
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+
+/**
+ * The least a best match may score and still be acted on without a model.
+ *
+ * A BM25 score, so it is read against the shape of the corpus rather than as a percentage: a
+ * query term carried by half the catalogue is worth about 0.7, and one carried by a single tool
+ * about 3. One at this floor is therefore "something more distinctive than a word every other
+ * tool uses", which is the weakest evidence worth skipping a round trip on.
+ *
+ * A term is distinctive only against other terms, so a catalogue of three or four tools rarely
+ * clears it. That is the right answer rather than a gap: a catalogue that small is not costing
+ * enough tokens to be worth choosing from in the first place.
+ */
+export const KEYWORD_MIN_SCORE = 1;
+
+/**
+ * How far the best unpicked tool must fall below the last picked one for the cut to count clean.
+ *
+ * Half. The cap is the only reason a hit is dropped, so a hit just underneath it scoring nearly
+ * as much as one just above means the ranking chose arbitrarily, which is exactly the case a
+ * model should be spent on.
+ */
+export const KEYWORD_DROPOFF = 0.5;
+
+/**
+ * English function words, dropped before matching.
+ *
+ * The inverse document frequency is supposed to make this unnecessary, and over a real corpus it
+ * would: a word carried by every document is worth nothing. But a tool catalogue is twenty
+ * one-line descriptions, and at that size "for" or "on" is rare by accident — it lands in one
+ * description, scores as the most distinctive term in the query, and a request that says "for me"
+ * is answered with whichever tool happened to use the word. Only closure-class words are here;
+ * "list", "get", "run" and "show" are what tools are called and stay.
+ */
+const NOISE = new Set(
+  (
+    "about all also am an and any are as at be been being but by can could do does for from had " +
+    "has have how if in into is it its just me more most my no not of on or other our out over " +
+    "please should so some such than that the their them then there these they this to too up us " +
+    "very was we were what when where which who will with would you your"
+  ).split(" "),
+);
+
+/**
+ * A text as the matcher reads it: lowercase words, `server__tool_name` and camelCase split apart.
+ *
+ * Plurals are folded, crudely, by dropping a trailing `s`: a request says "read the files" and
+ * the tool is called `read_file`, and without this the two do not meet. Nothing else is stemmed —
+ * a real stemmer is a table of English morphology, and this is matching identifiers.
+ */
+const terms = (text: string): string[] =>
+  text
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 1 && !NOISE.has(word))
+    .map((word) =>
+      word.length > 3 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word,
+    );
+
+/** One tool's score against a request. */
+export interface ToolMatch {
+  name: string;
+  /** Its BM25 score. Zero-scoring tools are not ranked at all. */
+  score: number;
+}
+
+/** What `preselectByKeywords` found. */
+export interface KeywordPreselection {
+  /** The names, best first, capped at `maxPerLoad`. */
+  names: string[];
+  /** Whether the match is clear enough to run on without asking a model. */
+  confident: boolean;
+  /** Every tool that scored at all, best first — for a caller measuring its own threshold. */
+  ranked: ToolMatch[];
+}
+
+/** What `preselectByKeywords` takes besides the catalogue and the request. */
+export interface KeywordPreselectOptions {
+  /** The most to pick, defaulting to `MAX_PER_LOAD`. The same cap the model is held to. */
+  maxPerLoad?: number;
+  /** The floor under a confident best match, defaulting to `KEYWORD_MIN_SCORE`. */
+  minScore?: number;
+  /** The gap a confident cut needs, defaulting to `KEYWORD_DROPOFF`. */
+  dropoff?: number;
+  /** Where the request is cut, defaulting to 2000 — the same head `preselectInput` reads. */
+  maxPromptChars?: number;
+}
+
+/**
+ * The tools a request's own words point at, ranked, and whether they point clearly enough.
+ *
+ * A preselection call costs a round trip to a model that is being asked to do term matching, and
+ * on a local box that is seconds before the run has started. For a catalogue of a few dozen tools
+ * the words usually decide it: a request that says "commit" and a tool called `git__commit` need
+ * no reasoning to connect.
+ *
+ * BM25 rather than counting shared words, because the ranking has to survive the words every tool
+ * uses. "list", "get" and "file" are in half the descriptions in a real catalogue, and a plain
+ * overlap count hands the top of the ranking to whichever tool has the longest description. The
+ * inverse document frequency makes a term worth what it distinguishes, and the length
+ * normalisation stops a wordy description from outscoring the tool actually named.
+ *
+ * `confident` is what a caller acts on, and it is deliberately hard to earn: something more
+ * distinctive than a word the whole catalogue shares has to have matched, and the tools left
+ * unpicked have to score well below the ones picked. Anything else is ambiguous, and ambiguous is
+ * what the model is for. Nothing matching is not confident either — the words cannot tell "this
+ * request needs no tools" from "these words are not in the catalogue".
+ *
+ * @param catalog The servers to choose from. Each tool is matched on its name, its server's label
+ * and its one-line description, which is everything the catalogue holds.
+ * @param prompt The request being planned for. Only its head is read, as in `preselectInput`.
+ * @param options The cap, the two confidence thresholds, and where the request is cut.
+ */
+export function preselectByKeywords(
+  catalog: CatalogServer[],
+  prompt: string,
+  {
+    maxPerLoad = MAX_PER_LOAD,
+    minScore = KEYWORD_MIN_SCORE,
+    dropoff = KEYWORD_DROPOFF,
+    maxPromptChars = PRESELECT_PROMPT_CHARS,
+  }: KeywordPreselectOptions = {},
+): KeywordPreselection {
+  const empty: KeywordPreselection = { names: [], confident: false, ranked: [] };
+  const docs = catalog.flatMap((server) =>
+    server.tools.map((tool) => ({
+      name: tool.name,
+      terms: terms(`${tool.name} ${server.label} ${tool.description}`),
+    })),
+  );
+  // A query term repeated in the request is not worth more than one said once: the request is
+  // prose about a task, not a document being matched against another document.
+  const query = new Set(terms(prompt.slice(0, maxPromptChars)));
+  if (!docs.length || !query.size) return empty;
+
+  const length = docs.reduce((total, doc) => total + doc.terms.length, 0) / docs.length;
+  const documents = new Map<string, number>();
+  for (const doc of docs)
+    for (const term of new Set(doc.terms)) documents.set(term, (documents.get(term) ?? 0) + 1);
+
+  const ranked = docs
+    .map((doc) => {
+      const counts = new Map<string, number>();
+      for (const term of doc.terms) counts.set(term, (counts.get(term) ?? 0) + 1);
+      let score = 0;
+      for (const term of query) {
+        const found = counts.get(term);
+        if (!found) continue;
+        const held = documents.get(term) ?? 0;
+        const idf = Math.log(1 + (docs.length - held + 0.5) / (held + 0.5));
+        const norm = BM25_K1 * (1 - BM25_B + (BM25_B * doc.terms.length) / length);
+        score += (idf * found * (BM25_K1 + 1)) / (found + norm);
+      }
+      return { name: doc.name, score };
+    })
+    .filter((hit) => hit.score > 0)
+    // Ties break on the name, not on where the tool sat in the catalogue, so reconnecting a
+    // server in a different order does not change what a run opens with.
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  if (!ranked.length) return empty;
+
+  const names = ranked.slice(0, maxPerLoad).map((hit) => hit.name);
+  const cut = ranked[names.length - 1].score;
+  const next = ranked[maxPerLoad]?.score ?? 0;
+  return { names, confident: ranked[0].score >= minScore && next <= dropoff * cut, ranked };
+}

@@ -296,6 +296,40 @@ describe("preselect", () => {
     expect(got).toEqual([]);
     expect(notices).toEqual([expect.stringContaining("boom")]);
   });
+
+  it("spends no round trip when the request's own words name the tool", async () => {
+    // A catalogue with something to discriminate between: a term is only distinctive against
+    // other terms, so one tool alone can never be a confident match, and does not need to be.
+    const desks = [
+      { id: "s", label: "S", tools: [{ name: "s__read", description: "Read a file" }] },
+      { id: "d", label: "D", tools: [{ name: "d__query", description: "Query the database" }] },
+      { id: "c", label: "C", tools: [{ name: "c__event", description: "Add a calendar event" }] },
+      { id: "w", label: "W", tools: [{ name: "w__fetch", description: "Fetch a URL" }] },
+    ];
+    const notices: string[] = [];
+    const got = await preselect(config, "small", desks, "read the file", {
+      keywords: true,
+      onNotice: (n) => notices.push(n),
+    });
+    expect(got).toEqual(["s__read"]);
+    // The whole point: the model was never asked.
+    expect(create).not.toHaveBeenCalled();
+    expect(notices).toEqual([expect.stringContaining("by name")]);
+  });
+
+  it("falls through to the model when the words settle nothing", async () => {
+    create.mockResolvedValue({ choices: [{ message: { content: '{"tools": ["s__read"]}' } }] });
+    expect(await preselect(config, "small", catalog, "sing me a song", { keywords: true })).toEqual(
+      ["s__read"],
+    );
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for no preselection at all without a model, words or not", async () => {
+    // `toolSelectModel: ""` means don't preselect, and the cheap path does not reinterpret it.
+    expect(await preselect(config, "", catalog, "read the file", { keywords: true })).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  });
 });
 
 describe("runAgentLoop", () => {

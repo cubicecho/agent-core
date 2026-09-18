@@ -34,6 +34,7 @@ import {
   catalogPrompt,
   expandNames,
   inCatalog,
+  type KeywordPreselectOptions,
   LOAD_TOOLS,
   LOAD_TOOLS_DEFINITION,
   loadedTools,
@@ -41,6 +42,7 @@ import {
   MAX_PER_LOAD,
   orderTools,
   PRESELECT_SCHEMA,
+  preselectByKeywords,
   preselectInput,
   preselection,
   preselectSystem,
@@ -170,13 +172,18 @@ export function resolveApiKey(
  * a failed one costs nothing — it is reported through `onNotice` and answered with an empty list,
  * since a side task is never worth failing the run. A stop still throws.
  *
+ * With `keywords`, the request's own words are matched against the catalogue first and the model
+ * is spent only on what they cannot settle, which on a local box is the difference between a run
+ * starting now and starting in a few seconds. The words have to be clear about it; see
+ * `preselectByKeywords` for what that means.
+ *
  * @param config The endpoint the preselector is reached through.
  * @param model The preselector. An empty name picks nothing, which is what `toolSelectModel`
  * means by empty.
  * @param catalog The servers to choose from.
  * @param prompt The request being planned for. Only its head is read; see `preselectInput`.
- * @param options Cancellation, notices, the reply ceiling (256) and the cap the choice is held to
- * (`MAX_PER_LOAD`).
+ * @param options Cancellation, notices, the reply ceiling (256), the cap the choice is held to
+ * (`MAX_PER_LOAD`), and whether to try the words first.
  */
 export async function preselect(
   config: Endpoint,
@@ -188,14 +195,31 @@ export async function preselect(
     onNotice,
     maxTokens = 256,
     maxPerLoad = MAX_PER_LOAD,
+    keywords,
   }: {
     signal?: AbortSignal;
     onNotice?: (message: string) => void;
     maxTokens?: number;
     maxPerLoad?: number;
+    /**
+     * Try `preselectByKeywords` first and spend the model only on what it cannot settle. `true`
+     * takes its defaults; an object tunes the thresholds. An empty `model` still means no
+     * preselection at all, words included — that is what `toolSelectModel: ""` asks for.
+     */
+    keywords?: boolean | KeywordPreselectOptions;
   } = {},
 ): Promise<string[]> {
   if (!model || !catalog.some((server) => server.tools.length > 0)) return [];
+  if (keywords) {
+    const guess = preselectByKeywords(catalog, prompt, {
+      maxPerLoad,
+      ...(keywords === true ? {} : keywords),
+    });
+    if (guess.confident) {
+      onNotice?.(`chose ${guess.names.length} tool${guess.names.length === 1 ? "" : "s"} by name`);
+      return guess.names;
+    }
+  }
   const reply = await tryAsk(
     "preselect",
     () =>
