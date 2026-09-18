@@ -234,6 +234,34 @@ What endpoints and models refused, carried across a restart.
 - `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
 - `ModelSnapshot` (type) — What one model on an endpoint refused.
 
+### spec
+
+A JSON document that defines an agent, and the rules for reading one.
+
+- `AGENT_SPEC` — The token a document declares itself with.
+- `AGENT_SPEC_VERSION` — The major version `AGENT_SPEC` pins.
+- `AGENT_TASKS` — The side tasks this package has code for: documentation and a sensible UI order, not a validator.
+- `AgentHook` (type) — A tool call bound to a lifecycle event, run by the host rather than the model.
+- `AgentSpec` (type) — One agent, as a document.
+- `EndpointSpec` (type) — Where a model is reached, and how long to wait for it.
+- `ExportSpecOptions` (type) — What `exportSpec` takes besides the document.
+- `exportSpec` — A document fit to leave the host: the same agent, with the secrets of its bundled servers gone.
+- `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
+- `ParsedSpec` (type) — What `parseSpec` hands back.
+- `ParseSpecOptions` (type) — What `parseSpec` takes besides the document.
+- `PromptPart` (type) — One layer of system prompt, named so a layer above can stack beside it or replace it.
+- `parseSpec` — Reads a document, dropping what it cannot use and refusing only what it cannot identify.
+- `RESOLVED_DEFAULTS` — What a field falls back to when no layer said anything at all.
+- `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the host's to act on.
+- `ResolvedTask` (type) — One side task, resolved: a model, and the endpoint it is reached through.
+- `RetrySpec` (type) — What to do about a request lost before the model produced anything.
+- `resolveAgentSpec` — Layers documents into the flat object the loop takes, weakest first.
+- `SPEC_EVENTS` — Every event a hook may be bound to, restated so this module stays free of `node:crypto`.
+- `SpecBundle` (type) — What an agent carries so it can travel whole: the definitions of the servers it names.
+- `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
+- `TaskSpec` (type) — One side task, which may run on a different model — and a different machine — than the agent.
+- `ToolsSpec` (type) — How tools reach the model, and which servers this agent may reach at all.
+
 ### stream
 
 Reading one streamed turn back into a message.

@@ -38,6 +38,7 @@ only, Node >=22.
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
+| `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
@@ -821,6 +822,57 @@ A single god interface would have forced two of them to grow columns they have n
 The seam is not finished. `timeoutMs` narrows to the one field it reads, but `getClient` still
 asks for the whole of `Endpoint`. `requestTimeoutSeconds` became optional in v2, so a consumer
 with no timeout to give now leaves it out rather than inventing a `0`.
+
+## An agent as a document
+
+The seam above says what a *running* agent is. `@cubicecho/agent-core/spec` says what a **stored**
+one is: a versioned JSON document that any host on this package can read, layer and hand to the
+loop. It exists because the applications here spell "an agent" three incompatible ways — `maxTokens: 0`
+means *no ceiling* in one, *inherit* in the next and *a real ceiling of zero* in the third, and an
+empty server list means *no tools* in one and *every tool* in another. `docs/agent-spec.md` argues
+the whole thing out.
+
+```ts
+import { parseSpec, resolveAgentSpec } from "@cubicecho/agent-core/spec";
+
+const { spec, errors, warnings } = parseSpec(JSON.parse(text));
+if (!spec) throw new Error(errors.join("\n"));
+
+const config = resolveAgentSpec([settingsSpec, spec]); // weakest layer first
+const result = await runAgentLoop({ config, ... });    // already the shape the loop takes
+```
+
+**Absent inherits, and nothing else does.** There is no inherit sentinel at any depth: `0`, `-1`,
+`""` and `[]` are values that mean what they say, and `null` reads as absent because a nullable
+column round-trips through JSON that way. `tools.servers` keeps its tri-state — absent is every
+server the host offers, `[]` is none, a list is exactly those — and layering replaces it whole
+rather than unioning, since a union of "these two" and "none" is "these two", which silently widens
+a scoped agent. `prompt`, `hooks` and `tasks` merge by id, which is one rule expressing two
+behaviours: different ids stack, the same id replaces.
+
+`parseSpec` reports every problem at once and refuses only four things, all of them about the
+document rather than a value: it is not an object, the `spec` token is missing or of another major,
+a `requires` entry this host does not understand, or a container is of the wrong kind. Everything
+else is dropped with a warning — including an out-of-range number, which is **dropped rather than
+clamped**, because a clamp invents a value the author did not write while dropping falls back to one
+somebody did.
+
+The document carries **no credential at any depth**, and a `${VAR}`-shaped string is kept as the
+literal it is rather than expanded — a format with no interpolation needs no credential denylist.
+Resolution yields `apiKey: ""`, which `getClient` turns into `NO_KEY`; a host that wants inheritance
+applies `resolveApiKey` afterwards, so a document naming somebody else's endpoint cannot make this
+host send its own provider key there. `exportSpec(spec)` strips a bundled server's `env` and
+`headers`, and a redacted document is still a valid one.
+
+`bundle.mcpServers` is parsed only under `parseSpec(document, { bundle: true })`. A bundled server
+is a command line and an environment map, so importing one is equivalent to running a program, and
+that is a decision a host makes rather than inherits from a default.
+
+The subpath is separate from the main entry for one reason: `client.ts` and `hooks.ts` import
+`node:crypto`, and `spec.ts` imports nothing but types, so a browser validating a pasted document in
+a form can load it. Nothing in `src/` imports it — the same direction the config seam runs, which is
+what lets a document travel between hosts without the loop growing an opinion about where an agent
+comes from.
 
 ## What is kept for the life of the process
 
