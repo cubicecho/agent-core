@@ -828,7 +828,35 @@ A snapshot names endpoints by `endpointId`, a SHA-256 digest of the URL and key,
 written to a settings row or a file without a credential going with it. Importing merges and only
 latches off, the same as a refusal does. A snapshot of another `version` is ignored. How old is too
 old is left to the consumer, who can read `savedAt` first: a server upgraded between boots may
-accept what it used to refuse, and nothing latched ever unlatches without a reset.
+accept what it used to refuse, and nothing latched ever unlatches on its own.
+
+It unlatches when you say so. A server upgraded behind the same URL — a newer llama.cpp that
+compiles the grammar, a proxy that has learned `stream_options` — keeps being sent the downgraded
+request until something forgets what it refused, and `resetCapabilities` takes the endpoint to
+forget:
+
+```ts
+resetCapabilities({ baseUrl: row.baseUrl, apiKey: row.apiKey });  // this one changed
+expireCapabilities(6 * 60 * 60_000);                              // anything half a day old
+```
+
+`resetCapabilities` with no argument still clears every endpoint, which is what `resetAll` and a
+test mean by it; with one it clears that endpoint alone, so an upgraded local box does not cost the
+cloud endpoint beside it its latches, and returns whether there was anything to forget. Call it
+where the host already knows something changed: a settings row saved, a health check reading a new
+build string, an operator pressing a button.
+
+`expireCapabilities(maxAgeMs)` covers the case where nobody knows, dropping every endpoint older
+than that and returning how many. An expiry does not probe anything — it stops suppressing, so the
+next request carries the field again and a server that still refuses it refuses it once, which
+`negotiate` answers as it always did. At an age measured in hours that is a few extra round trips a
+day against a downgrade that would otherwise last as long as the process. Nothing calls it on a
+timer; when to sweep is yours, the same way how stale a snapshot is too stale is.
+
+An endpoint's age is when it was first met, not when a flag latched, and `exportCapabilities`
+carries it in the snapshot so an imported latch keeps its real age instead of being born again on
+every boot. Importing takes the older of the two ages, and a snapshot written before this field
+existed reads as met now.
 
 ## Where the merged behaviour came from
 

@@ -34,6 +34,13 @@ export interface EndpointSnapshot {
   strictSchemas: boolean;
   usageInStream: boolean;
   models: Record<string, ModelSnapshot>;
+  /**
+   * When this endpoint was first met, as epoch milliseconds, so `expireCapabilities` measures a
+   * latch from when it was learned rather than from the boot that imported it. Absent in a snapshot
+   * taken before it was written, which reads as met now — the behaviour of every release until this
+   * one, and the reason no version bump is owed.
+   */
+  since?: number;
 }
 
 /** Every latched refusal in the process, JSON-safe. See `exportCapabilities`. */
@@ -70,13 +77,19 @@ const refusedAnything = (model: ModelSnapshot) =>
  * Covers what `negotiate` latches on endpoints and models and the models `ask` found refusing the
  * no-thinking hints. Only what was actually refused is in it, so a snapshot of a process that met
  * no refusals has no endpoints. Endpoints are named by digest rather than URL and key, since the
- * blob is meant to be written somewhere and a key must not be written with it.
+ * blob is meant to be written somewhere and a key must not be written with it. Each carries the
+ * `since` it was learned at, so importing it does not make an old latch young again.
  */
 export function exportCapabilities(): CapabilitySnapshot {
   const endpoints: Record<string, EndpointSnapshot> = {};
   const entry = (id: string) => {
-    endpoints[id] ??= { strictSchemas: true, usageInStream: true, models: {} };
-    return endpoints[id];
+    const held = endpoints[id];
+    if (held) return held;
+    const fresh: EndpointSnapshot = { strictSchemas: true, usageInStream: true, models: {} };
+    const since = knownCapabilities().get(id)?.since;
+    if (since !== undefined) fresh.since = since;
+    endpoints[id] = fresh;
+    return fresh;
   };
   for (const [id, supports] of knownCapabilities()) {
     const models: Record<string, ModelSnapshot> = {};
@@ -119,7 +132,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * off whatever the snapshot says, and one the snapshot has off is turned off. A snapshot of another
  * version, or anything that is not one, is ignored — a stale shape costs the refused requests it
  * would have saved, which is what a restart cost before. How old is too old is the consumer's call,
- * made on `savedAt` before importing, since a server behind a URL can be upgraded between boots.
+ * made on `savedAt` before importing, or afterwards per endpoint with `expireCapabilities`, since a
+ * server behind a URL can be upgraded between boots.
  *
  * @param snapshot What `exportCapabilities` returned, as stored. Read defensively: a field of the
  * wrong type is skipped rather than trusted.
@@ -133,6 +147,11 @@ export function importCapabilities(snapshot: unknown): boolean {
     const supports = capabilitiesById(id);
     if (endpoint.strictSchemas === false) supports.strictSchemas = false;
     if (endpoint.usageInStream === false) supports.usageInStream = false;
+    // Older of the two, so a snapshot ages an entry and never rejuvenates one: importing must not
+    // be a way to keep a latch from ever reaching `expireCapabilities`.
+    if (typeof endpoint.since === "number" && endpoint.since < supports.since) {
+      supports.since = endpoint.since;
+    }
     if (!isRecord(endpoint.models)) continue;
     for (const [name, model] of Object.entries(endpoint.models)) {
       if (!isRecord(model)) continue;
