@@ -1,3 +1,10 @@
+# [2.16.0](https://github.com/cubicecho/agent-core/compare/v2.15.0...v2.16.0) (2026-09-18)
+
+
+### Features
+
+* step a refused reasoning_effort up to one the model takes ([b80fbeb](https://github.com/cubicecho/agent-core/commit/b80fbebe3df24405e9cd0b9d1d2a04bec4126f67)), closes [#42](https://github.com/cubicecho/agent-core/issues/42) [#94](https://github.com/cubicecho/agent-core/issues/94)
+
 # [2.15.0](https://github.com/cubicecho/agent-core/compare/v2.14.0...v2.15.0) (2026-09-18)
 
 
