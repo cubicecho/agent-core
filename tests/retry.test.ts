@@ -4,12 +4,15 @@ import {
   backoffMs,
   ContextOverflow,
   compact,
+  contextChars,
+  contextTokens,
   EndpointSilent,
   isOverflow,
   isTransient,
   messageTokens,
   requestTokens,
   sleep,
+  toolsChars,
 } from "../src/retry.ts";
 import { estimateTokens } from "../src/tokens.ts";
 
@@ -247,4 +250,80 @@ test("the same tools array is only measured once", () => {
 test("token counts are shortened the way they are read", () => {
   expect(compact(999)).toBe("999");
   expect(compact(1234)).toBe("1.2k");
+});
+
+/** A request with something substantial in every part, so no share rounds to nothing. */
+const fourParts = (): OpenAI.ChatCompletionCreateParamsStreaming => ({
+  model: "m",
+  stream: true,
+  messages: [
+    { role: "system", content: "s".repeat(800) },
+    { role: "user", content: "u".repeat(1200) },
+    { role: "assistant", content: "a".repeat(400) },
+    { role: "tool", tool_call_id: "c1", content: "t".repeat(2000) },
+  ],
+  tools: [{ type: "function", function: { name: "t", parameters: { type: "object" } } }],
+});
+
+test("a request is cut along the levers an operator actually has", () => {
+  const chars = contextChars(fourParts());
+  // Each part holds the thing named after it, and the four are exhaustive.
+  expect(chars.system).toBeGreaterThan(800);
+  expect(chars.history).toBeGreaterThan(1600);
+  expect(chars.toolResults).toBeGreaterThan(2000);
+  expect(chars.tools).toBeGreaterThan(0);
+  expect(chars.system + chars.tools + chars.history + chars.toolResults).toBe(chars.total);
+  // The tool results are only the `tool` messages: what `pruneToolResults` can shrink, no more.
+  expect(chars.toolResults).toBeLessThan(2100);
+});
+
+test("a developer message is charged to the system prompt, wherever it sits", () => {
+  const body: OpenAI.ChatCompletionCreateParamsStreaming = {
+    model: "m",
+    stream: true,
+    messages: [
+      { role: "user", content: "hi" },
+      { role: "developer", content: "d".repeat(500) },
+    ],
+  };
+  expect(contextChars(body).system).toBeGreaterThan(500);
+});
+
+test("the parts add up to the total exactly, estimated or reported", () => {
+  const body = fourParts();
+  const sum = (b: ReturnType<typeof contextTokens>) =>
+    b.system + b.tools + b.history + b.toolResults;
+
+  const estimated = contextTokens(body);
+  expect(sum(estimated)).toBe(estimated.total);
+  // Without a reported count the total is the number the pre-flight guard uses.
+  expect(estimated.total).toBe(requestTokens(body));
+
+  // With one, it is the number the server charged — every part a share of it.
+  const reported = contextTokens(body, { promptTokens: 1000 });
+  expect(reported.total).toBe(1000);
+  expect(sum(reported)).toBe(1000);
+  // The shares are proportions of the characters, not a fresh estimate.
+  const chars = contextChars(body);
+  expect(reported.toolResults).toBe(Math.round((chars.toolResults / chars.total) * 1000));
+});
+
+test("the tool block agrees with the turn metrics rather than being shared out", () => {
+  const body = fourParts();
+  // `TurnMetrics.toolSchemaTokens` is this expression; a readout that disagreed with it by a
+  // token would have an operator chasing a difference that is only rounding.
+  expect(contextTokens(body).tools).toBe(Math.ceil(toolsChars(body.tools ?? []) / 4));
+  expect(contextTokens(body, { charsPerToken: 3 }).tools).toBe(
+    Math.ceil(toolsChars(body.tools ?? []) / 3),
+  );
+});
+
+test("an odd total still lands somewhere, and an empty request breaks into nothing", () => {
+  // One token to share over four parts: it goes to the biggest, and nothing is lost.
+  const one = contextTokens(fourParts(), { promptTokens: 1 });
+  expect(one.toolResults).toBe(1);
+  expect(one.system + one.tools + one.history).toBe(0);
+
+  const empty = contextTokens({ model: "m", stream: true, messages: [] });
+  expect(empty).toEqual({ system: 0, tools: 0, history: 0, toolResults: 0, total: 0 });
 });

@@ -170,8 +170,12 @@ Everything about a request failing that is not about what the request said.
 
 - `backoffMs` — Exponential, with jitter so several tasks failing at once do not return in lockstep.
 - `CHARS_PER_TOKEN` — The divisor behind `estimateTokens`, applied here to a character count rather than a string.
+- `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
+- `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
 - `ContextOverflow` — The request was bigger than the model will read.
 - `compact` — 1234 → "1.2k".
+- `contextChars` — What each part of a request is worth in characters, by the same walk `requestTokens` divides.
+- `contextTokens` — What each part of a request costs the window, in tokens, adding up to the whole.
 - `EndpointSilent` — The endpoint stopped answering mid-request.
 - `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.

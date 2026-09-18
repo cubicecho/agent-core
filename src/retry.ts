@@ -217,6 +217,127 @@ export const requestTokens = (
 };
 
 /**
+ * What a request is made of, by the part of it a consumer can actually do something about.
+ *
+ * The question an operator asks is not how big the request is — the total already answers that —
+ * but what is filling the window, and the only useful answer names a lever: a system prompt to
+ * shorten, a tool list to load on demand instead of declaring whole, a transcript to compact,
+ * results to prune. So the cut follows the levers rather than the roles: `toolResults` is exactly
+ * what `pruneToolResults` can shrink, and `history` is everything `planCompaction` folds, the
+ * arguments of the calls in it included.
+ */
+export interface ContextBreakdown {
+  /** Every system and developer message, wherever it sits in the transcript. */
+  system: number;
+  /** The declared tool schemas, which a chat template renders ahead of the system prompt. */
+  tools: number;
+  /** What was said: the user and assistant messages, and the calls the assistant asked for. */
+  history: number;
+  /** What the tools handed back — the `tool` messages, and nothing else. */
+  toolResults: number;
+  /** The four above, summed. */
+  total: number;
+}
+
+/** The parts, in the order a readout reads them. */
+const PARTS = ["system", "tools", "history", "toolResults"] as const;
+
+/**
+ * What each part of a request is worth in characters, by the same walk `requestTokens` divides.
+ *
+ * Exact and additive: the parts sum to `total`, which is `requestChars` plus `toolsChars`. The
+ * conversion to tokens is `contextTokens`' business, because that is where an estimate and a
+ * reported count have to be told apart.
+ *
+ * @param body The request as it will be sent, tools included.
+ */
+export function contextChars(body: OpenAI.ChatCompletionCreateParamsStreaming): ContextBreakdown {
+  const out: ContextBreakdown = {
+    system: 0,
+    tools: toolsChars(body.tools ?? []),
+    history: 0,
+    toolResults: 0,
+    total: 0,
+  };
+  for (const message of body.messages) {
+    const chars = messageChars(message);
+    // Every system message and not just the leading one: a host that appends guidance, or a
+    // hook that injects a preface, has put more of the window there and wants to be told so.
+    if (message.role === "system" || message.role === "developer") out.system += chars;
+    else if (message.role === "tool") out.toolResults += chars;
+    else out.history += chars;
+  }
+  out.total = out.system + out.tools + out.history + out.toolResults;
+  return out;
+}
+
+/** What `contextTokens` takes besides the request. */
+export interface ContextBreakdownOptions extends TokenEstimateOptions {
+  /**
+   * The prompt count the endpoint reported for this request, if it has answered. Given one, the
+   * parts are shares of it and the breakdown sums to what was actually charged rather than to an
+   * estimate; left out, they are shares of `requestTokens`.
+   */
+  promptTokens?: number;
+}
+
+/**
+ * Shares `total` out over these parts by their character counts, the largest absorbing the
+ * rounding so they add up to it exactly rather than to within a few tokens of it.
+ */
+function share(
+  chars: ContextBreakdown,
+  over: readonly (keyof ContextBreakdown)[],
+  total: number,
+): ContextBreakdown {
+  const out: ContextBreakdown = { system: 0, tools: 0, history: 0, toolResults: 0, total };
+  const measured = over.reduce((sum, part) => sum + chars[part], 0);
+  if (measured <= 0 || total <= 0) return out;
+  const absorber = over.reduce((a, b) => (chars[b] > chars[a] ? b : a));
+  let assigned = 0;
+  for (const part of over) {
+    if (part === absorber) continue;
+    out[part] = Math.round((chars[part] / measured) * total);
+    assigned += out[part];
+  }
+  out[absorber] = Math.max(0, total - assigned);
+  return out;
+}
+
+/**
+ * What each part of a request costs the window, in tokens, adding up to the whole.
+ *
+ * Shares rather than four independent estimates, because a readout whose parts do not add up to
+ * the total beside them is a readout nobody trusts. Nothing in the round trip reports anything
+ * finer than a prompt count — a completion says how many tokens it read and not a word about
+ * where they came from — so the proportions are an estimate whatever the total is.
+ *
+ * Without a reported count the total is `requestTokens`, and the tools are counted the way it and
+ * `TurnMetrics.toolSchemaTokens` count them rather than shared out, so the two agree by
+ * construction and an operator does not read one number for the tool block in the metrics and a
+ * different one here. With a reported count every part is a share of it, the tools included:
+ * that number is the server's, and the point of using it is that the parts sum to what was
+ * charged.
+ *
+ * @param body The request as it will be sent, tools included.
+ * @param options The divisor, and the reported prompt count when there is one.
+ */
+export function contextTokens(
+  body: OpenAI.ChatCompletionCreateParamsStreaming,
+  { charsPerToken, promptTokens }: ContextBreakdownOptions = {},
+): ContextBreakdown {
+  const chars = contextChars(body);
+  if (promptTokens !== undefined && promptTokens > 0) return share(chars, PARTS, promptTokens);
+  const per = divisor(charsPerToken);
+  const tools = Math.ceil(chars.tools / per);
+  const rest = Math.ceil((chars.total - chars.tools) / per);
+  const out = share(chars, ["system", "history", "toolResults"], rest);
+  out.tools = tools;
+  out.total = rest + tools;
+  return out;
+}
+
+/**
  * One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
  *
  * For the arithmetic that weighs part of a transcript against a window — `planCompaction`'s kept

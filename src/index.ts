@@ -128,8 +128,12 @@ export { resetAll } from "./reset.ts";
 export {
   backoffMs,
   CHARS_PER_TOKEN,
+  type ContextBreakdown,
+  type ContextBreakdownOptions,
   ContextOverflow,
   compact,
+  contextChars,
+  contextTokens,
   EndpointSilent,
   isModelLoading,
   isOverflow,
