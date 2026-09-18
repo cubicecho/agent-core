@@ -1,3 +1,10 @@
+# [2.18.0](https://github.com/cubicecho/agent-core/compare/v2.17.0...v2.18.0) (2026-09-18)
+
+
+### Features
+
+* an agent as a versioned JSON document ([851de22](https://github.com/cubicecho/agent-core/commit/851de2204d23ad0880249a0fc038e3d2c2e5141e)), closes [#110](https://github.com/cubicecho/agent-core/issues/110)
+
 # [2.17.0](https://github.com/cubicecho/agent-core/compare/v2.16.0...v2.17.0) (2026-09-18)
 
 
