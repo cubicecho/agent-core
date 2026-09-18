@@ -1,3 +1,10 @@
+# [2.15.0](https://github.com/cubicecho/agent-core/compare/v2.14.0...v2.15.0) (2026-09-18)
+
+
+### Features
+
+* dedupe identical tool calls on both paths, per step, with an opt-out ([8e1eb71](https://github.com/cubicecho/agent-core/commit/8e1eb71f14baf482f13021fb5cc939c505a485d2))
+
 # [2.14.0](https://github.com/cubicecho/agent-core/compare/v2.13.0...v2.14.0) (2026-09-18)
 
 
