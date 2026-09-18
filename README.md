@@ -21,7 +21,7 @@ only, Node >=22.
 | Module | What it does |
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`. |
-| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. |
+| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, fenced reasoning taken out of the answer, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
@@ -440,6 +440,33 @@ a catalogued tool without loading it first is right about what it wants, and get
 run. A preselection shapes the first step alone: those tools, no catalogue, no `load_tools` —
 a model with the menu still in front of it shops, reloading what it has or picking a sibling —
 and everything is back from the second step on.
+
+That preselection costs a round trip to a model, which on a local box is a few seconds before the
+run has started, spent on a model doing term matching. `preselect(..., { keywords: true })` does
+the matching directly and spends the model only on what the words cannot settle:
+
+```ts
+const preselected = await preselect(config, config.toolSelectModel, catalog, prompt, {
+  keywords: true, // or { minScore, dropoff } to move the bar
+  onNotice,
+});
+```
+
+`preselectByKeywords` is the matcher on its own, ranking every tool against the request by BM25
+over its name, its server's label and its one-line description. BM25 rather than counting shared
+words, because a catalogue is full of words every tool uses — "list", "get", "file" — and an
+overlap count hands the top of the ranking to whichever tool has the longest description. English
+function words are dropped outright: the inverse document frequency is meant to handle them, and
+over a real corpus it would, but twenty one-line descriptions are few enough that "for" lands in
+one of them and scores as the most distinctive word in the request.
+
+What a caller acts on is `confident`, which is deliberately hard to earn: something more
+distinctive than a word the catalogue shares has to have matched, and the tools the cap left out
+have to score well below the ones it kept — a hit just under the line scoring nearly as much as
+one just over it means the ranking chose arbitrarily, which is the case a model is worth spending
+on. Matching nothing is not confident either, since the words cannot tell a request that needs no
+tools from one whose words are not in the catalogue. An empty `toolSelectModel` still means no
+preselection at all, words included.
 
 A turn cut off at `maxTokens` is said so as a notice, and with `maxContinuations` above zero it is
 continued first. `continueTurn` is the same thing for a caller with its own loop:
