@@ -199,7 +199,7 @@ export const MAX_PER_LOAD = 12;
 
 /**
  * The most a conversation carries between turns. Bounds the tool array no matter how long the
- * conversation runs; least-recently-used names fall off the front.
+ * conversation runs; past it, the earliest-declared names this turn did not use fall off first.
  *
  * Only a multi-turn caller needs this — a run that starts from nothing each time has nothing to
  * carry. See `carryOver`, which takes another number if this one is not yours.
@@ -207,15 +207,35 @@ export const MAX_PER_LOAD = 12;
 export const MAX_CARRIED = 16;
 
 /**
- * The tools to start the next turn with: recently used, newest last, capped.
+ * The tools to start the next turn with: last turn's where they were, then what this turn used.
  *
- * @param previous Last turn's names, oldest first.
- * @param used What this turn called. Moved to the end, so the oldest unused fall off.
- * @param max How many to carry, defaulting to `MAX_CARRIED`. At least one: a cap of zero is
- * read as no cap, which is what `slice` does with it and not what anybody asking for zero meant.
+ * Nothing carried moves. A template renders the tool array near the head of the prompt, and
+ * moving each used tool to the end — which this did until it was found in a local server's cache
+ * log — reordered the array between turns and re-prefilled the whole transcript from the first
+ * moved definition. Kept in place, the next turn's array is this one's with only the unused
+ * loads gone, a prefix of it when every load was used. Past `max`, dropping a name from the
+ * middle costs the cache from there, so it happens only when the cap forces it.
+ *
+ * @param previous Last turn's names, in the order they were declared.
+ * @param used What this turn called. Names not already carried are appended in the order given,
+ * so pass them in load order to keep them where the tool array had them.
+ * @param max How many to carry, defaulting to `MAX_CARRIED`. Past it, the earliest names not in
+ * `used` go first, then the earliest of all. At least one: a cap of zero is read as one, not as
+ * no cap and not as none.
  */
-export const carryOver = (previous: string[], used: Set<string>, max = MAX_CARRIED) =>
-  [...previous.filter((name) => !used.has(name)), ...used].slice(-Math.max(1, max));
+export function carryOver(
+  previous: readonly string[],
+  used: ReadonlySet<string>,
+  max = MAX_CARRIED,
+): string[] {
+  const next = [...previous, ...[...used].filter((name) => !previous.includes(name))];
+  const cap = Math.max(1, max);
+  while (next.length > cap) {
+    const stale = next.findIndex((name) => !used.has(name));
+    next.splice(stale === -1 ? 0 : stale, 1);
+  }
+  return next;
+}
 
 /**
  * Resolves requested names against the catalogue, expanding trailing `*` wildcards.
