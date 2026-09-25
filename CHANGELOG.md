@@ -1,3 +1,10 @@
+## [2.18.1](https://github.com/cubicecho/agent-core/compare/v2.18.0...v2.18.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* carry tools between turns in place, so the next turn's tool array keeps the prompt cache ([5934d4d](https://github.com/cubicecho/agent-core/commit/5934d4d38e27dccfcc358366c0c515fd16aee2af))
+
 # [2.18.0](https://github.com/cubicecho/agent-core/compare/v2.17.0...v2.18.0) (2026-09-18)
 
 
