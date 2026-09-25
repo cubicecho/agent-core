@@ -300,7 +300,7 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 
 ### tool-loading
 
-- `carryOver` — The tools to start the next turn with: recently used, newest last, capped.
+- `carryOver` — The tools to start the next turn with: last turn's where they were, then what this turn used.
 - `catalogList` — The catalogue as a plain grouped listing of names, loaded ones marked if asked.
 - `catalogPrompt` — The catalogue block appended to the system prompt.
 - `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.

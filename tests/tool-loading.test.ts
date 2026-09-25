@@ -171,8 +171,17 @@ test("the preselect prompt carries the catalogue and the task, and not the meta-
   expect(input).not.toContain("load_tools");
 });
 
-test("carry-over keeps what was used, most recent last", () => {
+test("carry-over keeps what was used, newly used last", () => {
   expect(carryOver(["a", "b"], new Set(["b", "c"]))).toEqual(["a", "b", "c"]);
+});
+
+test("carry-over leaves a carried tool where it was when it is used again", () => {
+  // Moving it to the end reorders the tool array between turns, and loses the prompt cache.
+  expect(carryOver(["a", "b", "c"], new Set(["a"]))).toEqual(["a", "b", "c"]);
+});
+
+test("carry-over drops the earliest unused before anything used this turn", () => {
+  expect(carryOver(["a", "b", "c"], new Set(["a", "d"]), 3)).toEqual(["a", "c", "d"]);
 });
 
 test("carry-over drops the least recently used past the cap", () => {
