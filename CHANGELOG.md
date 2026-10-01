@@ -1,3 +1,10 @@
+## [2.21.1](https://github.com/cubicecho/agent-core/compare/v2.21.0...v2.21.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* read the window from /v1/models first, and stop asking /api/v0/models once it errors ([c724827](https://github.com/cubicecho/agent-core/commit/c72482723a5aed5a6b5f83ffdcf229bd44f00dfe)), closes [#135](https://github.com/cubicecho/agent-core/issues/135)
+
 # [2.21.0](https://github.com/cubicecho/agent-core/compare/v2.20.0...v2.21.0) (2026-10-01)
 
 
