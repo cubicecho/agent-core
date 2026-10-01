@@ -13,6 +13,7 @@
 export {
   type AgentLoopHooks,
   type AgentLoopOptions,
+  type AgentLoopRequest,
   type AgentLoopResult,
   buildBody,
   preselect,

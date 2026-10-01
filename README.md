@@ -102,7 +102,7 @@ than zero otherwise:
 | `firstTokenMs` | `streamTurn`, from the request to the first chunk that carried something |
 | `wallMs`, `retries`, `timeouts` | `runTurn`: the whole turn with its backoff, the lost requests sent again, and how many of those went silent |
 | `continuations` | `continueTurn` |
-| `cacheExpected`, `cacheBroken`, `cacheBreakReason`, `toolsDeclared`, `toolSchemaTokens` | `runAgentLoop`, below |
+| `cacheExpected`, `cacheBroken`, `cacheBreakReason`, `toolsDeclared`, `toolSchemaTokens`, `context` | `runAgentLoop`, below |
 
 `reasoning` is the scratchpad `onThinking` was told, kept because two common families want it
 back. gpt-oss and DeepSeek in thinking mode read the analysis behind a tool call off the assistant
@@ -365,6 +365,10 @@ the total is `requestTokens`, and the tool block is counted the way `requestToke
 `TurnMetrics.toolSchemaTokens` count it rather than shared out, so the breakdown and the metrics
 line cannot disagree about the same tool list.
 
+A host on `runAgentLoop` has no body to hand it, since the loop builds the request. It does not
+need one: each `usage` event's `turn.context` is this breakdown for that step, and `onRequest` is
+handed the request itself for a host that cuts it some other way. Both are under the loop, below.
+
 ## The loop
 
 `runAgentLoop` is the part of an agent that three servers had each written, and that had drifted
@@ -502,6 +506,25 @@ reported — `cacheBroken`, a hit short of 90% of the previous prompt. A broken 
 `cacheBreakReason` read off the request against the one before: `tools-changed`, `system-changed`,
 `history-rewritten` (a compaction or a prune in `beforeStep`), or `none-known` where the new request
 only appended, which points at the server — a slot evicted, a template that re-renders the tail.
+
+The same `turn` carries `context`, the request cut by `contextTokens` into `system`, `tools`,
+`history` and `toolResults`: shares of the prompt the endpoint reported for it, adding up to it, or
+an estimate where it reported none. A host that wants a different cut — the catalogue apart from the
+prompt it rides on, this turn's messages apart from the ones before — takes the request from
+`onRequest` and measures it itself:
+
+```ts
+await runAgentLoop({
+  ...options,
+  onRequest: ({ messages, tools, step }) => measure(step, messages, tools),
+});
+```
+
+It is called once a step, before the request goes out, with the messages and tools as the client
+is about to be sent them. It is for reading: `beforeStep` is where the transcript is changed. What
+it reports is the request as first built. A retry sends that again, but a refusal is answered with
+a lesser body and a continuation with the reply so far on the end, and neither is reported — and
+`context` is measured on the same first request, against the first prompt reported for the turn.
 
 `runMetrics(events)` adds a run up from those events — tokens, cache hit ratio and breaks by
 reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft

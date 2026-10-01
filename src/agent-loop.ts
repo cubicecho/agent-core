@@ -5,6 +5,7 @@ import {
   capabilitiesFor,
   effortFor,
   type ModelCapabilities,
+  modelCapabilitiesFor,
 } from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
 import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
@@ -24,7 +25,7 @@ import {
   turnMessages,
   withContext,
 } from "./hooks.ts";
-import { toolsChars } from "./retry.ts";
+import { contextTokens, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { askJson, tryAsk } from "./side-task.ts";
@@ -253,6 +254,22 @@ export interface ToolCallOutcome {
   ok: boolean;
 }
 
+/**
+ * One step's request as `onRequest` is handed it: what the model is about to read.
+ *
+ * The loop assembles this and nothing else sees it — the system prompt with the catalogue on it,
+ * the hooks' context on the question, the tool array ordered and sanitised as it is sent — so a
+ * host that wants to say what is filling the window has nothing to measure without it.
+ */
+export interface AgentLoopRequest {
+  /** The messages as sent, system prompt first. The request's own array, not a copy. */
+  messages: readonly OpenAI.ChatCompletionMessageParam[];
+  /** The tools as sent: ordered, sanitised, relaxed where the endpoint needs it. Empty for none. */
+  tools: readonly OpenAI.ChatCompletionTool[];
+  /** Which step of the run this is, from zero, as `beforeStep` and `onTurn` count them. */
+  step: number;
+}
+
 /** The hooks a loop runs around one question. See `hooks.ts`. */
 export interface AgentLoopHooks {
   run: HookRunner;
@@ -352,6 +369,16 @@ export interface AgentLoopOptions {
    * the answer. See `recoverToolCalls`.
    */
   recoverToolCalls?: boolean;
+  /**
+   * Each step's request as first built, before it goes out — for measuring what was sent, not for
+   * changing it, which is `beforeStep`'s.
+   *
+   * Called once a step, synchronously, and what it throws ends the run. It is not called again
+   * for what `runTurn` sends after that: a retry sends the same request, but a refusal is answered
+   * with a lesser body — relaxed schemas, a field dropped — and a continuation with the reply so
+   * far on the end, and neither is reported.
+   */
+  onRequest?: (request: AgentLoopRequest) => void;
   /** Each turn as it comes back, before its tools run. Recovered calls are in it as calls. */
   onTurn?: (turn: Turn, step: number) => void;
   /**
@@ -478,7 +505,8 @@ function cacheDiagnosis(
  * preselection shapes the first step. A turn cut off at `maxTokens` is said so as a notice,
  * because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
  * continued first. Every turn ends in a `usage` event carrying the turn's own report, with the
- * cache compared against the request before it; see `TurnUsage` and `runMetrics`.
+ * cache compared against the request before it and the request broken down by what filled it; see
+ * `TurnUsage` and `runMetrics`.
  *
  * @param options The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
@@ -486,6 +514,7 @@ function cacheDiagnosis(
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const { config, system = "", tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
+    onRequest,
     onTurn,
     beforeStep,
     parallel = false,
@@ -606,13 +635,26 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       onThinking: (text: string) => onEvent({ kind: "thinking", text }),
       onOutput: (text: string) => onEvent({ kind: "output", text }),
     };
+    // Built the way `negotiate` is about to build the first attempt — the same flags, the same
+    // model's refusals — so what the host is told is what is sent unless something is refused.
+    if (onRequest) {
+      const opening = build(supports, modelCapabilitiesFor(supports, config.model));
+      onRequest({ messages: opening.messages, tools: opening.tools ?? [], step });
+    }
     const first = await runTurn(client, supports, build, turnOptions);
     const names = declared.map((tool) => (tool.type === "function" ? tool.function.name : ""));
     // Compared before any continuation is joined on: the cache a request meets is the one its own
     // prompt found, and a continuation's prompt is this request's plus the reply so far.
+    // The breakdown measures the array `toolSchemaTokens` does, so where no prompt was reported
+    // the two give one number for the tool block rather than two.
+    const charsPerToken = charsPerTokenFor(supports, config.model);
     Object.assign(first.usage, cacheDiagnosis(previous, request, names, first.usage), {
       toolsDeclared: declared.length,
-      toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerTokenFor(supports, config.model)),
+      toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerToken),
+      context: contextTokens(
+        { model: config.model, stream: true, messages: request, tools: declared },
+        { charsPerToken, promptTokens: first.usage.prompt },
+      ),
     });
     const firstPrompt = first.usage.prompt;
     const turn =
