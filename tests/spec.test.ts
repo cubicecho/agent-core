@@ -442,6 +442,34 @@ describe("resolveAgentSpec", () => {
     expect(resolved.toolSelectModel).toBe("");
   });
 
+  it("lets a layer set a task's temperature and leave its model to the layer below", () => {
+    // Fields merge across layers before an entry without a model is dropped, so "titles at
+    // temperature 0" does not have to repeat the model.
+    const settings = parsed(doc({ tasks: { title: { model: "qwen3:0.6b" } } }));
+    const profile = parsed(doc({ tasks: { title: { temperature: 0 } } }));
+    expect(resolveAgentSpec([settings, profile]).tasks.title).toEqual({
+      model: "qwen3:0.6b",
+      endpoint: { baseUrl: "", apiKey: "" },
+      temperature: 0,
+    });
+    // With no model under it the setting configures nothing, and the task is not there.
+    expect(resolveAgentSpec([profile]).tasks).toEqual({});
+  });
+
+  it("fills nothing in on a task from the agent's own model", () => {
+    const spec = parsed(
+      doc({
+        model: { model: "big", temperature: 1, maxTokens: 4096, reasoningEffort: "high" },
+        tasks: { title: { model: "qwen3:0.6b" } },
+      }),
+    );
+    // Absent stays absent, which is what leaves it to the side task's own default.
+    expect(resolveAgentSpec([spec]).tasks.title).toEqual({
+      model: "qwen3:0.6b",
+      endpoint: { baseUrl: "", apiKey: "" },
+    });
+  });
+
   it("merges extraBody and extensions by top-level key", () => {
     const base = parsed(
       doc({ model: { extraBody: { top_k: 20, min_p: 0.05 } }, extensions: { a: 1, b: 2 } }),

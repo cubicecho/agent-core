@@ -34,7 +34,7 @@ only, Node >=22.
 | `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
-| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
+| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, `resolveApiKey` for a caller deciding which key an endpoint gets, and `taskCall` for running a side task on the settings an agent spec gives it. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `ledger` | What stretches of a transcript cost, read off the prompt counts the server reported rather than estimated: `recordRequest`, `tokensBetween`, `estimateFrom`, `rebaseLedger`. |
@@ -553,7 +553,9 @@ have to score well below the ones it kept — a hit just under the line scoring 
 one just over it means the ranking chose arbitrarily, which is the case a model is worth spending
 on. Matching nothing is not confident either, since the words cannot tell a request that needs no
 tools from one whose words are not in the catalogue. An empty `toolSelectModel` still means no
-preselection at all, words included.
+preselection at all, words included. `preselect` also takes a `temperature` and a
+`reasoningEffort`, read as `ask` reads them, and `runAgentLoop({ preselect: true })` makes the call
+itself — see "Its side tasks" below.
 
 A turn cut off at `maxTokens` is said so as a notice, and with `maxContinuations` above zero it is
 continued first. `continueTurn` is the same thing for a caller with its own loop:
@@ -1138,6 +1140,47 @@ The subpath is separate from the main entry for one reason: `client.ts` and `hoo
 a form can load it. Nothing in `src/` imports it — the same direction the config seam runs, which is
 what lets a document travel between hosts without the loop growing an opinion about where an agent
 comes from.
+
+### Its side tasks
+
+`tasks.<key>` configures a side task apart from the main model — its own model, endpoint, ceiling,
+temperature and reasoning effort — and resolution hands each back as a `ResolvedTask` holding only
+what a layer stated. `taskCall` turns one into the arguments `ask`, `askJson`, `summariser` and
+`preselect` already take, so a setting added to a task later arrives without the host's call
+changing:
+
+```ts
+const title = taskCall(config.tasks.title, { signal, onNotice }, config);
+const name = await ask(title.endpoint, title.model, "Name this chat.", firstMessage, title.options);
+```
+
+**An absent setting is the side task's own default, never the agent's.** A titler under an agent
+running at temperature 1.0 is still sent 0.3, and its ceiling is still `ask`'s 512, `summariser`'s
+1024 or `preselect`'s 256. What the task does state wins over the same field in the options beside
+it, so the options are where a host puts its own default for a task that names none. `maxTokens: 0`
+sends no ceiling, as it does on the main model.
+
+`reasoningEffort` is the one that reads differently from the main model's. A side task is sent the
+no-thinking hints by default, and absent or `"off"` keeps them; a level — `"low"`, `"high"` — is
+sent as `reasoning_effort` in their place, for a compaction model an operator pointed at a model
+that should deliberate.
+
+The third argument is the endpoint the main turn uses. Given it, a task on the same endpoint is
+sent the agent's spelling of the URL and, having no key of its own, the agent's key, so the two
+share one entry in `capabilitiesFor` and a refusal learned by either is known to both; a task on
+another endpoint is sent only a key of its own, as `resolveApiKey` has it.
+
+The loop reads two of them when asked to. `preselect: true` has `runAgentLoop` make the
+preselection itself with `tasks.toolSelect` — or with `toolSelectModel` on the agent's endpoint,
+which stays the flattened spelling for a host that is not on the spec — and `compact: true` has it
+fold the transcript before a step, once `planCompaction` says a `contextLength` window is filling,
+with `tasks.compaction` writing the summary and no falling back to the main model without it. Both
+are off by default: a host that already calls `preselect` or compacts in `beforeStep` is not sent
+a second request.
+
+```ts
+const result = await runAgentLoop({ config, preselect: { keywords: true }, compact: true, ... });
+```
 
 ## What is kept for the life of the process
 

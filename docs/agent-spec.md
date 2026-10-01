@@ -420,6 +420,28 @@ unknown task key is carried through untouched and not warned about, since a host
 package has never heard of. `toolSelectModel` flattens from `tasks.toolSelect?.model ?? ""`, where
 `""` already means do not preselect.
 
+A task's settings are its own. `maxTokens`, `temperature` and `reasoningEffort` are resolved only
+where a layer stated them, and nothing is filled in from `model`: an absent field is the side
+task's default — temperature 0.3, and the ceiling of whichever entry point runs it — so raising the
+agent's temperature to 1.0 for the chat does not make its titler creative. Layers merge a task
+field by field before an entry without a model is dropped, so a profile can set
+`tasks.title.temperature` alone over a base that names the model; with no model beneath it, the
+setting configures nothing and the task is absent.
+
+`taskCall(task, options, agent)` in `src/agent-loop.ts` is what carries them the rest of the way.
+It turns a `ResolvedTask` into the endpoint, model and options that `ask`, `askJson`, `summariser`
+and `preselect` take, with what the task states winning over the host's options. Given the agent's
+endpoint it also keys a task on that endpoint as the agent is keyed, so the two share one
+capability entry rather than learning each refusal twice. `runAgentLoop` reads `tasks.toolSelect`
+under its `preselect` option and `tasks.compaction` under `compact`, both off by default.
+
+`reasoningEffort` does not read as `model.reasoningEffort` does. A side task is sent the
+no-thinking hints unless told otherwise, so absent and `"off"` both keep them, where on the main
+model they send nothing; a level is sent as `reasoning_effort` and the hints are left out.
+`maxTokens: 0` is no ceiling on both. Sampling beyond temperature — `top_p`, `top_k`, the
+penalties — has no field on a task: `model.extraBody` carries it for the main model, and a side
+task is sent none.
+
 ## Out of scope
 
 Host scheduling, worker intervals, triggers, steps and decision trees, lanes, roles, boards,

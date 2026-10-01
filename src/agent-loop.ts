@@ -9,6 +9,12 @@ import {
 } from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
 import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
+import {
+  type CompactionOptions,
+  compactTranscript,
+  planCompaction,
+  summariser,
+} from "./compaction.ts";
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from "./config.ts";
 import { continueTurn } from "./continuation.ts";
 import {
@@ -36,7 +42,7 @@ import { type LedgerRequest, rebaseLedger, recordRequest, type TokenLedger } fro
 import { ContextOverflow, contextTokens, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
-import { askJson, tryAsk } from "./side-task.ts";
+import { askJson, type SideTask, type SideTaskOptions, tryAsk } from "./side-task.ts";
 import type { Turn, TurnUsage } from "./stream.ts";
 import { parseToolArguments, recoverToolCalls, type ToolCall } from "./tool-calls.ts";
 import {
@@ -179,6 +185,54 @@ export function resolveApiKey(
 }
 
 /**
+ * A side task's settings as the call that honours them: its endpoint, its model, and the options
+ * `ask`, `askJson`, `summariser` and `preselect` take last.
+ *
+ * A helper rather than a second signature on each of the four, so a setting added to a task later
+ * arrives through `options` without a host's call changing. What the task states wins over the
+ * same field in `options`: the host's code is written once and the task is what an operator
+ * configured over it, so a host passes its own ceiling as the value for a task that names none.
+ * A setting the task leaves out and `options` does too is absent from the result, which is what
+ * leaves it to the entry point's own default — 0.3, not the agent's temperature.
+ *
+ * A resolved spec carries no key, so a task on the agent's own endpoint would otherwise go out
+ * unkeyed, and be remembered under a second capability entry beside the agent's. Given `agent`,
+ * such a task is sent the agent's `baseUrl` as the agent spells it and, having no key of its own,
+ * the agent's key, so `capabilitiesFor` answers both with one object; a task on another endpoint
+ * is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
+ * agent's key is whatever the main turn is sent.
+ *
+ * @param task The task, ordinarily `resolved.tasks.<key>`.
+ * @param options What the host adds — cancellation, notices, `keywords` — and its own defaults
+ * for the settings a task may leave out.
+ * @param agent The endpoint the main turn uses, key included. Absent sends the task's endpoint
+ * as it stands.
+ */
+export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
+  task: SideTask,
+  options?: Options,
+  agent?: { baseUrl: string; apiKey?: string },
+): { endpoint: Endpoint; model: string; options: Options } {
+  const own = task.endpoint;
+  const shared = agent && (!own.baseUrl.trim() || sameUrl(own.baseUrl, agent.baseUrl));
+  const stated: SideTaskOptions = {};
+  if (task.maxTokens !== undefined) stated.maxTokens = task.maxTokens;
+  if (task.temperature !== undefined) stated.temperature = task.temperature;
+  if (task.reasoningEffort !== undefined) stated.reasoningEffort = task.reasoningEffort;
+  return {
+    endpoint: agent
+      ? {
+          ...own,
+          ...(shared ? { baseUrl: agent.baseUrl } : {}),
+          apiKey: resolveApiKey(own, agent, {}),
+        }
+      : own,
+    model: task.model,
+    options: { ...options, ...stated } as Options,
+  };
+}
+
+/**
  * The tools a request is likely to need, picked by a small model before the run starts, or none.
  *
  * On-demand loading otherwise spends a round trip on reading the catalogue and calling
@@ -197,7 +251,8 @@ export function resolveApiKey(
  * means by empty.
  * @param catalog The servers to choose from.
  * @param prompt The request being planned for. Only its head is read; see `preselectInput`.
- * @param options Cancellation, notices, the reply ceiling (256), the cap the choice is held to
+ * @param options Cancellation, notices, the reply ceiling (256), the temperature and reasoning
+ * effort as `ask` reads them (0.3 and none when absent), the cap the choice is held to
  * (`MAX_PER_LOAD`), and whether to try the words first.
  */
 export async function preselect(
@@ -209,12 +264,18 @@ export async function preselect(
     signal,
     onNotice,
     maxTokens = 256,
+    temperature,
+    reasoningEffort,
     maxPerLoad = MAX_PER_LOAD,
     keywords,
   }: {
     signal?: AbortSignal;
     onNotice?: (message: string) => void;
     maxTokens?: number;
+    /** As `SideTaskOptions.temperature`: absent is 0.3. */
+    temperature?: number;
+    /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
+    reasoningEffort?: string;
     maxPerLoad?: number;
     /**
      * Try `preselectByKeywords` first and spend the model only on what it cannot settle. `true`
@@ -244,7 +305,7 @@ export async function preselect(
         preselectSystem(maxPerLoad),
         preselectInput(catalog, prompt),
         PRESELECT_SCHEMA,
-        { name: "preselection", maxTokens, signal, onNotice },
+        { name: "preselection", maxTokens, temperature, reasoningEffort, signal, onNotice },
       ),
     { onNotice },
   );
@@ -361,12 +422,19 @@ export interface AgentLoopOptions {
    * `toolDiscovery` absent is eager, `maxRetries` absent is none, and `contextLength` is handed
    * to `runTurn` as `contextLimit`, which sizes each request against the window before sending.
    * `"proxy"` is on-demand loading behind a tool array that never changes; see `PROXY_TOOLS`.
+   *
+   * `tasks` is a resolved agent's, and is read only for the side tasks the loop was asked to run:
+   * `tasks.toolSelect` under `preselect` and `tasks.compaction` under `compact`. `toolSelectModel`
+   * is the flattened spelling of the first, for a host that is not on the spec.
    */
   config: Endpoint &
     ModelParams &
     Pick<ToolPolicy, "maxToolIterations"> &
-    Partial<Pick<ToolPolicy, "toolDiscovery">> &
-    Partial<RetryPolicy> & { contextLength?: number };
+    Partial<Pick<ToolPolicy, "toolDiscovery" | "toolSelectModel">> &
+    Partial<RetryPolicy> & {
+      contextLength?: number;
+      tasks?: Readonly<Record<string, SideTask>>;
+    };
   /**
    * The standing instruction, sent as the first message. On-demand and proxied modes append the
    * catalogue, each in its own wording.
@@ -421,6 +489,40 @@ export interface AgentLoopOptions {
    * mode, or proxied, where no step is routed either way.
    */
   preselectRouting?: "exclusive" | "append";
+  /**
+   * Has the loop make the preselection itself, before its first request, with the preselector
+   * the config names. Off by default: a host that passes a resolved agent and calls `preselect`
+   * on its own is not sent a second one.
+   *
+   * The preselector is `config.tasks.toolSelect` with everything it states — its endpoint, model,
+   * ceiling, temperature and reasoning effort, keyed as `taskCall` keys a task against `config` —
+   * and otherwise `config.toolSelectModel` on the config's own endpoint at `preselect`'s defaults.
+   * What it is asked about is the text of the last user message. Nothing is asked in eager mode,
+   * with neither preselector named, with no user message, or when `preselected` is given — an
+   * empty one included, which is how a host says it has already decided.
+   *
+   * `true` takes `preselect`'s defaults; an object passes `keywords` and `maxPerLoad` through.
+   * Its notices arrive as `notice` events, and a preselection that fails picks nothing rather
+   * than ending the run. It runs before the hooks gather, not beside them.
+   */
+  preselect?: boolean | { keywords?: boolean | KeywordPreselectOptions; maxPerLoad?: number };
+  /**
+   * Has the loop fold the transcript itself before a step, once `planCompaction` says the window
+   * is filling, with the summary written by `config.tasks.compaction` on its own settings. Off by
+   * default, and nothing is folded without that task — there is no falling back to the main model
+   * — or without a `config.contextLength` to plan against.
+   *
+   * It runs after `beforeStep`, on what that returned, and is `compactTranscript` and nothing
+   * more: the plan is made from the last request's reported prompt, or an estimate before the
+   * first step and after a `beforeStep` rewrite; `hooks`, when given, are told `beforeCompact`
+   * beside the summary; and a fold is said as a `notice` event. A summary that fails is a notice
+   * too and folds nothing. Tool results are not pruned — `beforeStep` is where a host does that.
+   *
+   * The result's `messages` then open with the summary in place of what was folded, so a host
+   * that keeps its transcript append-only wants `runCompaction` and a stored fold instead. `true`
+   * plans by `planCompaction`'s defaults; an object moves its thresholds.
+   */
+  compact?: boolean | Pick<CompactionOptions, "compactAt" | "keepRatio" | "target">;
   /**
    * Tools already loaded, carried from an earlier question. See `carryOver`. Not read in proxied
    * mode, where a tool is loaded only while its definition is in the history.
@@ -735,6 +837,11 @@ interface Standing {
  * the question. `call_tool` is honoured on demand too, unless the host has a tool of that name —
  * a session switched out of proxied mode still has it in its history, and the model copies it.
  *
+ * Neither side task is run unless asked for. `preselect` has the loop make the preselection and
+ * `compact` has it fold the transcript, each by the task `config.tasks` carries for it and on
+ * that task's own settings — a setting the task leaves out is the side task's default, never the
+ * run's `temperature` or `maxTokens`.
+ *
  * @param options The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
  */
@@ -766,6 +873,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     standing.read(),
   );
 }
+
+/** A message's words, as the preselector is asked about them: its string, or its text parts. */
+const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): string => {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((part) => (part.type === "text" ? part.text : [])).join("\n");
+};
 
 /**
  * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
@@ -824,8 +939,41 @@ async function runSteps(
   const onDemand = proxied || (config.toolDiscovery === "ondemand" && catalog.length > 0);
   // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
   const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
-  const preselected = onDemand ? [...(options.preselected ?? [])] : [];
+  // The loop's own preselection, where it was asked for and the host has not already decided: by
+  // the task where the config carries one, and by the flattened name on its own endpoint where
+  // it does not. `preselect` answers an empty model with nothing, so neither named asks nothing.
+  const choose = async () => {
+    const prompt = userText(options.messages.findLast((message) => message.role === "user"));
+    if (!prompt.trim()) return [];
+    const asked = {
+      ...(typeof options.preselect === "object" ? options.preselect : {}),
+      signal,
+      onNotice: notice,
+    };
+    const selector = config.tasks?.toolSelect;
+    if (!selector?.model) {
+      return preselect(config, config.toolSelectModel ?? "", catalog, prompt, asked);
+    }
+    const call = taskCall(selector, asked, config);
+    return preselect(call.endpoint, call.model, catalog, prompt, call.options);
+  };
+  const preselected = !onDemand
+    ? []
+    : options.preselect && options.preselected === undefined
+      ? await choose()
+      : [...(options.preselected ?? [])];
   if (!proxied) for (const name of preselected) loaded.add(name);
+  // The loop's own compaction, which is the task's or nothing: a summary the main model writes is
+  // a second full-price request the operator did not ask for.
+  const compactor = options.compact ? config.tasks?.compaction : undefined;
+  const summarise = (() => {
+    if (!compactor?.model) return undefined;
+    const call = taskCall(compactor, { signal, onNotice: notice }, config);
+    const write = summariser(call.endpoint, call.model, call.options);
+    // A summary that fails folds nothing, and the step goes out as it was.
+    return async (text: string) =>
+      (await tryAsk("compaction", () => write(text), { onNotice: notice })) ?? "";
+  })();
   const used = new Set<string>();
   const definitions = new Map<string, OpenAI.ChatCompletionTool>();
   for (const tool of tools) {
@@ -936,10 +1084,30 @@ async function runSteps(
       limit: config.contextLength ?? 0,
       ledger,
     });
+    let next = rewritten ?? messages;
+    if (summarise) {
+      const plan = planCompaction(next, {
+        ...(typeof options.compact === "object" ? options.compact : {}),
+        limit: config.contextLength ?? 0,
+        // The last request's prompt describes this transcript only while nothing has rewritten it.
+        ...(next === messages && previous && previous.prompt > 0 ? { used: previous.prompt } : {}),
+        charsPerToken: charsPerTokenFor(supports, config.model),
+        ...((compactor?.maxTokens ?? 0) > 0 ? { summaryTokens: compactor?.maxTokens } : {}),
+      });
+      if (plan) {
+        const folded = await compactTranscript(next, plan, summarise, {
+          ...(hooks
+            ? { hooks: { run: hooks.run, context: hooks.context, onNote: hooks.onNote } }
+            : {}),
+        });
+        if (folded !== next) notice(`compacted ${plan.cut - plan.from} messages into a summary`);
+        next = folded;
+      }
+    }
     // A rewrite may have folded a definition away, and a load answered "already loaded" would
     // then point at nothing. Forgetting costs a definition sent twice at worst.
-    if (proxied && rewritten && rewritten !== messages) loaded.clear();
-    messages = rewritten ?? messages;
+    if (proxied && next !== messages) loaded.clear();
+    messages = next;
     ledger = rebaseLedger(ledger, before, messages);
     onEvent({ kind: "turn", text: `turn ${step + 1}` });
 

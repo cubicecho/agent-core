@@ -95,10 +95,22 @@ export type SideTaskInput = string | OpenAI.ChatCompletionContentPart[];
 
 /** What a side task may be given. All optional — one given none of them still runs. */
 export interface SideTaskOptions {
-  /** Ceiling on the reply, default 512. These answers are meant to be short. */
+  /**
+   * Ceiling on the reply, default 512. These answers are meant to be short. Zero or less sends
+   * none and leaves it to the server, which is what `maxTokens: 0` means on the main model too.
+   */
   maxTokens?: number;
   /** Sampling temperature, default 0.3. Naming and classifying want the same answer twice. */
   temperature?: number;
+  /**
+   * A reasoning effort to ask for in place of the no-thinking hints, for a side task an operator
+   * has pointed at a model that should deliberate — a compaction summary is the usual one.
+   *
+   * Absent, `""` and `"off"` all keep the hints, because off is what they already ask for. Any
+   * other value is sent as `reasoning_effort`, stepped up by `effortFor` where the model has
+   * refused it by value, and `chat_template_kwargs` is left out of the request altogether.
+   */
+  reasoningEffort?: string;
   /** Abandons the call, usually because the run it supports has gone away. */
   signal?: AbortSignal;
   /**
@@ -117,13 +129,35 @@ export interface SideTaskOptions {
 }
 
 /**
+ * One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
+ *
+ * Declared here rather than imported from `spec.ts`, whose `ResolvedTask` it matches field for
+ * field: the spec module is one nothing else in `src/` imports, and a host that is not on the spec
+ * can write one of these by hand. An absent setting is the side task's own default — 0.3, the
+ * entry point's ceiling, thinking off — and never the main model's, so raising the agent's
+ * temperature for the chat does not make its titler creative. See `taskCall`.
+ */
+export interface SideTask {
+  /** The model that does the task. */
+  model: string;
+  /** Where that model is reached, which need not be where the agent's is. */
+  endpoint: Endpoint;
+  /** The reply's ceiling. Absent is the entry point's default; zero sends none. */
+  maxTokens?: number;
+  /** Absent is 0.3, whatever the agent's own temperature is. Zero means zero. */
+  temperature?: number;
+  /** As `SideTaskOptions.reasoningEffort`: a level replaces the no-thinking hints. */
+  reasoningEffort?: string;
+}
+
+/**
  * Runs a side task and returns the reply text, thinking stripped. Throws like any request.
  *
  * @param config Where to send it and how long to wait.
  * @param model The model to ask, usually smaller than the one running the work.
  * @param system The instruction.
  * @param user The input it applies to. Content parts where the model is being shown an image.
- * @param options Reply ceiling, temperature, cancellation, notices.
+ * @param options Reply ceiling, temperature, a reasoning effort, cancellation, notices.
  */
 export function ask(
   config: Endpoint,
@@ -144,9 +178,12 @@ async function complete(
   model: string,
   system: string,
   user: SideTaskInput,
-  { maxTokens = 512, temperature = 0.3, signal, onNotice }: SideTaskOptions,
+  { maxTokens = 512, temperature = 0.3, reasoningEffort, signal, onNotice }: SideTaskOptions,
   format?: (supports: Capabilities, refused: ModelCapabilities) => Record<string, unknown>,
 ): Promise<string> {
+  // The effort the caller chose, or empty where it chose none: `""` and `"off"` read as absent,
+  // since off is what the hints below already ask for.
+  const level = effortFor(undefined, reasoningEffort);
   // Whether the last request carried an effort, which `negotiate` decides and not this function.
   let sentEffort = false;
   const send = (
@@ -158,16 +195,20 @@ async function complete(
     // `none` is what a side task wants and not always what the model offers: OpenAI's reasoning
     // models refuse it by value and list `minimal` as their floor. `effortFor` answers with the
     // cheapest rung this one takes, which `negotiate` has been stepping up as it was refused.
-    const asked = effort ? effortFor(refused, "none") : "";
+    // A level the caller chose goes through the same ladder, which only ever steps up from it.
+    const asked = effort ? effortFor(refused, level || "none") : "";
     sentEffort = asked !== "";
     return getClient(config).chat.completions.create(
       {
         model,
         // The reasoning models want the ceiling spelled the other way, and they are exactly the
-        // models a side task most wants to stop deliberating.
-        ...(refused && !refused.legacyTokenLimit
-          ? { max_completion_tokens: maxTokens }
-          : { max_tokens: maxTokens }),
+        // models a side task most wants to stop deliberating. Zero is no ceiling, as it is on the
+        // main model: a spec's `maxTokens: 0` sent as `max_tokens: 0` asks for an empty reply.
+        ...(maxTokens > 0
+          ? refused && !refused.legacyTokenLimit
+            ? { max_completion_tokens: maxTokens }
+            : { max_tokens: maxTokens }
+          : {}),
         // One that will only run at the temperature it was built with is sent none: a side task
         // wants the same answer twice, and 1.0 from that model is as close as it gets.
         ...(refused && !refused.chosenTemperature ? {} : { temperature }),
@@ -197,7 +238,9 @@ async function complete(
     });
 
   const key = hintKey(endpointId(config), model);
-  const hints = !noHints.has(key);
+  // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
+  // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
+  const hints = !level && !noHints.has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {
     response = await attempt(hints, true);
@@ -208,7 +251,11 @@ async function complete(
     // notice says what was tried rather than what was wrong.
     const effort = sentEffort;
     if (!(hints || effort) || !rejectedTheRequest(error)) throw error;
-    onNotice?.(`${model} rejected a request carrying the no-thinking hints; retrying without them`);
+    onNotice?.(
+      level
+        ? `${model} rejected a request carrying a reasoning effort; retrying without it`
+        : `${model} rejected a request carrying the no-thinking hints; retrying without them`,
+    );
     response = await attempt(false, false);
     // Latched on the finding, not the hypothesis: a context overflow is a 400 `negotiate` does
     // not recognise too, and it fails the retry the same way, leaving the next call to try the
