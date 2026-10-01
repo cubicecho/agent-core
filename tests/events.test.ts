@@ -40,6 +40,17 @@ describe("emit", () => {
     expect(history("b")).toEqual([]);
   });
 
+  it("carries a call id where the emitter gave one, and adds none where it did not", () => {
+    emit("r", { kind: "tool-call", id: "c1", name: "read" });
+    emit("r", { kind: "tool-result", id: "c1", name: "read", ok: true });
+    emit("r", { kind: "tool-call", name: "read" });
+    emit("r", { kind: "done", ok: true });
+
+    expect(history("r").map((event) => event.id)).toEqual(["c1", "c1", undefined, undefined]);
+    // Absent rather than empty: an event from before the field existed reads the same as it did.
+    expect(history("r").map((event) => "id" in event)).toEqual([true, true, false, false]);
+  });
+
   it("keeps separate runs' sequences to themselves", () => {
     emit("a", { kind: "output", text: "x" });
     emit("b", { kind: "output", text: "y" });
@@ -394,6 +405,23 @@ describe("fold", () => {
     const blocks = fold(history("r"));
     blocks[0].text = "REDACTED";
     expect(history("r").map((event) => event.text)).toEqual(["a", "b"]);
+  });
+
+  it("keeps the call id on the tool blocks it passes through", () => {
+    emit("r", { kind: "output", text: "a" });
+    emit("r", { kind: "output", text: "b" });
+    emit("r", { kind: "tool-call", id: "c1", name: "read", text: "{}" });
+    emit("r", { kind: "tool-call", id: "c2", name: "read", text: "{}" });
+    emit("r", { kind: "tool-result", id: "c2", name: "read", ok: true, text: "two" });
+    emit("r", { kind: "tool-result", id: "c1", name: "read", ok: true, text: "one" });
+
+    expect(fold(history("r")).map((block) => [block.kind, block.id, block.text])).toEqual([
+      ["output", undefined, "ab"],
+      ["tool-call", "c1", "{}"],
+      ["tool-call", "c2", "{}"],
+      ["tool-result", "c2", "two"],
+      ["tool-result", "c1", "one"],
+    ]);
   });
 });
 
