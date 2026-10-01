@@ -10,7 +10,13 @@ import type { CatalogServer } from "./catalog.ts";
 import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from "./config.ts";
 import { continueTurn } from "./continuation.ts";
-import { errorMessage } from "./errors.ts";
+import {
+  AgentLoopError,
+  type AgentLoopFailure,
+  AgentLoopOverflow,
+  errorMessage,
+  ToolIterationLimit,
+} from "./errors.ts";
 import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics } from "./events.ts";
 import {
   type Gathered,
@@ -24,7 +30,7 @@ import {
   turnMessages,
   withContext,
 } from "./hooks.ts";
-import { toolsChars } from "./retry.ts";
+import { ContextOverflow, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { askJson, tryAsk } from "./side-task.ts";
@@ -355,6 +361,22 @@ export interface AgentLoopOptions {
   /** Each turn as it comes back, before its tools run. Recovered calls are in it as calls. */
   onTurn?: (turn: Turn, step: number) => void;
   /**
+   * Each message as the loop appends it to the transcript, in transcript order, and awaited before
+   * the loop goes on — so a host that stores its transcript has written the assistant message
+   * before its tools run, and every tool result before the next request is sent.
+   *
+   * The assistant message is the one replayed on later requests — arguments repaired, recovered
+   * calls folded in — and comes with its `turn`, as `onTurn` was handed it, for the `reasoning` a
+   * host keeps beside the message. A tool result comes without one. What it returns is ignored:
+   * `beforeStep` is the one way to rewrite the transcript. What it throws ends the run, and it is
+   * not called again for that run.
+   */
+  onMessage?: (
+    message: OpenAI.ChatCompletionMessageParam,
+    step: number,
+    turn?: Turn,
+  ) => void | Promise<void>;
+  /**
    * How many times an answer cut off at `maxTokens` is continued, zero — the default — for never.
    * Opt-in because it spends another request, and on a server that does not continue a trailing
    * assistant message it spends one to find that out. See `continueTurn`.
@@ -466,10 +488,30 @@ function cacheDiagnosis(
   return found;
 }
 
+/** What a tool call the run was stopped during is answered with, in place of a result. */
+const STOPPED_CALL = "Stopped before this call finished.";
+
+/** The same for a call of that step the loop never got to. */
+const UNRUN_CALL = "Not run: the run stopped first.";
+
+/** How `runAgentLoop` reads the run as it stands, from outside the steps that are building it. */
+interface Standing {
+  read: () => AgentLoopFailure;
+}
+
 /**
  * Runs a question to its answer: one `runTurn` per step, the tools it asks for between them,
  * until a turn asks for none. Throws when `maxToolIterations` is spent, when stopped, and on
  * whatever `runTurn` throws — `ContextOverflow` among them, however it was found out.
+ *
+ * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded` and
+ * `used` — because the steps before a failure were real and a host that stores its transcript
+ * has nothing else to store them from. A spent budget is a `ToolIterationLimit`, an overflow is
+ * an `AgentLoopOverflow`, which is still a `ContextOverflow`, and anything else is an
+ * `AgentLoopError` with what was caught as its `cause` and its message as its own; `failedRun`
+ * reads the run off any of the three. A failure while a step's tools run leaves the transcript
+ * well-formed: the results that came back are kept, and each call without one is answered with a
+ * line saying it was stopped or never run, since a call with no result is refused on replay.
  *
  * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system
  * prompt unchanged from step to step, a load adds to the tool array — which every request sends
@@ -484,9 +526,46 @@ function cacheDiagnosis(
  * and cancellation. See `AgentLoopOptions`.
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
+  // Until the steps have set themselves up there is only what the caller handed over.
+  const standing: Standing = {
+    read: () => ({
+      messages: [...options.messages],
+      usage: { prompt: 0, completion: 0, total: 0, cached: 0 },
+      toolCalls: [],
+      loaded: [],
+      used: [],
+    }),
+  };
+  let result: AgentLoopResult | undefined;
+  try {
+    result = await runSteps(options, standing);
+  } catch (error) {
+    // Wrapped rather than annotated: an abort's reason is one object shared by every run under
+    // the signal, so the run cannot be hung on the error itself. An overflow keeps its class,
+    // because `instanceof ContextOverflow` is how a caller knows to compact and try again.
+    throw error instanceof ContextOverflow
+      ? new AgentLoopOverflow(error.message, standing.read(), { cause: error })
+      : new AgentLoopError(errorMessage(error), standing.read(), { cause: error });
+  }
+  if (result) return result;
+  throw new ToolIterationLimit(
+    `Stopped after ${options.config.maxToolIterations} tool iterations.`,
+    standing.read(),
+  );
+}
+
+/**
+ * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
+ * when `maxToolIterations` is spent, and tells `standing` how to read the run either way.
+ */
+async function runSteps(
+  options: AgentLoopOptions,
+  standing: Standing,
+): Promise<AgentLoopResult | undefined> {
   const { config, system = "", tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
     onTurn,
+    onMessage,
     beforeStep,
     parallel = false,
     recoverToolCalls: recover = true,
@@ -539,6 +618,25 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     [...names].flatMap((name) => definitions.get(name) ?? []);
 
   let messages = [...options.messages];
+  const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
+  const toolCalls: ToolCallOutcome[] = [];
+  standing.read = () => ({ messages, usage, toolCalls, loaded: [...loaded], used: [...used] });
+  // Once `onMessage` has thrown the run is ending on that, and the results still to be written
+  // into the transcript are not offered to a host that has just failed to take one.
+  let heard = true;
+  const announce = async (
+    message: OpenAI.ChatCompletionMessageParam,
+    step: number,
+    turn?: Turn,
+  ) => {
+    if (!onMessage || !heard) return;
+    try {
+      await onMessage(message, step, turn);
+    } catch (error) {
+      heard = false;
+      throw error;
+    }
+  };
   // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
   // moves the question without losing it — and one that summarises the question away takes the
   // hooks' context with it, which is right.
@@ -551,8 +649,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       })
     : { context: "", notes: [] };
 
-  const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
-  const toolCalls: ToolCallOutcome[] = [];
   const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
   let previous: Sent | undefined;
 
@@ -673,7 +769,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       }
     });
 
-    messages.push({
+    const assistant: OpenAI.ChatCompletionAssistantMessageParam = {
       role: "assistant",
       content: content || null,
       ...(parsed.length
@@ -684,7 +780,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
             })),
           }
         : {}),
-    });
+    };
+    messages.push(assistant);
+    await announce(assistant, step, shown);
 
     if (!calls.length) {
       if (hooks) {
@@ -764,23 +862,63 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       return { id: call.id, name, ok, content };
     };
 
-    const outcomes: Awaited<ReturnType<typeof run>>[] = [];
-    if (parallel) {
-      signal?.throwIfAborted();
-      outcomes.push(...(await Promise.all(parsed.map(run))));
-    } else {
-      for (const call of parsed) {
+    // By position, so a call that came back while another was being stopped is still found.
+    const outcomes: (Awaited<ReturnType<typeof run>> | undefined)[] = parsed.map(() => undefined);
+    // How many of the step's calls were handed off, and how many have their result in the
+    // transcript. Both count from the front, since results are written in the order asked.
+    let begun = 0;
+    let kept = 0;
+    const keep = async (id: string, content: string) => {
+      const result: OpenAI.ChatCompletionToolMessageParam = {
+        role: "tool",
+        tool_call_id: id,
+        content,
+      };
+      messages.push(result);
+      kept++;
+      await announce(result, step);
+    };
+    try {
+      if (parallel) {
         signal?.throwIfAborted();
-        outcomes.push(await run(call));
+        begun = parsed.length;
+        await Promise.all(
+          parsed.map(async (call, at) => {
+            outcomes[at] = await run(call);
+          }),
+        );
+        for (const { id, name, ok, content } of outcomes.flatMap((outcome) => outcome ?? [])) {
+          toolCalls.push({ name, ok });
+          await keep(id, content);
+        }
+      } else {
+        for (const [at, call] of parsed.entries()) {
+          signal?.throwIfAborted();
+          begun = at + 1;
+          const { id, name, ok, content } = await run(call);
+          toolCalls.push({ name, ok });
+          await keep(id, content);
+        }
       }
-    }
-    for (const { id, name, ok, content } of outcomes) {
-      toolCalls.push({ name, ok });
-      messages.push({ role: "tool", tool_call_id: id, content });
+    } catch (error) {
+      // A call with no result is a transcript no endpoint takes back, so every call of the step
+      // is answered before the throw: with what it returned where it had, and otherwise with a
+      // line saying it was stopped, or never run. Only a call that was made counts in `toolCalls`.
+      for (const [at, { call }] of parsed.entries()) {
+        if (at < kept) continue;
+        const outcome = outcomes[at];
+        if (at < begun) toolCalls.push({ name: call.function.name, ok: outcome?.ok ?? false });
+        // The run is already ending on `error`; a host that cannot take this result does not
+        // get to replace it.
+        await keep(call.id, outcome?.content ?? (at < begun ? STOPPED_CALL : UNRUN_CALL)).catch(
+          () => {},
+        );
+      }
+      throw error;
     }
   }
 
-  throw new Error(`Stopped after ${config.maxToolIterations} tool iterations.`);
+  return undefined;
 }
 
 /**

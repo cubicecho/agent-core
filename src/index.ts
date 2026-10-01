@@ -83,7 +83,14 @@ export {
   continueTurn,
   isContinuable,
 } from "./continuation.ts";
-export { errorMessage } from "./errors.ts";
+export {
+  AgentLoopError,
+  type AgentLoopFailure,
+  AgentLoopOverflow,
+  errorMessage,
+  failedRun,
+  ToolIterationLimit,
+} from "./errors.ts";
 export {
   configureEvents,
   type EventBusOptions,
