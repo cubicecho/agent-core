@@ -56,10 +56,31 @@ describe("contextLimitFor", () => {
     vi.unstubAllGlobals();
   });
 
-  it("reads the window off the endpoint's listing", async () => {
+  /** Every URL a stubbed fetch was asked for, in order. */
+  const asked = (fetch: { mock: { calls: unknown[][] } }) =>
+    fetch.mock.calls.map(([url]) => String(url));
+
+  it("reads the window off the endpoint's listing, and asks nothing else", async () => {
     // vLLM's spelling, top-level.
     list.mockResolvedValue(listing({ id: "qwen", max_model_len: 32768 }));
+    const fetch = routes({});
+    vi.stubGlobal("fetch", fetch);
     await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("never asks the native routes of a server whose listing states the window", async () => {
+    // gufo: `/props` is a llama-server stub with no `default_generation_settings`, there is no
+    // `/api/v0/models`, and the listing carries the served window. Asked natively first, that was
+    // two dead requests a lookup, again every `LISTING_MISS_MS`, for the life of the process.
+    list.mockResolvedValue(listing({ id: "qwen", context_length: 32768 }));
+    const fetch = routes({ "/props": { model: "qwen", template: "", model_info: {} } });
+    vi.stubGlobal("fetch", fetch);
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
+    expect(fetch).not.toHaveBeenCalled();
     expect(list).toHaveBeenCalledTimes(1);
   });
 
@@ -71,37 +92,114 @@ describe("contextLimitFor", () => {
   });
 
   it("prefers the window llama.cpp is serving over the one the model was trained with", async () => {
-    // A 256k model started at `-c 16384`: the listing says one, `/props` the other.
+    // A 256k model started at `-c 16384`: the listing says one, `/props` the other. The listing is
+    // asked first and answers, and a trained window still loses to the served one.
     list.mockResolvedValue(listing({ id: "qwen", meta: { n_ctx_train: 262144 } }));
     const fetch = routes({ "/props": { default_generation_settings: { n_ctx: 16384 } } });
     vi.stubGlobal("fetch", fetch);
     await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(16384);
-    expect(fetch.mock.calls[0]?.[0]).toBe("http://local/props?model=qwen");
-    expect(list).not.toHaveBeenCalled();
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(16384);
+    expect(asked(fetch)).toEqual(["http://local/props?model=qwen"]);
+    expect(list).toHaveBeenCalledTimes(1);
   });
 
   it("reads the window LM Studio has the model loaded in", async () => {
-    vi.stubGlobal(
-      "fetch",
-      routes({
-        "/api/v0/models": {
-          data: [
-            { id: "other", loaded_context_length: 4096 },
-            { id: "qwen", max_context_length: 131072, loaded_context_length: 32768 },
-          ],
-        },
-      }),
+    // LM Studio's listing names the model and says nothing about a window, so the lookup falls
+    // through to the native routes, `/api/v0/models` being the one that exists for this server.
+    list.mockResolvedValue(
+      listing({ id: "qwen", object: "model", owned_by: "organization_owner" }),
     );
+    const fetch = routes({
+      "/api/v0/models": {
+        data: [
+          { id: "other", loaded_context_length: 4096 },
+          { id: "qwen", max_context_length: 131072, loaded_context_length: 32768 },
+        ],
+      },
+    });
+    vi.stubGlobal("fetch", fetch);
     await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
+    expect(asked(fetch)).toEqual(["http://local/props?model=qwen", "http://local/api/v0/models"]);
+  });
+
+  it("goes on asking LM Studio about a model it has not loaded yet", async () => {
+    list.mockResolvedValue(listing({ id: "qwen" }));
+    const loaded = (window?: number) => ({
+      "/api/v0/models": { data: [{ id: "qwen", loaded_context_length: window }] },
+    });
+    vi.stubGlobal("fetch", routes(loaded()));
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(0);
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.stubGlobal("fetch", routes(loaded(32768)));
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
+  });
+
+  it("asks the native routes for a model the listing does not name", async () => {
+    // llama.cpp under a `-a` alias that is not the configured name: the listing has nothing for
+    // it, and a single-model server answers `/props` whatever name it is asked under.
+    list.mockResolvedValue(listing({ id: "alias", meta: { n_ctx_train: 262144 } }));
+    vi.stubGlobal("fetch", routes({ "/props": { default_generation_settings: { n_ctx: 16384 } } }));
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(16384);
+  });
+
+  it("asks the native routes when the listing fails", async () => {
+    list.mockRejectedValue(new Error("no listing here"));
+    vi.stubGlobal("fetch", routes({ "/props": { default_generation_settings: { n_ctx: 16384 } } }));
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(16384);
   });
 
   it("stops asking a server that has neither route", async () => {
     const fetch = routes({});
     vi.stubGlobal("fetch", fetch);
-    list.mockResolvedValue(listing({ id: "qwen", max_model_len: 32768 }));
+    list.mockResolvedValue(listing({ id: "qwen" }, { id: "llama" }));
     await contextLimitFor({ ...endpoint, model: "qwen" });
     await contextLimitFor({ ...endpoint, model: "llama" });
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await contextLimitFor({ ...endpoint, model: "qwen" });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops asking /api/v0/models once it is not there, whatever /props said", async () => {
+    // `/props` answers, with no window in it, so this is not a server with neither route, and
+    // the 404 from the other route used to be forgotten with every lookup.
+    const fetch = routes({ "/props": { model: "qwen" } });
+    vi.stubGlobal("fetch", fetch);
+    list.mockResolvedValue(listing({ id: "qwen" }, { id: "llama" }));
+    await contextLimitFor({ ...endpoint, model: "qwen" });
+    await contextLimitFor({ ...endpoint, model: "llama" });
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await contextLimitFor({ ...endpoint, model: "qwen" });
+    expect(asked(fetch)).toEqual([
+      "http://local/props?model=qwen",
+      "http://local/api/v0/models",
+      "http://local/props?model=llama",
+      "http://local/props?model=qwen",
+    ]);
+  });
+
+  it("leaves /api/v0/models alone for a while after any other error, then asks again", async () => {
+    // A 500 is not a missing route, and may pass. The route is not asked on behalf of the next
+    // model either, but only for `LISTING_MISS_MS`.
+    let status = 500;
+    const fetch = vi.fn(async (url: string) =>
+      new URL(url).pathname === "/api/v0/models"
+        ? new Response(JSON.stringify({ data: [{ id: "qwen", loaded_context_length: 32768 }] }), {
+            status,
+          })
+        : new Response("not found", { status: 404 }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    list.mockResolvedValue(listing({ id: "qwen" }, { id: "llama" }));
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(0);
+    await expect(contextLimitFor({ ...endpoint, model: "llama" })).resolves.toBe(0);
+    expect(asked(fetch)).toEqual([
+      "http://local/props?model=qwen",
+      "http://local/api/v0/models",
+      "http://local/props?model=llama",
+    ]);
+    status = 200;
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
   });
 
   it("does not remember a server it could not reach", async () => {
@@ -109,7 +207,7 @@ describe("contextLimitFor", () => {
       throw new TypeError("fetch failed");
     });
     vi.stubGlobal("fetch", fetch);
-    list.mockResolvedValue(listing({ id: "qwen", max_model_len: 32768 }));
+    list.mockResolvedValue(listing({ id: "qwen", meta: { n_ctx_train: 32768 } }));
     await expect(contextLimitFor({ ...endpoint, model: "qwen" })).resolves.toBe(32768);
     await contextLimitFor({ ...endpoint, model: "qwen" });
     expect(fetch).toHaveBeenCalledTimes(2);

@@ -279,15 +279,24 @@ const turn = await runTurn(client, supports, build, {
 });
 ```
 
-`contextLimitFor` answers the operator's number when there is one. Otherwise it asks for the window
-the server is actually serving the model in (`servedWindow`): llama.cpp's `/props`
-(`default_generation_settings.n_ctx`) and LM Studio's `/api/v0/models` (`loaded_context_length`).
-That differs from the trained window in the case the guard exists for, a 256k model started at `-c
-16384`. A server with neither route is latched and not asked again. Failing both, it reads the
-`/v1/models` listing: `max_model_len` from vLLM, `context_length` from OpenRouter, and llama.cpp's
-`meta.n_ctx_train`, which is only the trained window. Ollama reports no window on any route this
-reads, and truncates an over-long prompt rather than refusing it, so on Ollama pass `contextLength`
-or there is no guard at all.
+`contextLimitFor` answers the operator's number when there is one. Otherwise it reads the
+`/v1/models` listing first. A window at the top of the model's entry (`context_length`,
+`max_context_window`, `max_model_len`, `context_window` or `n_ctx`: vLLM's `max_model_len`,
+OpenRouter's `context_length`) is taken as the one being served, and nothing else is asked.
+
+Where the listing does not settle it, the server's own API is asked (`servedWindow`): llama.cpp's
+`/props` (`default_generation_settings.n_ctx`), then LM Studio's `/api/v0/models`
+(`loaded_context_length`). That covers a model listed with no window, which is LM Studio, and one
+listed with only `meta.n_ctx_train`, which is llama.cpp. The trained window differs from the served
+one in the case the guard exists for, a 256k model started at `-c 16384`, so it is used only when
+neither native route gives a number. A server with neither route is latched and not asked again.
+`/api/v0/models` is also dropped on its own: for the life of the process once it answers 404, 405
+or 501, and for `listingMissMs` after any other error.
+
+A top-level listing key is trusted without a second opinion, so on a server that puts a trained
+window there, pass `contextLength`. Ollama reports no window on any route this reads, and truncates
+an over-long prompt rather than refusing it, so on Ollama pass `contextLength` or there is no guard
+at all.
 
 What is weighed is the prompt plus the reply ceiling the body carries, under whichever spelling
 was chosen, because that is what the endpoint weighs: a 30k prompt into a 32k window with
