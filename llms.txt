@@ -23,7 +23,8 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
-- `ToolCallRequest` (type) — One call the model made, as `dispatch` is handed it.
+- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
+- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
 ### calibration
 

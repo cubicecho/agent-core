@@ -408,6 +408,26 @@ predicate is asked per call — which is how `send_email` opts out, since twice 
 nothing in an OpenAI tool definition says which tools those are. A pool that reads the MCP
 `readOnlyHint` and `idempotentHint` annotations can answer it; this package cannot.
 
+Three kinds of call never reach `dispatch`: `load_tools`, which the loop answers itself, a call
+whose arguments could not be read, and that identical repeat. A host that draws each call as a
+card and fills it in when the result lands hears of those through `onToolCall` and `onToolResult`,
+which are told of every call the model made — the request as `dispatch` would have been handed it
+(with empty `args` where they could not be read), then `{ id, name, ok, content }` with the whole
+text the model reads. A repeat gets a result of its own under its own id, carrying the answer it
+shares. Neither is awaited. The `tool-call` and `tool-result` events carry the same `id`, with
+`text` still cut by `preview`, and so does each entry of the result's `toolCalls` — which is what
+tells two calls to one tool apart when `parallel` lands their results out of order. An id is
+distinct within a step, and a server is free to use it again in a later one.
+
+```ts
+await runAgentLoop({
+  // ...
+  onToolCall: ({ id, name, args }) => send({ type: "tool_use", id, name, input: args }),
+  onToolResult: ({ id, ok, content }) =>
+    send({ type: "tool_result", toolUseId: id, content, isError: !ok }),
+});
+```
+
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
 `True` and `None`, bare keys, a trailing comma — is repaired, without touching what is inside a
@@ -445,6 +465,20 @@ a catalogued tool without loading it first is right about what it wants, and get
 run. A preselection shapes the first step alone: those tools, no catalogue, no `load_tools` —
 a model with the menu still in front of it shops, reloading what it has or picking a sibling —
 and everything is back from the second step on.
+
+That first step has a request head of its own — a different system prompt and a different tool
+array from the last turn's final request, and from this turn's second step — so a prompt cache
+misses the whole transcript twice on a question that has a preselection. `preselectRouting:
+"append"` drops the separate head: the shortlist is loaded as a `load_tools` call would have loaded
+it, after whatever `loaded` carried and without declaring a carried name twice, and the first step
+is sent like every other, catalogue and `load_tools` included. The trade is the menu back in front
+of the model on the step the shortlist was meant to settle. Neither cost has been measured against
+the other, so `"exclusive"` stays the default.
+
+Appended is where the tools go before `toolOrder` orders them. With `toolOrder: false` a carried
+tool array stays a strict prefix of the new one. With name order, the default, a preselected tool
+is sorted in and moves every definition after it — the first step still matches the second, but
+the last turn's cache holds only as far as the first new name.
 
 That preselection costs a round trip to a model, which on a local box is a few seconds before the
 run has started, spent on a model doing term matching. `preselect(..., { keywords: true })` does
@@ -544,6 +578,47 @@ whether the host compacted — neither is in the events.
 `beforeStep` is handed the transcript before each request and may return a replacement, which is
 where compaction goes (below). Hooks are gathered once, onto the question, and never written into
 the transcript that comes back; `afterTurn` is told the reply without the run waiting on it.
+
+That leaves an earlier question's context to the host, because the loop only ever touches the
+current one. A question sent with `<context>` blocks one turn and bare the next is a different
+prompt from that message on, and the server's prefix cache is lost behind it — on every turn. So
+the result hands back what it said, `context` and the `preface` above it, for the host to keep
+beside the question and put back with `withContext` on every later call:
+
+```ts
+import { runAgentLoop, withContext } from "@cubicecho/agent-core";
+
+// Stored: what the user typed, and what the hooks added to it the turn it was asked.
+const history = session.messages.reduce(
+  (sent, message, at) => withContext(sent, at, message.hookContext ?? "", message.hookPreface),
+  session.messages.map(({ hookContext, hookPreface, ...message }) => message),
+);
+const result = await runAgentLoop({
+  config,
+  messages: [...history, { role: "user", content: prompt }],
+  dispatch,
+  hooks: { run, context: { session: { id }, prompt } },
+});
+session.messages.push(
+  { role: "user", content: prompt, hookContext: result.context, hookPreface: result.preface },
+  ...result.messages.slice(history.length + 1),
+);
+await result.afterTurn; // only if its notes are wanted, or the process is about to exit
+```
+
+`withContext` with those two arguments builds the question exactly as the loop sent it, whatever
+`configureHooks` has since been told, so the next request is the last one with its tail added.
+`result.messages` is the transcript the loop was given plus what the run added — earlier questions
+as the host passed them, this one as typed — which is why the snippet stores only the new tail.
+
+`afterTurn` on the result is the `afterTurn` hooks' notes as a promise. The loop still returns
+without waiting; a host that stores those notes with the turn, or would otherwise exit before the
+turn is remembered, awaits it once the answer is out.
+
+The loop gathers before its first request, and nothing of the host's can run beside that. A host
+with pre-turn work to overlap with the hooks — compaction, a preselection — calls `gather` itself,
+applies `withContext` to the current question as well, calls `notify` after, and passes no `hooks`
+(see [Hooks](#hooks)).
 
 `resolveApiKey` is exported and not applied, because which key an endpoint gets is a rule a
 consumer states and a library guessing it could send one where it was not meant to go. The rule
@@ -769,7 +844,10 @@ void notify(run, "afterTurn", { ...context, reply, turn: { ...context.turn, mess
 
 The context goes on this turn's question and never into the system prompt — a prompt that changed
 every turn would miss the prompt cache every turn — and `withContext` returns a new array, so a
-host that stores what the user typed never stores the context as something they said. Every
+host that stores what the user typed never stores the context as something they said. It is stored
+beside the question instead, and put back on every later request: a question that loses its blocks
+on the next turn rewrites the prompt from there on, and the server's prefix cache with it.
+`runAgentLoop` hands back `context` and `preface` for the same purpose. Every
 injecting hook shares `HOOK_CONTEXT_TOKENS` (2000) by default, each held to its own `maxTokens`
 inside that, so a generous hook cannot crowd out the conversation it was meant to inform.
 
