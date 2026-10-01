@@ -300,9 +300,27 @@ export interface AgentLoopOptions {
   /**
    * What `preselect` picked. The first step is sent these and nothing else — no catalogue, no
    * `load_tools` — because a model with the menu still in front of it shops: it reloads what it
-   * has or picks a sibling. Everything comes back on the step after.
+   * has or picks a sibling. Everything comes back on the step after. `preselectRouting` trades
+   * that for a first step shaped like the rest.
    */
   preselected?: readonly string[];
+  /**
+   * What a preselection does to the first step. `"exclusive"`, the default, is the shortlist alone
+   * as `preselected` describes — and a system prompt and tool array unlike the last request's and
+   * unlike the next step's, so a prompt cache misses the whole transcript on the first step and
+   * again on the second. `"append"` loads the shortlist as a `load_tools` call would have and
+   * sends the first step like any other: the catalogue, `load_tools`, what `loaded` carried, then
+   * the shortlist after it, with a name already carried left where it is. The price is the menu
+   * back in front of the model. Which costs more has not been measured, which is why the default
+   * has not moved.
+   *
+   * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
+   * place and moves every definition after it, so only `toolOrder: false` keeps a carried array
+   * a strict prefix. Either way the first step's system prompt is the second's, and so is its
+   * tool array until something else is loaded. Nothing to do without a preselection, or in eager
+   * mode.
+   */
+  preselectRouting?: "exclusive" | "append";
   /** Tools already loaded, carried from an earlier question. See `carryOver`. */
   loaded?: Iterable<string>;
   /** Runs one tool call and returns what the model reads. What it throws, the model reads too. */
@@ -475,8 +493,8 @@ function cacheDiagnosis(
  * prompt unchanged from step to step, a load adds to the tool array — which every request sends
  * in the stable order `toolOrder` asks for — and
  * a catalogued tool called without being loaded is loaded and run rather than refused, and a
- * preselection shapes the first step. A turn cut off at `maxTokens` is said so as a notice,
- * because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
+ * preselection shapes the first step unless `preselectRouting` says to append it. A turn cut off
+ * at `maxTokens` is said so as a notice, because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
  * continued first. Every turn ends in a `usage` event carrying the turn's own report, with the
  * cache compared against the request before it; see `TurnUsage` and `runMetrics`.
  *
@@ -493,6 +511,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     maxContinuations = 0,
     toolOrder = true,
     dedupeToolCalls = true,
+    preselectRouting = "exclusive",
   } = options;
   const dedupable = typeof dedupeToolCalls === "function" ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
@@ -563,7 +582,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     messages = (await beforeStep?.(messages, step)) ?? messages;
     onEvent({ kind: "turn", text: `turn ${step + 1}` });
 
-    const routed = preselected.length > 0 && step === 0;
+    // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
+    // first step needs nothing of its own.
+    const routed = preselectRouting !== "append" && preselected.length > 0 && step === 0;
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
@@ -577,7 +598,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     );
     // Unmarked, so the system prompt is the same text on every step and a load does not throw
     // away the cache for the whole transcript. What is loaded is said in `declared` and in the
-    // `load_tools` result instead. The preselected first step is the one exception, by design.
+    // `load_tools` result instead. The preselected first step is the one exception, by design,
+    // and `preselectRouting: "append"` is the way out of it.
     const prompt = onDemand && !routed ? `${system}\n\n${catalogPrompt(catalog)}`.trim() : system;
     const request: OpenAI.ChatCompletionMessageParam[] = [
       ...(prompt ? [{ role: "system" as const, content: prompt }] : []),

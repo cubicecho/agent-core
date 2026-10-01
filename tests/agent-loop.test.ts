@@ -890,6 +890,135 @@ describe("runAgentLoop", () => {
       expect((create.mock.calls[0][0] as Body).messages[0].content).toBe("sys");
       expect((create.mock.calls[1][0] as Body).messages[0].content).toContain("Tool catalogue");
     });
+
+    describe("with the preselection appended", () => {
+      const wide = [
+        {
+          id: "s",
+          label: "S",
+          tools: ["s__list", "s__read", "s__write"].map((name) => ({ name, description: name })),
+        },
+      ];
+      const all = [tool("s__list"), tool("s__read"), tool("s__write")];
+      const bodies = () => create.mock.calls.map(([body]) => body as Body);
+
+      it("sends the first step the head of every other step", async () => {
+        create
+          .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
+          .mockReturnValueOnce(says("done"));
+        const result = await runAgentLoop({
+          config: onDemand,
+          system: "sys",
+          messages: question,
+          tools: all,
+          catalog: wide,
+          preselected: ["s__list"],
+          preselectRouting: "append",
+          toolOrder: false,
+          dispatch: async () => "ok",
+        });
+        const [first, second] = bodies();
+        expect(first.messages[0].content).toContain("Tool catalogue");
+        expect(first.messages[0]).toEqual(second.messages[0]);
+        expect(declared()[0]).toEqual([LOAD_TOOLS, "s__list"]);
+        // What step 0 declared is the start of what step 1 declares, definition for definition.
+        expect(second.tools?.slice(0, first.tools?.length)).toEqual(first.tools);
+        expect(declared()[1]).toEqual([LOAD_TOOLS, "s__list", "s__write"]);
+        expect(result.loaded).toEqual(["s__list", "s__write"]);
+      });
+
+      it("puts the shortlist after what was carried, and declares a carried name once", async () => {
+        create.mockReturnValueOnce(says("done"));
+        const result = await runAgentLoop({
+          config: onDemand,
+          messages: question,
+          tools: all,
+          catalog: wide,
+          loaded: ["s__write", "s__read"],
+          preselected: ["s__read", "s__list"],
+          preselectRouting: "append",
+          toolOrder: false,
+          dispatch: async () => "ok",
+        });
+        // The carried pair is where the last turn's request had it, so that request's tool array
+        // is a prefix of this one's; `s__read` is not declared a second time for being picked.
+        expect(declared()).toEqual([[LOAD_TOOLS, "s__write", "s__read", "s__list"]]);
+        expect(result.loaded).toEqual(["s__write", "s__read", "s__list"]);
+      });
+
+      it("sorts the shortlist in under toolOrder, which moves what sorts after it", async () => {
+        create.mockReturnValueOnce(calls(["s__list", "{}"])).mockReturnValueOnce(says("done"));
+        await runAgentLoop({
+          config: onDemand,
+          system: "sys",
+          messages: question,
+          tools: all,
+          catalog: wide,
+          loaded: ["s__write"],
+          preselected: ["s__list"],
+          preselectRouting: "append",
+          dispatch: async () => "ok",
+        });
+        // The last turn ended on [load_tools, s__write]; `s__list` lands between them, not after.
+        expect(declared()).toEqual([
+          [LOAD_TOOLS, "s__list", "s__write"],
+          [LOAD_TOOLS, "s__list", "s__write"],
+        ]);
+        const [first, second] = bodies();
+        expect(first.messages[0]).toEqual(second.messages[0]);
+        expect(first.tools).toEqual(second.tools);
+      });
+
+      it("leaves the second step's head as the first's, where exclusive moves the tools", async () => {
+        const run = async (preselectRouting?: "exclusive" | "append") => {
+          create
+            .mockReturnValueOnce(reportedCall(100, 0, "s__read"))
+            .mockReturnValueOnce(reported(130, 0, { content: "done" }));
+          const { metrics } = await runAgentLoop({
+            config: onDemand,
+            system: "sys",
+            messages: question,
+            tools: all,
+            catalog: wide,
+            preselected: ["s__read"],
+            ...(preselectRouting ? { preselectRouting } : {}),
+            dispatch: async () => "ok",
+          });
+          return metrics;
+        };
+        // The server reports the same miss both times; the loop's own comparison of the two
+        // requests finds nothing that moved when appended, and the tool array when not.
+        expect(await run("append")).toMatchObject({ cacheBreakReasons: { "none-known": 1 } });
+        // Absent is exclusive: the first step's tools are not the second's.
+        expect(await run()).toMatchObject({
+          cacheBreaks: 1,
+          cacheBreakReasons: { "tools-changed": 1 },
+        });
+        expect(declared().slice(2)).toEqual([["s__read"], [LOAD_TOOLS, "s__read"]]);
+      });
+
+      it("changes nothing in eager mode or without a preselection", async () => {
+        create.mockReturnValueOnce(says("done")).mockReturnValueOnce(says("done"));
+        await runAgentLoop({
+          config,
+          messages: question,
+          tools: all,
+          catalog: wide,
+          preselected: ["s__read"],
+          preselectRouting: "append",
+          dispatch: async () => "ok",
+        });
+        await runAgentLoop({
+          config: onDemand,
+          messages: question,
+          tools: all,
+          catalog: wide,
+          preselectRouting: "append",
+          dispatch: async () => "ok",
+        });
+        expect(declared()).toEqual([["s__list", "s__read", "s__write"], [LOAD_TOOLS]]);
+      });
+    });
   });
 
   it("puts the hooks' context on the question, and tells them the reply", async () => {
