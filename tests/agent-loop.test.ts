@@ -21,6 +21,7 @@ type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
 type ToolCall = import("../src/tool-calls.ts").ToolCall;
 type ToolCallRequest = import("../src/agent-loop.ts").ToolCallRequest;
+type AgentLoopRequest = import("../src/agent-loop.ts").AgentLoopRequest;
 type ToolCallResult = import("../src/agent-loop.ts").ToolCallResult;
 type RunEventInput = import("../src/events.ts").RunEventInput;
 type RunUsage = import("../src/events.ts").RunUsage;
@@ -1421,6 +1422,138 @@ describe("runAgentLoop", () => {
       content: "shorter",
     });
     expect(result.messages[0]).toEqual({ role: "user", content: "shorter" });
+  });
+
+  it("hands the host each step's request, as the client is about to be sent it", async () => {
+    const order: string[] = [];
+    const replies = [calls([LOAD_TOOLS, '{"names":["s__read"]}']), says("done")];
+    create.mockImplementation(() => {
+      order.push("sent");
+      return replies.shift();
+    });
+    const requests: AgentLoopRequest[] = [];
+    await runAgentLoop({
+      config: { ...config, toolDiscovery: "ondemand" },
+      system: "sys",
+      messages: question,
+      tools: [tool("s__read")],
+      catalog: [{ id: "s", label: "S", tools: [{ name: "s__read", description: "reads" }] }],
+      dispatch: async () => "ok",
+      onRequest: (request) => {
+        order.push("told");
+        requests.push(request);
+      },
+    });
+    expect(order).toEqual(["told", "sent", "told", "sent"]);
+    expect(requests.map((request) => request.step)).toEqual([0, 1]);
+    for (const [at, [body]] of create.mock.calls.entries()) {
+      // The array itself, catalogue and tool result and all, not a copy of it.
+      expect(requests[at].messages).toBe((body as Body).messages);
+      expect(requests[at].tools).toEqual((body as Body).tools);
+    }
+    expect(requests[0].messages[0].content).toContain("Tool catalogue");
+    expect(requests[1].messages.at(-1)).toMatchObject({ role: "tool" });
+    expect(requests[1].tools).toHaveLength(2);
+  });
+
+  it("hands over an empty tool list where the request declares none", async () => {
+    create.mockReturnValueOnce(says("done"));
+    const onRequest = vi.fn();
+    await runAgentLoop({ config, messages: question, dispatch: async () => "", onRequest });
+    expect(onRequest).toHaveBeenCalledExactlyOnceWith({ messages: question, tools: [], step: 0 });
+    expect(create.mock.calls[0][0]).not.toHaveProperty("tools");
+  });
+
+  it("reports the request as first built, not what a refusal or a continuation sent after", async () => {
+    const strict: OpenAI.ChatCompletionTool = {
+      type: "function",
+      function: {
+        name: "a",
+        parameters: { type: "object", properties: { id: { type: "string", pattern: "^\\d+$" } } },
+      },
+    };
+    create
+      .mockRejectedValueOnce(new Error("Failed to initialize samplers: failed to parse grammar"))
+      .mockReturnValueOnce(says("half", "length"))
+      .mockReturnValueOnce(says(" and the rest"));
+    const requests: AgentLoopRequest[] = [];
+    await runAgentLoop({
+      config: { ...config, baseUrl: "http://no-grammar/v1" },
+      messages: question,
+      tools: [strict],
+      dispatch: async () => "",
+      maxContinuations: 1,
+      onRequest: (request) => requests.push(request),
+    });
+    // Three requests went out for the one step: the refused one, the relaxed one, the continuation.
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(requests).toHaveLength(1);
+    const [refused, relaxed, continued] = create.mock.calls.map(([body]) => body as Body);
+    expect(requests[0].tools).toEqual(refused.tools);
+    expect(requests[0].tools).not.toEqual(relaxed.tools);
+    expect(requests[0].messages).toHaveLength(continued.messages.length - 1);
+  });
+
+  it("ends the run on what onRequest throws, before anything is sent", async () => {
+    await expect(
+      runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => "",
+        onRequest: () => {
+          throw new Error("host bug");
+        },
+      }),
+    ).rejects.toThrow("host bug");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("breaks each turn's request down by what filled it, on the usage event", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(says("half", "length"))
+      .mockReturnValueOnce(says(" and the rest"));
+    const turns: RunUsage["turn"][] = [];
+    await runAgentLoop({
+      config,
+      system: "sys",
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "a long result ".repeat(20),
+      maxContinuations: 1,
+      onEvent: (event) => event.kind === "usage" && turns.push(event.usage?.turn),
+    });
+    const [first, second] = turns.map((turn) => {
+      if (!turn?.context) throw new Error("a turn without a breakdown");
+      return turn.context;
+    });
+    // Shares of what the endpoint reported, adding up to it.
+    expect(first.total).toBe(100);
+    expect(first.system + first.tools + first.history + first.toolResults).toBe(100);
+    expect(first.system).toBeGreaterThan(0);
+    expect(first.tools).toBeGreaterThan(0);
+    expect(first.toolResults).toBe(0);
+    // The second step carries the result, which is most of it. Its total is the first request's
+    // ten, though the continuation's ten were added to the turn's prompt.
+    expect(turns[1]?.prompt).toBe(20);
+    expect(second.total).toBe(10);
+    expect(second.toolResults).toBeGreaterThan(second.history);
+  });
+
+  it("estimates the breakdown where no prompt was reported, agreeing with toolSchemaTokens", async () => {
+    create.mockReturnValueOnce(calls(["a", "{}"])).mockReturnValueOnce(says("done"));
+    const turns: RunUsage["turn"][] = [];
+    await runAgentLoop({
+      config,
+      system: "sys",
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      onEvent: (event) => event.kind === "usage" && turns.push(event.usage?.turn),
+    });
+    expect(turns[0]?.prompt).toBe(0);
+    expect(turns[0]?.context?.tools).toBe(turns[0]?.toolSchemaTokens);
+    expect(turns[0]?.context?.total).toBeGreaterThan(turns[0]?.context?.tools ?? 0);
   });
 
   it("drops an extraBody field the model refuses, and keeps it dropped", async () => {

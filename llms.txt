@@ -15,6 +15,7 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 
 - `AgentLoopHooks` (type) — The hooks a loop runs around one question.
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
+- `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
 - `AgentLoopResult` (type) — What a finished loop hands back.
 - `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
 - `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
