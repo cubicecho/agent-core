@@ -78,9 +78,11 @@ export interface ModelParams {
 export interface ToolPolicy {
   /**
    * "eager" sends every tool definition on every request. "ondemand" sends a name-only
-   * catalogue and lets the model pull in the schemas it needs. See `tool-loading.ts`.
+   * catalogue and lets the model pull in the schemas it needs. "proxy" is the same catalogue
+   * behind a tool array that never changes — `load_tools` and `call_tool` — for a server whose
+   * prompt cache a growing tool array throws away. See `tool-loading.ts`.
    */
-  toolDiscovery: "eager" | "ondemand";
+  toolDiscovery: "eager" | "ondemand" | "proxy";
   /** The model that does the preselection pass. Empty means don't preselect. */
   toolSelectModel: string;
   /** Hard stop on runaway tool loops. */

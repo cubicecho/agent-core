@@ -11,6 +11,7 @@ import {
   summaryInput,
 } from "../src/compaction.ts";
 import { turnMessages } from "../src/hooks.ts";
+import { expandNames, loadResult, proxyLoadResult } from "../src/tool-loading.ts";
 
 type Message = OpenAI.ChatCompletionMessageParam;
 
@@ -38,6 +39,33 @@ describe("pruneToolResults", () => {
     const messages = [result("x".repeat(1000)), result("y")];
     const once = pruneToolResults(messages, { keepLast: 1, maxChars: 10 });
     expect(pruneToolResults(once, { keepLast: 1, maxChars: 10 })).toBe(once);
+  });
+
+  it("keeps a proxied load's result, which is the only copy of the schema", () => {
+    const catalog = [{ id: "s", label: "S", tools: [{ name: "s__read", description: "reads" }] }];
+    const resolved = expandNames(["s__read"], catalog);
+    const proxied = proxyLoadResult(resolved, catalog, [
+      {
+        type: "function",
+        function: {
+          name: "s__read",
+          description: "Reads a file.",
+          parameters: { type: "object", properties: { path: { type: "string" } } },
+        },
+      },
+    ]);
+    // On demand the definition is in the tool array, so its load is cleared like any result.
+    const onDemand = loadResult(resolved, catalog);
+    const big = "x".repeat(400);
+    const messages = [user("q"), result(proxied), result(onDemand), result(big), result(big)];
+    const pruned = pruneToolResults(messages, { keepLast: 1, maxChars: 10 });
+    expect(pruned.map((m) => m.content)).toEqual([
+      "q",
+      proxied,
+      `[result cleared, ${onDemand.length} chars]`,
+      "[result cleared, 400 chars]",
+      big,
+    ]);
   });
 });
 

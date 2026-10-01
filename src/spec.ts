@@ -130,7 +130,11 @@ export interface PromptPart {
 
 /** How tools reach the model, and which servers this agent may reach at all. */
 export interface ToolsSpec {
-  discovery?: "eager" | "ondemand";
+  /**
+   * How tool definitions reach the model: all of them on every request, a name-only catalogue
+   * the model loads from, or that catalogue behind a fixed `load_tools` and `call_tool`.
+   */
+  discovery?: "eager" | "ondemand" | "proxy";
   /** The hard stop on a tool loop. At least one. */
   maxIterations?: number;
   /**
@@ -437,8 +441,13 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
   if (!isRecord(value)) return void report.drop("tools", "must be an object");
   let discovery: ToolsSpec["discovery"];
   if (!absent(value.discovery)) {
-    if (value.discovery === "eager" || value.discovery === "ondemand") discovery = value.discovery;
-    else report.drop("tools.discovery", 'must be "eager" or "ondemand"');
+    if (
+      value.discovery === "eager" ||
+      value.discovery === "ondemand" ||
+      value.discovery === "proxy"
+    )
+      discovery = value.discovery;
+    else report.drop("tools.discovery", 'must be "eager", "ondemand" or "proxy"');
   }
   let servers: string[] | undefined;
   if (!absent(value.servers)) {

@@ -21,7 +21,7 @@ only, Node >=22.
 | Module | What it does |
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`. |
-| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model. |
+| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model, and the proxied form of the same thing — `PROXY_TOOLS`, `proxyLoadResult`, `proxiedCall` — for a server whose prompt cache a growing tool array throws away. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, fenced reasoning taken out of the answer, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
@@ -378,10 +378,10 @@ import { runAgentLoop, emit } from "@cubicecho/agent-core";
 
 const { turn, messages, usage, loaded } = await runAgentLoop({
   config,                         // Endpoint & ModelParams & { maxToolIterations, toolDiscovery?, maxRetries?, loadingTimeoutSeconds?, contextLength? }
-  system,                         // sent as the first message; on-demand mode appends the catalogue
+  system,                         // sent as the first message; on-demand and proxied modes append the catalogue
   messages: history,              // ending in the question; not written to
   tools,                          // every tool the run may reach
-  catalog,                        // the same, name-only, for on-demand loading
+  catalog,                        // the same, name-only, for on-demand and proxied loading
   preselected,                    // from `preselect`, if a small model chose
   dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
   hooks: { run, context: { session: { id } } },
@@ -441,6 +441,52 @@ a catalogued tool without loading it first is right about what it wants, and get
 run. A preselection shapes the first step alone: those tools, no catalogue, no `load_tools` —
 a model with the menu still in front of it shops, reloading what it has or picking a sibling —
 and everything is back from the second step on.
+
+`toolDiscovery: "proxy"` is the same catalogue behind a tool array that never changes. A chat
+template renders the tool array in the system turn, so on a server that caches by prefix —
+llama.cpp, and anything built on it — a `load_tools` that appends a definition changes the head of
+the prompt and the whole transcript is prefilled again, on the very step that was meant to save
+tokens. Proxied, every step declares `PROXY_TOOLS` and nothing else: `load_tools`, and `call_tool`,
+which takes `{ name, arguments }`. A load answers with each new tool's name, description and
+parameters as a line of JSON, since no request will ever declare them, and with a pointer back for
+one whose definition is already in the conversation. A `call_tool` is refused for a name outside
+the catalogue, takes `arguments` as an object or as JSON in a string, and reaches `dispatch` as the
+tool it names — the inner name and arguments, under the call's own id — so a dispatcher, a watcher
+and `used` see the same thing in every mode. The transcript keeps the `call_tool` the model wrote.
+
+```ts
+const { messages, used } = await runAgentLoop({
+  config: { ...config, toolDiscovery: "proxy" },
+  messages: history,
+  tools,                          // never declared; a load answers with them
+  catalog,
+  preselected,                    // written into the transcript, not into the tool array
+  dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
+});
+```
+
+A preselection has no tool array to go into there, and no step of its own. It is written into the
+transcript after the question as a `load_tools` call the model did not make, and the result that
+call would have had:
+
+```ts
+{ role: "assistant", content: null, tool_calls: [{ id: "preselect-3", type: "function",
+    function: { name: "load_tools", arguments: '{"names":["files__read_file"]}' } }] },
+{ role: "tool", tool_call_id: "preselect-3", content: "Loaded 1 tool(s). Run them with `call_tool`.\n\n{...}" },
+```
+
+The pair is in the `messages` the loop hands back, to be stored like any other, and is reported as
+a `tool-call` and a `tool-result` event, counted in `toolCalls` and in the `load_tools` metrics. The
+id is numbered by where the call lands in the transcript, so two questions do not share one. A name
+with no definition in `tools`, or outside the catalogue, is left out, and none left is no exchange.
+
+What is loaded there is what the history holds, so `loaded` comes back empty and the `loaded`
+option is not read: there is nothing to carry, and a definition a compaction folded away has to be
+loadable again. For the same reason a `beforeStep` that returns a different array makes the loop
+forget what it loaded, which costs a definition sent twice at worst. `call_tool` is honoured in
+`ondemand` mode as well — a session switched out of proxied mode still has it in its history, and
+a model copies what it has seen work — unless the host has a tool of that name, which is then the
+host's. Eager mode does not know it.
 
 That preselection costs a round trip to a model, which on a local box is a few seconds before the
 run has started, spent on a model doing term matching. `preselect(..., { keywords: true })` does
@@ -559,7 +605,9 @@ Two ways to make a transcript smaller, cheap first.
 `pruneToolResults(messages, { keepLast: 5, maxChars: 256 })` replaces every tool result but the
 latest five with a stub — `[result cleared, 10,412 chars]`. A 40k-character `read_file` is 10k
 tokens on every turn after it, and by then the model has usually taken what it wanted; the stub
-keeps the call answered and says how much was there.
+keeps the call answered and says how much was there. A proxied `load_tools` result that carries
+definitions is never cleared, however old: it is the only copy of the schema the model has, and
+`holdsDefinitions` is the test for a host with a prune of its own.
 
 `planCompaction(messages, { limit, used })` says where to fold the oldest stretch into a summary,
 once `used` (the last turn's prompt tokens, or the estimate) is past three quarters of the window.

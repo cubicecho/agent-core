@@ -122,7 +122,11 @@ export interface PromptPart {
 }
 
 export interface ToolsSpec {
-  discovery?: "eager" | "ondemand";
+  /**
+   * How tool definitions reach the model: all of them on every request, a name-only catalogue
+   * the model loads from, or that catalogue behind a fixed `load_tools` and `call_tool`.
+   */
+  discovery?: "eager" | "ondemand" | "proxy";
   /** The hard stop on a tool loop. At least one. */
   maxIterations?: number;
   /**
