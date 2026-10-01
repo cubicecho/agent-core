@@ -34,6 +34,7 @@ import { askJson, tryAsk } from "./side-task.ts";
 import type { Turn, TurnUsage } from "./stream.ts";
 import { parseToolArguments, recoverToolCalls, type ToolCall } from "./tool-calls.ts";
 import {
+  CALL_TOOL,
   catalogPrompt,
   expandNames,
   inCatalog,
@@ -45,11 +46,16 @@ import {
   MAX_PER_LOAD,
   orderTools,
   PRESELECT_SCHEMA,
+  PROXY_TOOLS,
   preselectByKeywords,
   preselectInput,
   preselection,
   preselectSystem,
+  proxiedCall,
+  proxyCatalogPrompt,
+  proxyLoadResult,
   requestedNames,
+  shownCall,
   type ToolOrder,
 } from "./tool-loading.ts";
 
@@ -239,7 +245,12 @@ export async function preselect(
   return preselection(reply, catalog, maxPerLoad);
 }
 
-/** One call the model made, as `dispatch` and `onToolCall` are handed it. */
+/**
+ * One call the model made, as `dispatch` and `onToolCall` are handed it.
+ *
+ * A `call_tool` arrives as the tool it names — that tool's name and arguments, under the
+ * `call_tool`'s id — so a dispatcher is the same in every discovery mode.
+ */
 export interface ToolCallRequest {
   id: string;
   name: string;
@@ -248,7 +259,10 @@ export interface ToolCallRequest {
    * read, which only `onToolCall` is ever handed.
    */
   args: Record<string, unknown>;
-  /** The arguments as the model wrote them, before any repair. */
+  /**
+   * The arguments as the model wrote them, before any repair. Through `call_tool`, the inner
+   * arguments as JSON text.
+   */
   raw: string;
 }
 
@@ -261,6 +275,7 @@ export interface ToolCallOutcome {
    * sets it; optional so an outcome built before it existed still compiles.
    */
   id?: string;
+  /** The tool that was called. For a `call_tool`, the tool it named. */
   name: string;
   /** False when the arguments did not parse, the tool threw, or `load_tools` loaded nothing. */
   ok: boolean;
@@ -339,22 +354,29 @@ export interface AgentLoopOptions {
    * The endpoint, what to ask the model for, and how long it may keep calling tools.
    * `toolDiscovery` absent is eager, `maxRetries` absent is none, and `contextLength` is handed
    * to `runTurn` as `contextLimit`, which sizes each request against the window before sending.
+   * `"proxy"` is on-demand loading behind a tool array that never changes; see `PROXY_TOOLS`.
    */
   config: Endpoint &
     ModelParams &
     Pick<ToolPolicy, "maxToolIterations"> &
     Partial<Pick<ToolPolicy, "toolDiscovery">> &
     Partial<RetryPolicy> & { contextLength?: number };
-  /** The standing instruction, sent as the first message. On-demand mode appends the catalogue. */
+  /**
+   * The standing instruction, sent as the first message. On-demand and proxied modes append the
+   * catalogue, each in its own wording.
+   */
   system?: string;
   /** The transcript so far, ending in the question. Not written to; see the result's `messages`. */
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
    * Every tool this run may reach. Eager mode sends all of them; on-demand mode sends the ones
-   * loaded so far, by name.
+   * loaded so far, by name; proxied mode declares none, and answers a load with them instead.
    */
   tools?: OpenAI.ChatCompletionTool[];
-  /** The same tools as a name-only catalogue. On-demand mode needs it, and is eager without it. */
+  /**
+   * The same tools as a name-only catalogue. On-demand and proxied modes need it, and are eager
+   * without it.
+   */
   catalog?: CatalogServer[];
   /**
    * How the declared tools are ordered before each request. By name unless told otherwise, so a
@@ -367,6 +389,13 @@ export interface AgentLoopOptions {
    * `load_tools` — because a model with the menu still in front of it shops: it reloads what it
    * has or picks a sibling. Everything comes back on the step after. `preselectRouting` trades
    * that for a first step shaped like the rest.
+   *
+   * Proxied, the tool array is fixed and there is no such step. The shortlist is written into the
+   * transcript instead, after the question, as a `load_tools` call the model did not make and the
+   * result that call would have had — an assistant message and a tool message, handed back in
+   * `messages` like any other, reported as a `tool-call` and a `tool-result` event and told to
+   * `onToolCall` and `onToolResult`. Names with no definition in `tools`, or outside the
+   * catalogue, are left out, and none left is no exchange.
    */
   preselected?: readonly string[];
   /**
@@ -382,11 +411,14 @@ export interface AgentLoopOptions {
    * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
    * place and moves every definition after it, so only `toolOrder: false` keeps a carried array
    * a strict prefix. Either way the first step's system prompt is the second's, and so is its
-   * tool array until something else is loaded. Nothing to do without a preselection, or in eager
-   * mode.
+   * tool array until something else is loaded. Nothing to do without a preselection, in eager
+   * mode, or proxied, where no step is routed either way.
    */
   preselectRouting?: "exclusive" | "append";
-  /** Tools already loaded, carried from an earlier question. See `carryOver`. */
+  /**
+   * Tools already loaded, carried from an earlier question. See `carryOver`. Not read in proxied
+   * mode, where a tool is loaded only while its definition is in the history.
+   */
   loaded?: Iterable<string>;
   /** Runs one tool call and returns what the model reads. What it throws, the model reads too. */
   dispatch: (call: ToolCallRequest, signal?: AbortSignal) => Promise<string>;
@@ -500,11 +532,18 @@ export interface AgentLoopResult {
   messages: OpenAI.ChatCompletionMessageParam[];
   /** Summed over every turn of the run. */
   usage: TurnUsage;
-  /** Every call, `load_tools` included, in the order they were made, each under its call id. */
+  /**
+   * Every call, `load_tools` included, in the order they were made, each under its call id — a
+   * proxied preselection's among them, first.
+   */
   toolCalls: ToolCallOutcome[];
-  /** What is loaded at the end, for `carryOver`. Empty in eager mode. */
+  /**
+   * What is loaded at the end, for `carryOver`. Empty in eager mode, and in proxied mode: a
+   * definition loaded there is already in the history, and one a compaction folded away has to be
+   * loadable again rather than answered "already loaded".
+   */
   loaded: string[];
-  /** The tools the model actually called, `load_tools` excluded. */
+  /** The tools the model actually called, `load_tools` excluded and `call_tool` looked through. */
   used: string[];
   /** The hooks' notes from before the first request. */
   notes: HookNote[];
@@ -646,6 +685,13 @@ function cacheDiagnosis(
  * continuation, and a step that reported none, or reported a cache count above its prompt, is not
  * recorded. The ledger comes back in the result and on every `usage` event; see `tokensBetween`.
  *
+ * Proxied discovery is the same catalogue behind a tool array that never moves: every step
+ * declares `PROXY_TOOLS` and nothing else, a load answers with the definitions themselves, and a
+ * `call_tool` is dispatched, counted and reported as the tool it names. A preselection has no
+ * tool array to go into, so it is written into the transcript as a `load_tools` exchange after
+ * the question. `call_tool` is honoured on demand too, unless the host has a tool of that name —
+ * a session switched out of proxied mode still has it in its history, and the model copies it.
+ *
  * @param options The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
  */
@@ -692,10 +738,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
   const notice = (text: string) => onEvent({ kind: "notice", text });
 
-  const onDemand = config.toolDiscovery === "ondemand" && catalog.length > 0;
-  const loaded = new Set(onDemand ? (options.loaded ?? []) : []);
+  // On demand, but with a tool array that never changes: definitions come back as `load_tools`
+  // results and run through `call_tool`. `onDemand` is true of both.
+  const proxied = config.toolDiscovery === "proxy" && catalog.length > 0;
+  const onDemand = proxied || (config.toolDiscovery === "ondemand" && catalog.length > 0);
+  // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
+  const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
   const preselected = onDemand ? [...(options.preselected ?? [])] : [];
-  for (const name of preselected) loaded.add(name);
+  if (!proxied) for (const name of preselected) loaded.add(name);
   const used = new Set<string>();
   const definitions = new Map<string, OpenAI.ChatCompletionTool>();
   for (const tool of tools) {
@@ -703,6 +753,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       definitions.set(tool.function.name, tool);
     }
   }
+  // Looked through unless the host has a tool by that name, which is then the host's to answer.
+  const proxies = onDemand && !definitions.has(CALL_TOOL);
   // In the order the names are given, not the order of `tools`: `loaded` is a set, which iterates
   // in the order things were added, so a load appends and never reshuffles what went before.
   const byName = (names: Iterable<string>) =>
@@ -732,39 +784,80 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   // Nothing before this run's first: an earlier run's head is not something the loop can see.
   let measured: LedgerRequest | undefined;
 
+  // Proxied, a shortlist has nowhere to go but the history: the tool array is fixed, so it is
+  // answered as though the model had loaded it, and the definitions sit after the question.
+  const shortlist = proxied
+    ? byName(new Set(preselected)).filter(
+        (tool) => tool.type === "function" && inCatalog(catalog, tool.function.name),
+      )
+    : [];
+  if (shortlist.length) {
+    const names = shortlist.map((tool) => (tool.type === "function" ? tool.function.name : ""));
+    // Numbered by where the call lands, so two questions in one transcript do not share an id.
+    const id = `preselect-${messages.length}`;
+    const args = JSON.stringify({ names });
+    // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and a
+    // host that shortlisted more has already chosen.
+    const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
+    // Announced as a call the model made would be, so a host pairing calls with results by id
+    // shows this one like the rest.
+    onEvent({ kind: "tool-call", id, name: LOAD_TOOLS, text: preview(args) });
+    onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
+    onEvent({ kind: "tool-result", id, name: LOAD_TOOLS, ok: true, text: preview(content) });
+    onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
+    toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
+    loads.toolsLoaded += names.length;
+    for (const name of names) loaded.add(name);
+    messages.push(
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id, type: "function", function: { name: LOAD_TOOLS, arguments: args } }],
+      },
+      { role: "tool", tool_call_id: id, content },
+    );
+  }
+
   for (let step = 0; step < config.maxToolIterations; step++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
     // end — so the signal is read between steps as well.
     signal?.throwIfAborted();
     const before = messages;
-    messages =
-      (await beforeStep?.(messages, step, {
-        ...(previous && previous.prompt > 0 ? { used: previous.prompt } : {}),
-        limit: config.contextLength ?? 0,
-        ledger,
-      })) ?? messages;
+    const rewritten = await beforeStep?.(messages, step, {
+      ...(previous && previous.prompt > 0 ? { used: previous.prompt } : {}),
+      limit: config.contextLength ?? 0,
+      ledger,
+    });
+    // A rewrite may have folded a definition away, and a load answered "already loaded" would
+    // then point at nothing. Forgetting costs a definition sent twice at worst.
+    if (proxied && rewritten && rewritten !== messages) loaded.clear();
+    messages = rewritten ?? messages;
     ledger = rebaseLedger(ledger, before, messages);
     onEvent({ kind: "turn", text: `turn ${step + 1}` });
 
     // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
-    // first step needs nothing of its own.
-    const routed = preselectRouting !== "append" && preselected.length > 0 && step === 0;
+    // first step needs nothing of its own. Proxied, it is in the history.
+    const routed =
+      !proxied && preselectRouting !== "append" && preselected.length > 0 && step === 0;
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
     const declared = orderTools(
       routed
         ? byName(new Set(preselected))
-        : onDemand
-          ? loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded))
-          : tools,
+        : proxied
+          ? [...PROXY_TOOLS]
+          : onDemand
+            ? loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded))
+            : tools,
       toolOrder,
     );
     // Unmarked, so the system prompt is the same text on every step and a load does not throw
     // away the cache for the whole transcript. What is loaded is said in `declared` and in the
     // `load_tools` result instead. The preselected first step is the one exception, by design,
     // and `preselectRouting: "append"` is the way out of it.
-    const prompt = onDemand && !routed ? `${system}\n\n${catalogPrompt(catalog)}`.trim() : system;
+    const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
+    const prompt = onDemand && !routed ? `${system}\n\n${catalogue}`.trim() : system;
     const request: OpenAI.ChatCompletionMessageParam[] = [
       ...(prompt ? [{ role: "system" as const, content: prompt }] : []),
       ...withContext(
@@ -857,7 +950,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     if (recover && !calls.length && content && (tools.length > 0 || onDemand)) {
       const names = tools.flatMap((tool) => (tool.type === "function" ? [tool.function.name] : []));
       const recovered = recoverToolCalls(content, {
-        names: onDemand ? [...names, LOAD_TOOLS] : names,
+        names: onDemand ? [...names, LOAD_TOOLS, ...(proxies ? [CALL_TOOL] : [])] : names,
       });
       if (recovered.toolCalls.length) {
         calls = recovered.toolCalls;
@@ -927,7 +1020,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         messages,
         usage,
         toolCalls,
-        loaded: [...loaded],
+        loaded: proxied ? [] : [...loaded],
         used: [...used],
         notes: gathered.notes,
         context: gathered.context,
@@ -947,31 +1040,61 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     // between ran, and the file the model read may be the file it has since written.
     const answered = new Map<string, Promise<string>>();
     const run = async ({ call, args, error: unreadable, normal }: (typeof parsed)[number]) => {
-      const { name, arguments: raw } = call.function;
+      const proxy = proxies && call.function.name === CALL_TOOL;
+      // A `call_tool` is shown, counted and dispatched as the tool it names. Read from the repaired
+      // arguments where there are any, since the model's own may be almost-JSON.
+      const { name, input: raw } = proxy
+        ? shownCall(CALL_TOOL, args ? normal : call.function.arguments)
+        : { name: call.function.name, input: call.function.arguments };
+      // Looked through before the call is announced, so a host is told of the tool it names with
+      // that tool's arguments. A name outside the catalogue is refused here, so `call_tool` reaches
+      // nothing a load could not, and the refusal is the call's answer below.
+      let inner = args ?? {};
+      let refused: { error: unknown } | undefined;
+      if (proxy && args) {
+        try {
+          inner = proxiedCall(args, catalog).input;
+        } catch (error) {
+          inner = {};
+          refused = { error };
+        }
+      }
       // Built for every call rather than only the dispatched ones, so a host hears of the calls
       // the loop answers itself in the same shape. Arguments that could not be read are none.
-      const request: ToolCallRequest = { id: call.id, name, args: args ?? {}, raw };
+      const request: ToolCallRequest = { id: call.id, name, args: inner, raw };
       onEvent({ kind: "tool-call", id: call.id, name, text: preview(raw) });
       onToolCall?.(request);
       let content: string;
       let ok = true;
       try {
         if (!args) throw unreadable;
-        if (onDemand && name === LOAD_TOOLS) {
+        // By the name the model called, not the one a `call_tool` wraps: `load_tools` is not in
+        // the catalogue, and one reached through `call_tool` is refused below like any other.
+        if (onDemand && call.function.name === LOAD_TOOLS) {
           const resolved = expandNames(requestedNames(args), catalog);
-          content = loadResult(resolved, catalog, loaded);
-          for (const hit of resolved.matched)
-            loads[loaded.has(hit) ? "redundantLoads" : "toolsLoaded"]++;
+          content = proxied
+            ? proxyLoadResult(resolved, catalog, byName(resolved.matched), loaded)
+            : loadResult(resolved, catalog, loaded);
+          // Proxied, a load is only of what the result could define: a catalogued name the host
+          // gave no definition for was not loaded, and is not counted or remembered as though it was.
+          const hits = proxied
+            ? resolved.matched.filter((hit) => definitions.has(hit))
+            : resolved.matched;
+          for (const hit of hits) loads[loaded.has(hit) ? "redundantLoads" : "toolsLoaded"]++;
           loads.unknownToolNames += resolved.unknown.length;
-          for (const hit of resolved.matched) loaded.add(hit);
-          ok = resolved.matched.length > 0;
+          for (const hit of hits) loaded.add(hit);
+          ok = hits.length > 0;
         } else {
+          if (refused) throw refused.error;
           // A model that skips `load_tools` and calls a catalogued tool by name is right about
-          // what it wants; load it and run it rather than refusing.
-          if (onDemand && inCatalog(catalog, name)) loaded.add(name);
+          // what it wants; load it and run it rather than refusing. Not proxied, where loaded
+          // means its definition is in the history, and this call put none there.
+          if (onDemand && !proxied && inCatalog(catalog, name)) loaded.add(name);
           used.add(name);
+          // Keyed on the inner call, so one made through `call_tool` and one made natively share.
+          const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
           content = dedupable(request)
-            ? await once(answered, `${name}\0${normal}`, () => dispatch(request, signal))
+            ? await once(answered, key, () => dispatch(request, signal))
             : await dispatch(request, signal);
         }
       } catch (error) {

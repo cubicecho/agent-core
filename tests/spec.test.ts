@@ -48,6 +48,17 @@ describe("parseSpec", () => {
     ]);
   });
 
+  it("takes each way tools can reach the model, and drops one it has not heard of", () => {
+    for (const discovery of ["eager", "ondemand", "proxy"] as const) {
+      expect(parsed(doc({ tools: { discovery } })).tools).toEqual({ discovery });
+    }
+    const result = parseSpec(doc({ tools: { discovery: "lazy", maxIterations: 3 } }));
+    expect(result.spec?.tools).toEqual({ maxIterations: 3 });
+    expect(result.warnings).toEqual([
+      'tools.discovery: must be "eager", "ondemand" or "proxy", and was dropped',
+    ]);
+  });
+
   it("drops an out-of-range number instead of clamping it", () => {
     // A clamp invents a number the author did not write; dropping falls back to one somebody did.
     const spec = parsed(doc({ model: { model: "m", temperature: 4 } }));

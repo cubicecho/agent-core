@@ -14,7 +14,7 @@ const { buildBody, preselect, preview, resolveApiKey, runAgentLoop } = await imp
 const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await import(
   "../src/capabilities.ts"
 );
-const { LOAD_TOOLS } = await import("../src/tool-loading.ts");
+const { CALL_TOOL, LOAD_TOOLS } = await import("../src/tool-loading.ts");
 const { configureHooks, resetHooks, withContext } = await import("../src/hooks.ts");
 const { tokensBetween } = await import("../src/ledger.ts");
 
@@ -1143,6 +1143,482 @@ describe("runAgentLoop", () => {
         });
         expect(declared()).toEqual([["s__list", "s__read", "s__write"], [LOAD_TOOLS]]);
       });
+    });
+
+    it("runs a `call_tool` left in the history as the tool it names, and loads it", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+      });
+      expect(dispatch.mock.calls[0][0]).toMatchObject({ name: "s__read", args: { path: "a" } });
+      expect(result.used).toEqual(["s__read"]);
+      // On demand a called tool is a declared one, so the model's next call can be a native one.
+      expect(declared()).toEqual([[LOAD_TOOLS], [LOAD_TOOLS, "s__read"]]);
+    });
+
+    it("leaves a host's own `call_tool` to the host", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{}}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "the host's answer");
+      await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools: [...tools, tool(CALL_TOOL)],
+        catalog: [
+          ...catalog,
+          { id: "h", label: "H", tools: [{ name: CALL_TOOL, description: "the host's" }] },
+        ],
+        dispatch,
+      });
+      expect(dispatch.mock.calls[0][0]).toMatchObject({
+        name: CALL_TOOL,
+        args: { name: "s__read", arguments: {} },
+      });
+    });
+  });
+
+  describe("proxied", () => {
+    const catalog = [
+      {
+        id: "s",
+        label: "S",
+        tools: [
+          { name: "s__read", description: "reads" },
+          { name: "s__write", description: "writes" },
+        ],
+      },
+    ];
+    const read: OpenAI.ChatCompletionFunctionTool = {
+      type: "function",
+      function: {
+        name: "s__read",
+        description: "Reads a file.",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      },
+    };
+    const tools = [read, tool("s__write")];
+    const proxied = { ...config, toolDiscovery: "proxy" as const };
+    /** What a proxied load of `s__read` answers with: the definition as one line of JSON. */
+    const definition = `Loaded 1 tool(s). Run them with \`call_tool\`.\n\n${JSON.stringify({
+      name: read.function.name,
+      description: read.function.description,
+      parameters: read.function.parameters,
+    })}`;
+    const results = (messages: Message[]) =>
+      messages.flatMap((message) => (message.role === "tool" ? [String(message.content)] : []));
+
+    it("declares `load_tools` and `call_tool` on every step, whatever is loaded", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: proxied,
+        system: "sys",
+        messages: question,
+        tools,
+        catalog,
+        loaded: ["s__write"],
+        dispatch,
+      });
+      // Name order, like any other tool array, and the same two on all three requests.
+      expect(declared()).toEqual([
+        [CALL_TOOL, LOAD_TOOLS],
+        [CALL_TOOL, LOAD_TOOLS],
+        [CALL_TOOL, LOAD_TOOLS],
+      ]);
+      const bodies = create.mock.calls.map(([body]) => body as Body);
+      expect(JSON.stringify(bodies[2].tools)).toBe(JSON.stringify(bodies[0].tools));
+      const systems = bodies.map((body) => body.messages[0].content);
+      expect(new Set(systems).size).toBe(1);
+      expect(systems[0]).toContain("sys");
+      expect(systems[0]).toContain("run them with `call_tool`");
+      expect(systems[0]).not.toContain("tool list");
+
+      // The load's result is the definition, since no request will ever declare it.
+      expect(results(result.messages)).toEqual([definition, "contents"]);
+      // The dispatcher is handed the tool the model meant, exactly as a native call would be.
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0][0]).toEqual({
+        id: "c0",
+        name: "s__read",
+        args: { path: "a" },
+        raw: '{"path":"a"}',
+      });
+      expect(result.used).toEqual(["s__read"]);
+      // Nothing carries: neither what was handed in nor what this run loaded.
+      expect(result.loaded).toEqual([]);
+      expect(result.toolCalls).toEqual([
+        { id: "c0", name: LOAD_TOOLS, ok: true },
+        { id: "c0", name: "s__read", ok: true },
+      ]);
+      expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 1, toolCalls: 2 });
+      // The transcript keeps the call the model wrote, which the next request has to repeat.
+      const written = result.messages[3] as OpenAI.ChatCompletionAssistantMessageParam;
+      expect(written.tool_calls?.[0]).toMatchObject({
+        function: { name: CALL_TOOL, arguments: '{"name":"s__read","arguments":{"path":"a"}}' },
+      });
+    });
+
+    it("sends `call_tool` a schema that still lets the model pass an argument", async () => {
+      create.mockReturnValueOnce(says("done"));
+      await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+      });
+      const sent = (create.mock.calls[0][0] as Body).tools as OpenAI.ChatCompletionFunctionTool[];
+      const call = sent.find((entry) => entry.function.name === CALL_TOOL);
+      // Sanitising gives the object an empty property list; without the keyword beside it a
+      // grammar-constrained server compiles that to `{}`.
+      expect(call?.function.parameters?.properties).toMatchObject({
+        arguments: { type: "object", properties: {}, additionalProperties: true },
+      });
+    });
+
+    it("reports a `call_tool` to a watcher as the tool it ran", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__write","arguments":{"text":"x"}}']))
+        .mockReturnValueOnce(says("done"));
+      const events: { kind: string; name?: string; text?: string }[] = [];
+      await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "written",
+        onEvent: (event) => events.push(event),
+      });
+      expect(events.filter((event) => event.kind.startsWith("tool-"))).toMatchObject([
+        { kind: "tool-call", name: "s__write", text: '{"text":"x"}' },
+        { kind: "tool-result", name: "s__write", ok: true, text: "written" },
+      ]);
+    });
+
+    it("takes `arguments` as a JSON string, and refuses a name outside the catalogue", async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            [CALL_TOOL, JSON.stringify({ name: "s__read", arguments: '{"path":"b"}' })],
+            [CALL_TOOL, '{"name":"rm_rf","arguments":{}}'],
+            [CALL_TOOL, '{"arguments":{}}'],
+            [CALL_TOOL, '{"name":"s__read","arguments":[1]}'],
+            [CALL_TOOL, '{"name":"s__read","arguments":"{not json"}'],
+            [CALL_TOOL, '{"name":"load_tools","arguments":{"names":["s__read"]}}'],
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+      });
+      // One call reached the dispatcher: the string was read as the arguments it spells.
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0][0]).toMatchObject({
+        name: "s__read",
+        args: { path: "b" },
+        raw: '{"path":"b"}',
+      });
+      const answers = results(result.messages);
+      expect(answers[0]).toBe("contents");
+      expect(answers[1]).toContain("Not in the catalogue: rm_rf. Check the name and try again.");
+      expect(answers[2]).toContain("call_tool needs a name; pass one from the tool catalogue.");
+      expect(answers[3]).toContain("call_tool arguments for s__read must be an object.");
+      expect(answers[4]).toContain("call_tool arguments for s__read are not valid JSON");
+      // `load_tools` is not in the catalogue either, so it cannot be reached through the proxy.
+      expect(answers[5]).toContain("Not in the catalogue: load_tools.");
+      expect(result.toolCalls.map((call) => call.ok)).toEqual([
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(result.used).toEqual(["s__read"]);
+    });
+
+    it("answers a repeat load with a pointer back, not the definition a second time", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write","nope"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+      });
+      const second = results(result.messages)[1];
+      expect(second).toContain("Loaded 1 tool(s). Run them with `call_tool`.");
+      expect(second).toContain('"name":"s__write"');
+      expect(second).not.toContain('"name":"s__read"');
+      expect(second).toContain("Already loaded earlier in this conversation: s__read.");
+      expect(second).toContain("Not in the catalogue: nope.");
+      expect(result.metrics).toMatchObject({
+        loadCalls: 2,
+        toolsLoaded: 2,
+        redundantLoads: 1,
+        unknownToolNames: 1,
+      });
+    });
+
+    it("sends the definition again once the transcript has been rewritten under it", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+        // A fold that took the first load with it: only the question is left.
+        beforeStep: (messages, step) => (step === 1 ? messages.slice(0, 1) : undefined),
+      });
+      expect(results(result.messages)).toEqual([definition]);
+    });
+
+    it("writes a preselection into the transcript as a load the model did not make", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(says("done"));
+      const history: Message[] = [
+        { role: "user", content: "earlier" },
+        { role: "assistant", content: "answered" },
+        { role: "user", content: "read a" },
+      ];
+      const events: { kind: string; name?: string; text?: string; ok?: boolean | null }[] = [];
+      const result = await runAgentLoop({
+        config: proxied,
+        system: "sys",
+        messages: history,
+        tools,
+        catalog,
+        // One the host has no definition for and one that is in no catalogue are left out.
+        preselected: ["s__read", "s__read", "gone", "s__ghost"],
+        dispatch: async () => "contents",
+        onEvent: (event) => events.push(event),
+      });
+
+      const exchange: Message[] = [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "preselect-3",
+              type: "function",
+              function: { name: LOAD_TOOLS, arguments: '{"names":["s__read"]}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "preselect-3", content: definition },
+      ];
+      // After the question, ahead of anything the model does, and handed back like any other.
+      expect(result.messages.slice(0, 5)).toEqual([...history, ...exchange]);
+      expect(result.messages).toHaveLength(8);
+      // The caller's array is not written to.
+      expect(history).toHaveLength(3);
+
+      // The first request already carries it: same head as every later step, no step of its own.
+      const first = create.mock.calls[0][0] as Body;
+      expect(first.messages).toEqual([
+        { role: "system", content: expect.stringContaining("# Tool catalogue") },
+        ...history,
+        ...exchange,
+      ]);
+      expect(declared()).toEqual([
+        [CALL_TOOL, LOAD_TOOLS],
+        [CALL_TOOL, LOAD_TOOLS],
+      ]);
+      const second = create.mock.calls[1][0] as Body;
+      expect(second.messages.slice(0, 6)).toEqual(first.messages);
+
+      // A watcher sees the exchange the transcript holds, before the first turn.
+      const tooling = events.filter((event) => event.kind.startsWith("tool-"));
+      expect(tooling.slice(0, 2)).toMatchObject([
+        { kind: "tool-call", name: LOAD_TOOLS, text: '{"names":["s__read"]}' },
+        { kind: "tool-result", name: LOAD_TOOLS, ok: true, text: definition },
+      ]);
+      expect(events.findIndex((event) => event.kind === "tool-result")).toBeLessThan(
+        events.findIndex((event) => event.kind === "turn"),
+      );
+      expect(result.toolCalls).toEqual([
+        { id: "preselect-3", name: LOAD_TOOLS, ok: true },
+        { id: "c0", name: "s__read", ok: true },
+      ]);
+      expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 1, redundantLoads: 0 });
+      expect(result.used).toEqual(["s__read"]);
+      expect(result.loaded).toEqual([]);
+    });
+
+    it("tells a host of a proxied call as the tool it names, and of a preselection's load", async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            [CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}'],
+            [CALL_TOOL, '{"name":"s__ghost","arguments":{"path":"b"}}'],
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const asked: ToolCallRequest[] = [];
+      const answers: ToolCallResult[] = [];
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        preselected: ["s__read"],
+        dispatch,
+        onToolCall: (call) => asked.push(call),
+        onToolResult: (result) => answers.push(result),
+      });
+      // The shortlist's load first, under the id the transcript gives it; then each `call_tool`
+      // under the inner name, with the inner arguments where the call was let through.
+      expect(asked).toEqual([
+        {
+          id: "preselect-1",
+          name: LOAD_TOOLS,
+          args: { names: ["s__read"] },
+          raw: '{"names":["s__read"]}',
+        },
+        { id: "c0", name: "s__read", args: { path: "a" }, raw: '{"path":"a"}' },
+        { id: "c1", name: "s__ghost", args: {}, raw: '{"path":"b"}' },
+      ]);
+      // What `dispatch` runs is the object the host was told of.
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0][0]).toBe(asked[1]);
+      expect(answers).toEqual([
+        { id: "preselect-1", name: LOAD_TOOLS, ok: true, content: definition },
+        { id: "c0", name: "s__read", ok: true, content: "contents" },
+        {
+          id: "c1",
+          name: "s__ghost",
+          ok: false,
+          content: "Not in the catalogue: s__ghost. Check the name and try again.",
+        },
+      ]);
+    });
+
+    it("answers a load of something preselected with a pointer back", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        preselected: ["s__read"],
+        dispatch: async () => "ok",
+      });
+      expect(results(result.messages)[1]).toBe(
+        "Already loaded earlier in this conversation: s__read. Run them with `call_tool`; do not load them again.",
+      );
+    });
+
+    it("writes no exchange for a preselection with nothing in it to define", async () => {
+      create.mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        preselected: ["gone"],
+        dispatch: async () => "ok",
+      });
+      expect(result.messages).toEqual([...question, { role: "assistant", content: "done" }]);
+      expect(result.toolCalls).toEqual([]);
+    });
+
+    it("runs a catalogued tool called natively, without calling it loaded", async () => {
+      create
+        .mockReturnValueOnce(calls(["s__read", '{"path":"a"}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+      });
+      expect(dispatch.mock.calls[0][0]).toMatchObject({ name: "s__read", args: { path: "a" } });
+      // The native call put no definition in the history, so the load that follows still does.
+      expect(results(result.messages)[1]).toBe(definition);
+    });
+
+    it("shares one answer between a `call_tool` and the same call made natively", async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            [CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}'],
+            ["s__read", '{"path":"a"}'],
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      await runAgentLoop({ config: proxied, messages: question, tools, catalog, dispatch });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("recovers a `call_tool` the model wrote as text", async () => {
+      create
+        .mockReturnValueOnce(
+          says(
+            '<tool_call>{"name":"call_tool","arguments":{"name":"s__write","arguments":{}}}</tool_call>',
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "written");
+      await runAgentLoop({ config: proxied, messages: question, tools, catalog, dispatch });
+      expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ name: "s__write", args: {} });
+    });
+
+    it("does not call a tool loaded when the host gave no definition for it", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools: [read],
+        catalog,
+        dispatch: async () => "ok",
+      });
+      expect(results(result.messages)).toEqual(["No definition is available for: s__write."]);
+      expect(result.toolCalls).toEqual([{ id: "c0", name: LOAD_TOOLS, ok: false }]);
+      expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 0, redundantLoads: 0 });
+    });
+
+    it("is eager without a catalogue, like on-demand mode", async () => {
+      create.mockReturnValueOnce(says("done"));
+      await runAgentLoop({ config: proxied, messages: question, tools, dispatch: async () => "" });
+      expect(declared()).toEqual([["s__read", "s__write"]]);
     });
   });
 
