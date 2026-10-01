@@ -26,6 +26,7 @@ import {
   turnMessages,
   withContext,
 } from "./hooks.ts";
+import { type LedgerRequest, rebaseLedger, recordRequest, type TokenLedger } from "./ledger.ts";
 import { contextTokens, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
@@ -317,6 +318,21 @@ export interface AgentLoopHooks {
   onNote?: (note: HookNote) => void;
 }
 
+/** How full the window is as a step is about to be sent, as `beforeStep` is told it. */
+export interface StepWindow {
+  /**
+   * The prompt tokens this run's last request reported. Absent before the first step — an earlier
+   * run's figure is the host's to vouch for, since the transcript may have been folded since —
+   * and where that request reported none. It does not count the reply and tool results added
+   * since.
+   */
+  used?: number;
+  /** The model's window, `config.contextLength`. Zero where the config names none. */
+  limit: number;
+  /** The run's ledger so far, indexed into the transcript `beforeStep` is handed beside it. */
+  ledger: TokenLedger;
+}
+
 /** What `runAgentLoop` takes. */
 export interface AgentLoopOptions {
   /**
@@ -426,15 +442,25 @@ export interface AgentLoopOptions {
   hooks?: AgentLoopHooks;
   /**
    * Called before each step with the transcript, and what it returns replaces it — the point to
-   * compact or prune a run that has grown into its window. Returning nothing keeps it.
+   * compact or prune a run that has grown into its window. Returning nothing keeps it. `window`
+   * is what `planCompaction` wants to know, so a host need not track usage itself to compact
+   * mid-run.
    */
   beforeStep?: (
     messages: readonly OpenAI.ChatCompletionMessageParam[],
     step: number,
+    window: StepWindow,
   ) =>
     | OpenAI.ChatCompletionMessageParam[]
     | undefined
     | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
+  /**
+   * The ledger an earlier run handed back for this transcript, to be continued. Its indexes have
+   * to be into `messages` as given here — see `rebaseLedger` for a transcript rewritten since.
+   * This run's requests start a new epoch, because the loop cannot see whether the request before
+   * its first one had the same system prompt and tools. Absent starts an empty one.
+   */
+  ledger?: TokenLedger;
   /** Stops the run: the request in flight, and between steps and calls. */
   signal?: AbortSignal;
   /** Told what the run is doing, as the events a watcher reads. */
@@ -509,6 +535,12 @@ export interface AgentLoopResult {
    * `load_tools` findings only the loop sees, `wallMs` from the call to the return, and `outcome`.
    */
   metrics: RunMetrics;
+  /**
+   * What each step's request reported its prompt as, indexed into `messages` above, for
+   * `tokensBetween` and `estimateFrom`. The entries of a `ledger` passed in come first. A step
+   * whose prompt was not reported has no entry.
+   */
+  ledger: TokenLedger;
 }
 
 /**
@@ -607,6 +639,13 @@ function cacheDiagnosis(
  * cache compared against the request before it and the request broken down by what filled it; see
  * `TurnUsage` and `runMetrics`.
  *
+ * Each step's reported prompt goes on a token ledger, in the same epoch as the step before where
+ * the request only appended to it and in a new one where it did not — a `beforeStep` that rewrote
+ * the transcript, a tool array a load grew — so that what the messages between two steps cost can
+ * be read back as a subtraction. The prompt recorded is the first request's, before any
+ * continuation, and a step that reported none, or reported a cache count above its prompt, is not
+ * recorded. The ledger comes back in the result and on every `usage` event; see `tokensBetween`.
+ *
  * @param options The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
  */
@@ -688,12 +727,23 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const toolCalls: ToolCallOutcome[] = [];
   const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
   let previous: Sent | undefined;
+  let ledger: TokenLedger = options.ledger ?? [];
+  // The request the ledger's last entry came from, which is what the next one is measured against.
+  // Nothing before this run's first: an earlier run's head is not something the loop can see.
+  let measured: LedgerRequest | undefined;
 
   for (let step = 0; step < config.maxToolIterations; step++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
     // end — so the signal is read between steps as well.
     signal?.throwIfAborted();
-    messages = (await beforeStep?.(messages, step)) ?? messages;
+    const before = messages;
+    messages =
+      (await beforeStep?.(messages, step, {
+        ...(previous && previous.prompt > 0 ? { used: previous.prompt } : {}),
+        limit: config.contextLength ?? 0,
+        ledger,
+      })) ?? messages;
+    ledger = rebaseLedger(ledger, before, messages);
     onEvent({ kind: "turn", text: `turn ${step + 1}` });
 
     // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
@@ -764,6 +814,17 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       ),
     });
     const firstPrompt = first.usage.prompt;
+    // Recorded from the first request for the same reason. A cache count above the prompt is a
+    // server reporting its prompt net of the cache, whose differences would measure nothing.
+    const sent: LedgerRequest = {
+      messages: request,
+      tools: names,
+      prompt: first.usage.cached > firstPrompt ? 0 : firstPrompt,
+      through: messages.length - 1,
+    };
+    const entered = recordRequest(ledger, measured, sent);
+    if (entered !== ledger) measured = sent;
+    ledger = entered;
     const turn =
       maxContinuations > 0
         ? await continueTurn(client, supports, build, first, { ...turnOptions, maxContinuations })
@@ -783,6 +844,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         totalTokens: usage.total,
         cachedTokens: usage.cached,
         turn: { ...turn.usage, finishReason: turn.finishReason },
+        ledger,
       },
     });
     if (turn.finishReason === "length") {
@@ -877,6 +939,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           wallMs: Date.now() - started,
           outcome: turn.finishReason === "length" ? "truncated" : "answered",
         },
+        ledger,
       };
     }
 

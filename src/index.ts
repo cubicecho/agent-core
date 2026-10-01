@@ -20,6 +20,7 @@ export {
   preview,
   resolveApiKey,
   runAgentLoop,
+  type StepWindow,
   type ToolCallOutcome,
   type ToolCallRequest,
   type ToolCallResult,
@@ -129,6 +130,16 @@ export {
   untrusted,
   withContext,
 } from "./hooks.ts";
+export {
+  estimateFrom,
+  type LedgerEntry,
+  type LedgerEstimateOptions,
+  type LedgerRequest,
+  rebaseLedger,
+  recordRequest,
+  type TokenLedger,
+  tokensBetween,
+} from "./ledger.ts";
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,
