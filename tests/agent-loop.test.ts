@@ -21,6 +21,8 @@ type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
 type ToolCall = import("../src/tool-calls.ts").ToolCall;
 type ToolCallRequest = import("../src/agent-loop.ts").ToolCallRequest;
+type ToolCallResult = import("../src/agent-loop.ts").ToolCallResult;
+type RunEventInput = import("../src/events.ts").RunEventInput;
 type RunUsage = import("../src/events.ts").RunUsage;
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
@@ -352,8 +354,8 @@ describe("runAgentLoop", () => {
     });
     expect(result.turn.content).toBe("done");
     expect(result.toolCalls).toEqual([
-      { name: "a", ok: true },
-      { name: "b", ok: false },
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "b", ok: false },
     ]);
     expect(result.messages.map((m) => m.role)).toEqual([
       "user",
@@ -554,9 +556,87 @@ describe("runAgentLoop", () => {
     expect(replayed?.map((c) => (c as ToolCall).function.arguments)).toEqual(['{"x":true}', "{}"]);
     expect(result.messages[3]).toMatchObject({ content: expect.stringContaining("invalid tool") });
     expect(result.toolCalls).toEqual([
-      { name: "a", ok: true },
-      { name: "a", ok: false },
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "a", ok: false },
     ]);
+  });
+
+  it("names each call by id on its events, so two calls to one tool can be told apart", async () => {
+    create
+      .mockReturnValueOnce(calls(["a", '{"n":1}'], ["a", '{"n":2}']))
+      .mockReturnValueOnce(says("done"));
+    // The first call is held until the second has answered, so the results land out of order.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const events: RunEventInput[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      parallel: true,
+      dispatch: async ({ args }) => {
+        if (args.n === 1) await held;
+        else release();
+        return `answer ${args.n}`;
+      },
+      onEvent: (event) => events.push(event),
+    });
+    const tools = events.filter((e) => e.kind === "tool-call" || e.kind === "tool-result");
+    expect(tools.map((e) => [e.kind, e.id, e.text])).toEqual([
+      ["tool-call", "c0", '{"n":1}'],
+      ["tool-call", "c1", '{"n":2}'],
+      ["tool-result", "c1", "answer 2"],
+      ["tool-result", "c0", "answer 1"],
+    ]);
+    // Only the tool kinds carry one.
+    expect(events.filter((e) => "id" in e)).toHaveLength(4);
+    expect(result.toolCalls).toEqual([
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "a", ok: true },
+    ]);
+  });
+
+  it("hands a host every call and its whole result, dispatched or not", async () => {
+    const long = "x".repeat(5000);
+    create
+      .mockReturnValueOnce(calls(["a", "{'x': True,}"], ["a", '{"x":true}'], ["a", "{nope"]))
+      .mockReturnValueOnce(says("done"));
+    const dispatch = vi.fn(async (_call: ToolCallRequest) => long);
+    const asked: ToolCallRequest[] = [];
+    const answered: ToolCallResult[] = [];
+    const events: RunEventInput[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch,
+      onToolCall: (call) => asked.push(call),
+      onToolResult: (answer) => answered.push(answer),
+      onEvent: (event) => events.push(event),
+    });
+    // One dispatch: the second call repeats the first, and the third could not be read.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(asked).toEqual([
+      { id: "c0", name: "a", args: { x: true }, raw: "{'x': True,}" },
+      { id: "c1", name: "a", args: { x: true }, raw: '{"x":true}' },
+      { id: "c2", name: "a", args: {}, raw: "{nope" },
+    ]);
+    // The repeat gets a result of its own, carrying the answer it shares with the first.
+    expect(answered).toEqual([
+      { id: "c0", name: "a", ok: true, content: long },
+      { id: "c1", name: "a", ok: true, content: long },
+      { id: "c2", name: "a", ok: false, content: expect.stringContaining("invalid tool") },
+    ]);
+    // What the callback was handed is what the model reads; the event is still the preview.
+    expect(answered.map((a) => a.content)).toEqual(
+      result.messages.flatMap((m) => (m.role === "tool" ? [m.content] : [])),
+    );
+    const shown = events.filter((e) => e.kind === "tool-result");
+    expect(shown.map((e) => e.id)).toEqual(["c0", "c1", "c2"]);
+    expect(shown[0].text).toBe(preview(long));
+    expect(shown[0].text).not.toBe(long);
   });
 
   it("tells a call cut off at the ceiling to raise maxTokens", async () => {
@@ -692,8 +772,8 @@ describe("runAgentLoop", () => {
     });
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(result.toolCalls).toEqual([
-      { name: "a", ok: false },
-      { name: "a", ok: true },
+      { id: "c0", name: "a", ok: false },
+      { id: "c0", name: "a", ok: true },
     ]);
   });
 
@@ -811,6 +891,49 @@ describe("runAgentLoop", () => {
       expect(dispatch).toHaveBeenCalledTimes(1);
       expect(result.loaded).toEqual(["s__read"]);
       expect(result.used).toEqual(["s__read"]);
+    });
+
+    it("announces load_tools like any other call, with the whole answer", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}'], [LOAD_TOOLS, "{}"]))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async () => "contents");
+      const asked: ToolCallRequest[] = [];
+      const answered: ToolCallResult[] = [];
+      const events: RunEventInput[] = [];
+      const result = await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+        onToolCall: (call) => asked.push(call),
+        onToolResult: (answer) => answered.push(answer),
+        onEvent: (event) => events.push(event),
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(asked).toEqual([
+        { id: "c0", name: LOAD_TOOLS, args: { names: ["s__read"] }, raw: '{"names":["s__read"]}' },
+        { id: "c1", name: LOAD_TOOLS, args: {}, raw: "{}" },
+      ]);
+      const stored = result.messages.flatMap((m) => (m.role === "tool" ? [m.content] : []));
+      expect(answered).toEqual([
+        { id: "c0", name: LOAD_TOOLS, ok: true, content: stored[0] },
+        // A load that named nothing loaded nothing, and says so under its own id.
+        { id: "c1", name: LOAD_TOOLS, ok: false, content: stored[1] },
+      ]);
+      expect(answered[0].content).toContain("s__read");
+      const pairs = events.filter((e) => e.kind === "tool-call" || e.kind === "tool-result");
+      expect(pairs.map((e) => [e.kind, e.id])).toEqual([
+        ["tool-call", "c0"],
+        ["tool-result", "c0"],
+        ["tool-call", "c1"],
+        ["tool-result", "c1"],
+      ]);
+      expect(result.toolCalls).toEqual([
+        { id: "c0", name: LOAD_TOOLS, ok: true },
+        { id: "c1", name: LOAD_TOOLS, ok: false },
+      ]);
     });
 
     it("counts what the model loaded, and calls a load that moved the tools a cache break", async () => {

@@ -21,6 +21,7 @@ export {
   runAgentLoop,
   type ToolCallOutcome,
   type ToolCallRequest,
+  type ToolCallResult,
 } from "./agent-loop.ts";
 export { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
 export {

@@ -97,9 +97,9 @@ export type RunEventKind =
   | "thinking"
   /** Reply tokens, as they arrive. */
   | "output"
-  /** The model asked for a tool, with the arguments it chose. */
+  /** The model asked for a tool, with the arguments it chose. `id` is the call's. */
   | "tool-call"
-  /** A tool came back, with what it said. */
+  /** A tool came back, with what it said. `id` is the id of the call it answers. */
   | "tool-result"
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
   | "notice"
@@ -143,8 +143,8 @@ export interface TurnReport extends TurnUsage {
 /**
  * One thing that happened in a run, as a watcher receives it.
  *
- * Every field is always present — the empty ones are `""` or `null` rather than missing — so a
- * client reads it without guarding each key.
+ * Every field but `id` is always present — the empty ones are `""` or `null` rather than
+ * missing — so a client reads it without guarding each key.
  */
 export interface RunEvent {
   /** The run it belongs to. `emit` fills this in; a caller does not pass it. */
@@ -165,6 +165,12 @@ export interface RunEvent {
   text: string;
   /** Tool name on the tool kinds, otherwise empty. */
   name: string;
+  /**
+   * The call's id on the tool kinds, which pairs a `tool-result` with its `tool-call` when one
+   * tool is called twice in a step. The one field `emit` does not fill in: it is there only where
+   * the emitter gave one, and optional so an event built before it existed still compiles.
+   */
+  id?: string;
   /**
    * The caller's own flow step this happened inside, so a watcher can group a run the way the
    * work is written. Empty for events that belong to the run rather than to any one step, and

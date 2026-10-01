@@ -406,6 +406,26 @@ predicate is asked per call — which is how `send_email` opts out, since twice 
 nothing in an OpenAI tool definition says which tools those are. A pool that reads the MCP
 `readOnlyHint` and `idempotentHint` annotations can answer it; this package cannot.
 
+Three kinds of call never reach `dispatch`: `load_tools`, which the loop answers itself, a call
+whose arguments could not be read, and that identical repeat. A host that draws each call as a
+card and fills it in when the result lands hears of those through `onToolCall` and `onToolResult`,
+which are told of every call the model made — the request as `dispatch` would have been handed it
+(with empty `args` where they could not be read), then `{ id, name, ok, content }` with the whole
+text the model reads. A repeat gets a result of its own under its own id, carrying the answer it
+shares. Neither is awaited. The `tool-call` and `tool-result` events carry the same `id`, with
+`text` still cut by `preview`, and so does each entry of the result's `toolCalls` — which is what
+tells two calls to one tool apart when `parallel` lands their results out of order. An id is
+distinct within a step, and a server is free to use it again in a later one.
+
+```ts
+await runAgentLoop({
+  // ...
+  onToolCall: ({ id, name, args }) => send({ type: "tool_use", id, name, input: args }),
+  onToolResult: ({ id, ok, content }) =>
+    send({ type: "tool_result", toolUseId: id, content, isError: !ok }),
+});
+```
+
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
 `True` and `None`, bare keys, a trailing comma — is repaired, without touching what is inside a

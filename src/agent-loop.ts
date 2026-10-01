@@ -237,11 +237,14 @@ export async function preselect(
   return preselection(reply, catalog, maxPerLoad);
 }
 
-/** One call the model made, as `dispatch` is handed it. */
+/** One call the model made, as `dispatch` and `onToolCall` are handed it. */
 export interface ToolCallRequest {
   id: string;
   name: string;
-  /** Parsed by `parseToolArguments`, repairs and all. */
+  /**
+   * Parsed by `parseToolArguments`, repairs and all. Empty for a call whose arguments could not be
+   * read, which only `onToolCall` is ever handed.
+   */
   args: Record<string, unknown>;
   /** The arguments as the model wrote them, before any repair. */
   raw: string;
@@ -249,9 +252,31 @@ export interface ToolCallRequest {
 
 /** What one tool call did, in the order the model asked. */
 export interface ToolCallOutcome {
+  /**
+   * The id the model's reply gave the call, which is what tells two calls to one tool apart.
+   * Distinct within a step — `streamTurn` mints one where the server sent none or repeated one —
+   * but nothing stops a server using the same id again in a later step. `runAgentLoop` always
+   * sets it; optional so an outcome built before it existed still compiles.
+   */
+  id?: string;
   name: string;
   /** False when the arguments did not parse, the tool threw, or `load_tools` loaded nothing. */
   ok: boolean;
+}
+
+/**
+ * One call's whole answer, as `onToolResult` is handed it.
+ *
+ * The `tool-result` event carries the same answer cut by `preview`, which is right for a readout
+ * and wrong for a host that renders or stores the result: this is the text the model reads.
+ */
+export interface ToolCallResult extends ToolCallOutcome {
+  id: string;
+  /**
+   * What went into the transcript for this call, uncut: what the tool returned, what it threw, the
+   * `load_tools` answer, or why the arguments could not be read.
+   */
+  content: string;
 }
 
 /**
@@ -354,6 +379,24 @@ export interface AgentLoopOptions {
    */
   dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
   /**
+   * Told of every call the model made, as it starts — the ones `dispatch` never sees included:
+   * `load_tools`, an identical repeat answered from the first, and a call whose arguments could
+   * not be read, which arrives with empty `args` and the model's own text in `raw`.
+   *
+   * For a host that shows each call as it is made and fills it in when its result lands, which
+   * `dispatch` alone cannot do for those three. Not awaited: a promise it returns is dropped.
+   */
+  onToolCall?: (call: ToolCallRequest) => void;
+  /**
+   * Told of every call's answer as it lands, whole, under the id `onToolCall` announced it by.
+   *
+   * One per call the model made: a deduplicated repeat gets its own, carrying the answer it
+   * shares with the first. With `parallel` they arrive as the calls finish, which need not be
+   * the order they were made in; the transcript and the result's `toolCalls` keep that order.
+   * Not awaited: a promise it returns is dropped.
+   */
+  onToolResult?: (result: ToolCallResult) => void;
+  /**
    * Hooks gathered onto the question before the first request, and told the reply after.
    *
    * Only this question is touched — the last user message of `messages` — and the context is on
@@ -404,7 +447,7 @@ export interface AgentLoopResult {
   messages: OpenAI.ChatCompletionMessageParam[];
   /** Summed over every turn of the run. */
   usage: TurnUsage;
-  /** Every call, `load_tools` included, in the order they were made. */
+  /** Every call, `load_tools` included, in the order they were made, each under its call id. */
   toolCalls: ToolCallOutcome[];
   /** What is loaded at the end, for `carryOver`. Empty in eager mode. */
   loaded: string[];
@@ -543,6 +586,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const { config, system = "", tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
     onTurn,
+    onToolCall,
+    onToolResult,
     beforeStep,
     parallel = false,
     recoverToolCalls: recover = true,
@@ -798,7 +843,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     const answered = new Map<string, Promise<string>>();
     const run = async ({ call, args, error: unreadable, normal }: (typeof parsed)[number]) => {
       const { name, arguments: raw } = call.function;
-      onEvent({ kind: "tool-call", name, text: preview(raw) });
+      // Built for every call rather than only the dispatched ones, so a host hears of the calls
+      // the loop answers itself in the same shape. Arguments that could not be read are none.
+      const request: ToolCallRequest = { id: call.id, name, args: args ?? {}, raw };
+      onEvent({ kind: "tool-call", id: call.id, name, text: preview(raw) });
+      onToolCall?.(request);
       let content: string;
       let ok = true;
       try {
@@ -816,7 +865,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           // what it wants; load it and run it rather than refusing.
           if (onDemand && inCatalog(catalog, name)) loaded.add(name);
           used.add(name);
-          const request = { id: call.id, name, args, raw };
           content = dedupable(request)
             ? await once(answered, `${name}\0${normal}`, () => dispatch(request, signal))
             : await dispatch(request, signal);
@@ -826,8 +874,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         content = errorMessage(error);
         ok = false;
       }
-      onEvent({ kind: "tool-result", name, ok, text: preview(content) });
-      return { id: call.id, name, ok, content };
+      onEvent({ kind: "tool-result", id: call.id, name, ok, text: preview(content) });
+      const result = { id: call.id, name, ok, content };
+      onToolResult?.(result);
+      return result;
     };
 
     const outcomes: Awaited<ReturnType<typeof run>>[] = [];
@@ -841,7 +891,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       }
     }
     for (const { id, name, ok, content } of outcomes) {
-      toolCalls.push({ name, ok });
+      toolCalls.push({ id, name, ok });
       messages.push({ role: "tool", tool_call_id: id, content });
     }
   }
