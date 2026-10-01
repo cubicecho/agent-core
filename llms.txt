@@ -21,6 +21,7 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 - `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
+- `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
 - `ToolCallRequest` (type) — One call the model made, as `dispatch` is handed it.
 
@@ -162,6 +163,19 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
 - `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 - `withContext` — The request, with the hooks' context added to this turn's question.
+
+### ledger
+
+What stretches of a transcript cost, read off the prompt counts the server already reported.
+
+- `estimateFrom` — A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers the message, the calibrated estimate where it does not.
+- `LedgerEntry` (type) — One request's reported prompt, and how far into the transcript that request reached.
+- `LedgerEstimateOptions` (type) — What `tokensBetween` and `estimateFrom` take besides the ledger and the transcript.
+- `LedgerRequest` (type) — What `recordRequest` needs to know of one request.
+- `rebaseLedger` — The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left standing.
+- `recordRequest` — The ledger with one more request on it, in the epoch the request before it says it belongs to.
+- `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
+- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
 
 ### reset
 

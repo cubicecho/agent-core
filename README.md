@@ -37,6 +37,7 @@ only, Node >=22.
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
+| `ledger` | What stretches of a transcript cost, read off the prompt counts the server reported rather than estimated: `recordRequest`, `tokensBetween`, `estimateFrom`, `rebaseLedger`. |
 | `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
 | `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
@@ -519,7 +520,10 @@ What it cannot say: whether a failed run was stopped, errored or ran out of tool
 whether the host compacted — neither is in the events.
 
 `beforeStep` is handed the transcript before each request and may return a replacement, which is
-where compaction goes (below). Hooks are gathered once, onto the question, and never written into
+where compaction goes (below). Its third argument is `{ used, limit, ledger }` — the prompt the
+run's last request reported, the window, and the token ledger so far — so a host can compact
+mid-run without tracking usage itself; `used` is absent before the first step and where the
+endpoint reported nothing. Hooks are gathered once, onto the question, and never written into
 the transcript that comes back; `afterTurn` is told the reply without the run waiting on it.
 
 `resolveApiKey` is exported and not applied, because which key an endpoint gets is a rule a
@@ -606,6 +610,73 @@ way to save tokens.
 
 `pruneToolResults` keeps the transcript's indexes, so a plan made before pruning still applies to
 what it returns, as above.
+
+### What the messages cost, measured
+
+`planCompaction` decides where to cut by estimating each message, and a calibrated divisor fixes
+only the average: a transcript is tool results, JSON arguments, code and prose, each at its own
+ratio, plus whatever the chat template adds per message. The server has already said what they
+cost. A request that only appended to the one before it differs from it by exactly the cost of what
+was appended, so two reported prompts and a subtraction give a number with no tokenizer in it — the
+template's tokens and a tool result's real density included, and reasoning, which is never
+replayed, left out.
+
+`runAgentLoop` keeps that as a ledger — one `{ through, prompt, epoch }` per request: the index of
+the request's last message, the prompt it reported, and an epoch that changes whenever the prefix
+did. It comes back as `result.ledger`, rides on every `usage` event, and is handed to `beforeStep`;
+pass it back as `ledger` on the next run and it is continued. It is a plain array of three numbers
+an entry, so it stores as two columns on the message row `through` names or as JSON beside the
+session.
+
+```ts
+const result = await runAgentLoop({
+  ...options,
+  ledger: session.ledger,
+  beforeStep: async (messages, step, { used, limit, ledger }) => {
+    const plan = planCompaction(messages, {
+      limit,
+      used,
+      target: 0.5,
+      estimate: estimateFrom(ledger, messages, { charsPerToken }),
+    });
+    if (!plan) return;
+    return compactTranscript(messages, plan, summarise);
+  },
+});
+session.ledger = result.ledger;
+```
+
+`tokensBetween(ledger, from, to, messages)` is the cost of `messages.slice(from, to)`. Between two
+boundaries recorded in one epoch it is the subtraction, and exact. A boundary falls after a question
+and after each step's tool results, never after an assistant message, so a stretch that starts or
+ends inside a group gets that group's total by character share, the way `contextTokens` divides a
+reported prompt. Whatever no pair of entries covers is the calibrated estimate: the messages before
+the first entry, the group either side of an epoch's end, and what has not been sent yet.
+`estimateFrom(ledger, messages)` is the same thing one message at a time, which is the function
+`planCompaction` already takes as `estimate`.
+
+`target` is the share of the window the whole request should come down to. `keepRatio` bounds the
+kept tail alone, with the system prompt, the tool schemas and the summary sitting on top of it
+uncounted; given a `target`, the cut is the first user message at which `used`, less what is
+folded, plus the summary's ceiling (`summaryTokens`, 1024 unless given) is at or under it, and the
+plan's `after` says what that leaves. Where no cut reaches it the plan folds as far as the last
+user message and `after` says how far short it fell. Without `target` nothing changes.
+
+A new epoch starts whenever a request did more than append: a fold or a prune in `beforeStep`, a
+system prompt that moved, and a tool array that grew — a `load_tools` in on-demand mode adds a
+schema to the head, so the group beside it is left unmeasured rather than charged for it. When
+`beforeStep` returns a different transcript the loop moves the entries that still stand to their new
+indexes with `rebaseLedger(ledger, before, after)`, which a host that folds between runs calls
+itself. Differences inside an old epoch stay good, since the prefix they shared cancels.
+
+What is not measured: the first request of every run starts an epoch, because the loop cannot see
+whether the run before it had the same system prompt and tools, so a run's question and the answer
+before it are estimated; a step whose prompt was not reported has no entry, and the next one that
+does is measured across it; and the prompt recorded is the first request's, before any continuation.
+A difference of zero or less is not trusted, and neither is a prompt reported smaller than its own
+cache count — both are how a server reporting `prompt_tokens` net of its cache would show up.
+Whether any endpoint does that has not been checked, and one whose net counts kept rising would not
+be caught. A host with its own loop keeps a ledger with `recordRequest(ledger, previous, next)`.
 
 ### A fold you store, instead of a transcript you rewrite
 

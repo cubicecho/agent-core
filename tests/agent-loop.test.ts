@@ -16,6 +16,7 @@ const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await impor
 );
 const { LOAD_TOOLS } = await import("../src/tool-loading.ts");
 const { configureHooks, resetHooks } = await import("../src/hooks.ts");
+const { tokensBetween } = await import("../src/ledger.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
@@ -987,6 +988,91 @@ describe("runAgentLoop", () => {
       content: "shorter",
     });
     expect(result.messages[0]).toEqual({ role: "user", content: "shorter" });
+  });
+
+  it("keeps a ledger of each step's reported prompt, and tells beforeStep how full the window is", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(reportedCall(160, 100, "a"))
+      .mockReturnValueOnce(reported(260, 160, { content: "done" }));
+    const windows: unknown[] = [];
+    const ledgers: unknown[] = [];
+    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
+    const result = await runAgentLoop({
+      config: { ...config, contextLength: 8000 },
+      messages: [
+        { role: "user", content: "before" },
+        { role: "assistant", content: "yes" },
+        ...question,
+      ],
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      ledger: earlier,
+      beforeStep: (_messages, _step, window) => {
+        windows.push(window);
+        return undefined;
+      },
+      onEvent: (event) => event.kind === "usage" && ledgers.push(event.usage?.ledger),
+    });
+    // The earlier run's entry stays, and this run's requests are an epoch of their own: one
+    // through the question, then one through each step's tool result.
+    expect(result.ledger).toEqual([
+      { through: 0, prompt: 40, epoch: 3 },
+      { through: 2, prompt: 100, epoch: 4 },
+      { through: 4, prompt: 160, epoch: 4 },
+      { through: 6, prompt: 260, epoch: 4 },
+    ]);
+    expect(earlier).toHaveLength(1);
+    expect(ledgers).toEqual([result.ledger.slice(0, 2), result.ledger.slice(0, 3), result.ledger]);
+    // Each step's call and result, read back as a subtraction — and nothing across the runs.
+    const estimate = () => 7;
+    expect(tokensBetween(result.ledger, 3, 5, result.messages, { estimate })).toBe(60);
+    expect(tokensBetween(result.ledger, 5, 7, result.messages, { estimate })).toBe(100);
+    expect(tokensBetween(result.ledger, 1, 3, result.messages, { estimate })).toBe(14);
+    // No request of this run's has reported before its first step.
+    expect(windows).toEqual([
+      { limit: 8000, ledger: earlier },
+      { used: 100, limit: 8000, ledger: result.ledger.slice(0, 2) },
+      { used: 160, limit: 8000, ledger: result.ledger.slice(0, 3) },
+    ]);
+  });
+
+  it("starts a new epoch when beforeStep rewrites the history, and records nothing unreported", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(reportedCall(90, 0, "a"))
+      .mockReturnValueOnce(calls(["a", "{}"]))
+      .mockReturnValueOnce(reported(170, 0, { content: "done" }));
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      beforeStep: (messages, step) =>
+        step === 1 ? [{ role: "user", content: "shorter" }, ...messages.slice(1)] : undefined,
+    });
+    // The rewrite moved the first boundary to a later epoch and put the next request in another,
+    // so 90 is not read against 100. The third request reported nothing and has no entry; the
+    // fourth only appended to the second, and is measured against it across the gap.
+    expect(result.ledger).toEqual([
+      { through: 0, prompt: 100, epoch: 1 },
+      { through: 2, prompt: 90, epoch: 2 },
+      { through: 6, prompt: 170, epoch: 2 },
+    ]);
+    expect(tokensBetween(result.ledger, 3, 7, result.messages)).toBe(80);
+  });
+
+  it("does not record a prompt reported net of the cache", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(reported(30, 100, { content: "done" }));
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+    });
+    expect(result.ledger).toEqual([{ through: 0, prompt: 100, epoch: 0 }]);
   });
 
   it("drops an extraBody field the model refuses, and keeps it dropped", async () => {

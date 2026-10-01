@@ -1,3 +1,4 @@
+import type { TokenLedger } from "./ledger.ts";
 import type { TurnUsage } from "./stream.ts";
 import { LOAD_TOOLS } from "./tool-loading.ts";
 
@@ -132,6 +133,12 @@ export interface RunUsage {
    * from a caller emitting usage of its own.
    */
   turn?: TurnReport;
+  /**
+   * The run's token ledger as of this turn, whole rather than the entry it added — a host whose
+   * run then fails still holds the latest one, and a rewrite in `beforeStep` moves earlier entries.
+   * Absent from a caller emitting usage of its own.
+   */
+  ledger?: TokenLedger;
 }
 
 /** One turn's usage and measurements as a `usage` event carries them. */
