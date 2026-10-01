@@ -1,3 +1,10 @@
+# [2.20.0](https://github.com/cubicecho/agent-core/compare/v2.19.0...v2.20.0) (2026-10-01)
+
+
+### Features
+
+* a proxied tool-discovery mode, with a tool array that is load_tools and call_tool for the whole run ([b4fb1cb](https://github.com/cubicecho/agent-core/commit/b4fb1cb16f87f7a1a6b0b360a0b012ee9077985a)), closes [#120](https://github.com/cubicecho/agent-core/issues/120)
+
 # [2.19.0](https://github.com/cubicecho/agent-core/compare/v2.18.1...v2.19.0) (2026-10-01)
 
 
