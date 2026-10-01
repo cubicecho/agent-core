@@ -44,7 +44,7 @@ only, Node >=22.
 | `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
-| `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. |
+| `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. And what `runAgentLoop` throws, with the run as it stood: `AgentLoopError`, `ToolIterationLimit`, `AgentLoopOverflow`, and `failedRun` to read it off any of them. |
 | `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
 
 What is **not** here is the work: orchestration, prompts, and whatever the run is about. That
@@ -681,6 +681,50 @@ The loop gathers before its first request, and nothing of the host's can run bes
 with pre-turn work to overlap with the hooks — compaction, a preselection — calls `gather` itself,
 applies `withContext` to the current question as well, calls `notify` after, and passes no `hooks`
 (see [Hooks](#hooks)).
+
+A host that stores its transcript — a row per message, so a crash or a stop mid-run still leaves
+readable history — gets each message as the loop appends it, and the run as it stood when the loop
+throws:
+
+```ts
+try {
+  await runAgentLoop({
+    ...options,
+    // Awaited: the row is written before the tools run, and before the next request is sent.
+    onMessage: (message, step, turn) =>
+      store.add(sessionId, turn?.reasoning ? { ...message, reasoning_content: turn.reasoning } : message),
+  });
+} catch (error) {
+  const run = failedRun(error); // messages, usage, toolCalls, loaded, used — or undefined
+  if (run) await store.keep(sessionId, { usage: run.usage, loaded: run.loaded });
+  if (signal.aborted) return; // a stop, told by the signal as it always was
+  if (error instanceof ContextOverflow) return compactAndRetry(run?.messages);
+  if (error instanceof ToolIterationLimit) return outOfSteps();
+  throw error; // an AgentLoopError: the message is the cause's, and the cause is on `cause`
+}
+```
+
+`onMessage` hears the assistant message as it will be replayed — recovered calls folded in, and
+arguments repaired, which the turn `onTurn` is handed does not show — together with that `Turn`,
+and then each tool result, in transcript order. `onTurn` is not awaited and never sees a tool
+result; this is the one to store from. What it returns is ignored, since `beforeStep` is the one way to rewrite
+the transcript, and what it throws ends the run.
+
+Everything the loop throws carries the run. A spent `maxToolIterations` is a `ToolIterationLimit`,
+with the message it always had. A request too big for the window is an `AgentLoopOverflow`, which
+is a `ContextOverflow`, so a `catch` written for one still catches it. Anything else — a stop, a
+refused request, a dropped stream — is an `AgentLoopError` whose `cause` is what was caught and
+whose message is the cause's own. It is a wrapper and not fields on the error that was caught
+because a stop throws the signal's reason, one object for every run under that signal. A stop is
+still recognised by the signal the host aborted.
+
+A failure while a step's tools are running leaves a transcript that can be sent again. The results
+that came back are kept, a call the run was stopped during is answered `Stopped before this call
+finished.`, and one the loop never reached `Not run: the run stopped first.` — a call with no
+result is a transcript an endpoint refuses. Those are announced through `onMessage` like any other
+result. The reply of a request that was in flight when the run stopped is not kept: the host has
+the deltas from its `output` and `thinking` events, and whether half an answer belongs in the
+history is its call.
 
 `resolveApiKey` is exported and not applied, because which key an endpoint gets is a rule a
 consumer states and a library guessing it could send one where it was not meant to go. The rule

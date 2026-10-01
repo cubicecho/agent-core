@@ -115,7 +115,12 @@ Picking up an answer the token ceiling cut off, instead of keeping half of it.
 
 ### errors
 
+- `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
+- `AgentLoopFailure` (type) — A run as it stood when `runAgentLoop` gave up on it.
+- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the run as it stood.
 - `errorMessage` — What went wrong, as a string.
+- `failedRun` — The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
+- `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
 
 ### events
 

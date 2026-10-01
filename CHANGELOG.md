@@ -1,3 +1,10 @@
+# [2.21.0](https://github.com/cubicecho/agent-core/compare/v2.20.0...v2.21.0) (2026-10-01)
+
+
+### Features
+
+* hand a host each message as the loop appends it, and the run as it stood when it throws ([2f7fc0f](https://github.com/cubicecho/agent-core/commit/2f7fc0f70897ed052602a85a691dc83c1497c6d3)), closes [#121](https://github.com/cubicecho/agent-core/issues/121)
+
 # [2.20.0](https://github.com/cubicecho/agent-core/compare/v2.19.0...v2.20.0) (2026-10-01)
 
 
