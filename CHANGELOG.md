@@ -1,3 +1,18 @@
+# [2.19.0](https://github.com/cubicecho/agent-core/compare/v2.18.1...v2.19.0) (2026-10-01)
+
+
+### Bug Fixes
+
+* hand back the hooks' context and preface, so a past question can be sent again as it was ([dd9a2df](https://github.com/cubicecho/agent-core/commit/dd9a2dfae5c496aca78712d2371202cd25328cf6)), closes [#123](https://github.com/cubicecho/agent-core/issues/123)
+
+
+### Features
+
+* call ids and whole results for every tool call, the ones the loop answers itself included ([6ccbc7a](https://github.com/cubicecho/agent-core/commit/6ccbc7a1bcc836a7b19d002d857aea49ed1a93e2)), closes [#122](https://github.com/cubicecho/agent-core/issues/122)
+* hand a host each step's request from runAgentLoop, and its context breakdown on the usage event ([8246c78](https://github.com/cubicecho/agent-core/commit/8246c783446309e7619e941da8d31113ff415fc0)), closes [#108](https://github.com/cubicecho/agent-core/issues/108) [#125](https://github.com/cubicecho/agent-core/issues/125)
+* keep a ledger of reported prompt tokens, and plan compaction from measured costs ([c2ab9f4](https://github.com/cubicecho/agent-core/commit/c2ab9f40f8e4a6ffea0a4a1daeb5e8eb9af7cac2)), closes [#126](https://github.com/cubicecho/agent-core/issues/126)
+* let a preselection be appended, so step 0 keeps the request head of every other step ([2c1bbe1](https://github.com/cubicecho/agent-core/commit/2c1bbe127b28312f52de662f84057e67c7808ccb)), closes [#124](https://github.com/cubicecho/agent-core/issues/124)
+
 ## [2.18.1](https://github.com/cubicecho/agent-core/compare/v2.18.0...v2.18.1) (2026-09-25)
 
 
