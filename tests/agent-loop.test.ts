@@ -15,7 +15,7 @@ const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await impor
   "../src/capabilities.ts"
 );
 const { LOAD_TOOLS } = await import("../src/tool-loading.ts");
-const { configureHooks, resetHooks } = await import("../src/hooks.ts");
+const { configureHooks, resetHooks, withContext } = await import("../src/hooks.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
@@ -1094,6 +1094,188 @@ describe("runAgentLoop", () => {
     } finally {
       resetHooks();
     }
+  });
+
+  describe("the hooks' context on past questions", () => {
+    /** A runner whose `beforeTurn` hook recalls this, and whose other events do nothing. */
+    const recalls = (text: string) => async (event: string) =>
+      event === "beforeTurn"
+        ? [
+            {
+              serverId: "m",
+              label: "memory",
+              hookId: "h",
+              event,
+              ok: true,
+              text,
+              inject: true,
+              maxTokens: 500,
+            },
+          ]
+        : [];
+    const hooks = (text: string, preface?: string) => ({
+      run: recalls(text) as never,
+      context: { session: { id: "s1" } },
+      preface,
+    });
+    const sent = (call: number) => (create.mock.calls[call][0] as Body).messages;
+
+    it("hands back what it put on the question, so the next turn's request only appends", async () => {
+      create
+        .mockReturnValueOnce(calls(["a", "{}"]))
+        .mockReturnValueOnce(says("tea"))
+        .mockReturnValueOnce(says("toast"));
+      const first = await runAgentLoop({
+        config,
+        system: "sys",
+        messages: [{ role: "user", content: "what do I like?" }],
+        tools: [tool("a")],
+        dispatch: async () => "ok",
+        hooks: hooks("you like tea"),
+      });
+      expect(first.context).toBe('<context source="memory">\nyou like tea\n</context>');
+      // The host stores what the user typed, and beside it what the loop said above it.
+      expect(first.messages[0].content).toBe("what do I like?");
+      const stored = { at: 0, context: first.context, preface: first.preface };
+      const history: Message[] = [...first.messages, { role: "user", content: "and to eat?" }];
+
+      await runAgentLoop({
+        config,
+        system: "sys",
+        messages: withContext(history, stored.at, stored.context, stored.preface),
+        tools: [tool("a")],
+        dispatch: async () => "ok",
+        hooks: hooks("you like toast"),
+      });
+      // Everything the last request of the first turn sent is the head of the next one, byte for
+      // byte — the earlier question with its context still on it.
+      const before = sent(1);
+      const after = sent(2);
+      expect(JSON.stringify(after.slice(0, before.length))).toBe(JSON.stringify(before));
+      expect(after[1].content).toContain("you like tea");
+      expect(after.at(-1)?.content).toContain("you like toast");
+      expect(after.at(-1)?.content).not.toContain("you like tea");
+    });
+
+    it("sends the earlier question bare when the host stores nothing, which is the rewrite", async () => {
+      create.mockReturnValueOnce(says("tea")).mockReturnValueOnce(says("toast"));
+      const first = await runAgentLoop({
+        config,
+        messages: [{ role: "user", content: "what do I like?" }],
+        dispatch: async () => "ok",
+        hooks: hooks("you like tea"),
+      });
+      await runAgentLoop({
+        config,
+        messages: [...first.messages, { role: "user", content: "and to eat?" }],
+        dispatch: async () => "ok",
+        hooks: hooks("you like toast"),
+      });
+      expect(sent(0)[0].content).toContain("you like tea");
+      expect(sent(1)[0].content).toBe("what do I like?");
+    });
+
+    it("hands back the preface it said, so a stored question outlives a change of it", async () => {
+      const parts = [{ type: "text" as const, text: "what do I like?" }];
+      configureHooks({ preface: "From min-agent:" });
+      try {
+        create.mockReturnValueOnce(says("tea")).mockReturnValueOnce(says("toast"));
+        const first = await runAgentLoop({
+          config,
+          messages: [{ role: "user", content: parts }],
+          dispatch: async () => "ok",
+          hooks: hooks("you like tea"),
+        });
+        expect(first.preface).toBe("From min-agent:");
+        configureHooks({ preface: "From kanban:" });
+        const history: Message[] = [...first.messages, { role: "user", content: "and to eat?" }];
+        const second = await runAgentLoop({
+          config,
+          messages: withContext(history, 0, first.context, first.preface),
+          dispatch: async () => "ok",
+          hooks: hooks("you like toast"),
+        });
+        expect(second.preface).toBe("From kanban:");
+        expect(JSON.stringify(sent(1).slice(0, 1))).toBe(JSON.stringify(sent(0)));
+        expect(sent(1).at(-1)?.content).toMatch(/^From kanban:\n\n<context/);
+      } finally {
+        resetHooks();
+      }
+    });
+
+    it("hands back the loop's own preface over the process's, and an empty one as empty", async () => {
+      for (const preface of ["From kanban:", ""]) {
+        create.mockReset().mockReturnValueOnce(says("tea"));
+        const result = await runAgentLoop({
+          config,
+          messages: question,
+          dispatch: async () => "ok",
+          hooks: hooks("you like tea", preface),
+        });
+        expect(result.preface).toBe(preface);
+        expect(withContext(result.messages, 0, result.context, result.preface)[0]).toEqual(
+          sent(0)[0],
+        );
+      }
+    });
+
+    it("hands back no context when no hook added any, or none was given", async () => {
+      create.mockReturnValueOnce(says("one")).mockReturnValueOnce(says("two"));
+      const quiet = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => "ok",
+        hooks: { run: async () => [], context: { session: { id: "s1" } } },
+      });
+      expect(quiet.context).toBe("");
+      const bare = await runAgentLoop({ config, messages: question, dispatch: async () => "ok" });
+      expect(bare.context).toBe("");
+      await expect(bare.afterTurn).resolves.toEqual([]);
+    });
+
+    it("hands back afterTurn's notes as a promise, without waiting for them itself", async () => {
+      create.mockReturnValueOnce(says("the answer"));
+      let finish: (outcomes: unknown[]) => void = () => {};
+      const heard: unknown[] = [];
+      const run = vi.fn((event: string) =>
+        event === "afterTurn"
+          ? new Promise<unknown[]>((resolve) => {
+              finish = resolve;
+            })
+          : Promise.resolve([]),
+      );
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => "ok",
+        hooks: {
+          run: run as never,
+          context: { session: { id: "s1" } },
+          onNote: (note) => heard.push(note),
+        },
+      });
+      // The loop is back and the hook is still running.
+      expect(result.turn.content).toBe("the answer");
+      expect(result.notes).toEqual([]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+      expect(heard).toEqual([]);
+      finish([
+        {
+          serverId: "m",
+          label: "memory",
+          hookId: "h",
+          event: "afterTurn",
+          ok: false,
+          error: "down",
+          ms: 1,
+          inject: false,
+          maxTokens: 0,
+        },
+      ]);
+      const note = { event: "afterTurn", source: "memory", hookId: "h", error: "down" };
+      await expect(result.afterTurn).resolves.toEqual([note]);
+      expect(heard).toEqual([note]);
+    });
   });
 
   it("lets beforeStep replace the transcript", async () => {
