@@ -62,7 +62,8 @@ export interface ClientPoolOptions {
   maxClients?: number;
   /**
    * How long, in milliseconds, a model an endpoint did not list — or a server that answered
-   * without a served window — is taken at its word before the endpoint is asked again.
+   * without a served window, or whose `/api/v0/models` answered with an error other than a
+   * missing route — is taken at its word before the endpoint is asked again.
    */
   listingMissMs?: number;
 }
@@ -190,20 +191,33 @@ const CONTEXT_KEYS = [
 
 const positive = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
 
-function contextLengthOf(model: object): number {
+/**
+ * A listing entry's window, and whether it is only the one the model was trained with.
+ *
+ * The two are told apart because they are trusted differently: a top-level key is taken as the
+ * window being served and settles the lookup, and a trained one is a ceiling the server may be
+ * running well under, so `contextLimitFor` still asks the native routes before settling for it.
+ */
+function contextLengthOf(model: object): { contextLength: number; trained: boolean } {
   const record = model as Record<string, unknown>;
   for (const key of CONTEXT_KEYS) {
     const value = positive(record[key]);
-    if (value) return value;
+    if (value) return { contextLength: value, trained: false };
   }
   // llama.cpp's, and the window the model was trained with rather than the one it is served in:
   // a 256k model started at `-c 16384` lists 262144 here. Better than nothing, and why the
-  // served window is asked for first. `meta` is `null` while the model loads.
+  // served window is still asked for after it. `meta` is `null` while the model loads.
   const meta = record.meta as Record<string, unknown> | null | undefined;
-  return positive(meta?.n_ctx_train);
+  const contextLength = positive(meta?.n_ctx_train);
+  return { contextLength, trained: contextLength > 0 };
 }
 
-/** A model an endpoint offers, and what it says the model will read. Zero means it did not say. */
+/**
+ * A model an endpoint offers, and what it says the model will read. Zero means it did not say.
+ *
+ * The number is whatever the listing carried, which from llama.cpp is the trained window rather
+ * than the served one; `contextLimitFor` is the lookup that knows the difference.
+ */
 export interface ModelInfo {
   id: string;
   contextLength: number;
@@ -224,6 +238,14 @@ export interface ModelInfo {
  * whatever was there rather than emptying it.
  */
 const listings = new Map<string, ModelInfo[]>();
+
+/**
+ * The models in each endpoint's last listing whose window is only the trained one, by id.
+ *
+ * Kept beside `listings` rather than on `ModelInfo`, so what `listModels` hands back is the shape
+ * it has always been. Replaced with each listing that lands, and left alone by one that fails.
+ */
+const trainedOnly = new Map<string, Set<string>>();
 
 /**
  * When an endpoint was last asked about a model it did not name, keyed on the two together.
@@ -284,8 +306,29 @@ export const endpointId = (config: { baseUrl: string; apiKey?: string }) =>
  */
 const served = new Map<string, { window: number; at: number }>();
 
-/** Endpoints that answered both probes with a refusal, and are not asked again. */
+/** Endpoints with neither native route, which are not asked for either again. */
 const unserved = new Set<string>();
+
+/**
+ * Endpoints whose `/api/v0/models` answered with an error, and when.
+ *
+ * `gone` is a route the server does not have (`NOT_THERE`), which is a fact about the server and
+ * stands until `resetClients`. Any other error stands for `listingMissMs` only, because it may be
+ * one the server gets over, and LM Studio latched for good on a passing 5xx would have no window
+ * at all until the process restarted, its listing carrying none.
+ *
+ * Per endpoint and on its own, whatever `/props` said: a server whose `/props` answers without a
+ * window is never `unserved`, and without this its missing route was asked again with every miss.
+ */
+const refusals = new Map<string, { at: number; gone: boolean }>();
+
+/** Whether `/api/v0/models` is to be left alone on this endpoint for now. */
+const refused = (endpoint: string) => {
+  const refusal = refusals.get(endpoint);
+  return (
+    refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits.listingMissMs)
+  );
+};
 
 /** How long a probe may take before the window is taken from the listing instead. */
 const PROBE_TIMEOUT_MS = 10_000;
@@ -297,28 +340,30 @@ const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, "").replace(/\/v1$/,
 const NOT_THERE = new Set([404, 405, 501]);
 
 /**
- * Asks one native endpoint. `missing` is a server without the route; `body` is absent for that
- * and for any other refusal, and a server that could not be reached throws.
+ * Asks one native endpoint. `failed` is any answer that was not a 2xx and `missing` the ones among
+ * them that mean a server without the route; `body` is absent for both, and for a 2xx that was not
+ * JSON. A server that could not be reached throws.
  */
 async function probe(
   config: Endpoint,
   path: string,
-): Promise<{ missing: boolean; body?: unknown }> {
+): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
   const apiKey = config.apiKey || undefined;
   const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
     headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
     signal: AbortSignal.timeout(timeoutMs(config) ?? PROBE_TIMEOUT_MS),
   });
-  if (!response.ok) return { missing: NOT_THERE.has(response.status) };
+  if (!response.ok) return { failed: true, missing: NOT_THERE.has(response.status) };
   try {
-    return { missing: false, body: await response.json() };
+    return { failed: false, missing: false, body: await response.json() };
   } catch {
-    return { missing: false };
+    return { failed: false, missing: false };
   }
 }
 
 /**
- * The window a local server is actually serving a model in, which its listing does not say.
+ * The window a local server's own API says it is serving a model in, for the servers whose
+ * listing does not say.
  *
  * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
  * Studio on `/api/v0/models` as `loaded_context_length` while the model is loaded. Both differ
@@ -326,8 +371,12 @@ async function probe(
  * built for, and reading the trained one lets an overflow through the guard meant to catch it.
  * Ollama reports nothing on either; an operator there has to declare the window.
  *
- * Zero where no answer was found. A server without either route, which is every hosted API, is
- * latched and not asked again; one that could not be reached is not remembered at all.
+ * Zero where no answer was found, which is remembered for `listingMissMs`. A server without
+ * either route is latched and not asked again. `/api/v0/models` is also dropped on its own: until
+ * `resetClients` once it answers as a route that is not there, and for `listingMissMs` after any
+ * other error. A server that could not be reached is not remembered at all.
+ *
+ * The listing is not read here; `contextLimitFor` reads it first and comes here after.
  *
  * @param config The endpoint, plus the model whose window is wanted.
  */
@@ -347,15 +396,19 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
       ?.default_generation_settings;
     window = positive(settings?.n_ctx);
     if (!window) {
-      const lmstudio = await probe(config, "/api/v0/models");
-      const { data } = (lmstudio.body ?? {}) as { data?: unknown };
-      const entry = Array.isArray(data)
-        ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find(
-            (model) => model?.id === config.model,
-          )
-        : undefined;
-      window = positive(entry?.loaded_context_length);
-      if (props.missing && lmstudio.missing) {
+      if (!refused(endpoint)) {
+        const lmstudio = await probe(config, "/api/v0/models");
+        if (lmstudio.failed) refusals.set(endpoint, { at: Date.now(), gone: lmstudio.missing });
+        else refusals.delete(endpoint);
+        const { data } = (lmstudio.body ?? {}) as { data?: unknown };
+        const entry = Array.isArray(data)
+          ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find(
+              (model) => model?.id === config.model,
+            )
+          : undefined;
+        window = positive(entry?.loaded_context_length);
+      }
+      if (props.missing && refusals.get(endpoint)?.gone) {
         unserved.add(endpoint);
         return 0;
       }
@@ -374,10 +427,17 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
  */
 export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
   const { data } = await getClient(config).models.list();
+  const trained = new Set<string>();
   const models = data
-    .map((model) => ({ id: model.id, contextLength: contextLengthOf(model) }))
+    .map((model) => {
+      const window = contextLengthOf(model);
+      if (window.trained) trained.add(model.id);
+      return { id: model.id, contextLength: window.contextLength };
+    })
     .sort((a, b) => a.id.localeCompare(b.id));
-  listings.set(endpointKey(config), models);
+  const key = endpointKey(config);
+  listings.set(key, models);
+  trainedOnly.set(key, trained);
   return models;
 }
 
@@ -389,11 +449,18 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * happily load a 256k model at `-c 16384` and go on listing it as 256k — and a run refused on
  * the honest-looking number is a run that fails at the endpoint instead.
  *
- * Otherwise the window the server is actually serving the model in, where it has an API that
- * says (`servedWindow`), and failing that the endpoint's listing — asked once, and again whenever
- * it does not name this model, since a model can arrive after the first listing was taken. A
- * server that will not list models still has to be able to run a turn: a failure here is an
- * unknown window, not a failed run.
+ * Otherwise the endpoint's listing — asked once, and again whenever it does not name this model,
+ * since a model can arrive after the first listing was taken. A window stated at the top of the
+ * model's entry is taken as the one being served, and nothing else is asked. Where the listing
+ * did not settle it — no window, only llama.cpp's trained one, no entry, no listing — the
+ * server's own API is asked (`servedWindow`), and what it says wins; the trained window is what
+ * is left when it says nothing. A server that will not list models still has to be able to run a
+ * turn: a failure here is an unknown window, not a failed run.
+ *
+ * The listing goes first because it is the one route every server here has, and the native ones
+ * are two more requests that a server stating its window in the listing never needed. Asked
+ * first, they were also asked again every `listingMissMs` for the life of the process on a server
+ * whose `/props` answers without a window, by any host that sizes the window per turn.
  *
  * @param config The endpoint, plus the model whose window is wanted.
  * @param declared The operator's own number. Above zero it wins and the endpoint is not asked.
@@ -403,8 +470,6 @@ export async function contextLimitFor(
   declared = 0,
 ): Promise<number> {
   if (declared > 0) return declared;
-  const window = await servedWindow(config);
-  if (window > 0) return window;
   const key = endpointKey(config);
   const listed = () => listings.get(key)?.find((model) => model.id === config.model);
   // The listing is asked for again when it does not name this model, rather than only when
@@ -420,22 +485,30 @@ export async function contextLimitFor(
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the endpoint is asked, and a caller sizing a window per turn pays a round
     // trip for each of them; `listingMissMs` is how long that answer is allowed to stand.
-    if (asked !== undefined && Date.now() - asked < poolLimits.listingMissMs) return 0;
-    // A failure is not remembered: an endpoint that was down when the last run started is not
-    // an endpoint with no models, and a window nobody could ask about is not a failed run.
-    try {
-      await listModels(config);
-    } catch {
-      return 0;
+    if (asked === undefined || Date.now() - asked >= poolLimits.listingMissMs) {
+      // A failure is not remembered: an endpoint that was down when the last run started is not
+      // an endpoint with no models, and a window nobody could ask about is not a failed run.
+      const answered = await listModels(config).then(
+        () => true,
+        () => false,
+      );
+      // Recorded where the endpoint was actually asked, and only there. Stamping it on the calls
+      // that skipped the request would push the deadline out ahead of any caller polling faster
+      // than the interval, which is a memory that never expires rather than one that expires in
+      // half a minute.
+      if (answered) {
+        if (listed()) misses.delete(missKey);
+        else misses.set(missKey, Date.now());
+      }
     }
-    // Recorded where the endpoint was actually asked, and only there. Stamping it on the calls
-    // that skipped the request would push the deadline out ahead of any caller polling faster
-    // than the interval, which is a memory that never expires rather than one that expires in
-    // half a minute.
-    if (listed()) misses.delete(missKey);
-    else misses.set(missKey, Date.now());
   }
-  return listed()?.contextLength ?? 0;
+  const entry = listed();
+  const fromListing = entry?.contextLength ?? 0;
+  // A top-level key settles it. A trained window does not: llama.cpp lists the one the model was
+  // built with, and taking it over what `/props` says lets an overflow through the guard.
+  if (fromListing > 0 && !trainedOnly.get(key)?.has(config.model)) return fromListing;
+  const window = await servedWindow(config);
+  return window > 0 ? window : fromListing;
 }
 
 /**
@@ -447,6 +520,8 @@ export function resetClients() {
   clients.clear();
   listings.clear();
   misses.clear();
+  trainedOnly.clear();
   served.clear();
   unserved.clear();
+  refusals.clear();
 }
