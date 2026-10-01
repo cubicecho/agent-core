@@ -287,11 +287,17 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
  * system prompt that changed every turn would miss the prompt cache every turn. Nothing is written
  * back: a host that stores what the user typed never remembers the context as something they said.
  *
+ * A question keeps its context for as long as it is sent. A host stores `context`, and the preface
+ * it was said under, beside the question and calls this for each stored one on every later request
+ * — a question sent with its blocks one turn and bare the next is a different prompt from that
+ * message on, and loses the server's prefix cache behind it.
+ *
  * @param history The request's messages. Neither the array nor any message in it is changed.
- * @param index Where this turn's question sits in `history` — which is not where it sits in the
+ * @param index Where the question sits in `history` — which is not where it sits in the
  * session once a compaction has folded the head into a summary. Anything but a user message there
  * leaves the request as it was.
- * @param context What `assembleContext` built. Empty returns `history` itself.
+ * @param context What `assembleContext` built, this turn or the turn the question was asked.
+ * Empty returns `history` itself.
  * @param preface Said above the blocks. Absent is what `configureHooks` last set — `HOOK_PREFACE`
  * unless something moved it. Empty says nothing, rather than leaving a blank line where it was.
  * @returns `history` when there was nothing to add or nowhere to add it, otherwise a new array.
