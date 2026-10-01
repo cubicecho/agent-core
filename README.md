@@ -412,7 +412,8 @@ which are told of every call the model made — the request as `dispatch` would 
 text the model reads. A repeat gets a result of its own under its own id, carrying the answer it
 shares. Neither is awaited. The `tool-call` and `tool-result` events carry the same `id`, with
 `text` still cut by `preview`, and so does each entry of the result's `toolCalls` — which is what
-tells two calls to one tool apart when `parallel` lands their results out of order.
+tells two calls to one tool apart when `parallel` lands their results out of order. An id is
+distinct within a step, and a server is free to use it again in a later one.
 
 ```ts
 await runAgentLoop({

@@ -253,7 +253,9 @@ export interface ToolCallRequest {
 export interface ToolCallOutcome {
   /**
    * The id the model's reply gave the call, which is what tells two calls to one tool apart.
-   * `runAgentLoop` always sets it; optional so an outcome built before it existed still compiles.
+   * Distinct within a step — `streamTurn` mints one where the server sent none or repeated one —
+   * but nothing stops a server using the same id again in a later step. `runAgentLoop` always
+   * sets it; optional so an outcome built before it existed still compiles.
    */
   id?: string;
   name: string;
