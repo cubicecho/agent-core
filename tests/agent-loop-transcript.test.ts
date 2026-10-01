@@ -14,7 +14,7 @@ const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = awa
 );
 const { ContextOverflow } = await import("../src/retry.ts");
 const { resetCapabilities } = await import("../src/capabilities.ts");
-const { LOAD_TOOLS } = await import("../src/tool-loading.ts");
+const { CALL_TOOL, LOAD_TOOLS } = await import("../src/tool-loading.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
@@ -223,8 +223,8 @@ describe("a run that throws", () => {
     ]);
     expect(limit.usage).toEqual({ prompt: 20, completion: 4, total: 24, cached: 0 });
     expect(limit.toolCalls).toEqual([
-      { name: "a", ok: true },
-      { name: "a", ok: true },
+      { id: "c0", name: "a", ok: true },
+      { id: "c0", name: "a", ok: true },
     ]);
     expect(limit.used).toEqual(["a"]);
     expect(limit.loaded).toEqual([]);
@@ -250,7 +250,7 @@ describe("a run that throws", () => {
     expect(failure.cause).toBe(refused);
     expect(outline(failure.messages)).toEqual(["user: hi", "assistant: null", "tool c0: ok"]);
     expect(failure.usage).toEqual({ prompt: 10, completion: 2, total: 12, cached: 0 });
-    expect(failure.toolCalls).toEqual([{ name: "a", ok: true }]);
+    expect(failure.toolCalls).toEqual([{ id: "c0", name: "a", ok: true }]);
   });
 
   it("keeps an overflow a ContextOverflow, with the run on it", async () => {
@@ -294,8 +294,8 @@ describe("a run that throws", () => {
     expect(failedRun(error)?.loaded).toEqual(["s__read"]);
     expect(failedRun(error)?.used).toEqual(["s__read"]);
     expect(failedRun(error)?.toolCalls).toEqual([
-      { name: LOAD_TOOLS, ok: true },
-      { name: "s__read", ok: true },
+      { id: "c0", name: LOAD_TOOLS, ok: true },
+      { id: "c0", name: "s__read", ok: true },
     ]);
   });
 
@@ -364,8 +364,8 @@ describe("a stop while the tools run", () => {
     expect(heard).toEqual(failure.messages.slice(1));
     // The call that never ran was never made.
     expect(failure.toolCalls).toEqual([
-      { name: "a", ok: true },
-      { name: "b", ok: false },
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "b", ok: false },
     ]);
     expect(failure.used).toEqual(["a", "b"]);
   });
@@ -411,9 +411,9 @@ describe("a stop while the tools run", () => {
       "tool c2: Stopped before this call finished.",
     ]);
     expect(failure.toolCalls).toEqual([
-      { name: "a", ok: true },
-      { name: "b", ok: false },
-      { name: "c", ok: false },
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "b", ok: false },
+      { id: "c2", name: "c", ok: false },
     ]);
   });
 
@@ -444,7 +444,7 @@ describe("a stop while the tools run", () => {
       "tool c0: ok",
       "tool c1: Not run: the run stopped first.",
     ]);
-    expect(failedRun(error)?.toolCalls).toEqual([{ name: "a", ok: true }]);
+    expect(failedRun(error)?.toolCalls).toEqual([{ id: "c0", name: "a", ok: true }]);
   });
 
   it("sends a transcript the next request can replay", async () => {
@@ -484,5 +484,85 @@ describe("a stop while the tools run", () => {
       message.role === "tool" ? [message.tool_call_id] : [],
     );
     expect(answered).toEqual(asked);
+  });
+});
+
+describe("a proxied run", () => {
+  const catalog = [{ id: "s", label: "S", tools: [{ name: "s__read", description: "reads" }] }];
+  const proxied = { ...config, toolDiscovery: "proxy" as const };
+
+  it("tells onMessage of the load it writes for a preselection, before any request", async () => {
+    create.mockReturnValueOnce(says("done"));
+    const heard: { message: Message; step: number; turn?: Turn; sent: number }[] = [];
+    const result = await runAgentLoop({
+      config: proxied,
+      messages: question,
+      tools: [tool("s__read")],
+      catalog,
+      preselected: ["s__read"],
+      dispatch: async () => "contents",
+      onMessage: (message, step, turn) => {
+        heard.push({ message, step, turn, sent: create.mock.calls.length });
+      },
+    });
+    expect(heard.map(({ message }) => message)).toEqual(result.messages.slice(1));
+    expect(heard.map(({ message }) => message.role)).toEqual(["assistant", "tool", "assistant"]);
+    // The pair no model wrote: step zero's, with no turn, and heard before the request went out.
+    expect(heard.slice(0, 2).map(({ step, turn, sent }) => ({ step, turn, sent }))).toEqual([
+      { step: 0, turn: undefined, sent: 0 },
+      { step: 0, turn: undefined, sent: 0 },
+    ]);
+    expect(heard[2].turn?.content).toBe("done");
+  });
+
+  it("leaves the preselection's call with its result when onMessage throws on it", async () => {
+    const refused = new Error("the store is down");
+    const error = await thrown(
+      runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools: [tool("s__read")],
+        catalog,
+        preselected: ["s__read"],
+        dispatch: async () => "contents",
+        onMessage: () => {
+          throw refused;
+        },
+      }),
+    );
+    expect(error).toBeInstanceOf(AgentLoopError);
+    const failure = error as InstanceType<typeof AgentLoopError>;
+    expect(failure.cause).toBe(refused);
+    expect(failure.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+    expect(failure.toolCalls).toEqual([{ id: "preselect-1", name: LOAD_TOOLS, ok: true }]);
+    // As a result says it: proxied, the definitions are in the history and nothing is carried.
+    expect(failure.loaded).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("counts a `call_tool` the run was stopped during as the tool it names", async () => {
+    const controller = new AbortController();
+    create.mockReturnValueOnce(calls([[CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']]));
+    const stopped = new Error("stopped");
+    const error = await thrown(
+      runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools: [tool("s__read")],
+        catalog,
+        dispatch: async () => {
+          controller.abort();
+          throw stopped;
+        },
+        signal: controller.signal,
+      }),
+    );
+    const failure = failedRun(error);
+    expect(failure?.toolCalls).toEqual([{ id: "c0", name: "s__read", ok: false }]);
+    expect(outline(failure?.messages ?? [])).toEqual([
+      "user: hi",
+      "assistant: null",
+      "tool c0: Stopped before this call finished.",
+    ]);
   });
 });

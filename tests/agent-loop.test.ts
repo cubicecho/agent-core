@@ -14,13 +14,17 @@ const { buildBody, preselect, preview, resolveApiKey, runAgentLoop } = await imp
 const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await import(
   "../src/capabilities.ts"
 );
-const { LOAD_TOOLS } = await import("../src/tool-loading.ts");
-const { configureHooks, resetHooks } = await import("../src/hooks.ts");
+const { CALL_TOOL, LOAD_TOOLS } = await import("../src/tool-loading.ts");
+const { configureHooks, resetHooks, withContext } = await import("../src/hooks.ts");
+const { tokensBetween } = await import("../src/ledger.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
 type ToolCall = import("../src/tool-calls.ts").ToolCall;
 type ToolCallRequest = import("../src/agent-loop.ts").ToolCallRequest;
+type AgentLoopRequest = import("../src/agent-loop.ts").AgentLoopRequest;
+type ToolCallResult = import("../src/agent-loop.ts").ToolCallResult;
+type RunEventInput = import("../src/events.ts").RunEventInput;
 type RunUsage = import("../src/events.ts").RunUsage;
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
@@ -352,8 +356,8 @@ describe("runAgentLoop", () => {
     });
     expect(result.turn.content).toBe("done");
     expect(result.toolCalls).toEqual([
-      { name: "a", ok: true },
-      { name: "b", ok: false },
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "b", ok: false },
     ]);
     expect(result.messages.map((m) => m.role)).toEqual([
       "user",
@@ -554,9 +558,87 @@ describe("runAgentLoop", () => {
     expect(replayed?.map((c) => (c as ToolCall).function.arguments)).toEqual(['{"x":true}', "{}"]);
     expect(result.messages[3]).toMatchObject({ content: expect.stringContaining("invalid tool") });
     expect(result.toolCalls).toEqual([
-      { name: "a", ok: true },
-      { name: "a", ok: false },
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "a", ok: false },
     ]);
+  });
+
+  it("names each call by id on its events, so two calls to one tool can be told apart", async () => {
+    create
+      .mockReturnValueOnce(calls(["a", '{"n":1}'], ["a", '{"n":2}']))
+      .mockReturnValueOnce(says("done"));
+    // The first call is held until the second has answered, so the results land out of order.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const events: RunEventInput[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      parallel: true,
+      dispatch: async ({ args }) => {
+        if (args.n === 1) await held;
+        else release();
+        return `answer ${args.n}`;
+      },
+      onEvent: (event) => events.push(event),
+    });
+    const tools = events.filter((e) => e.kind === "tool-call" || e.kind === "tool-result");
+    expect(tools.map((e) => [e.kind, e.id, e.text])).toEqual([
+      ["tool-call", "c0", '{"n":1}'],
+      ["tool-call", "c1", '{"n":2}'],
+      ["tool-result", "c1", "answer 2"],
+      ["tool-result", "c0", "answer 1"],
+    ]);
+    // Only the tool kinds carry one.
+    expect(events.filter((e) => "id" in e)).toHaveLength(4);
+    expect(result.toolCalls).toEqual([
+      { id: "c0", name: "a", ok: true },
+      { id: "c1", name: "a", ok: true },
+    ]);
+  });
+
+  it("hands a host every call and its whole result, dispatched or not", async () => {
+    const long = "x".repeat(5000);
+    create
+      .mockReturnValueOnce(calls(["a", "{'x': True,}"], ["a", '{"x":true}'], ["a", "{nope"]))
+      .mockReturnValueOnce(says("done"));
+    const dispatch = vi.fn(async (_call: ToolCallRequest) => long);
+    const asked: ToolCallRequest[] = [];
+    const answered: ToolCallResult[] = [];
+    const events: RunEventInput[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch,
+      onToolCall: (call) => asked.push(call),
+      onToolResult: (answer) => answered.push(answer),
+      onEvent: (event) => events.push(event),
+    });
+    // One dispatch: the second call repeats the first, and the third could not be read.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(asked).toEqual([
+      { id: "c0", name: "a", args: { x: true }, raw: "{'x': True,}" },
+      { id: "c1", name: "a", args: { x: true }, raw: '{"x":true}' },
+      { id: "c2", name: "a", args: {}, raw: "{nope" },
+    ]);
+    // The repeat gets a result of its own, carrying the answer it shares with the first.
+    expect(answered).toEqual([
+      { id: "c0", name: "a", ok: true, content: long },
+      { id: "c1", name: "a", ok: true, content: long },
+      { id: "c2", name: "a", ok: false, content: expect.stringContaining("invalid tool") },
+    ]);
+    // What the callback was handed is what the model reads; the event is still the preview.
+    expect(answered.map((a) => a.content)).toEqual(
+      result.messages.flatMap((m) => (m.role === "tool" ? [m.content] : [])),
+    );
+    const shown = events.filter((e) => e.kind === "tool-result");
+    expect(shown.map((e) => e.id)).toEqual(["c0", "c1", "c2"]);
+    expect(shown[0].text).toBe(preview(long));
+    expect(shown[0].text).not.toBe(long);
   });
 
   it("tells a call cut off at the ceiling to raise maxTokens", async () => {
@@ -692,8 +774,8 @@ describe("runAgentLoop", () => {
     });
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(result.toolCalls).toEqual([
-      { name: "a", ok: false },
-      { name: "a", ok: true },
+      { id: "c0", name: "a", ok: false },
+      { id: "c0", name: "a", ok: true },
     ]);
   });
 
@@ -813,6 +895,49 @@ describe("runAgentLoop", () => {
       expect(result.used).toEqual(["s__read"]);
     });
 
+    it("announces load_tools like any other call, with the whole answer", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}'], [LOAD_TOOLS, "{}"]))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async () => "contents");
+      const asked: ToolCallRequest[] = [];
+      const answered: ToolCallResult[] = [];
+      const events: RunEventInput[] = [];
+      const result = await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+        onToolCall: (call) => asked.push(call),
+        onToolResult: (answer) => answered.push(answer),
+        onEvent: (event) => events.push(event),
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(asked).toEqual([
+        { id: "c0", name: LOAD_TOOLS, args: { names: ["s__read"] }, raw: '{"names":["s__read"]}' },
+        { id: "c1", name: LOAD_TOOLS, args: {}, raw: "{}" },
+      ]);
+      const stored = result.messages.flatMap((m) => (m.role === "tool" ? [m.content] : []));
+      expect(answered).toEqual([
+        { id: "c0", name: LOAD_TOOLS, ok: true, content: stored[0] },
+        // A load that named nothing loaded nothing, and says so under its own id.
+        { id: "c1", name: LOAD_TOOLS, ok: false, content: stored[1] },
+      ]);
+      expect(answered[0].content).toContain("s__read");
+      const pairs = events.filter((e) => e.kind === "tool-call" || e.kind === "tool-result");
+      expect(pairs.map((e) => [e.kind, e.id])).toEqual([
+        ["tool-call", "c0"],
+        ["tool-result", "c0"],
+        ["tool-call", "c1"],
+        ["tool-result", "c1"],
+      ]);
+      expect(result.toolCalls).toEqual([
+        { id: "c0", name: LOAD_TOOLS, ok: true },
+        { id: "c1", name: LOAD_TOOLS, ok: false },
+      ]);
+    });
+
     it("counts what the model loaded, and calls a load that moved the tools a cache break", async () => {
       create
         .mockReturnValueOnce(reportedCall(100, 0, LOAD_TOOLS, '{"names":["s__read","nope"]}'))
@@ -889,6 +1014,611 @@ describe("runAgentLoop", () => {
       expect(declared()).toEqual([["s__read"], [LOAD_TOOLS, "s__read"]]);
       expect((create.mock.calls[0][0] as Body).messages[0].content).toBe("sys");
       expect((create.mock.calls[1][0] as Body).messages[0].content).toContain("Tool catalogue");
+    });
+
+    describe("with the preselection appended", () => {
+      const wide = [
+        {
+          id: "s",
+          label: "S",
+          tools: ["s__list", "s__read", "s__write"].map((name) => ({ name, description: name })),
+        },
+      ];
+      const all = [tool("s__list"), tool("s__read"), tool("s__write")];
+      const bodies = () => create.mock.calls.map(([body]) => body as Body);
+
+      it("sends the first step the head of every other step", async () => {
+        create
+          .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
+          .mockReturnValueOnce(says("done"));
+        const result = await runAgentLoop({
+          config: onDemand,
+          system: "sys",
+          messages: question,
+          tools: all,
+          catalog: wide,
+          preselected: ["s__list"],
+          preselectRouting: "append",
+          toolOrder: false,
+          dispatch: async () => "ok",
+        });
+        const [first, second] = bodies();
+        expect(first.messages[0].content).toContain("Tool catalogue");
+        expect(first.messages[0]).toEqual(second.messages[0]);
+        expect(declared()[0]).toEqual([LOAD_TOOLS, "s__list"]);
+        // What step 0 declared is the start of what step 1 declares, definition for definition.
+        expect(second.tools?.slice(0, first.tools?.length)).toEqual(first.tools);
+        expect(declared()[1]).toEqual([LOAD_TOOLS, "s__list", "s__write"]);
+        expect(result.loaded).toEqual(["s__list", "s__write"]);
+      });
+
+      it("puts the shortlist after what was carried, and declares a carried name once", async () => {
+        create.mockReturnValueOnce(says("done"));
+        const result = await runAgentLoop({
+          config: onDemand,
+          messages: question,
+          tools: all,
+          catalog: wide,
+          loaded: ["s__write", "s__read"],
+          preselected: ["s__read", "s__list"],
+          preselectRouting: "append",
+          toolOrder: false,
+          dispatch: async () => "ok",
+        });
+        // The carried pair is where the last turn's request had it, so that request's tool array
+        // is a prefix of this one's; `s__read` is not declared a second time for being picked.
+        expect(declared()).toEqual([[LOAD_TOOLS, "s__write", "s__read", "s__list"]]);
+        expect(result.loaded).toEqual(["s__write", "s__read", "s__list"]);
+      });
+
+      it("sorts the shortlist in under toolOrder, which moves what sorts after it", async () => {
+        create.mockReturnValueOnce(calls(["s__list", "{}"])).mockReturnValueOnce(says("done"));
+        await runAgentLoop({
+          config: onDemand,
+          system: "sys",
+          messages: question,
+          tools: all,
+          catalog: wide,
+          loaded: ["s__write"],
+          preselected: ["s__list"],
+          preselectRouting: "append",
+          dispatch: async () => "ok",
+        });
+        // The last turn ended on [load_tools, s__write]; `s__list` lands between them, not after.
+        expect(declared()).toEqual([
+          [LOAD_TOOLS, "s__list", "s__write"],
+          [LOAD_TOOLS, "s__list", "s__write"],
+        ]);
+        const [first, second] = bodies();
+        expect(first.messages[0]).toEqual(second.messages[0]);
+        expect(first.tools).toEqual(second.tools);
+      });
+
+      it("leaves the second step's head as the first's, where exclusive moves the tools", async () => {
+        const run = async (preselectRouting?: "exclusive" | "append") => {
+          create
+            .mockReturnValueOnce(reportedCall(100, 0, "s__read"))
+            .mockReturnValueOnce(reported(130, 0, { content: "done" }));
+          const { metrics } = await runAgentLoop({
+            config: onDemand,
+            system: "sys",
+            messages: question,
+            tools: all,
+            catalog: wide,
+            preselected: ["s__read"],
+            ...(preselectRouting ? { preselectRouting } : {}),
+            dispatch: async () => "ok",
+          });
+          return metrics;
+        };
+        // The server reports the same miss both times; the loop's own comparison of the two
+        // requests finds nothing that moved when appended, and the tool array when not.
+        expect(await run("append")).toMatchObject({ cacheBreakReasons: { "none-known": 1 } });
+        // Absent is exclusive: the first step's tools are not the second's.
+        expect(await run()).toMatchObject({
+          cacheBreaks: 1,
+          cacheBreakReasons: { "tools-changed": 1 },
+        });
+        expect(declared().slice(2)).toEqual([["s__read"], [LOAD_TOOLS, "s__read"]]);
+      });
+
+      it("changes nothing in eager mode or without a preselection", async () => {
+        create.mockReturnValueOnce(says("done")).mockReturnValueOnce(says("done"));
+        await runAgentLoop({
+          config,
+          messages: question,
+          tools: all,
+          catalog: wide,
+          preselected: ["s__read"],
+          preselectRouting: "append",
+          dispatch: async () => "ok",
+        });
+        await runAgentLoop({
+          config: onDemand,
+          messages: question,
+          tools: all,
+          catalog: wide,
+          preselectRouting: "append",
+          dispatch: async () => "ok",
+        });
+        expect(declared()).toEqual([["s__list", "s__read", "s__write"], [LOAD_TOOLS]]);
+      });
+    });
+
+    it("runs a `call_tool` left in the history as the tool it names, and loads it", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+      });
+      expect(dispatch.mock.calls[0][0]).toMatchObject({ name: "s__read", args: { path: "a" } });
+      expect(result.used).toEqual(["s__read"]);
+      // On demand a called tool is a declared one, so the model's next call can be a native one.
+      expect(declared()).toEqual([[LOAD_TOOLS], [LOAD_TOOLS, "s__read"]]);
+    });
+
+    it("leaves a host's own `call_tool` to the host", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{}}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "the host's answer");
+      await runAgentLoop({
+        config: onDemand,
+        messages: question,
+        tools: [...tools, tool(CALL_TOOL)],
+        catalog: [
+          ...catalog,
+          { id: "h", label: "H", tools: [{ name: CALL_TOOL, description: "the host's" }] },
+        ],
+        dispatch,
+      });
+      expect(dispatch.mock.calls[0][0]).toMatchObject({
+        name: CALL_TOOL,
+        args: { name: "s__read", arguments: {} },
+      });
+    });
+  });
+
+  describe("proxied", () => {
+    const catalog = [
+      {
+        id: "s",
+        label: "S",
+        tools: [
+          { name: "s__read", description: "reads" },
+          { name: "s__write", description: "writes" },
+        ],
+      },
+    ];
+    const read: OpenAI.ChatCompletionFunctionTool = {
+      type: "function",
+      function: {
+        name: "s__read",
+        description: "Reads a file.",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      },
+    };
+    const tools = [read, tool("s__write")];
+    const proxied = { ...config, toolDiscovery: "proxy" as const };
+    /** What a proxied load of `s__read` answers with: the definition as one line of JSON. */
+    const definition = `Loaded 1 tool(s). Run them with \`call_tool\`.\n\n${JSON.stringify({
+      name: read.function.name,
+      description: read.function.description,
+      parameters: read.function.parameters,
+    })}`;
+    const results = (messages: Message[]) =>
+      messages.flatMap((message) => (message.role === "tool" ? [String(message.content)] : []));
+
+    it("declares `load_tools` and `call_tool` on every step, whatever is loaded", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: proxied,
+        system: "sys",
+        messages: question,
+        tools,
+        catalog,
+        loaded: ["s__write"],
+        dispatch,
+      });
+      // Name order, like any other tool array, and the same two on all three requests.
+      expect(declared()).toEqual([
+        [CALL_TOOL, LOAD_TOOLS],
+        [CALL_TOOL, LOAD_TOOLS],
+        [CALL_TOOL, LOAD_TOOLS],
+      ]);
+      const bodies = create.mock.calls.map(([body]) => body as Body);
+      expect(JSON.stringify(bodies[2].tools)).toBe(JSON.stringify(bodies[0].tools));
+      const systems = bodies.map((body) => body.messages[0].content);
+      expect(new Set(systems).size).toBe(1);
+      expect(systems[0]).toContain("sys");
+      expect(systems[0]).toContain("run them with `call_tool`");
+      expect(systems[0]).not.toContain("tool list");
+
+      // The load's result is the definition, since no request will ever declare it.
+      expect(results(result.messages)).toEqual([definition, "contents"]);
+      // The dispatcher is handed the tool the model meant, exactly as a native call would be.
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0][0]).toEqual({
+        id: "c0",
+        name: "s__read",
+        args: { path: "a" },
+        raw: '{"path":"a"}',
+      });
+      expect(result.used).toEqual(["s__read"]);
+      // Nothing carries: neither what was handed in nor what this run loaded.
+      expect(result.loaded).toEqual([]);
+      expect(result.toolCalls).toEqual([
+        { id: "c0", name: LOAD_TOOLS, ok: true },
+        { id: "c0", name: "s__read", ok: true },
+      ]);
+      expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 1, toolCalls: 2 });
+      // The transcript keeps the call the model wrote, which the next request has to repeat.
+      const written = result.messages[3] as OpenAI.ChatCompletionAssistantMessageParam;
+      expect(written.tool_calls?.[0]).toMatchObject({
+        function: { name: CALL_TOOL, arguments: '{"name":"s__read","arguments":{"path":"a"}}' },
+      });
+    });
+
+    it("sends `call_tool` a schema that still lets the model pass an argument", async () => {
+      create.mockReturnValueOnce(says("done"));
+      await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+      });
+      const sent = (create.mock.calls[0][0] as Body).tools as OpenAI.ChatCompletionFunctionTool[];
+      const call = sent.find((entry) => entry.function.name === CALL_TOOL);
+      // Sanitising gives the object an empty property list; without the keyword beside it a
+      // grammar-constrained server compiles that to `{}`.
+      expect(call?.function.parameters?.properties).toMatchObject({
+        arguments: { type: "object", properties: {}, additionalProperties: true },
+      });
+    });
+
+    it("reports a `call_tool` to a watcher as the tool it ran", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__write","arguments":{"text":"x"}}']))
+        .mockReturnValueOnce(says("done"));
+      const events: { kind: string; name?: string; text?: string }[] = [];
+      await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "written",
+        onEvent: (event) => events.push(event),
+      });
+      expect(events.filter((event) => event.kind.startsWith("tool-"))).toMatchObject([
+        { kind: "tool-call", name: "s__write", text: '{"text":"x"}' },
+        { kind: "tool-result", name: "s__write", ok: true, text: "written" },
+      ]);
+    });
+
+    it("takes `arguments` as a JSON string, and refuses a name outside the catalogue", async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            [CALL_TOOL, JSON.stringify({ name: "s__read", arguments: '{"path":"b"}' })],
+            [CALL_TOOL, '{"name":"rm_rf","arguments":{}}'],
+            [CALL_TOOL, '{"arguments":{}}'],
+            [CALL_TOOL, '{"name":"s__read","arguments":[1]}'],
+            [CALL_TOOL, '{"name":"s__read","arguments":"{not json"}'],
+            [CALL_TOOL, '{"name":"load_tools","arguments":{"names":["s__read"]}}'],
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+      });
+      // One call reached the dispatcher: the string was read as the arguments it spells.
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0][0]).toMatchObject({
+        name: "s__read",
+        args: { path: "b" },
+        raw: '{"path":"b"}',
+      });
+      const answers = results(result.messages);
+      expect(answers[0]).toBe("contents");
+      expect(answers[1]).toContain("Not in the catalogue: rm_rf. Check the name and try again.");
+      expect(answers[2]).toContain("call_tool needs a name; pass one from the tool catalogue.");
+      expect(answers[3]).toContain("call_tool arguments for s__read must be an object.");
+      expect(answers[4]).toContain("call_tool arguments for s__read are not valid JSON");
+      // `load_tools` is not in the catalogue either, so it cannot be reached through the proxy.
+      expect(answers[5]).toContain("Not in the catalogue: load_tools.");
+      expect(result.toolCalls.map((call) => call.ok)).toEqual([
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(result.used).toEqual(["s__read"]);
+    });
+
+    it("answers a repeat load with a pointer back, not the definition a second time", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write","nope"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+      });
+      const second = results(result.messages)[1];
+      expect(second).toContain("Loaded 1 tool(s). Run them with `call_tool`.");
+      expect(second).toContain('"name":"s__write"');
+      expect(second).not.toContain('"name":"s__read"');
+      expect(second).toContain("Already loaded earlier in this conversation: s__read.");
+      expect(second).toContain("Not in the catalogue: nope.");
+      expect(result.metrics).toMatchObject({
+        loadCalls: 2,
+        toolsLoaded: 2,
+        redundantLoads: 1,
+        unknownToolNames: 1,
+      });
+    });
+
+    it("sends the definition again once the transcript has been rewritten under it", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => "ok",
+        // A fold that took the first load with it: only the question is left.
+        beforeStep: (messages, step) => (step === 1 ? messages.slice(0, 1) : undefined),
+      });
+      expect(results(result.messages)).toEqual([definition]);
+    });
+
+    it("writes a preselection into the transcript as a load the model did not make", async () => {
+      create
+        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(says("done"));
+      const history: Message[] = [
+        { role: "user", content: "earlier" },
+        { role: "assistant", content: "answered" },
+        { role: "user", content: "read a" },
+      ];
+      const events: { kind: string; name?: string; text?: string; ok?: boolean | null }[] = [];
+      const result = await runAgentLoop({
+        config: proxied,
+        system: "sys",
+        messages: history,
+        tools,
+        catalog,
+        // One the host has no definition for and one that is in no catalogue are left out.
+        preselected: ["s__read", "s__read", "gone", "s__ghost"],
+        dispatch: async () => "contents",
+        onEvent: (event) => events.push(event),
+      });
+
+      const exchange: Message[] = [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "preselect-3",
+              type: "function",
+              function: { name: LOAD_TOOLS, arguments: '{"names":["s__read"]}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "preselect-3", content: definition },
+      ];
+      // After the question, ahead of anything the model does, and handed back like any other.
+      expect(result.messages.slice(0, 5)).toEqual([...history, ...exchange]);
+      expect(result.messages).toHaveLength(8);
+      // The caller's array is not written to.
+      expect(history).toHaveLength(3);
+
+      // The first request already carries it: same head as every later step, no step of its own.
+      const first = create.mock.calls[0][0] as Body;
+      expect(first.messages).toEqual([
+        { role: "system", content: expect.stringContaining("# Tool catalogue") },
+        ...history,
+        ...exchange,
+      ]);
+      expect(declared()).toEqual([
+        [CALL_TOOL, LOAD_TOOLS],
+        [CALL_TOOL, LOAD_TOOLS],
+      ]);
+      const second = create.mock.calls[1][0] as Body;
+      expect(second.messages.slice(0, 6)).toEqual(first.messages);
+
+      // A watcher sees the exchange the transcript holds, before the first turn.
+      const tooling = events.filter((event) => event.kind.startsWith("tool-"));
+      expect(tooling.slice(0, 2)).toMatchObject([
+        { kind: "tool-call", name: LOAD_TOOLS, text: '{"names":["s__read"]}' },
+        { kind: "tool-result", name: LOAD_TOOLS, ok: true, text: definition },
+      ]);
+      expect(events.findIndex((event) => event.kind === "tool-result")).toBeLessThan(
+        events.findIndex((event) => event.kind === "turn"),
+      );
+      expect(result.toolCalls).toEqual([
+        { id: "preselect-3", name: LOAD_TOOLS, ok: true },
+        { id: "c0", name: "s__read", ok: true },
+      ]);
+      expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 1, redundantLoads: 0 });
+      expect(result.used).toEqual(["s__read"]);
+      expect(result.loaded).toEqual([]);
+    });
+
+    it("tells a host of a proxied call as the tool it names, and of a preselection's load", async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            [CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}'],
+            [CALL_TOOL, '{"name":"s__ghost","arguments":{"path":"b"}}'],
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const asked: ToolCallRequest[] = [];
+      const answers: ToolCallResult[] = [];
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        preselected: ["s__read"],
+        dispatch,
+        onToolCall: (call) => asked.push(call),
+        onToolResult: (result) => answers.push(result),
+      });
+      // The shortlist's load first, under the id the transcript gives it; then each `call_tool`
+      // under the inner name, with the inner arguments where the call was let through.
+      expect(asked).toEqual([
+        {
+          id: "preselect-1",
+          name: LOAD_TOOLS,
+          args: { names: ["s__read"] },
+          raw: '{"names":["s__read"]}',
+        },
+        { id: "c0", name: "s__read", args: { path: "a" }, raw: '{"path":"a"}' },
+        { id: "c1", name: "s__ghost", args: {}, raw: '{"path":"b"}' },
+      ]);
+      // What `dispatch` runs is the object the host was told of.
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0][0]).toBe(asked[1]);
+      expect(answers).toEqual([
+        { id: "preselect-1", name: LOAD_TOOLS, ok: true, content: definition },
+        { id: "c0", name: "s__read", ok: true, content: "contents" },
+        {
+          id: "c1",
+          name: "s__ghost",
+          ok: false,
+          content: "Not in the catalogue: s__ghost. Check the name and try again.",
+        },
+      ]);
+    });
+
+    it("answers a load of something preselected with a pointer back", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        preselected: ["s__read"],
+        dispatch: async () => "ok",
+      });
+      expect(results(result.messages)[1]).toBe(
+        "Already loaded earlier in this conversation: s__read. Run them with `call_tool`; do not load them again.",
+      );
+    });
+
+    it("writes no exchange for a preselection with nothing in it to define", async () => {
+      create.mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        preselected: ["gone"],
+        dispatch: async () => "ok",
+      });
+      expect(result.messages).toEqual([...question, { role: "assistant", content: "done" }]);
+      expect(result.toolCalls).toEqual([]);
+    });
+
+    it("runs a catalogued tool called natively, without calling it loaded", async () => {
+      create
+        .mockReturnValueOnce(calls(["s__read", '{"path":"a"}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch,
+      });
+      expect(dispatch.mock.calls[0][0]).toMatchObject({ name: "s__read", args: { path: "a" } });
+      // The native call put no definition in the history, so the load that follows still does.
+      expect(results(result.messages)[1]).toBe(definition);
+    });
+
+    it("shares one answer between a `call_tool` and the same call made natively", async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            [CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}'],
+            ["s__read", '{"path":"a"}'],
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "contents");
+      await runAgentLoop({ config: proxied, messages: question, tools, catalog, dispatch });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("recovers a `call_tool` the model wrote as text", async () => {
+      create
+        .mockReturnValueOnce(
+          says(
+            '<tool_call>{"name":"call_tool","arguments":{"name":"s__write","arguments":{}}}</tool_call>',
+          ),
+        )
+        .mockReturnValueOnce(says("done"));
+      const dispatch = vi.fn(async (_call: ToolCallRequest) => "written");
+      await runAgentLoop({ config: proxied, messages: question, tools, catalog, dispatch });
+      expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ name: "s__write", args: {} });
+    });
+
+    it("does not call a tool loaded when the host gave no definition for it", async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
+        .mockReturnValueOnce(says("done"));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools: [read],
+        catalog,
+        dispatch: async () => "ok",
+      });
+      expect(results(result.messages)).toEqual(["No definition is available for: s__write."]);
+      expect(result.toolCalls).toEqual([{ id: "c0", name: LOAD_TOOLS, ok: false }]);
+      expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 0, redundantLoads: 0 });
+    });
+
+    it("is eager without a catalogue, like on-demand mode", async () => {
+      create.mockReturnValueOnce(says("done"));
+      await runAgentLoop({ config: proxied, messages: question, tools, dispatch: async () => "" });
+      expect(declared()).toEqual([["s__read", "s__write"]]);
     });
   });
 
@@ -967,6 +1697,188 @@ describe("runAgentLoop", () => {
     }
   });
 
+  describe("the hooks' context on past questions", () => {
+    /** A runner whose `beforeTurn` hook recalls this, and whose other events do nothing. */
+    const recalls = (text: string) => async (event: string) =>
+      event === "beforeTurn"
+        ? [
+            {
+              serverId: "m",
+              label: "memory",
+              hookId: "h",
+              event,
+              ok: true,
+              text,
+              inject: true,
+              maxTokens: 500,
+            },
+          ]
+        : [];
+    const hooks = (text: string, preface?: string) => ({
+      run: recalls(text) as never,
+      context: { session: { id: "s1" } },
+      preface,
+    });
+    const sent = (call: number) => (create.mock.calls[call][0] as Body).messages;
+
+    it("hands back what it put on the question, so the next turn's request only appends", async () => {
+      create
+        .mockReturnValueOnce(calls(["a", "{}"]))
+        .mockReturnValueOnce(says("tea"))
+        .mockReturnValueOnce(says("toast"));
+      const first = await runAgentLoop({
+        config,
+        system: "sys",
+        messages: [{ role: "user", content: "what do I like?" }],
+        tools: [tool("a")],
+        dispatch: async () => "ok",
+        hooks: hooks("you like tea"),
+      });
+      expect(first.context).toBe('<context source="memory">\nyou like tea\n</context>');
+      // The host stores what the user typed, and beside it what the loop said above it.
+      expect(first.messages[0].content).toBe("what do I like?");
+      const stored = { at: 0, context: first.context, preface: first.preface };
+      const history: Message[] = [...first.messages, { role: "user", content: "and to eat?" }];
+
+      await runAgentLoop({
+        config,
+        system: "sys",
+        messages: withContext(history, stored.at, stored.context, stored.preface),
+        tools: [tool("a")],
+        dispatch: async () => "ok",
+        hooks: hooks("you like toast"),
+      });
+      // Everything the last request of the first turn sent is the head of the next one, byte for
+      // byte — the earlier question with its context still on it.
+      const before = sent(1);
+      const after = sent(2);
+      expect(JSON.stringify(after.slice(0, before.length))).toBe(JSON.stringify(before));
+      expect(after[1].content).toContain("you like tea");
+      expect(after.at(-1)?.content).toContain("you like toast");
+      expect(after.at(-1)?.content).not.toContain("you like tea");
+    });
+
+    it("sends the earlier question bare when the host stores nothing, which is the rewrite", async () => {
+      create.mockReturnValueOnce(says("tea")).mockReturnValueOnce(says("toast"));
+      const first = await runAgentLoop({
+        config,
+        messages: [{ role: "user", content: "what do I like?" }],
+        dispatch: async () => "ok",
+        hooks: hooks("you like tea"),
+      });
+      await runAgentLoop({
+        config,
+        messages: [...first.messages, { role: "user", content: "and to eat?" }],
+        dispatch: async () => "ok",
+        hooks: hooks("you like toast"),
+      });
+      expect(sent(0)[0].content).toContain("you like tea");
+      expect(sent(1)[0].content).toBe("what do I like?");
+    });
+
+    it("hands back the preface it said, so a stored question outlives a change of it", async () => {
+      const parts = [{ type: "text" as const, text: "what do I like?" }];
+      configureHooks({ preface: "From min-agent:" });
+      try {
+        create.mockReturnValueOnce(says("tea")).mockReturnValueOnce(says("toast"));
+        const first = await runAgentLoop({
+          config,
+          messages: [{ role: "user", content: parts }],
+          dispatch: async () => "ok",
+          hooks: hooks("you like tea"),
+        });
+        expect(first.preface).toBe("From min-agent:");
+        configureHooks({ preface: "From kanban:" });
+        const history: Message[] = [...first.messages, { role: "user", content: "and to eat?" }];
+        const second = await runAgentLoop({
+          config,
+          messages: withContext(history, 0, first.context, first.preface),
+          dispatch: async () => "ok",
+          hooks: hooks("you like toast"),
+        });
+        expect(second.preface).toBe("From kanban:");
+        expect(JSON.stringify(sent(1).slice(0, 1))).toBe(JSON.stringify(sent(0)));
+        expect(sent(1).at(-1)?.content).toMatch(/^From kanban:\n\n<context/);
+      } finally {
+        resetHooks();
+      }
+    });
+
+    it("hands back the loop's own preface over the process's, and an empty one as empty", async () => {
+      for (const preface of ["From kanban:", ""]) {
+        create.mockReset().mockReturnValueOnce(says("tea"));
+        const result = await runAgentLoop({
+          config,
+          messages: question,
+          dispatch: async () => "ok",
+          hooks: hooks("you like tea", preface),
+        });
+        expect(result.preface).toBe(preface);
+        expect(withContext(result.messages, 0, result.context, result.preface)[0]).toEqual(
+          sent(0)[0],
+        );
+      }
+    });
+
+    it("hands back no context when no hook added any, or none was given", async () => {
+      create.mockReturnValueOnce(says("one")).mockReturnValueOnce(says("two"));
+      const quiet = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => "ok",
+        hooks: { run: async () => [], context: { session: { id: "s1" } } },
+      });
+      expect(quiet.context).toBe("");
+      const bare = await runAgentLoop({ config, messages: question, dispatch: async () => "ok" });
+      expect(bare.context).toBe("");
+      await expect(bare.afterTurn).resolves.toEqual([]);
+    });
+
+    it("hands back afterTurn's notes as a promise, without waiting for them itself", async () => {
+      create.mockReturnValueOnce(says("the answer"));
+      let finish: (outcomes: unknown[]) => void = () => {};
+      const heard: unknown[] = [];
+      const run = vi.fn((event: string) =>
+        event === "afterTurn"
+          ? new Promise<unknown[]>((resolve) => {
+              finish = resolve;
+            })
+          : Promise.resolve([]),
+      );
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => "ok",
+        hooks: {
+          run: run as never,
+          context: { session: { id: "s1" } },
+          onNote: (note) => heard.push(note),
+        },
+      });
+      // The loop is back and the hook is still running.
+      expect(result.turn.content).toBe("the answer");
+      expect(result.notes).toEqual([]);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+      expect(heard).toEqual([]);
+      finish([
+        {
+          serverId: "m",
+          label: "memory",
+          hookId: "h",
+          event: "afterTurn",
+          ok: false,
+          error: "down",
+          ms: 1,
+          inject: false,
+          maxTokens: 0,
+        },
+      ]);
+      const note = { event: "afterTurn", source: "memory", hookId: "h", error: "down" };
+      await expect(result.afterTurn).resolves.toEqual([note]);
+      expect(heard).toEqual([note]);
+    });
+  });
+
   it("lets beforeStep replace the transcript", async () => {
     create.mockReturnValueOnce(calls(["a", "{}"])).mockReturnValueOnce(says("done"));
     const beforeStep = vi.fn((messages: readonly Message[], step: number) =>
@@ -987,6 +1899,223 @@ describe("runAgentLoop", () => {
       content: "shorter",
     });
     expect(result.messages[0]).toEqual({ role: "user", content: "shorter" });
+  });
+
+  it("keeps a ledger of each step's reported prompt, and tells beforeStep how full the window is", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(reportedCall(160, 100, "a"))
+      .mockReturnValueOnce(reported(260, 160, { content: "done" }));
+    const windows: unknown[] = [];
+    const ledgers: unknown[] = [];
+    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
+    const result = await runAgentLoop({
+      config: { ...config, contextLength: 8000 },
+      messages: [
+        { role: "user", content: "before" },
+        { role: "assistant", content: "yes" },
+        ...question,
+      ],
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      ledger: earlier,
+      beforeStep: (_messages, _step, window) => {
+        windows.push(window);
+        return undefined;
+      },
+      onEvent: (event) => event.kind === "usage" && ledgers.push(event.usage?.ledger),
+    });
+    // The earlier run's entry stays, and this run's requests are an epoch of their own: one
+    // through the question, then one through each step's tool result.
+    expect(result.ledger).toEqual([
+      { through: 0, prompt: 40, epoch: 3 },
+      { through: 2, prompt: 100, epoch: 4 },
+      { through: 4, prompt: 160, epoch: 4 },
+      { through: 6, prompt: 260, epoch: 4 },
+    ]);
+    expect(earlier).toHaveLength(1);
+    expect(ledgers).toEqual([result.ledger.slice(0, 2), result.ledger.slice(0, 3), result.ledger]);
+    // Each step's call and result, read back as a subtraction — and nothing across the runs.
+    const estimate = () => 7;
+    expect(tokensBetween(result.ledger, 3, 5, result.messages, { estimate })).toBe(60);
+    expect(tokensBetween(result.ledger, 5, 7, result.messages, { estimate })).toBe(100);
+    expect(tokensBetween(result.ledger, 1, 3, result.messages, { estimate })).toBe(14);
+    // No request of this run's has reported before its first step.
+    expect(windows).toEqual([
+      { limit: 8000, ledger: earlier },
+      { used: 100, limit: 8000, ledger: result.ledger.slice(0, 2) },
+      { used: 160, limit: 8000, ledger: result.ledger.slice(0, 3) },
+    ]);
+  });
+
+  it("starts a new epoch when beforeStep rewrites the history, and records nothing unreported", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(reportedCall(90, 0, "a"))
+      .mockReturnValueOnce(calls(["a", "{}"]))
+      .mockReturnValueOnce(reported(170, 0, { content: "done" }));
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      beforeStep: (messages, step) =>
+        step === 1 ? [{ role: "user", content: "shorter" }, ...messages.slice(1)] : undefined,
+    });
+    // The rewrite moved the first boundary to a later epoch and put the next request in another,
+    // so 90 is not read against 100. The third request reported nothing and has no entry; the
+    // fourth only appended to the second, and is measured against it across the gap.
+    expect(result.ledger).toEqual([
+      { through: 0, prompt: 100, epoch: 1 },
+      { through: 2, prompt: 90, epoch: 2 },
+      { through: 6, prompt: 170, epoch: 2 },
+    ]);
+    expect(tokensBetween(result.ledger, 3, 7, result.messages)).toBe(80);
+  });
+
+  it("does not record a prompt reported net of the cache", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(reported(30, 100, { content: "done" }));
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+    });
+    expect(result.ledger).toEqual([{ through: 0, prompt: 100, epoch: 0 }]);
+  });
+
+  it("hands the host each step's request, as the client is about to be sent it", async () => {
+    const order: string[] = [];
+    const replies = [calls([LOAD_TOOLS, '{"names":["s__read"]}']), says("done")];
+    create.mockImplementation(() => {
+      order.push("sent");
+      return replies.shift();
+    });
+    const requests: AgentLoopRequest[] = [];
+    await runAgentLoop({
+      config: { ...config, toolDiscovery: "ondemand" },
+      system: "sys",
+      messages: question,
+      tools: [tool("s__read")],
+      catalog: [{ id: "s", label: "S", tools: [{ name: "s__read", description: "reads" }] }],
+      dispatch: async () => "ok",
+      onRequest: (request) => {
+        order.push("told");
+        requests.push(request);
+      },
+    });
+    expect(order).toEqual(["told", "sent", "told", "sent"]);
+    expect(requests.map((request) => request.step)).toEqual([0, 1]);
+    for (const [at, [body]] of create.mock.calls.entries()) {
+      // The array itself, catalogue and tool result and all, not a copy of it.
+      expect(requests[at].messages).toBe((body as Body).messages);
+      expect(requests[at].tools).toEqual((body as Body).tools);
+    }
+    expect(requests[0].messages[0].content).toContain("Tool catalogue");
+    expect(requests[1].messages.at(-1)).toMatchObject({ role: "tool" });
+    expect(requests[1].tools).toHaveLength(2);
+  });
+
+  it("hands over an empty tool list where the request declares none", async () => {
+    create.mockReturnValueOnce(says("done"));
+    const onRequest = vi.fn();
+    await runAgentLoop({ config, messages: question, dispatch: async () => "", onRequest });
+    expect(onRequest).toHaveBeenCalledExactlyOnceWith({ messages: question, tools: [], step: 0 });
+    expect(create.mock.calls[0][0]).not.toHaveProperty("tools");
+  });
+
+  it("reports the request as first built, not what a refusal or a continuation sent after", async () => {
+    const strict: OpenAI.ChatCompletionTool = {
+      type: "function",
+      function: {
+        name: "a",
+        parameters: { type: "object", properties: { id: { type: "string", pattern: "^\\d+$" } } },
+      },
+    };
+    create
+      .mockRejectedValueOnce(new Error("Failed to initialize samplers: failed to parse grammar"))
+      .mockReturnValueOnce(says("half", "length"))
+      .mockReturnValueOnce(says(" and the rest"));
+    const requests: AgentLoopRequest[] = [];
+    await runAgentLoop({
+      config: { ...config, baseUrl: "http://no-grammar/v1" },
+      messages: question,
+      tools: [strict],
+      dispatch: async () => "",
+      maxContinuations: 1,
+      onRequest: (request) => requests.push(request),
+    });
+    // Three requests went out for the one step: the refused one, the relaxed one, the continuation.
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(requests).toHaveLength(1);
+    const [refused, relaxed, continued] = create.mock.calls.map(([body]) => body as Body);
+    expect(requests[0].tools).toEqual(refused.tools);
+    expect(requests[0].tools).not.toEqual(relaxed.tools);
+    expect(requests[0].messages).toHaveLength(continued.messages.length - 1);
+  });
+
+  it("ends the run on what onRequest throws, before anything is sent", async () => {
+    await expect(
+      runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => "",
+        onRequest: () => {
+          throw new Error("host bug");
+        },
+      }),
+    ).rejects.toThrow("host bug");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("breaks each turn's request down by what filled it, on the usage event", async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, "a"))
+      .mockReturnValueOnce(says("half", "length"))
+      .mockReturnValueOnce(says(" and the rest"));
+    const turns: RunUsage["turn"][] = [];
+    await runAgentLoop({
+      config,
+      system: "sys",
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "a long result ".repeat(20),
+      maxContinuations: 1,
+      onEvent: (event) => event.kind === "usage" && turns.push(event.usage?.turn),
+    });
+    const [first, second] = turns.map((turn) => {
+      if (!turn?.context) throw new Error("a turn without a breakdown");
+      return turn.context;
+    });
+    // Shares of what the endpoint reported, adding up to it.
+    expect(first.total).toBe(100);
+    expect(first.system + first.tools + first.history + first.toolResults).toBe(100);
+    expect(first.system).toBeGreaterThan(0);
+    expect(first.tools).toBeGreaterThan(0);
+    expect(first.toolResults).toBe(0);
+    // The second step carries the result, which is most of it. Its total is the first request's
+    // ten, though the continuation's ten were added to the turn's prompt.
+    expect(turns[1]?.prompt).toBe(20);
+    expect(second.total).toBe(10);
+    expect(second.toolResults).toBeGreaterThan(second.history);
+  });
+
+  it("estimates the breakdown where no prompt was reported, agreeing with toolSchemaTokens", async () => {
+    create.mockReturnValueOnce(calls(["a", "{}"])).mockReturnValueOnce(says("done"));
+    const turns: RunUsage["turn"][] = [];
+    await runAgentLoop({
+      config,
+      system: "sys",
+      messages: question,
+      tools: [tool("a")],
+      dispatch: async () => "ok",
+      onEvent: (event) => event.kind === "usage" && turns.push(event.usage?.turn),
+    });
+    expect(turns[0]?.prompt).toBe(0);
+    expect(turns[0]?.context?.tools).toBe(turns[0]?.toolSchemaTokens);
+    expect(turns[0]?.context?.total).toBeGreaterThan(turns[0]?.context?.tools ?? 0);
   });
 
   it("drops an extraBody field the model refuses, and keeps it dropped", async () => {

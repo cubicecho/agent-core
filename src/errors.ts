@@ -33,7 +33,7 @@ export interface AgentLoopFailure {
   usage: TurnUsage;
   /** Every call that was made, in order. One the run was stopped during is `ok: false`. */
   toolCalls: ToolCallOutcome[];
-  /** What was loaded when the run failed, for `carryOver`. Empty in eager mode. */
+  /** What was loaded when the run failed, for `carryOver`. Empty in eager and proxied modes. */
   loaded: string[];
   /** The tools the model had called, `load_tools` excluded. */
   used: string[];

@@ -1,21 +1,29 @@
 import { expect, test } from "vitest";
 import type { CatalogServer } from "../src/catalog.ts";
 import {
+  CALL_TOOL,
   carryOver,
   catalogPrompt,
   expandNames,
+  holdsDefinitions,
   inCatalog,
+  LOAD_TOOLS,
   loadedTools,
   loadResult,
   MAX_CARRIED,
   MAX_PER_LOAD,
   orderTools,
   PRESELECT_SYSTEM,
+  PROXY_TOOLS,
   preselectByKeywords,
   preselectInput,
   preselection,
   preselectSystem,
+  proxiedCall,
+  proxyCatalogPrompt,
+  proxyLoadResult,
   requestedNames,
+  shownCall,
 } from "../src/tool-loading.ts";
 
 const tool = (name: string) => ({ name, description: `does ${name}` });
@@ -487,4 +495,136 @@ test("the request is read only as far as the preselector reads it", () => {
   expect(preselectByKeywords(desks, buried, { maxPromptChars: 10_000 }).names).toContain(
     "git__commit",
   );
+});
+
+const definition = (name: string) => ({
+  type: "function" as const,
+  function: {
+    name,
+    description: `does ${name}`,
+    parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+  },
+});
+
+test("the proxied tool array is load_tools and call_tool, frozen, with open arguments", () => {
+  const names = PROXY_TOOLS.map((tool) => (tool.type === "function" ? tool.function.name : ""));
+  expect(names).toEqual([LOAD_TOOLS, CALL_TOOL]);
+  expect(Object.isFrozen(PROXY_TOOLS)).toBe(true);
+  const call = PROXY_TOOLS[1];
+  if (call.type !== "function") throw new Error("unreachable");
+  expect(Object.isFrozen(call.function)).toBe(true);
+  expect(call.function.parameters).toMatchObject({
+    properties: { arguments: { type: "object", additionalProperties: true } },
+    required: ["name", "arguments"],
+  });
+});
+
+test("the proxied catalogue points at call_tool, and never at a tool list", () => {
+  const prompt = proxyCatalogPrompt(catalog);
+  expect(prompt).toContain("run them with `call_tool`");
+  expect(prompt).toContain("gmail__send_email");
+  expect(prompt).not.toContain("tool list");
+  expect(proxyCatalogPrompt([{ id: "1", label: "Empty", tools: [] }])).toBe("");
+});
+
+test("a proxied load answers with each new tool's whole definition", () => {
+  const resolved = expandNames(["gmail__send_email", "files__read_file"], catalog);
+  const send = definition("gmail__send_email");
+  const read = definition("files__read_file");
+  const result = proxyLoadResult(resolved, catalog, [send, read]);
+  expect(result.split("\n")).toEqual([
+    "Loaded 2 tool(s). Run them with `call_tool`.",
+    "",
+    JSON.stringify({
+      name: "gmail__send_email",
+      description: "does gmail__send_email",
+      parameters: send.function.parameters,
+    }),
+    "",
+    JSON.stringify({
+      name: "files__read_file",
+      description: "does files__read_file",
+      parameters: read.function.parameters,
+    }),
+  ]);
+});
+
+test("a proxied load points back at what is loaded, and says what it could not define", () => {
+  const resolved = expandNames(
+    ["gmail__send_email", "files__read_file", "files__write_file", "nope"],
+    catalog,
+  );
+  const result = proxyLoadResult(
+    resolved,
+    catalog,
+    [definition("gmail__send_email"), definition("files__read_file")],
+    new Set(["gmail__send_email"]),
+  );
+  expect(result).toContain("Loaded 1 tool(s). Run them with `call_tool`.");
+  expect(result).not.toContain('"name":"gmail__send_email"');
+  expect(result).toContain(
+    "Already loaded earlier in this conversation: gmail__send_email. Run them with `call_tool`; do not load them again.",
+  );
+  expect(result).toContain("No definition is available for: files__write_file.");
+  expect(result).toContain("Not in the catalogue: nope.");
+});
+
+test("a proxied load that matched nothing is refused in on-demand's words", () => {
+  for (const names of [[], ["*"], ["nope"]]) {
+    const resolved = expandNames(names, catalog);
+    expect(proxyLoadResult(resolved, catalog, [])).toBe(loadResult(resolved, catalog));
+  }
+});
+
+test("only a proxied load carrying definitions is one a prune has to keep", () => {
+  const resolved = expandNames(["gmail__send_email"], catalog);
+  const send = definition("gmail__send_email");
+  expect(holdsDefinitions(proxyLoadResult(resolved, catalog, [send]))).toBe(true);
+  // A pointer back, a refusal and on-demand's own result all leave the model nothing to lose.
+  expect(
+    holdsDefinitions(proxyLoadResult(resolved, catalog, [send], new Set(resolved.matched))),
+  ).toBe(false);
+  expect(holdsDefinitions(proxyLoadResult(expandNames(["nope"], catalog), catalog, []))).toBe(
+    false,
+  );
+  expect(holdsDefinitions(loadResult(resolved, catalog))).toBe(false);
+});
+
+test("call_tool is read as the tool it names, with arguments as an object or as JSON", () => {
+  expect(proxiedCall({ name: "files__read_file", arguments: { path: "a" } }, catalog)).toEqual({
+    name: "files__read_file",
+    input: { path: "a" },
+  });
+  expect(
+    proxiedCall({ name: "files__read_file", arguments: '{"path":"a"}' }, catalog).input,
+  ).toEqual({ path: "a" });
+  expect(proxiedCall({ name: "files__read_file" }, catalog).input).toEqual({});
+});
+
+test("call_tool refuses what it cannot run, in words the model can act on", () => {
+  expect(() => proxiedCall({ arguments: {} }, catalog)).toThrow("call_tool needs a name");
+  expect(() => proxiedCall({ name: "shell", arguments: {} }, catalog)).toThrow(
+    "Not in the catalogue: shell.",
+  );
+  expect(() => proxiedCall({ name: "files__read_file", arguments: "{oops" }, catalog)).toThrow(
+    "call_tool arguments for files__read_file are not valid JSON",
+  );
+  expect(() => proxiedCall({ name: "files__read_file", arguments: [] }, catalog)).toThrow(
+    "must be an object",
+  );
+  expect(() => proxiedCall({ name: "files__read_file", arguments: 3 }, catalog)).toThrow(
+    "must be an object",
+  );
+});
+
+test("a call is shown as the tool a call_tool ran, and otherwise as it came", () => {
+  expect(shownCall(CALL_TOOL, '{"name":"files__read_file","arguments":{"path":"a"}}')).toEqual({
+    name: "files__read_file",
+    input: '{"path":"a"}',
+  });
+  expect(shownCall(CALL_TOOL, "{not json")).toEqual({ name: CALL_TOOL, input: "{not json" });
+  expect(shownCall("files__read_file", '{"name":"x"}')).toEqual({
+    name: "files__read_file",
+    input: '{"name":"x"}',
+  });
 });

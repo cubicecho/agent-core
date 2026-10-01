@@ -21,7 +21,7 @@ only, Node >=22.
 | Module | What it does |
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`. |
-| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model. |
+| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model, and the proxied form of the same thing — `PROXY_TOOLS`, `proxyLoadResult`, `proxiedCall` — for a server whose prompt cache a growing tool array throws away. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, fenced reasoning taken out of the answer, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
@@ -37,6 +37,7 @@ only, Node >=22.
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, and `resolveApiKey` for a caller deciding which key an endpoint gets. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
+| `ledger` | What stretches of a transcript cost, read off the prompt counts the server reported rather than estimated: `recordRequest`, `tokensBetween`, `estimateFrom`, `rebaseLedger`. |
 | `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
 | `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
@@ -102,7 +103,7 @@ than zero otherwise:
 | `firstTokenMs` | `streamTurn`, from the request to the first chunk that carried something |
 | `wallMs`, `retries`, `timeouts` | `runTurn`: the whole turn with its backoff, the lost requests sent again, and how many of those went silent |
 | `continuations` | `continueTurn` |
-| `cacheExpected`, `cacheBroken`, `cacheBreakReason`, `toolsDeclared`, `toolSchemaTokens` | `runAgentLoop`, below |
+| `cacheExpected`, `cacheBroken`, `cacheBreakReason`, `toolsDeclared`, `toolSchemaTokens`, `context` | `runAgentLoop`, below |
 
 `reasoning` is the scratchpad `onThinking` was told, kept because two common families want it
 back. gpt-oss and DeepSeek in thinking mode read the analysis behind a tool call off the assistant
@@ -365,6 +366,10 @@ the total is `requestTokens`, and the tool block is counted the way `requestToke
 `TurnMetrics.toolSchemaTokens` count it rather than shared out, so the breakdown and the metrics
 line cannot disagree about the same tool list.
 
+A host on `runAgentLoop` has no body to hand it, since the loop builds the request. It does not
+need one: each `usage` event's `turn.context` is this breakdown for that step, and `onRequest` is
+handed the request itself for a host that cuts it some other way. Both are under the loop, below.
+
 ## The loop
 
 `runAgentLoop` is the part of an agent that three servers had each written, and that had drifted
@@ -378,10 +383,10 @@ import { runAgentLoop, emit } from "@cubicecho/agent-core";
 
 const { turn, messages, usage, loaded } = await runAgentLoop({
   config,                         // Endpoint & ModelParams & { maxToolIterations, toolDiscovery?, maxRetries?, loadingTimeoutSeconds?, contextLength? }
-  system,                         // sent as the first message; on-demand mode appends the catalogue
+  system,                         // sent as the first message; on-demand and proxied modes append the catalogue
   messages: history,              // ending in the question; not written to
   tools,                          // every tool the run may reach
-  catalog,                        // the same, name-only, for on-demand loading
+  catalog,                        // the same, name-only, for on-demand and proxied loading
   preselected,                    // from `preselect`, if a small model chose
   dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
   hooks: { run, context: { session: { id } } },
@@ -403,6 +408,26 @@ may be the file it has since written. `dedupeToolCalls: false` dispatches everyt
 predicate is asked per call — which is how `send_email` opts out, since twice is two emails and
 nothing in an OpenAI tool definition says which tools those are. A pool that reads the MCP
 `readOnlyHint` and `idempotentHint` annotations can answer it; this package cannot.
+
+Three kinds of call never reach `dispatch`: `load_tools`, which the loop answers itself, a call
+whose arguments could not be read, and that identical repeat. A host that draws each call as a
+card and fills it in when the result lands hears of those through `onToolCall` and `onToolResult`,
+which are told of every call the model made — the request as `dispatch` would have been handed it
+(with empty `args` where they could not be read), then `{ id, name, ok, content }` with the whole
+text the model reads. A repeat gets a result of its own under its own id, carrying the answer it
+shares. Neither is awaited. The `tool-call` and `tool-result` events carry the same `id`, with
+`text` still cut by `preview`, and so does each entry of the result's `toolCalls` — which is what
+tells two calls to one tool apart when `parallel` lands their results out of order. An id is
+distinct within a step, and a server is free to use it again in a later one.
+
+```ts
+await runAgentLoop({
+  // ...
+  onToolCall: ({ id, name, args }) => send({ type: "tool_use", id, name, input: args }),
+  onToolResult: ({ id, ok, content }) =>
+    send({ type: "tool_result", toolUseId: id, content, isError: !ok }),
+});
+```
 
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
@@ -441,6 +466,67 @@ a catalogued tool without loading it first is right about what it wants, and get
 run. A preselection shapes the first step alone: those tools, no catalogue, no `load_tools` —
 a model with the menu still in front of it shops, reloading what it has or picking a sibling —
 and everything is back from the second step on.
+
+That first step has a request head of its own — a different system prompt and a different tool
+array from the last turn's final request, and from this turn's second step — so a prompt cache
+misses the whole transcript twice on a question that has a preselection. `preselectRouting:
+"append"` drops the separate head: the shortlist is loaded as a `load_tools` call would have loaded
+it, after whatever `loaded` carried and without declaring a carried name twice, and the first step
+is sent like every other, catalogue and `load_tools` included. The trade is the menu back in front
+of the model on the step the shortlist was meant to settle. Neither cost has been measured against
+the other, so `"exclusive"` stays the default.
+
+Appended is where the tools go before `toolOrder` orders them. With `toolOrder: false` a carried
+tool array stays a strict prefix of the new one. With name order, the default, a preselected tool
+is sorted in and moves every definition after it — the first step still matches the second, but
+the last turn's cache holds only as far as the first new name.
+
+`toolDiscovery: "proxy"` is the same catalogue behind a tool array that never changes. A chat
+template renders the tool array in the system turn, so on a server that caches by prefix —
+llama.cpp, and anything built on it — a `load_tools` that appends a definition changes the head of
+the prompt and the whole transcript is prefilled again, on the very step that was meant to save
+tokens. Proxied, every step declares `PROXY_TOOLS` and nothing else: `load_tools`, and `call_tool`,
+which takes `{ name, arguments }`. A load answers with each new tool's name, description and
+parameters as a line of JSON, since no request will ever declare them, and with a pointer back for
+one whose definition is already in the conversation. A `call_tool` is refused for a name outside
+the catalogue, takes `arguments` as an object or as JSON in a string, and reaches `dispatch` as the
+tool it names — the inner name and arguments, under the call's own id — so a dispatcher, a watcher
+and `used` see the same thing in every mode. The transcript keeps the `call_tool` the model wrote.
+
+```ts
+const { messages, used } = await runAgentLoop({
+  config: { ...config, toolDiscovery: "proxy" },
+  messages: history,
+  tools,                          // never declared; a load answers with them
+  catalog,
+  preselected,                    // written into the transcript, not into the tool array
+  dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
+});
+```
+
+A preselection has no tool array to go into there, and no step of its own. It is written into the
+transcript after the question as a `load_tools` call the model did not make, and the result that
+call would have had:
+
+```ts
+{ role: "assistant", content: null, tool_calls: [{ id: "preselect-3", type: "function",
+    function: { name: "load_tools", arguments: '{"names":["files__read_file"]}' } }] },
+{ role: "tool", tool_call_id: "preselect-3", content: "Loaded 1 tool(s). Run them with `call_tool`.\n\n{...}" },
+```
+
+The pair is in the `messages` the loop hands back, to be stored like any other, and is reported as
+a `tool-call` and a `tool-result` event, told to `onToolCall` and `onToolResult`, and counted in
+`toolCalls` and in the `load_tools` metrics. The
+id is numbered by where the call lands in the transcript, so two questions do not share one. A name
+with no definition in `tools`, or outside the catalogue, is left out, and none left is no exchange.
+
+What is loaded there is what the history holds, so `loaded` comes back empty and the `loaded`
+option is not read: there is nothing to carry, and a definition a compaction folded away has to be
+loadable again. For the same reason a `beforeStep` that returns a different array makes the loop
+forget what it loaded, which costs a definition sent twice at worst. `call_tool` is honoured in
+`ondemand` mode as well — a session switched out of proxied mode still has it in its history, and
+a model copies what it has seen work — unless the host has a tool of that name, which is then the
+host's. Eager mode does not know it.
 
 That preselection costs a round trip to a model, which on a local box is a few seconds before the
 run has started, spent on a model doing term matching. `preselect(..., { keywords: true })` does
@@ -503,6 +589,25 @@ reported — `cacheBroken`, a hit short of 90% of the previous prompt. A broken 
 `history-rewritten` (a compaction or a prune in `beforeStep`), or `none-known` where the new request
 only appended, which points at the server — a slot evicted, a template that re-renders the tail.
 
+The same `turn` carries `context`, the request cut by `contextTokens` into `system`, `tools`,
+`history` and `toolResults`: shares of the prompt the endpoint reported for it, adding up to it, or
+an estimate where it reported none. A host that wants a different cut — the catalogue apart from the
+prompt it rides on, this turn's messages apart from the ones before — takes the request from
+`onRequest` and measures it itself:
+
+```ts
+await runAgentLoop({
+  ...options,
+  onRequest: ({ messages, tools, step }) => measure(step, messages, tools),
+});
+```
+
+It is called once a step, before the request goes out, with the messages and tools as the client
+is about to be sent them. It is for reading: `beforeStep` is where the transcript is changed. What
+it reports is the request as first built. A retry sends that again, but a refusal is answered with
+a lesser body and a continuation with the reply so far on the end, and neither is reported — and
+`context` is measured on the same first request, against the first prompt reported for the turn.
+
 `runMetrics(events)` adds a run up from those events — tokens, cache hit ratio and breaks by
 reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft
 acceptance, the largest prompt against a `contextLength`, turns cut off, tool errors by name, and
@@ -519,8 +624,52 @@ What it cannot say: whether a failed run was stopped, errored or ran out of tool
 whether the host compacted — neither is in the events.
 
 `beforeStep` is handed the transcript before each request and may return a replacement, which is
-where compaction goes (below). Hooks are gathered once, onto the question, and never written into
+where compaction goes (below). Its third argument is `{ used, limit, ledger }` — the prompt the
+run's last request reported, the window, and the token ledger so far — so a host can compact
+mid-run without tracking usage itself; `used` is absent before the first step and where the
+endpoint reported nothing. Hooks are gathered once, onto the question, and never written into
 the transcript that comes back; `afterTurn` is told the reply without the run waiting on it.
+
+That leaves an earlier question's context to the host, because the loop only ever touches the
+current one. A question sent with `<context>` blocks one turn and bare the next is a different
+prompt from that message on, and the server's prefix cache is lost behind it — on every turn. So
+the result hands back what it said, `context` and the `preface` above it, for the host to keep
+beside the question and put back with `withContext` on every later call:
+
+```ts
+import { runAgentLoop, withContext } from "@cubicecho/agent-core";
+
+// Stored: what the user typed, and what the hooks added to it the turn it was asked.
+const history = session.messages.reduce(
+  (sent, message, at) => withContext(sent, at, message.hookContext ?? "", message.hookPreface),
+  session.messages.map(({ hookContext, hookPreface, ...message }) => message),
+);
+const result = await runAgentLoop({
+  config,
+  messages: [...history, { role: "user", content: prompt }],
+  dispatch,
+  hooks: { run, context: { session: { id }, prompt } },
+});
+session.messages.push(
+  { role: "user", content: prompt, hookContext: result.context, hookPreface: result.preface },
+  ...result.messages.slice(history.length + 1),
+);
+await result.afterTurn; // only if its notes are wanted, or the process is about to exit
+```
+
+`withContext` with those two arguments builds the question exactly as the loop sent it, whatever
+`configureHooks` has since been told, so the next request is the last one with its tail added.
+`result.messages` is the transcript the loop was given plus what the run added — earlier questions
+as the host passed them, this one as typed — which is why the snippet stores only the new tail.
+
+`afterTurn` on the result is the `afterTurn` hooks' notes as a promise. The loop still returns
+without waiting; a host that stores those notes with the turn, or would otherwise exit before the
+turn is remembered, awaits it once the answer is out.
+
+The loop gathers before its first request, and nothing of the host's can run beside that. A host
+with pre-turn work to overlap with the hooks — compaction, a preselection — calls `gather` itself,
+applies `withContext` to the current question as well, calls `notify` after, and passes no `hooks`
+(see [Hooks](#hooks)).
 
 A host that stores its transcript — a row per message, so a crash or a stop mid-run still leaves
 readable history — gets each message as the loop appends it, and the run as it stood when the loop
@@ -603,7 +752,9 @@ Two ways to make a transcript smaller, cheap first.
 `pruneToolResults(messages, { keepLast: 5, maxChars: 256 })` replaces every tool result but the
 latest five with a stub — `[result cleared, 10,412 chars]`. A 40k-character `read_file` is 10k
 tokens on every turn after it, and by then the model has usually taken what it wanted; the stub
-keeps the call answered and says how much was there.
+keeps the call answered and says how much was there. A proxied `load_tools` result that carries
+definitions is never cleared, however old: it is the only copy of the schema the model has, and
+`holdsDefinitions` is the test for a host with a prune of its own.
 
 `planCompaction(messages, { limit, used })` says where to fold the oldest stretch into a summary,
 once `used` (the last turn's prompt tokens, or the estimate) is past three quarters of the window.
@@ -650,6 +801,73 @@ way to save tokens.
 
 `pruneToolResults` keeps the transcript's indexes, so a plan made before pruning still applies to
 what it returns, as above.
+
+### What the messages cost, measured
+
+`planCompaction` decides where to cut by estimating each message, and a calibrated divisor fixes
+only the average: a transcript is tool results, JSON arguments, code and prose, each at its own
+ratio, plus whatever the chat template adds per message. The server has already said what they
+cost. A request that only appended to the one before it differs from it by exactly the cost of what
+was appended, so two reported prompts and a subtraction give a number with no tokenizer in it — the
+template's tokens and a tool result's real density included, and reasoning, which is never
+replayed, left out.
+
+`runAgentLoop` keeps that as a ledger — one `{ through, prompt, epoch }` per request: the index of
+the request's last message, the prompt it reported, and an epoch that changes whenever the prefix
+did. It comes back as `result.ledger`, rides on every `usage` event, and is handed to `beforeStep`;
+pass it back as `ledger` on the next run and it is continued. It is a plain array of three numbers
+an entry, so it stores as two columns on the message row `through` names or as JSON beside the
+session.
+
+```ts
+const result = await runAgentLoop({
+  ...options,
+  ledger: session.ledger,
+  beforeStep: async (messages, step, { used, limit, ledger }) => {
+    const plan = planCompaction(messages, {
+      limit,
+      used,
+      target: 0.5,
+      estimate: estimateFrom(ledger, messages, { charsPerToken }),
+    });
+    if (!plan) return;
+    return compactTranscript(messages, plan, summarise);
+  },
+});
+session.ledger = result.ledger;
+```
+
+`tokensBetween(ledger, from, to, messages)` is the cost of `messages.slice(from, to)`. Between two
+boundaries recorded in one epoch it is the subtraction, and exact. A boundary falls after a question
+and after each step's tool results, never after an assistant message, so a stretch that starts or
+ends inside a group gets that group's total by character share, the way `contextTokens` divides a
+reported prompt. Whatever no pair of entries covers is the calibrated estimate: the messages before
+the first entry, the group either side of an epoch's end, and what has not been sent yet.
+`estimateFrom(ledger, messages)` is the same thing one message at a time, which is the function
+`planCompaction` already takes as `estimate`.
+
+`target` is the share of the window the whole request should come down to. `keepRatio` bounds the
+kept tail alone, with the system prompt, the tool schemas and the summary sitting on top of it
+uncounted; given a `target`, the cut is the first user message at which `used`, less what is
+folded, plus the summary's ceiling (`summaryTokens`, 1024 unless given) is at or under it, and the
+plan's `after` says what that leaves. Where no cut reaches it the plan folds as far as the last
+user message and `after` says how far short it fell. Without `target` nothing changes.
+
+A new epoch starts whenever a request did more than append: a fold or a prune in `beforeStep`, a
+system prompt that moved, and a tool array that grew — a `load_tools` in on-demand mode adds a
+schema to the head, so the group beside it is left unmeasured rather than charged for it. When
+`beforeStep` returns a different transcript the loop moves the entries that still stand to their new
+indexes with `rebaseLedger(ledger, before, after)`, which a host that folds between runs calls
+itself. Differences inside an old epoch stay good, since the prefix they shared cancels.
+
+What is not measured: the first request of every run starts an epoch, because the loop cannot see
+whether the run before it had the same system prompt and tools, so a run's question and the answer
+before it are estimated; a step whose prompt was not reported has no entry, and the next one that
+does is measured across it; and the prompt recorded is the first request's, before any continuation.
+A difference of zero or less is not trusted, and neither is a prompt reported smaller than its own
+cache count — both are how a server reporting `prompt_tokens` net of its cache would show up.
+Whether any endpoint does that has not been checked, and one whose net counts kept rising would not
+be caught. A host with its own loop keeps a ledger with `recordRequest(ledger, previous, next)`.
 
 ### A fold you store, instead of a transcript you rewrite
 
@@ -790,7 +1008,10 @@ void notify(run, "afterTurn", { ...context, reply, turn: { ...context.turn, mess
 
 The context goes on this turn's question and never into the system prompt — a prompt that changed
 every turn would miss the prompt cache every turn — and `withContext` returns a new array, so a
-host that stores what the user typed never stores the context as something they said. Every
+host that stores what the user typed never stores the context as something they said. It is stored
+beside the question instead, and put back on every later request: a question that loses its blocks
+on the next turn rewrites the prompt from there on, and the server's prefix cache with it.
+`runAgentLoop` hands back `context` and `preface` for the same purpose. Every
 injecting hook shares `HOOK_CONTEXT_TOKENS` (2000) by default, each held to its own `maxTokens`
 inside that, so a generous hook cannot crowd out the conversation it was meant to inform.
 

@@ -385,6 +385,236 @@ export function requestedNames(args: Record<string, unknown>): string[] {
 }
 
 /**
+ * The one tool a proxied run reaches every catalogued tool through.
+ *
+ * Proxied discovery is on-demand loading with a tool array that never changes. On-demand mode
+ * declares each tool as it is loaded, and a chat template renders the tool array in the system
+ * turn, ahead of the whole conversation — so appending one definition there moves every token
+ * after it, and on a model llama.cpp can only rewind to a saved checkpoint a single load
+ * re-prefills the transcript from the first token. Proxied, the array is `load_tools` and
+ * `call_tool` for the life of the session: a load answers with the definitions as its result, at
+ * the end of the history where the cache already stops, and the model runs a loaded tool through
+ * this one. The price is a level of indirection the model has to get right, which a small model
+ * does less reliably than a native call.
+ */
+export const CALL_TOOL = "call_tool";
+
+/**
+ * The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is
+ * shared.
+ *
+ * The load keeps `LOAD_TOOLS` as its name, so `requestedNames` and `expandNames` read its
+ * arguments as they do on demand; only what it promises differs, which is why it is not
+ * `LOAD_TOOLS_DEFINITION`. `call_tool`'s `arguments` says `additionalProperties: true` and has to:
+ * `sanitizeTools` gives an object with no properties an empty property list, a grammar-constrained
+ * server compiles that to `{}`, and without the keyword the model is left no way to pass an
+ * argument at all.
+ */
+export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
+  {
+    type: "function",
+    function: {
+      name: LOAD_TOOLS,
+      description:
+        "Get the full definitions of tools listed in the tool catalogue: what each does and the " +
+        "arguments it takes. Pass the exact names you need, or a trailing wildcard like " +
+        "`server__group__*` for a whole group. Then run them with `call_tool`. Load only what " +
+        "the task actually needs.",
+      parameters: {
+        type: "object",
+        properties: {
+          names: {
+            type: "array",
+            items: { type: "string" },
+            description: "Tool names from the catalogue. Wildcards may end with `*`.",
+          },
+        },
+        required: ["names"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: CALL_TOOL,
+      description:
+        "Run a tool from the catalogue. Load it with `load_tools` first to learn its arguments, " +
+        "then pass its exact name and an arguments object matching its parameters.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "The tool's exact name from the catalogue." },
+          arguments: {
+            type: "object",
+            description: "The tool's arguments, as its definition describes them.",
+            additionalProperties: true,
+          },
+        },
+        required: ["name", "arguments"],
+      },
+    },
+  },
+]);
+
+/**
+ * The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a
+ * tool list.
+ *
+ * `catalogPrompt` tells the model a loaded tool is in its tool list, which proxied is never true —
+ * a model told so looks for it there and calls it natively. The listing itself is the same, and
+ * like that one it is never marked, so the head of the prompt is one text for the whole session.
+ *
+ * @param catalog The connected servers. A catalogue with no tools in it produces an empty string.
+ */
+export function proxyCatalogPrompt(catalog: CatalogServer[]): string {
+  const list = catalogList(catalog);
+  if (!list) return "";
+  return [
+    "# Tool catalogue",
+    "",
+    "These tools exist. Call `load_tools` with the names you need to get their definitions, then",
+    "run them with `call_tool`. Names are descriptive; load a tool to see its parameters. A tool",
+    "whose definition is already in this conversation does not need loading again. Do not load",
+    "tools the task does not need, and do not mention this mechanism in your answer.",
+    "",
+    list,
+  ].join("\n");
+}
+
+/** How a proxied load result that carries definitions opens, with the count left open. */
+const PROXY_LOADED = /^Loaded \d+ tool\(s\)\. Run them with `call_tool`\./;
+
+/**
+ * Whether a tool result is a proxied load carrying definitions, which is the only copy of them
+ * the model has.
+ *
+ * On demand the definitions are in the tool array and a load's result only repeats their
+ * descriptions, so clearing it loses nothing. Proxied, the result is the schema, and
+ * `pruneToolResults` asks this before it stubs one. Told by how `proxyLoadResult` opens, the way
+ * a summary is told by `SUMMARY_LEAD`, because a `tool` message carries no tool name of its own.
+ *
+ * @param result The tool message's text. A load that only pointed back or refused is not one.
+ */
+export const holdsDefinitions = (result: string) => PROXY_LOADED.test(result);
+
+/**
+ * What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since
+ * the result is the only place the model will ever see it.
+ *
+ * A name loaded before this call is answered with a pointer back rather than its definition a
+ * second time, and one the catalogue lists but `definitions` does not hold is said to have none,
+ * so the model is not left waiting on a schema that is not coming. The refusals — too broad, over
+ * the per-call cap, not in the catalogue, nothing asked for — are `loadResult`'s, worded the same
+ * in both modes.
+ *
+ * @param resolved What the call asked for, from `expandNames`.
+ * @param catalog The servers, read for the refusals' wording.
+ * @param definitions The definitions of `resolved.matched`, as many as the host has. Ones that
+ * are not functions are skipped.
+ * @param loaded What was loaded before this call. Absent reports every match as newly loaded.
+ */
+export function proxyLoadResult(
+  resolved: ReturnType<typeof expandNames>,
+  catalog: CatalogServer[],
+  definitions: readonly OpenAI.ChatCompletionTool[],
+  loaded?: ReadonlySet<string>,
+): string {
+  const lines: string[] = [];
+  const again = resolved.matched.filter((name) => loaded?.has(name));
+  const fresh = definitions.flatMap((tool) =>
+    tool.type === "function" && !loaded?.has(tool.function.name) ? [tool.function] : [],
+  );
+  const defined = new Set(fresh.map((tool) => tool.name));
+  const missing = resolved.matched.filter((name) => !loaded?.has(name) && !defined.has(name));
+  if (fresh.length) {
+    lines.push(`Loaded ${fresh.length} tool(s). Run them with \`${CALL_TOOL}\`.`);
+    for (const { name, description, parameters } of fresh)
+      lines.push("", JSON.stringify({ name, description, parameters }));
+  }
+  if (again.length) {
+    if (lines.length) lines.push("");
+    lines.push(
+      `Already loaded earlier in this conversation: ${again.join(", ")}. Run them with ` +
+        `\`${CALL_TOOL}\`; do not load them again.`,
+    );
+  }
+  if (missing.length) {
+    if (lines.length) lines.push("");
+    lines.push(`No definition is available for: ${missing.join(", ")}.`);
+  }
+  const { overBroad, deferred, unknown, matched } = resolved;
+  if (overBroad.length || deferred.length || unknown.length || !matched.length) {
+    if (lines.length) lines.push("");
+    lines.push(loadResult({ ...resolved, matched: [] }, catalog));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
+ *
+ * `arguments` arrives as an object when the model follows the schema and as a JSON string when it
+ * copies the shape of a native call instead; both are taken, since the intent is the same. A name
+ * outside the catalogue is refused here rather than handed to a dispatcher, which is what keeps
+ * `call_tool` from reaching anything the catalogue does not offer.
+ *
+ * @param args The `call_tool` call's own arguments, parsed. An absent `arguments` is no arguments.
+ * @param catalog What may be called. The name is trimmed and then matched exactly.
+ */
+export function proxiedCall(
+  args: Record<string, unknown>,
+  catalog: CatalogServer[],
+): { name: string; input: Record<string, unknown> } {
+  const name = typeof args.name === "string" ? args.name.trim() : "";
+  if (!name) throw new Error(`${CALL_TOOL} needs a name; pass one from the tool catalogue.`);
+  if (!inCatalog(catalog, name))
+    throw new Error(`Not in the catalogue: ${name}. Check the name and try again.`);
+  let input: unknown = args.arguments ?? {};
+  if (typeof input === "string") {
+    const text = input;
+    try {
+      input = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(
+        `${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, 200)}`,
+      );
+    }
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new Error(`${CALL_TOOL} arguments for ${name} must be an object.`);
+  return { name, input: input as Record<string, unknown> };
+}
+
+/**
+ * A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it
+ * is.
+ *
+ * The transcript keeps the `call_tool` the model wrote, since the next request has to repeat it
+ * word for word to stay in the cache; only the display looks through it. Anything that does not
+ * parse as a proxied call is left as it came.
+ *
+ * @param name The name the model called.
+ * @param input The call's arguments as JSON text.
+ * @returns The inner name and its arguments as JSON text — the string itself where the model
+ * passed `arguments` as one.
+ */
+export function shownCall(name: string, input: string): { name: string; input: string } {
+  if (name !== CALL_TOOL) return { name, input };
+  try {
+    const args = JSON.parse(input) as { name?: unknown; arguments?: unknown };
+    if (typeof args.name !== "string" || !args.name.trim()) return { name, input };
+    const inner = args.arguments ?? {};
+    return {
+      name: args.name.trim(),
+      input: typeof inner === "string" ? inner : JSON.stringify(inner),
+    };
+  } catch {
+    return { name, input };
+  }
+}
+
+/**
  * Where a request is cut for the preselector, in characters.
  *
  * A tool choice is made on what the work is, which is the top of a request rather than all of

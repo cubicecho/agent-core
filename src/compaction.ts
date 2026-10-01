@@ -10,6 +10,7 @@ import {
 } from "./hooks.ts";
 import { messageTokens } from "./retry.ts";
 import { ask, type SideTaskOptions } from "./side-task.ts";
+import { holdsDefinitions } from "./tool-loading.ts";
 
 /**
  * Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded
@@ -29,6 +30,9 @@ export const COMPACT_AT = 0.75;
 
 /** The fraction of the window the kept tail may fill, leaving room for the run to grow again. */
 export const KEEP_RATIO = 0.35;
+
+/** The ceiling `summariser` gives a summary, and what `planCompaction` assumes one will cost. */
+const SUMMARY_TOKENS = 1024;
 
 /** How much of any one message the summariser is shown. A pasted file is not worth it whole. */
 const SUMMARY_SLICE = 4000;
@@ -111,7 +115,9 @@ export interface PruneOptions {
  * after it, and by then the model has usually taken what it wanted from it; the stub keeps the
  * call answered — a call with no result is a malformed transcript — and says how much was there,
  * so a model that does need it again knows to ask. Short results are kept, since a stub saves
- * nothing on them. Returns the same array when there was nothing to clear. Rewrites the prefix;
+ * nothing on them, and so is a proxied `load_tools` result carrying definitions, which is the
+ * only copy of them the model has (`holdsDefinitions`); either still counts as one of the latest
+ * few. Returns the same array when there was nothing to clear. Rewrites the prefix;
  * see the module comment on when to run it.
  *
  * @param messages The transcript. Not written to.
@@ -129,6 +135,9 @@ export function pruneToolResults(
     if (kept++ < keepLast) continue;
     const text = textOf(message.content);
     if (text.length <= maxChars || text.startsWith("[result cleared")) continue;
+    // A proxied load's result is the schema itself; stubbed, the tool is one the model can still
+    // name and no longer call correctly.
+    if (holdsDefinitions(text)) continue;
     out ??= [...messages];
     out[at] = {
       ...message,
@@ -151,6 +160,17 @@ export interface CompactionOptions {
   compactAt?: number;
   /** The fraction of `limit` the kept tail may fill. `KEEP_RATIO` by default. */
   keepRatio?: number;
+  /**
+   * The fraction of `limit` the whole request should come down to, in place of `keepRatio`: the
+   * cut is the earliest that leaves `used`, less what is folded, plus `summaryTokens`, at or under
+   * it. Absent, or not above zero, plans by `keepRatio` as before.
+   */
+  target?: number;
+  /**
+   * What the summary is assumed to cost when planning to a `target` — the ceiling its writer is
+   * held to, since the plan is made before it is written. 1024 by default, which is `summariser`'s.
+   */
+  summaryTokens?: number;
   /** One message's tokens. `messageTokens` by default, divided by `charsPerToken`. */
   estimate?: (message: Message) => number;
   /**
@@ -181,6 +201,12 @@ export interface CompactionPlan {
   toSummarise: Message[];
   /** The summary an earlier compaction left, which this one continues. */
   previous?: string;
+  /**
+   * What the request is expected to cost once folded, in tokens: what was in use, less what is
+   * summarised, plus the summary's ceiling. Only on a plan made to a `target`, and above the
+   * target where no legal cut reaches it.
+   */
+  after?: number;
 }
 
 /**
@@ -198,6 +224,15 @@ export interface CompactionPlan {
  * transcript — its system prompt a separate argument, no summary message in the array at all —
  * knows them exactly, and passes `from` and `previous` instead of hoping the scan agrees.
  *
+ * `keepRatio` bounds the kept tail alone, and the system prompt, the tool schemas and the summary
+ * sit in the window on top of it uncounted. Given a `target` the plan is made against what the
+ * request will be afterwards instead: the cut is the first user message at which `used`, less the
+ * folded messages, plus the summary's ceiling, is at or under that share of the window. Where no
+ * cut gets there the plan folds up to the last user message, which is as near as a legal one
+ * comes, and `after` says how far short it fell. An earlier summary the new one replaces is not
+ * credited, so `after` errs high by at most that much. It is only as good as `estimate` — see
+ * `estimateFrom` for one that is measured.
+ *
  * @param messages The transcript, system prompts included if the caller keeps them in it.
  * @param options The window, what is in use, the ratios, and where the last fold ended. See
  * `CompactionOptions`.
@@ -209,6 +244,8 @@ export function planCompaction(
     used,
     compactAt = COMPACT_AT,
     keepRatio = KEEP_RATIO,
+    target,
+    summaryTokens = SUMMARY_TOKENS,
     charsPerToken,
     estimate = (message) => messageTokens(message, { charsPerToken }),
     from: givenFrom,
@@ -223,18 +260,38 @@ export function planCompaction(
   const from = Math.min(Math.max(givenFrom ?? head.from, 0), messages.length);
   const previous = givenPrevious ?? head.previous;
 
-  const budget = limit * keepRatio;
-  let kept = 0;
   let cut = messages.length;
-  for (let at = messages.length - 1; at > from; at--) {
-    kept += estimate(messages[at]);
-    if (kept > budget) break;
-    cut = at;
+  let after: number | undefined;
+  if (target !== undefined && target > 0) {
+    // Forward from the head, so the first cut that reaches the target is the one that folds least.
+    let folded = 0;
+    for (let at = from; at < messages.length; at++) {
+      if (messages[at].role === "user") {
+        cut = at;
+        after = cost - folded + summaryTokens;
+        if (after <= limit * target) break;
+      }
+      folded += estimate(messages[at]);
+    }
+  } else {
+    const budget = limit * keepRatio;
+    let kept = 0;
+    for (let at = messages.length - 1; at > from; at--) {
+      kept += estimate(messages[at]);
+      if (kept > budget) break;
+      cut = at;
+    }
+    while (cut < messages.length && messages[cut].role !== "user") cut++;
   }
-  while (cut < messages.length && messages[cut].role !== "user") cut++;
 
   if (cut >= messages.length || cut - from < 2) return undefined;
-  return { from, cut, toSummarise: messages.slice(from, cut), ...(previous ? { previous } : {}) };
+  return {
+    from,
+    cut,
+    toSummarise: messages.slice(from, cut),
+    ...(previous ? { previous } : {}),
+    ...(after === undefined ? {} : { after: Math.round(after) }),
+  };
 }
 
 /**
@@ -270,7 +327,7 @@ export const summariser =
     model: string,
     {
       system = SUMMARY_PROMPT,
-      maxTokens = 1024,
+      maxTokens = SUMMARY_TOKENS,
       ...options
     }: SideTaskOptions & { system?: string } = {},
   ) =>

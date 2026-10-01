@@ -15,14 +15,17 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 
 - `AgentLoopHooks` (type) — The hooks a loop runs around one question.
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
+- `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
 - `AgentLoopResult` (type) — What a finished loop hands back.
 - `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
 - `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 - `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
+- `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
-- `ToolCallRequest` (type) — One call the model made, as `dispatch` is handed it.
+- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
+- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
 ### calibration
 
@@ -168,6 +171,19 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 - `withContext` — The request, with the hooks' context added to this turn's question.
 
+### ledger
+
+What stretches of a transcript cost, read off the prompt counts the server already reported.
+
+- `estimateFrom` — A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers the message, the calibrated estimate where it does not.
+- `LedgerEntry` (type) — One request's reported prompt, and how far into the transcript that request reached.
+- `LedgerEstimateOptions` (type) — What `tokensBetween` and `estimateFrom` take besides the ledger and the transcript.
+- `LedgerRequest` (type) — What `recordRequest` needs to know of one request.
+- `rebaseLedger` — The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left standing.
+- `recordRequest` — The ledger with one more request on it, in the epoch the request before it says it belongs to.
+- `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
+- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
+
 ### reset
 
 - `resetAll` — Forgets everything this package remembers between calls.
@@ -305,10 +321,12 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 
 ### tool-loading
 
+- `CALL_TOOL` — The one tool a proxied run reaches every catalogued tool through.
 - `carryOver` — The tools to start the next turn with: last turn's where they were, then what this turn used.
 - `catalogList` — The catalogue as a plain grouped listing of names, loaded ones marked if asked.
 - `catalogPrompt` — The catalogue block appended to the system prompt.
 - `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
+- `holdsDefinitions` — Whether a tool result is a proxied load carrying definitions, which is the only copy of them the model has.
 - `inCatalog` — Whether the catalogue holds a tool by this name.
 - `KEYWORD_DROPOFF` — How far the best unpicked tool must fall below the last picked one for the cut to count clean.
 - `KEYWORD_MIN_SCORE` — The least a best match may score and still be acted on without a model.
@@ -323,10 +341,15 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
 - `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
 - `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
+- `PROXY_TOOLS` — The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is shared.
 - `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
 - `preselectInput` — The user message for a preselection call: the catalogue, then the request.
 - `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
 - `preselectSystem` — The system prompt a preselector is given, holding it to the cap its answer will be held to.
+- `proxiedCall` — The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
+- `proxyCatalogPrompt` — The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a tool list.
+- `proxyLoadResult` — What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since the result is the only place the model will ever see it.
 - `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
+- `shownCall` — A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it is.
 - `ToolMatch` (type) — One tool's score against a request.
 - `ToolOrder` (type) — How a tool array is ordered before it is sent: `true` by name, `false` as the caller built it, or a comparator over the two names.
