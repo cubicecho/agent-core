@@ -13,6 +13,7 @@ import { continueTurn } from "./continuation.ts";
 import { errorMessage } from "./errors.ts";
 import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics } from "./events.ts";
 import {
+  configureHooks,
   type Gathered,
   gather,
   type HookContext,
@@ -253,7 +254,13 @@ export interface ToolCallOutcome {
   ok: boolean;
 }
 
-/** The hooks a loop runs around one question. See `hooks.ts`. */
+/**
+ * The hooks a loop runs around one question. See `hooks.ts`.
+ *
+ * The loop gathers before its first request and nothing else can run beside that, so a host with
+ * pre-turn work of its own to overlap with the hooks — compaction, a preselection — calls `gather`
+ * itself, puts the context on with `withContext`, calls `notify` after, and passes no `hooks`.
+ */
 export interface AgentLoopHooks {
   run: HookRunner;
   /** What the hooks are told. `reply` and `turn` are filled in for `afterTurn`. */
@@ -328,7 +335,16 @@ export interface AgentLoopOptions {
    * `idempotentHint` annotations can answer it; nothing in an OpenAI tool definition can.
    */
   dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
-  /** Hooks gathered onto the question before the first request, and told the reply after. */
+  /**
+   * Hooks gathered onto the question before the first request, and told the reply after.
+   *
+   * Only this question is touched — the last user message of `messages` — and the context is on
+   * the request, never in the transcript handed back. An earlier question's context is therefore
+   * the host's to send again: keep the result's `context` and `preface` beside the question, and
+   * put them back with `withContext` on every later call. A question sent bare that was first
+   * sent with context is a different prompt from that message on, and the server's prefix cache
+   * is lost behind it on every turn.
+   */
   hooks?: AgentLoopHooks;
   /**
    * Called before each step with the transcript, and what it returns replaces it — the point to
@@ -378,6 +394,28 @@ export interface AgentLoopResult {
   used: string[];
   /** The hooks' notes from before the first request. */
   notes: HookNote[];
+  /**
+   * The `<context>` blocks the hooks added to this question, as `withContext` takes them. Empty
+   * when no hook added any, and without `hooks`. Not in `messages`, so a host that wants the next
+   * turn's request to begin with this one's stores it beside the question; see `hooks`.
+   */
+  context: string;
+  /**
+   * What was said above `context`: the hooks' own `preface`, or what `configureHooks` had set when
+   * the run began. Handed back because the second is not the host's to know later — with it,
+   * `withContext(messages, at, context, preface)` is the question as it was sent, whatever the
+   * process's preface has since become. Empty when the preface was turned off; with no `context`
+   * nothing was said either way, and `withContext` adds nothing.
+   */
+  preface: string;
+  /**
+   * The `afterTurn` hooks' notes, once they have run — failures only, as `notify` returns them.
+   * The loop does not wait for it, so the answer is never held for a hook; a host that stores the
+   * notes with the turn, or must not exit before the turn is remembered, awaits it. Each note
+   * reaches `onNote` as well. Already resolved and empty without `hooks`, and rejects only if
+   * `onNote` throws.
+   */
+  afterTurn: Promise<HookNote[]>;
   /**
    * The run summed and derived: what `runMetrics` makes of the events this loop emitted, plus the
    * `load_tools` findings only the loop sees, `wallMs` from the call to the return, and `outcome`.
@@ -550,6 +588,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         maxTokens: hooks.maxTokens,
       })
     : { context: "", notes: [] };
+  // Read once, so what the result hands back is what every step of this run said.
+  const preface = hooks?.preface ?? configureHooks().preface;
 
   const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
   const toolCalls: ToolCallOutcome[] = [];
@@ -585,7 +625,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         messages,
         question ? messages.indexOf(question) : -1,
         gathered.context,
-        hooks?.preface,
+        preface,
       ),
     ];
 
@@ -687,11 +727,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     });
 
     if (!calls.length) {
+      let afterTurn: Promise<HookNote[]> = Promise.resolve([]);
       if (hooks) {
         const at = question ? messages.indexOf(question) : -1;
         // Not awaited: the answer is ready, and remembering it is not something to hold it for.
-        // `notify` never rejects.
-        void notify(
+        // Handed back instead, for a host that wants its notes.
+        afterTurn = notify(
           hooks.run,
           "afterTurn",
           {
@@ -718,6 +759,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         loaded: [...loaded],
         used: [...used],
         notes: gathered.notes,
+        context: gathered.context,
+        preface,
+        afterTurn,
         metrics: {
           ...metrics,
           ...(onDemand ? loads : {}),

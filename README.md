@@ -522,6 +522,47 @@ whether the host compacted — neither is in the events.
 where compaction goes (below). Hooks are gathered once, onto the question, and never written into
 the transcript that comes back; `afterTurn` is told the reply without the run waiting on it.
 
+That leaves an earlier question's context to the host, because the loop only ever touches the
+current one. A question sent with `<context>` blocks one turn and bare the next is a different
+prompt from that message on, and the server's prefix cache is lost behind it — on every turn. So
+the result hands back what it said, `context` and the `preface` above it, for the host to keep
+beside the question and put back with `withContext` on every later call:
+
+```ts
+import { runAgentLoop, withContext } from "@cubicecho/agent-core";
+
+// Stored: what the user typed, and what the hooks added to it the turn it was asked.
+const history = session.messages.reduce(
+  (sent, message, at) => withContext(sent, at, message.hookContext ?? "", message.hookPreface),
+  session.messages.map(({ hookContext, hookPreface, ...message }) => message),
+);
+const result = await runAgentLoop({
+  config,
+  messages: [...history, { role: "user", content: prompt }],
+  dispatch,
+  hooks: { run, context: { session: { id }, prompt } },
+});
+session.messages.push(
+  { role: "user", content: prompt, hookContext: result.context, hookPreface: result.preface },
+  ...result.messages.slice(history.length + 1),
+);
+await result.afterTurn; // only if its notes are wanted, or the process is about to exit
+```
+
+`withContext` with those two arguments builds the question exactly as the loop sent it, whatever
+`configureHooks` has since been told, so the next request is the last one with its tail added.
+`result.messages` is the transcript the loop was given plus what the run added — earlier questions
+as the host passed them, this one as typed — which is why the snippet stores only the new tail.
+
+`afterTurn` on the result is the `afterTurn` hooks' notes as a promise. The loop still returns
+without waiting; a host that stores those notes with the turn, or would otherwise exit before the
+turn is remembered, awaits it once the answer is out.
+
+The loop gathers before its first request, and nothing of the host's can run beside that. A host
+with pre-turn work to overlap with the hooks — compaction, a preselection — calls `gather` itself,
+applies `withContext` to the current question as well, calls `notify` after, and passes no `hooks`
+(see [Hooks](#hooks)).
+
 `resolveApiKey` is exported and not applied, because which key an endpoint gets is a rule a
 consumer states and a library guessing it could send one where it was not meant to go. The rule
 it encodes is the conservative one: an endpoint's own key wins; one that names a base URL of its
@@ -746,7 +787,10 @@ void notify(run, "afterTurn", { ...context, reply, turn: { ...context.turn, mess
 
 The context goes on this turn's question and never into the system prompt — a prompt that changed
 every turn would miss the prompt cache every turn — and `withContext` returns a new array, so a
-host that stores what the user typed never stores the context as something they said. Every
+host that stores what the user typed never stores the context as something they said. It is stored
+beside the question instead, and put back on every later request: a question that loses its blocks
+on the next turn rewrites the prompt from there on, and the server's prefix cache with it.
+`runAgentLoop` hands back `context` and `preface` for the same purpose. Every
 injecting hook shares `HOOK_CONTEXT_TOKENS` (2000) by default, each held to its own `maxTokens`
 inside that, so a generous hook cannot crowd out the conversation it was meant to inform.
 
