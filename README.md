@@ -2,6 +2,8 @@
 
 The endpoint-agnostic half of an OpenAI-compatible agent loop.
 
+Site: <https://cubicecho.github.io/agent-core/>
+
 Extracted from three servers that had each written it separately — `kanban_server`,
 `task_server` and `min-agent` — after the copies drifted far enough that a fix in one was a bug
 still live in another.
