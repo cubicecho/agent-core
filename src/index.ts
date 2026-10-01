@@ -13,14 +13,17 @@
 export {
   type AgentLoopHooks,
   type AgentLoopOptions,
+  type AgentLoopRequest,
   type AgentLoopResult,
   buildBody,
   preselect,
   preview,
   resolveApiKey,
   runAgentLoop,
+  type StepWindow,
   type ToolCallOutcome,
   type ToolCallRequest,
+  type ToolCallResult,
 } from "./agent-loop.ts";
 export { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
 export {
@@ -127,6 +130,16 @@ export {
   untrusted,
   withContext,
 } from "./hooks.ts";
+export {
+  estimateFrom,
+  type LedgerEntry,
+  type LedgerEstimateOptions,
+  type LedgerRequest,
+  rebaseLedger,
+  recordRequest,
+  type TokenLedger,
+  tokensBetween,
+} from "./ledger.ts";
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,

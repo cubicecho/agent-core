@@ -125,6 +125,45 @@ describe("planCompaction", () => {
     if (!plan) throw new Error("expected a plan");
     expect(summaryInput(plan)).toMatch(/^Notes so far:\nthey like tea\n\nContinue them/);
   });
+
+  describe("to a target", () => {
+    // 90 in use on a window of 100, every message ten, and a summary assumed to cost ten.
+    const window = { limit: 100, estimate, summaryTokens: 10 };
+
+    it("folds the least that brings the whole request under the target, and says what is left", () => {
+      // Folding through `b` leaves 90 − 40 + 10 = 60, the first cut at or under 65.
+      const plan = planCompaction(long, { ...window, target: 0.65 });
+      expect(plan).toMatchObject({ from: 1, cut: 5, after: 60 });
+      expect(plan?.toSummarise).toEqual(long.slice(1, 5));
+      expect(planCompaction(long, { ...window, target: 0.5 })).toMatchObject({ cut: 7, after: 40 });
+    });
+
+    it("counts from what is in use, the head and the tools the tail does not hold included", () => {
+      // The same transcript reported at 190: the messages are 90 of it, and the rest stays.
+      expect(
+        planCompaction(long, { ...window, limit: 250, used: 190, target: 0.65 }),
+      ).toMatchObject({ cut: 5, after: 160 });
+    });
+
+    it("folds as far as the last user message where no cut reaches the target", () => {
+      expect(planCompaction(long, { ...window, target: 0.1 })).toMatchObject({ cut: 7, after: 40 });
+    });
+
+    it("plans nothing where the request is already under it", () => {
+      expect(planCompaction(long, { ...window, summaryTokens: 5, target: 0.99 })).toBeUndefined();
+    });
+
+    it("assumes the summariser's own ceiling for the summary unless told", () => {
+      const plan = planCompaction(long, { limit: 10000, used: 9000, estimate, target: 0.5 });
+      expect(plan).toMatchObject({ cut: 7, after: 9000 - 60 + 1024 });
+    });
+
+    it("leaves a plan made by keepRatio as it was", () => {
+      const plan = planCompaction(long, { limit: 100, estimate });
+      expect(plan).not.toHaveProperty("after");
+      expect(planCompaction(long, { limit: 100, estimate, target: 0 })).toEqual(plan);
+    });
+  });
 });
 
 describe("summaryInput", () => {

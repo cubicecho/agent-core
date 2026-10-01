@@ -5,6 +5,7 @@ import {
   capabilitiesFor,
   effortFor,
   type ModelCapabilities,
+  modelCapabilitiesFor,
 } from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
 import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
@@ -13,6 +14,7 @@ import { continueTurn } from "./continuation.ts";
 import { errorMessage } from "./errors.ts";
 import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics } from "./events.ts";
 import {
+  configureHooks,
   type Gathered,
   gather,
   type HookContext,
@@ -24,7 +26,8 @@ import {
   turnMessages,
   withContext,
 } from "./hooks.ts";
-import { toolsChars } from "./retry.ts";
+import { type LedgerRequest, rebaseLedger, recordRequest, type TokenLedger } from "./ledger.ts";
+import { contextTokens, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { askJson, tryAsk } from "./side-task.ts";
@@ -243,7 +246,7 @@ export async function preselect(
 }
 
 /**
- * One call the model made, as `dispatch` is handed it.
+ * One call the model made, as `dispatch` and `onToolCall` are handed it.
  *
  * A `call_tool` arrives as the tool it names — that tool's name and arguments, under the
  * `call_tool`'s id — so a dispatcher is the same in every discovery mode.
@@ -251,7 +254,10 @@ export async function preselect(
 export interface ToolCallRequest {
   id: string;
   name: string;
-  /** Parsed by `parseToolArguments`, repairs and all. */
+  /**
+   * Parsed by `parseToolArguments`, repairs and all. Empty for a call whose arguments could not be
+   * read, which only `onToolCall` is ever handed.
+   */
   args: Record<string, unknown>;
   /**
    * The arguments as the model wrote them, before any repair. Through `call_tool`, the inner
@@ -262,13 +268,57 @@ export interface ToolCallRequest {
 
 /** What one tool call did, in the order the model asked. */
 export interface ToolCallOutcome {
+  /**
+   * The id the model's reply gave the call, which is what tells two calls to one tool apart.
+   * Distinct within a step — `streamTurn` mints one where the server sent none or repeated one —
+   * but nothing stops a server using the same id again in a later step. `runAgentLoop` always
+   * sets it; optional so an outcome built before it existed still compiles.
+   */
+  id?: string;
   /** The tool that was called. For a `call_tool`, the tool it named. */
   name: string;
   /** False when the arguments did not parse, the tool threw, or `load_tools` loaded nothing. */
   ok: boolean;
 }
 
-/** The hooks a loop runs around one question. See `hooks.ts`. */
+/**
+ * One step's request as `onRequest` is handed it: what the model is about to read.
+ *
+ * The loop assembles this and nothing else sees it — the system prompt with the catalogue on it,
+ * the hooks' context on the question, the tool array ordered and sanitised as it is sent — so a
+ * host that wants to say what is filling the window has nothing to measure without it.
+ */
+export interface AgentLoopRequest {
+  /** The messages as sent, system prompt first. The request's own array, not a copy. */
+  messages: readonly OpenAI.ChatCompletionMessageParam[];
+  /** The tools as sent: ordered, sanitised, relaxed where the endpoint needs it. Empty for none. */
+  tools: readonly OpenAI.ChatCompletionTool[];
+  /** Which step of the run this is, from zero, as `beforeStep` and `onTurn` count them. */
+  step: number;
+}
+
+/**
+ * One call's whole answer, as `onToolResult` is handed it.
+ *
+ * The `tool-result` event carries the same answer cut by `preview`, which is right for a readout
+ * and wrong for a host that renders or stores the result: this is the text the model reads.
+ */
+export interface ToolCallResult extends ToolCallOutcome {
+  id: string;
+  /**
+   * What went into the transcript for this call, uncut: what the tool returned, what it threw, the
+   * `load_tools` answer, or why the arguments could not be read.
+   */
+  content: string;
+}
+
+/**
+ * The hooks a loop runs around one question. See `hooks.ts`.
+ *
+ * The loop gathers before its first request and nothing else can run beside that, so a host with
+ * pre-turn work of its own to overlap with the hooks — compaction, a preselection — calls `gather`
+ * itself, puts the context on with `withContext`, calls `notify` after, and passes no `hooks`.
+ */
 export interface AgentLoopHooks {
   run: HookRunner;
   /** What the hooks are told. `reply` and `turn` are filled in for `afterTurn`. */
@@ -281,6 +331,21 @@ export interface AgentLoopHooks {
   preface?: string;
   /** Hears each note, from before the request and from `afterTurn`. */
   onNote?: (note: HookNote) => void;
+}
+
+/** How full the window is as a step is about to be sent, as `beforeStep` is told it. */
+export interface StepWindow {
+  /**
+   * The prompt tokens this run's last request reported. Absent before the first step — an earlier
+   * run's figure is the host's to vouch for, since the transcript may have been folded since —
+   * and where that request reported none. It does not count the reply and tool results added
+   * since.
+   */
+  used?: number;
+  /** The model's window, `config.contextLength`. Zero where the config names none. */
+  limit: number;
+  /** The run's ledger so far, indexed into the transcript `beforeStep` is handed beside it. */
+  ledger: TokenLedger;
 }
 
 /** What `runAgentLoop` takes. */
@@ -322,15 +387,34 @@ export interface AgentLoopOptions {
   /**
    * What `preselect` picked. The first step is sent these and nothing else — no catalogue, no
    * `load_tools` — because a model with the menu still in front of it shops: it reloads what it
-   * has or picks a sibling. Everything comes back on the step after.
+   * has or picks a sibling. Everything comes back on the step after. `preselectRouting` trades
+   * that for a first step shaped like the rest.
    *
    * Proxied, the tool array is fixed and there is no such step. The shortlist is written into the
    * transcript instead, after the question, as a `load_tools` call the model did not make and the
    * result that call would have had — an assistant message and a tool message, handed back in
-   * `messages` like any other and reported as a `tool-call` and a `tool-result` event. Names with
-   * no definition in `tools`, or outside the catalogue, are left out, and none left is no exchange.
+   * `messages` like any other, reported as a `tool-call` and a `tool-result` event and told to
+   * `onToolCall` and `onToolResult`. Names with no definition in `tools`, or outside the
+   * catalogue, are left out, and none left is no exchange.
    */
   preselected?: readonly string[];
+  /**
+   * What a preselection does to the first step. `"exclusive"`, the default, is the shortlist alone
+   * as `preselected` describes — and a system prompt and tool array unlike the last request's and
+   * unlike the next step's, so a prompt cache misses the whole transcript on the first step and
+   * again on the second. `"append"` loads the shortlist as a `load_tools` call would have and
+   * sends the first step like any other: the catalogue, `load_tools`, what `loaded` carried, then
+   * the shortlist after it, with a name already carried left where it is. The price is the menu
+   * back in front of the model. Which costs more has not been measured, which is why the default
+   * has not moved.
+   *
+   * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
+   * place and moves every definition after it, so only `toolOrder: false` keeps a carried array
+   * a strict prefix. Either way the first step's system prompt is the second's, and so is its
+   * tool array until something else is loaded. Nothing to do without a preselection, in eager
+   * mode, or proxied, where no step is routed either way.
+   */
+  preselectRouting?: "exclusive" | "append";
   /**
    * Tools already loaded, carried from an earlier question. See `carryOver`. Not read in proxied
    * mode, where a tool is loaded only while its definition is in the history.
@@ -359,19 +443,56 @@ export interface AgentLoopOptions {
    * `idempotentHint` annotations can answer it; nothing in an OpenAI tool definition can.
    */
   dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
-  /** Hooks gathered onto the question before the first request, and told the reply after. */
+  /**
+   * Told of every call the model made, as it starts — the ones `dispatch` never sees included:
+   * `load_tools`, an identical repeat answered from the first, and a call whose arguments could
+   * not be read, which arrives with empty `args` and the model's own text in `raw`.
+   *
+   * For a host that shows each call as it is made and fills it in when its result lands, which
+   * `dispatch` alone cannot do for those three. Not awaited: a promise it returns is dropped.
+   */
+  onToolCall?: (call: ToolCallRequest) => void;
+  /**
+   * Told of every call's answer as it lands, whole, under the id `onToolCall` announced it by.
+   *
+   * One per call the model made: a deduplicated repeat gets its own, carrying the answer it
+   * shares with the first. With `parallel` they arrive as the calls finish, which need not be
+   * the order they were made in; the transcript and the result's `toolCalls` keep that order.
+   * Not awaited: a promise it returns is dropped.
+   */
+  onToolResult?: (result: ToolCallResult) => void;
+  /**
+   * Hooks gathered onto the question before the first request, and told the reply after.
+   *
+   * Only this question is touched — the last user message of `messages` — and the context is on
+   * the request, never in the transcript handed back. An earlier question's context is therefore
+   * the host's to send again: keep the result's `context` and `preface` beside the question, and
+   * put them back with `withContext` on every later call. A question sent bare that was first
+   * sent with context is a different prompt from that message on, and the server's prefix cache
+   * is lost behind it on every turn.
+   */
   hooks?: AgentLoopHooks;
   /**
    * Called before each step with the transcript, and what it returns replaces it — the point to
-   * compact or prune a run that has grown into its window. Returning nothing keeps it.
+   * compact or prune a run that has grown into its window. Returning nothing keeps it. `window`
+   * is what `planCompaction` wants to know, so a host need not track usage itself to compact
+   * mid-run.
    */
   beforeStep?: (
     messages: readonly OpenAI.ChatCompletionMessageParam[],
     step: number,
+    window: StepWindow,
   ) =>
     | OpenAI.ChatCompletionMessageParam[]
     | undefined
     | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
+  /**
+   * The ledger an earlier run handed back for this transcript, to be continued. Its indexes have
+   * to be into `messages` as given here — see `rebaseLedger` for a transcript rewritten since.
+   * This run's requests start a new epoch, because the loop cannot see whether the request before
+   * its first one had the same system prompt and tools. Absent starts an empty one.
+   */
+  ledger?: TokenLedger;
   /** Stops the run: the request in flight, and between steps and calls. */
   signal?: AbortSignal;
   /** Told what the run is doing, as the events a watcher reads. */
@@ -383,6 +504,16 @@ export interface AgentLoopOptions {
    * the answer. See `recoverToolCalls`.
    */
   recoverToolCalls?: boolean;
+  /**
+   * Each step's request as first built, before it goes out — for measuring what was sent, not for
+   * changing it, which is `beforeStep`'s.
+   *
+   * Called once a step, synchronously, and what it throws ends the run. It is not called again
+   * for what `runTurn` sends after that: a retry sends the same request, but a refusal is answered
+   * with a lesser body — relaxed schemas, a field dropped — and a continuation with the reply so
+   * far on the end, and neither is reported.
+   */
+  onRequest?: (request: AgentLoopRequest) => void;
   /** Each turn as it comes back, before its tools run. Recovered calls are in it as calls. */
   onTurn?: (turn: Turn, step: number) => void;
   /**
@@ -402,8 +533,8 @@ export interface AgentLoopResult {
   /** Summed over every turn of the run. */
   usage: TurnUsage;
   /**
-   * Every call, `load_tools` included, in the order they were made — a proxied preselection's
-   * among them, first.
+   * Every call, `load_tools` included, in the order they were made, each under its call id — a
+   * proxied preselection's among them, first.
    */
   toolCalls: ToolCallOutcome[];
   /**
@@ -417,10 +548,38 @@ export interface AgentLoopResult {
   /** The hooks' notes from before the first request. */
   notes: HookNote[];
   /**
+   * The `<context>` blocks the hooks added to this question, as `withContext` takes them. Empty
+   * when no hook added any, and without `hooks`. Not in `messages`, so a host that wants the next
+   * turn's request to begin with this one's stores it beside the question; see `hooks`.
+   */
+  context: string;
+  /**
+   * What was said above `context`: the hooks' own `preface`, or what `configureHooks` had set when
+   * the run began. Handed back because the second is not the host's to know later — with it,
+   * `withContext(messages, at, context, preface)` is the question as it was sent, whatever the
+   * process's preface has since become. Empty when the preface was turned off; with no `context`
+   * nothing was said either way, and `withContext` adds nothing.
+   */
+  preface: string;
+  /**
+   * The `afterTurn` hooks' notes, once they have run — failures only, as `notify` returns them.
+   * The loop does not wait for it, so the answer is never held for a hook; a host that stores the
+   * notes with the turn, or must not exit before the turn is remembered, awaits it. Each note
+   * reaches `onNote` as well. Already resolved and empty without `hooks`, and rejects only if
+   * `onNote` throws.
+   */
+  afterTurn: Promise<HookNote[]>;
+  /**
    * The run summed and derived: what `runMetrics` makes of the events this loop emitted, plus the
    * `load_tools` findings only the loop sees, `wallMs` from the call to the return, and `outcome`.
    */
   metrics: RunMetrics;
+  /**
+   * What each step's request reported its prompt as, indexed into `messages` above, for
+   * `tokensBetween` and `estimateFrom`. The entries of a `ledger` passed in come first. A step
+   * whose prompt was not reported has no entry.
+   */
+  ledger: TokenLedger;
 }
 
 /**
@@ -513,10 +672,18 @@ function cacheDiagnosis(
  * prompt unchanged from step to step, a load adds to the tool array — which every request sends
  * in the stable order `toolOrder` asks for — and
  * a catalogued tool called without being loaded is loaded and run rather than refused, and a
- * preselection shapes the first step. A turn cut off at `maxTokens` is said so as a notice,
- * because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
+ * preselection shapes the first step unless `preselectRouting` says to append it. A turn cut off
+ * at `maxTokens` is said so as a notice, because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
  * continued first. Every turn ends in a `usage` event carrying the turn's own report, with the
- * cache compared against the request before it; see `TurnUsage` and `runMetrics`.
+ * cache compared against the request before it and the request broken down by what filled it; see
+ * `TurnUsage` and `runMetrics`.
+ *
+ * Each step's reported prompt goes on a token ledger, in the same epoch as the step before where
+ * the request only appended to it and in a new one where it did not — a `beforeStep` that rewrote
+ * the transcript, a tool array a load grew — so that what the messages between two steps cost can
+ * be read back as a subtraction. The prompt recorded is the first request's, before any
+ * continuation, and a step that reported none, or reported a cache count above its prompt, is not
+ * recorded. The ledger comes back in the result and on every `usage` event; see `tokensBetween`.
  *
  * Proxied discovery is the same catalogue behind a tool array that never moves: every step
  * declares `PROXY_TOOLS` and nothing else, a load answers with the definitions themselves, and a
@@ -531,13 +698,17 @@ function cacheDiagnosis(
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const { config, system = "", tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
+    onRequest,
     onTurn,
+    onToolCall,
+    onToolResult,
     beforeStep,
     parallel = false,
     recoverToolCalls: recover = true,
     maxContinuations = 0,
     toolOrder = true,
     dedupeToolCalls = true,
+    preselectRouting = "exclusive",
   } = options;
   const dedupable = typeof dedupeToolCalls === "function" ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
@@ -601,11 +772,17 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         maxTokens: hooks.maxTokens,
       })
     : { context: "", notes: [] };
+  // Read once, so what the result hands back is what every step of this run said.
+  const preface = hooks?.preface ?? configureHooks().preface;
 
   const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
   const toolCalls: ToolCallOutcome[] = [];
   const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
   let previous: Sent | undefined;
+  let ledger: TokenLedger = options.ledger ?? [];
+  // The request the ledger's last entry came from, which is what the next one is measured against.
+  // Nothing before this run's first: an earlier run's head is not something the loop can see.
+  let measured: LedgerRequest | undefined;
 
   // Proxied, a shortlist has nowhere to go but the history: the tool array is fixed, so it is
   // answered as though the model had loaded it, and the definitions sit after the question.
@@ -622,9 +799,13 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and a
     // host that shortlisted more has already chosen.
     const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
-    onEvent({ kind: "tool-call", name: LOAD_TOOLS, text: preview(args) });
-    onEvent({ kind: "tool-result", name: LOAD_TOOLS, ok: true, text: preview(content) });
-    toolCalls.push({ name: LOAD_TOOLS, ok: true });
+    // Announced as a call the model made would be, so a host pairing calls with results by id
+    // shows this one like the rest.
+    onEvent({ kind: "tool-call", id, name: LOAD_TOOLS, text: preview(args) });
+    onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
+    onEvent({ kind: "tool-result", id, name: LOAD_TOOLS, ok: true, text: preview(content) });
+    onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
+    toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
     loads.toolsLoaded += names.length;
     for (const name of names) loaded.add(name);
     messages.push(
@@ -641,14 +822,23 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
     // end — so the signal is read between steps as well.
     signal?.throwIfAborted();
-    const rewritten = await beforeStep?.(messages, step);
+    const before = messages;
+    const rewritten = await beforeStep?.(messages, step, {
+      ...(previous && previous.prompt > 0 ? { used: previous.prompt } : {}),
+      limit: config.contextLength ?? 0,
+      ledger,
+    });
     // A rewrite may have folded a definition away, and a load answered "already loaded" would
     // then point at nothing. Forgetting costs a definition sent twice at worst.
     if (proxied && rewritten && rewritten !== messages) loaded.clear();
     messages = rewritten ?? messages;
+    ledger = rebaseLedger(ledger, before, messages);
     onEvent({ kind: "turn", text: `turn ${step + 1}` });
 
-    const routed = !proxied && preselected.length > 0 && step === 0;
+    // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
+    // first step needs nothing of its own. Proxied, it is in the history.
+    const routed =
+      !proxied && preselectRouting !== "append" && preselected.length > 0 && step === 0;
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
@@ -664,7 +854,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     );
     // Unmarked, so the system prompt is the same text on every step and a load does not throw
     // away the cache for the whole transcript. What is loaded is said in `declared` and in the
-    // `load_tools` result instead. The preselected first step is the one exception, by design.
+    // `load_tools` result instead. The preselected first step is the one exception, by design,
+    // and `preselectRouting: "append"` is the way out of it.
     const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
     const prompt = onDemand && !routed ? `${system}\n\n${catalogue}`.trim() : system;
     const request: OpenAI.ChatCompletionMessageParam[] = [
@@ -673,7 +864,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         messages,
         question ? messages.indexOf(question) : -1,
         gathered.context,
-        hooks?.preface,
+        preface,
       ),
     ];
 
@@ -694,15 +885,39 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       onThinking: (text: string) => onEvent({ kind: "thinking", text }),
       onOutput: (text: string) => onEvent({ kind: "output", text }),
     };
+    // Built the way `negotiate` is about to build the first attempt — the same flags, the same
+    // model's refusals — so what the host is told is what is sent unless something is refused.
+    if (onRequest) {
+      const opening = build(supports, modelCapabilitiesFor(supports, config.model));
+      onRequest({ messages: opening.messages, tools: opening.tools ?? [], step });
+    }
     const first = await runTurn(client, supports, build, turnOptions);
     const names = declared.map((tool) => (tool.type === "function" ? tool.function.name : ""));
     // Compared before any continuation is joined on: the cache a request meets is the one its own
     // prompt found, and a continuation's prompt is this request's plus the reply so far.
+    // The breakdown measures the array `toolSchemaTokens` does, so where no prompt was reported
+    // the two give one number for the tool block rather than two.
+    const charsPerToken = charsPerTokenFor(supports, config.model);
     Object.assign(first.usage, cacheDiagnosis(previous, request, names, first.usage), {
       toolsDeclared: declared.length,
-      toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerTokenFor(supports, config.model)),
+      toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerToken),
+      context: contextTokens(
+        { model: config.model, stream: true, messages: request, tools: declared },
+        { charsPerToken, promptTokens: first.usage.prompt },
+      ),
     });
     const firstPrompt = first.usage.prompt;
+    // Recorded from the first request for the same reason. A cache count above the prompt is a
+    // server reporting its prompt net of the cache, whose differences would measure nothing.
+    const sent: LedgerRequest = {
+      messages: request,
+      tools: names,
+      prompt: first.usage.cached > firstPrompt ? 0 : firstPrompt,
+      through: messages.length - 1,
+    };
+    const entered = recordRequest(ledger, measured, sent);
+    if (entered !== ledger) measured = sent;
+    ledger = entered;
     const turn =
       maxContinuations > 0
         ? await continueTurn(client, supports, build, first, { ...turnOptions, maxContinuations })
@@ -722,6 +937,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         totalTokens: usage.total,
         cachedTokens: usage.cached,
         turn: { ...turn.usage, finishReason: turn.finishReason },
+        ledger,
       },
     });
     if (turn.finishReason === "length") {
@@ -775,11 +991,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     });
 
     if (!calls.length) {
+      let afterTurn: Promise<HookNote[]> = Promise.resolve([]);
       if (hooks) {
         const at = question ? messages.indexOf(question) : -1;
         // Not awaited: the answer is ready, and remembering it is not something to hold it for.
-        // `notify` never rejects.
-        void notify(
+        // Handed back instead, for a host that wants its notes.
+        afterTurn = notify(
           hooks.run,
           "afterTurn",
           {
@@ -806,12 +1023,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         loaded: proxied ? [] : [...loaded],
         used: [...used],
         notes: gathered.notes,
+        context: gathered.context,
+        preface,
+        afterTurn,
         metrics: {
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
           outcome: turn.finishReason === "length" ? "truncated" : "answered",
         },
+        ledger,
       };
     }
 
@@ -825,7 +1046,24 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       const { name, input: raw } = proxy
         ? shownCall(CALL_TOOL, args ? normal : call.function.arguments)
         : { name: call.function.name, input: call.function.arguments };
-      onEvent({ kind: "tool-call", name, text: preview(raw) });
+      // Looked through before the call is announced, so a host is told of the tool it names with
+      // that tool's arguments. A name outside the catalogue is refused here, so `call_tool` reaches
+      // nothing a load could not, and the refusal is the call's answer below.
+      let inner = args ?? {};
+      let refused: { error: unknown } | undefined;
+      if (proxy && args) {
+        try {
+          inner = proxiedCall(args, catalog).input;
+        } catch (error) {
+          inner = {};
+          refused = { error };
+        }
+      }
+      // Built for every call rather than only the dispatched ones, so a host hears of the calls
+      // the loop answers itself in the same shape. Arguments that could not be read are none.
+      const request: ToolCallRequest = { id: call.id, name, args: inner, raw };
+      onEvent({ kind: "tool-call", id: call.id, name, text: preview(raw) });
+      onToolCall?.(request);
       let content: string;
       let ok = true;
       try {
@@ -847,16 +1085,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           for (const hit of hits) loaded.add(hit);
           ok = hits.length > 0;
         } else {
-          // Refuses a name outside the catalogue, so `call_tool` reaches nothing a load could not.
-          const inner = proxy ? proxiedCall(args, catalog) : { name, input: args };
+          if (refused) throw refused.error;
           // A model that skips `load_tools` and calls a catalogued tool by name is right about
           // what it wants; load it and run it rather than refusing. Not proxied, where loaded
           // means its definition is in the history, and this call put none there.
-          if (onDemand && !proxied && inCatalog(catalog, inner.name)) loaded.add(inner.name);
-          used.add(inner.name);
-          const request = { id: call.id, name: inner.name, args: inner.input, raw };
+          if (onDemand && !proxied && inCatalog(catalog, name)) loaded.add(name);
+          used.add(name);
           // Keyed on the inner call, so one made through `call_tool` and one made natively share.
-          const key = `${inner.name}\0${proxy ? JSON.stringify(inner.input) : normal}`;
+          const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
           content = dedupable(request)
             ? await once(answered, key, () => dispatch(request, signal))
             : await dispatch(request, signal);
@@ -866,8 +1102,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         content = errorMessage(error);
         ok = false;
       }
-      onEvent({ kind: "tool-result", name, ok, text: preview(content) });
-      return { id: call.id, name, ok, content };
+      onEvent({ kind: "tool-result", id: call.id, name, ok, text: preview(content) });
+      const result = { id: call.id, name, ok, content };
+      onToolResult?.(result);
+      return result;
     };
 
     const outcomes: Awaited<ReturnType<typeof run>>[] = [];
@@ -881,7 +1119,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       }
     }
     for (const { id, name, ok, content } of outcomes) {
-      toolCalls.push({ name, ok });
+      toolCalls.push({ id, name, ok });
       messages.push({ role: "tool", tool_call_id: id, content });
     }
   }

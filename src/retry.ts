@@ -100,8 +100,12 @@ export interface TokenEstimateOptions {
 const divisor = (charsPerToken: number | undefined) =>
   charsPerToken !== undefined && charsPerToken > 0 ? charsPerToken : CHARS_PER_TOKEN;
 
-/** How many characters one message is worth: its keys, and its content in whichever shape. */
-function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
+/**
+ * How many characters one message is worth: its keys, and its content in whichever shape.
+ *
+ * @param message The message as it will be sent.
+ */
+export function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
   let chars = message.role.length + ENVELOPE;
   const { content } = message;
   if (typeof content === "string") chars += content.length;

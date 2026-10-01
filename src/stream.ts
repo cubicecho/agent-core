@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { EndpointSilent } from "./retry.ts";
+import { type ContextBreakdown, EndpointSilent } from "./retry.ts";
 import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from "./thinking.ts";
 
 /**
@@ -98,6 +98,16 @@ export interface TurnUsage {
    * prompt, so this is what every change to the tool list costs the cache.
    */
   toolSchemaTokens?: number;
+  /**
+   * What the request was made of, as `contextTokens` cuts it, filled by `runAgentLoop`. Shares of
+   * the prompt the turn's first request reported, summing to it, or an estimate where none was.
+   *
+   * Measured on the request as first built, with the tools as `toolSchemaTokens` measures them. A
+   * continued turn's `prompt` is every request's summed, so it is larger than this `total`; and
+   * where a refusal was answered with a lesser body, the prompt is that body's and the proportions
+   * are still the first one's.
+   */
+  context?: ContextBreakdown;
 }
 
 /** llama.cpp's per-response `timings`, which Lemonade and other servers fronting it pass through. */
