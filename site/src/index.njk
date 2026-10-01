@@ -1,0 +1,88 @@
+---
+layout: base.njk
+---
+<section class="hero project-hero">
+  <h1>{{ site.name }}</h1>
+  <p>{{ site.tagline }}</p>
+  <p class="cta">
+    <a class="button" href="#start">Get started</a>
+    <a class="button secondary" href="{{ site.repo }}" rel="noopener">GitHub ↗</a>
+  </p>
+</section>
+
+<section class="section">
+  <h2>What it does</h2>
+  <p class="section-intro">
+    An agent that talks to OpenAI, Ollama, llama.cpp, vLLM or OpenRouter through
+    the same API ends up writing the same plumbing: pooled clients, retries,
+    streaming, and working out what each server refuses. This package is that
+    plumbing, extracted from three servers that had each written it separately
+    and drifted apart. Prompts, tools and what a run is for stay with the caller.
+  </p>
+
+  <ul class="card-grid">
+    <li>
+      <article class="card">
+        <h3>Tool schemas a server accepts</h3>
+        <p>
+          <code>sanitizeTools</code> makes an MCP tool schema something a strict
+          or grammar-constrained server will take, and <code>negotiate</code>
+          re-sends a request without what the endpoint or the model refused.
+        </p>
+      </article>
+    </li>
+    <li>
+      <article class="card">
+        <h3>Tools loaded on demand</h3>
+        <p>
+          A name-only catalogue plus a <code>load_tools</code> meta-tool, so a
+          run pays for the schemas the model asks for instead of all of them on
+          every request.
+        </p>
+      </article>
+    </li>
+    <li>
+      <article class="card">
+        <h3>One turn, or the whole loop</h3>
+        <p>
+          <code>runTurn</code> is one streamed turn with retry and negotiation
+          around it; <code>runAgentLoop</code> runs it per step, with the tool
+          calls between, until the model stops asking.
+        </p>
+      </article>
+    </li>
+  </ul>
+</section>
+
+<section class="section" id="start">
+  <h2>Get started</h2>
+  <div class="prose">
+    <p>
+      ESM only, Node 22 or later. <code>openai</code> (version 6 or later) is a
+      peer dependency.
+    </p>
+    <pre class="code"><code>npm install @cubicecho/agent-core openai</code></pre>
+    <pre class="code"><code>import { runAgentLoop } from "@cubicecho/agent-core";
+
+const { turn } = await runAgentLoop({
+  config: {
+    baseUrl: "http://localhost:11434/v1", // any OpenAI-compatible endpoint
+    apiKey: "",
+    model: "qwen3",
+    maxTokens: 1024,
+    temperature: 0.2,
+    maxToolIterations: 8,
+  },
+  messages: [{ role: "user", content: "What changed in the last release?" }],
+  tools, // OpenAI tool definitions, if the run has any
+  dispatch: async ({ name, args }) =&gt; callTool(name, args), // returns what the model reads
+});
+
+console.log(turn.content);</code></pre>
+  </div>
+
+  <p class="readme-link">
+    Full documentation lives in the project README:
+    <a href="{{ site.repo }}#readme" rel="noopener">{{ site.repo }}</a>
+  </p>
+</section>
