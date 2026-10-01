@@ -444,6 +444,20 @@ run. A preselection shapes the first step alone: those tools, no catalogue, no `
 a model with the menu still in front of it shops, reloading what it has or picking a sibling —
 and everything is back from the second step on.
 
+That first step has a request head of its own — a different system prompt and a different tool
+array from the last turn's final request, and from this turn's second step — so a prompt cache
+misses the whole transcript twice on a question that has a preselection. `preselectRouting:
+"append"` drops the separate head: the shortlist is loaded as a `load_tools` call would have loaded
+it, after whatever `loaded` carried and without declaring a carried name twice, and the first step
+is sent like every other, catalogue and `load_tools` included. The trade is the menu back in front
+of the model on the step the shortlist was meant to settle. Neither cost has been measured against
+the other, so `"exclusive"` stays the default.
+
+Appended is where the tools go before `toolOrder` orders them. With `toolOrder: false` a carried
+tool array stays a strict prefix of the new one. With name order, the default, a preselected tool
+is sorted in and moves every definition after it — the first step still matches the second, but
+the last turn's cache holds only as far as the first new name.
+
 That preselection costs a round trip to a model, which on a local box is a few seconds before the
 run has started, spent on a model doing term matching. `preselect(..., { keywords: true })` does
 the matching directly and spends the model only on what the words cannot settle:
