@@ -243,14 +243,21 @@ async function complete(
     else modelCapabilitiesFor(supports, model).reasoningEffort = false;
   }
 
-  const message = response.choices[0]?.message;
-  // Reasoning models that ignore the hints still fence their scratchpad. A side task answers
-  // under a small ceiling, so the fence often never closes, and a template that opened it in
-  // the prompt leaves only the close; either way the deliberation used to come back as the answer.
+  return answerOf(response.choices[0]?.message);
+}
+
+/**
+ * A reply's answer, thinking stripped, or its scratchpad where the answer is nothing else.
+ *
+ * Reasoning models that ignore the hints still fence their scratchpad. A side task answers under
+ * a small ceiling, so the fence often never closes, and a template that opened it in the prompt
+ * leaves only the close; either way the deliberation used to come back as the answer.
+ */
+function answerOf(message: OpenAI.ChatCompletionMessage | undefined): string {
   const answer = stripThinking(message?.content ?? "").trim();
+  if (answer) return answer;
   // Nothing but scratchpad. Some servers put the deliberation in its own field and leave the
   // content genuinely empty, in which case there is no answer to find anywhere else.
-  if (answer) return answer;
   const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
   return typeof reasoning === "string" ? stripThinking(reasoning).trim() : "";
 }
