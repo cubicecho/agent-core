@@ -102,8 +102,8 @@ const leadingSystem = (messages: Message[]) => {
  * wants to know whether two prompts subtract, and this one why a cache that should have held
  * did not.
  *
- * @param previous The request before, as it was sent.
- * @param next The request being explained.
+ * @param previous - The request before, as it was sent.
+ * @param next - The request being explained.
  */
 export function breakReason(previous: RequestShape, next: RequestShape): NonNullable<TurnUsage['cacheBreakReason']> {
   if (!sameTools(previous, next)) {
@@ -131,11 +131,11 @@ export function breakReason(previous: RequestShape, next: RequestShape): NonNull
  * no prompt records nothing, and neither does one that reaches no further than the last entry in
  * the same epoch, so a retry or a continuation leaves the first reading standing.
  *
- * @param ledger The ledger so far. Not written to; handed back as it is when nothing is recorded.
- * @param previous The request the ledger's last entry was recorded from — not merely the last one
+ * @param ledger - The ledger so far. Not written to; handed back as it is when nothing is recorded.
+ * @param previous - The request the ledger's last entry was recorded from — not merely the last one
  * sent, so that a request which reported nothing is skipped over rather than compared against.
  * `undefined` where that is not known, which starts a new epoch.
- * @param next The request just answered.
+ * @param next - The request just answered.
  */
 export function recordRequest(
   ledger: TokenLedger,
@@ -165,9 +165,9 @@ export function recordRequest(
  * only the ones in between — the messages a fold removed or a prune stubbed — are dropped. The
  * tail's entries move to a later epoch as well, so no difference is read across the rewrite.
  *
- * @param ledger The ledger for `before`. Not written to.
- * @param before The transcript the ledger's indexes are in.
- * @param after The transcript that replaces it. One that only appended to `before`, or is the same
+ * @param ledger - The ledger for `before`. Not written to.
+ * @param before - The transcript the ledger's indexes are in.
+ * @param after - The transcript that replaces it. One that only appended to `before`, or is the same
  * array, hands the ledger back as it is.
  */
 export function rebaseLedger(ledger: TokenLedger, before: readonly Message[], after: readonly Message[]): TokenLedger {
@@ -255,11 +255,11 @@ const fallback = ({ charsPerToken, estimate }: LedgerEstimateOptions) =>
  * reporting `prompt_tokens` net of its cache would show up, though one whose net counts still
  * happened to rise would not be caught by it.
  *
- * @param ledger The ledger kept for `messages`.
- * @param from The first message counted. Below zero counts from the start.
- * @param to The first message not counted, as `slice` takes it. Past the end counts to the end.
- * @param messages The transcript the ledger's indexes are in.
- * @param options The estimate for what is not measured: a divisor, or a function of the caller's.
+ * @param ledger - The ledger kept for `messages`.
+ * @param from - The first message counted. Below zero counts from the start.
+ * @param to - The first message not counted, as `slice` takes it. Past the end counts to the end.
+ * @param messages - The transcript the ledger's indexes are in.
+ * @param [options] - The estimate for what is not measured: a divisor, or a function of the caller's.
  * @returns Whole tokens, rounded once over the stretch rather than per message.
  */
 export function tokensBetween(
@@ -286,11 +286,11 @@ export function tokensBetween(
  * measured message is given its group's total by character share. The shares are not rounded,
  * which is what makes a whole group of them add back up to the difference the server reported.
  *
- * @param ledger The ledger kept for `messages`.
- * @param messages The transcript the plan will be made for. The function it returns knows a
+ * @param ledger - The ledger kept for `messages`.
+ * @param messages - The transcript the plan will be made for. The function it returns knows a
  * message by identity, so it has to be asked about these objects and not copies of them; one it
  * does not know is estimated.
- * @param options The estimate for what is not measured: a divisor, or a function of the caller's.
+ * @param [options] - The estimate for what is not measured: a divisor, or a function of the caller's.
  */
 export function estimateFrom(
   ledger: TokenLedger,

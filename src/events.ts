@@ -91,7 +91,7 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * a cap that has just come down, because the trim happens on push; the backlog settles to the
  * new number as the run goes on.
  *
- * @param options The bounds to change. A field left out — or given anything that is not a
+ * @param [options] - The bounds to change. A field left out — or given anything that is not a
  * number above zero — keeps what it has, so a partial or a half-built config narrows nothing.
  * @returns Everything in force afterwards, including what this call did not change.
  */
@@ -219,10 +219,10 @@ export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kin
  * own metrics and the notice a slow watcher is sent cannot come to disagree about what an unset
  * field reads as.
  *
- * @param input What happened. An `at` it carries wins over the one given here.
- * @param runId The run it belongs to. Written after `input`, which gets no say in it.
- * @param seq Its place in that run, the same.
- * @param at When, for an input that does not say.
+ * @param input - What happened. An `at` it carries wins over the one given here.
+ * @param runId - The run it belongs to. Written after `input`, which gets no say in it.
+ * @param seq - Its place in that run, the same.
+ * @param at - When, for an input that does not say.
  */
 export const stamp = (input: RunEventInput, runId: string, seq: number, at: number): RunEvent => ({
   at,
@@ -295,7 +295,7 @@ function scheduleSweep(held: Bus) {
  * loop threw where it could not be caught. The sweep gets there on its own; this is for a
  * caller that already knows.
  *
- * @param runId The run to forget. An id nothing was emitted under is ignored.
+ * @param runId - The run to forget. An id nothing was emitted under is ignored.
  */
 export function endRun(runId: string) {
   const { streams } = bus();
@@ -318,8 +318,8 @@ export function endRun(runId: string) {
 /**
  * Records one event and hands it to everyone watching that run. Never throws at the caller.
  *
- * @param runId The run this belongs to. Created on first use.
- * @param input The event. `kind` is required; `runId` and `seq` are not a caller's to set.
+ * @param runId - The run this belongs to. Created on first use.
+ * @param input - The event. `kind` is required; `runId` and `seq` are not a caller's to set.
  * @returns The event as it was recorded: its `seq` in the run, its time, and every unset field
  * filled in.
  */
@@ -358,8 +358,8 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
  * The backlog comes first so a watcher that joins halfway through — or after the run finished,
  * inside the retention window — reads the same story as one that was there from the start.
  *
- * @param runId The run to follow. One that has not started yet is waited on, not refused.
- * @param signal Stops following. The only other way out is the run's own `done`, and a watcher
+ * @param runId - The run to follow. One that has not started yet is waited on, not refused.
+ * @param [signal] - Stops following. The only other way out is the run's own `done`, and a watcher
  * with no way out is a leak rather than a lost backlog: the sweep below skips any stream a
  * listener is on, so a run that dies without `done` pins its backlog for the life of the process.
  * Returning the generator is not that way out — parked on the promise at the foot of this
@@ -495,7 +495,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
  * `fold` copies to avoid, and this is the other half of the same warning. Read them, or copy
  * what you mean to change.
  *
- * @param runId The run to read. An unknown or already-swept run gives an empty array.
+ * @param runId - The run to read. An unknown or already-swept run gives an empty array.
  */
 export const history = (runId: string): RunEvent[] => [...(bus().streams.get(runId)?.events ?? [])];
 
@@ -530,7 +530,7 @@ export const resetEvents = () => {
  * Each block carries the `seq` of its last event, so asking for what came after one block
  * picks up exactly where it left off.
  *
- * @param events Events in `seq` order, from `history` or collected from `watch`.
+ * @param events - Events in `seq` order, from `history` or collected from `watch`.
  */
 export function fold(events: RunEvent[]): RunEvent[] {
   const blocks: RunEvent[] = [];
@@ -665,9 +665,9 @@ export interface RunMetricsOptions {
  * `turn` rather than the running totals, so a run with several loops in it — a question per loop —
  * adds up the same as one with a single loop.
  *
- * @param events A run's events in `seq` order, from `history` or collected from `watch`. A backlog
+ * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
  * that has lost its oldest events to the cap sums what it still has.
- * @param options The served window, for how full the run came to it.
+ * @param [options] - The served window, for how full the run came to it.
  */
 export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOptions = {}): RunMetrics {
   const metrics: RunMetrics = {

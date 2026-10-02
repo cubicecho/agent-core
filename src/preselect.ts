@@ -34,7 +34,7 @@ const PRESELECT_PROMPT_CHARS = 2000;
  * A wrong guess is cheap — an unused definition is a few hundred tokens for one run — but a
  * broad guess is not, so the same cap applies here as to a `load_tools` call.
  *
- * @param maxPerLoad The most to ask for, defaulting to `MAX_PER_LOAD`. Give `preselection` the
+ * @param [maxPerLoad] - The most to ask for. Give `preselection` the
  * same number: this one is what the preselector is told, and that one is what it is held to.
  */
 export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
@@ -63,10 +63,10 @@ export const PRESELECT_SYSTEM = preselectSystem();
 /**
  * The user message for a preselection call: the catalogue, then the request.
  *
- * @param catalog The connected servers, rendered as the name-only listing.
- * @param prompt The request being planned for, truncated — choosing tools needs the shape of the
+ * @param catalog - The connected servers, rendered as the name-only listing.
+ * @param prompt - The request being planned for, truncated — choosing tools needs the shape of the
  * ask, not all of it.
- * @param maxPromptChars Where the request is cut, defaulting to 2000. A caller whose requests
+ * @param [maxPromptChars] - Where the request is cut. A caller whose requests
  * carry the part that names the work at the end wants a larger one, and pays for it in the
  * preselector's prompt.
  */
@@ -76,11 +76,11 @@ export const preselectInput = (catalog: CatalogServer[], prompt: string, maxProm
 /**
  * Resolves a preselection against the catalogue: unknown names dropped, count capped.
  *
- * @param names What the preselector replied: `{ tools: [...] }` as `PRESELECT_SCHEMA` has it, or
+ * @param names - What the preselector replied: `{ tools: [...] }` as `PRESELECT_SCHEMA` has it, or
  * the bare array an older prompt asked for. Unvalidated: anything else gives none, and entries
  * that are not strings are dropped.
- * @param catalog The servers to resolve against.
- * @param maxPerLoad The most to keep, defaulting to `MAX_PER_LOAD`. The same number
+ * @param catalog - The servers to resolve against.
+ * @param [maxPerLoad] - The most to keep. The same number
  * `preselectSystem` was given, or the model is being held to a cap it was never told about.
  */
 export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD): string[] {
@@ -207,10 +207,10 @@ export interface KeywordPreselectOptions {
  * what the model is for. Nothing matching is not confident either — the words cannot tell "this
  * request needs no tools" from "these words are not in the catalogue".
  *
- * @param catalog The servers to choose from. Each tool is matched on its name, its server's label
+ * @param catalog - The servers to choose from. Each tool is matched on its name, its server's label
  * and its one-line description, which is everything the catalogue holds.
- * @param prompt The request being planned for. Only its head is read, as in `preselectInput`.
- * @param options The cap, the two confidence thresholds, and where the request is cut.
+ * @param prompt - The request being planned for. Only its head is read, as in `preselectInput`.
+ * @param [options] - The cap, the two confidence thresholds, and where the request is cut.
  */
 export function preselectByKeywords(
   catalog: CatalogServer[],
@@ -314,12 +314,12 @@ export interface PreselectOptions {
  * starting now and starting in a few seconds. The words have to be clear about it; see
  * `preselectByKeywords` for what that means.
  *
- * @param config The endpoint the preselector is reached through.
- * @param model The preselector. An empty name picks nothing, which is what `toolSelectModel`
+ * @param config - The endpoint the preselector is reached through.
+ * @param model - The preselector. An empty name picks nothing, which is what `toolSelectModel`
  * means by empty.
- * @param catalog The servers to choose from.
- * @param prompt The request being planned for. Only its head is read; see `preselectInput`.
- * @param options Cancellation, notices, the reply ceiling (256), the temperature and reasoning
+ * @param catalog - The servers to choose from.
+ * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
+ * @param [options] - Cancellation, notices, the reply ceiling (256), the temperature and reasoning
  * effort as `ask` reads them (0.3 and none when absent), the cap the choice is held to
  * (`MAX_PER_LOAD`), and whether to try the words first.
  */

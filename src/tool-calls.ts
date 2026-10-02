@@ -28,8 +28,8 @@ export class ToolArgumentsError extends Error {
   readonly kind: 'truncated' | 'malformed';
 
   /**
-   * @param kind Why the arguments could not be read.
-   * @param message What the model is handed back as the tool's result.
+   * @param kind - Why the arguments could not be read.
+   * @param message - What the model is handed back as the tool's result.
    */
   constructor(kind: 'truncated' | 'malformed', message: string) {
     super(message);
@@ -94,7 +94,7 @@ function repairJson(text: string): string {
  * Read as written first, so the repair can only ever add to what parses: nothing valid is
  * reinterpreted on its way through.
  *
- * @param text What a model wrote where JSON was asked for, with no prose around it.
+ * @param text - What a model wrote where JSON was asked for, with no prose around it.
  */
 export function looseJson(text: string): unknown {
   for (const candidate of [text, repairJson(text)]) {
@@ -124,9 +124,9 @@ export function looseJson(text: string): unknown {
  * throws a `ToolArgumentsError`, and the loop hands its message back to the model as the tool's
  * result so it can try again.
  *
- * @param raw The arguments as the model sent them: usually the streamed string, sometimes an
+ * @param raw - The arguments as the model sent them: usually the streamed string, sometimes an
  * object a server parsed already. Null, absent or blank is no arguments.
- * @param options `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
+ * @param [options] - `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
  * `truncated`, since a call cut off at the ceiling reads exactly like a malformed one.
  */
 export function parseToolArguments(
@@ -378,8 +378,8 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  * text after the last `</think>` is searched, since a model deliberating about a call is not making
  * one.
  *
- * @param content The turn's text.
- * @param options `names`, the tools that exist. Without them only the templates' markers count.
+ * @param content - The turn's text.
+ * @param [options] - `names`, the tools that exist. Without them only the templates' markers count.
  * @returns The text with the calls taken out, and the calls, numbered `call_recovered_0` onward.
  * No calls leaves the text as it was.
  */

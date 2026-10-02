@@ -671,9 +671,9 @@ const KNOWN = new Set([
  * identity. A snapshot of the wrong version costs a few refused requests; an agent of the wrong
  * version is not the agent its author described.
  *
- * @param document Anything at all — this is the front door, and it is given parsed JSON from a
+ * @param document - Anything at all — this is the front door, and it is given parsed JSON from a
  * form, a file or another host.
- * @param options Whether to parse a bundle, which events this host fires, and which extension
+ * @param [options] - Whether to parse a bundle, which events this host fires, and which extension
  * keys it understands.
  */
 export function parseSpec(document: unknown, options: ParseSpecOptions = {}): ParsedSpec {
@@ -879,7 +879,7 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * this host send its own provider key there. A host that wants inheritance applies `resolveApiKey`
  * afterwards.
  *
- * @param layers The documents, weakest first: settings, then the agent, then a task, then a step.
+ * @param layers - The documents, weakest first: settings, then the agent, then a task, then a step.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
@@ -981,8 +981,8 @@ export interface ExportSpecOptions {
  * nothing outside `bundle` is touched: the format has no credential field at any depth, which is
  * the reason there is nothing else to strip.
  *
- * @param spec A document, ordinarily one `parseSpec` returned.
- * @param options Whether to keep the secrets. The default is not to.
+ * @param spec - A document, ordinarily one `parseSpec` returned.
+ * @param [options] - Whether to keep the secrets.
  */
 export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptions = {}): AgentSpec {
   if (secrets || !spec.bundle?.mcpServers) {

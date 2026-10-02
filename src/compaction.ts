@@ -102,8 +102,8 @@ export interface PruneOptions {
  * few. Returns the same array when there was nothing to clear. Rewrites the prefix;
  * see the module comment on when to run it.
  *
- * @param messages The transcript. Not written to.
- * @param options How many results to keep and how long one must be to clear.
+ * @param messages - The transcript. Not written to.
+ * @param [options] - How many results to keep and how long one must be to clear.
  */
 export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars = 256 }: PruneOptions = {}): Message[] {
   let kept = 0;
@@ -223,8 +223,8 @@ const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most
  * credited, so `after` errs high by at most that much. It is only as good as `estimate` — see
  * `estimateFrom` for one that is measured.
  *
- * @param messages The transcript, system prompts included if the caller keeps them in it.
- * @param options The window, what is in use, the ratios, and where the last fold ended. See
+ * @param messages - The transcript, system prompts included if the caller keeps them in it.
+ * @param options - The window, what is in use, the ratios, and where the last fold ended. See
  * `CompactionOptions`.
  */
 export function planCompaction(
@@ -300,7 +300,7 @@ export function planCompaction(
  * What the summariser is handed for a plan: the earlier summary if there was one, then each
  * message as its role and at most 4000 characters of its text.
  *
- * @param plan What `planCompaction` returned.
+ * @param plan - What `planCompaction` returned.
  */
 export function summaryInput(plan: CompactionPlan): string {
   const transcript = plan.toSummarise
@@ -318,9 +318,9 @@ export function summaryInput(plan: CompactionPlan): string {
 /**
  * A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
  *
- * @param config The endpoint the summary is written through.
- * @param model The model to write it, which may be a smaller one than the run's.
- * @param options Cancellation and notices; the ceiling is 1024 and the instruction
+ * @param config - The endpoint the summary is written through.
+ * @param model - The model to write it, which may be a smaller one than the run's.
+ * @param [options] - Cancellation and notices; the ceiling is 1024 and the instruction
  * `SUMMARY_PROMPT` unless given.
  */
 export const summariser =
@@ -376,11 +376,11 @@ export interface CompactionRunOptions {
  * fold lives on the session row and the messages stay where they are. Nothing here is persisted or
  * logged — that is the host's, and so is deciding what to do with a fold that did not happen.
  *
- * @param messages The transcript the plan was made for. Read only, and only for the hooks.
- * @param plan What `planCompaction` returned for it.
- * @param summarise Writes the summary from `summaryInput`'s text. See `summariser`. Not called
+ * @param messages - The transcript the plan was made for. Read only, and only for the hooks.
+ * @param plan - What `planCompaction` returned for it.
+ * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
  * when a hook vetoes.
- * @param options Hooks to tell and whether the window is already past. See `CompactionRunOptions`.
+ * @param [options] - Hooks to tell and whether the window is already past. See `CompactionRunOptions`.
  * @returns `undefined` when nothing was folded — a hook vetoed, or the summary came back empty —
  * so the caller stores nothing and the transcript is still whole.
  */
@@ -422,10 +422,10 @@ export async function runCompaction(
  * continues these notes rather than summarising them a second time. Any earlier summary message in
  * the kept head is dropped, since the record's already contains it.
  *
- * @param messages The stored transcript, whole. Not written to.
- * @param record The fold, or `undefined` for a session that has not been compacted, which hands
+ * @param messages - The stored transcript, whole. Not written to.
+ * @param [record] - The fold, or `undefined` for a session that has not been compacted, which hands
  * back `messages` itself.
- * @param options `from` is the first message the fold was allowed to take — the plan's, for a host
+ * @param [options] - `from` is the first message the fold was allowed to take — the plan's, for a host
  * that keeps its system prompts in the array; everything before it is kept ahead of the summary.
  * Absent, the leading `system` messages are found by scanning, and zero of them is the ordinary
  * case for a host whose system prompt is a separate argument.
@@ -455,10 +455,10 @@ export function applyCompaction(
  * hook — has to say which it is in. An index inside the folded stretch answers with the summary
  * message that now stands for it.
  *
- * @param index The position in the stored transcript.
- * @param record The fold in force, or `undefined` for a session that has none, which hands the
+ * @param index - The position in the stored transcript.
+ * @param [record] - The fold in force, or `undefined` for a session that has none, which hands the
  * index straight back.
- * @param head How many messages the request keeps ahead of the summary — the leading system
+ * @param [head] - How many messages the request keeps ahead of the summary — the leading system
  * prompts, when the host keeps them in the array. Zero, the default, is the stored-fold case,
  * where the summary is the request's first message.
  */
@@ -486,11 +486,11 @@ export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'thr
  * order, so a host that stores the fold instead of the array gets the same summary at the same
  * cut rather than a second implementation that drifts from this one.
  *
- * @param messages The transcript the plan was made for. Not written to.
- * @param plan What `planCompaction` returned for it.
- * @param summarise Writes the summary from `summaryInput`'s text. See `summariser`. Not called
+ * @param messages - The transcript the plan was made for. Not written to.
+ * @param plan - What `planCompaction` returned for it.
+ * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
  * when a hook vetoes.
- * @param options Hooks to tell and whether the window is already past. See
+ * @param [options] - Hooks to tell and whether the window is already past. See
  * `CompactionRunOptions`.
  * @returns `messages` itself when nothing was folded — a veto or an empty summary — otherwise a
  * new array.

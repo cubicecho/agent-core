@@ -17,7 +17,7 @@ const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
 /**
  * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
  *
- * @param config Read for `requestTimeoutSeconds` alone.
+ * @param config - Read for `requestTimeoutSeconds` alone.
  */
 export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
@@ -29,7 +29,7 @@ export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): numb
  * Zero rather than the SDK's `undefined` for "no wait", because here absent already means
  * something else: `runTurn`'s own default.
  *
- * @param config Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
+ * @param config - Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
  */
 export const loadingMs = (config: Pick<RetryPolicy, 'loadingTimeoutSeconds'>): number | undefined =>
   config.loadingTimeoutSeconds === undefined ? undefined : (limitMs(config.loadingTimeoutSeconds) ?? 0);
@@ -121,7 +121,7 @@ const evict = () => {
  * for first, as the next `getClient` would have. A shorter `listingMissMs` applies to misses
  * already remembered, since each is a timestamp compared against it when read.
  *
- * @param options The bounds to change. A field left out — or given anything that is not a number
+ * @param [options] - The bounds to change. A field left out — or given anything that is not a number
  * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
  * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
  * about again until `resetClients`.
@@ -139,7 +139,7 @@ export const FIRST_TOKEN_FACTOR = 5;
 /**
  * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
  *
- * @param config Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
+ * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
  */
 export const firstTokenMs = (
   config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,
@@ -164,7 +164,7 @@ export const firstTokenMs = (
  * that from being unbounded, and it is the point at which a client of your own, built and held
  * per tenant, is the better answer than this.
  *
- * @param config Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
+ * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
  */
 export function getClient(config: Endpoint): OpenAI {
   const apiKey = config.apiKey || NO_KEY;
@@ -287,7 +287,7 @@ const misses = scoped(() => new Map<string, number>());
  * keeping its own per-endpoint state keys it on this rather than on a copy of it, so the two
  * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
  *
- * @param config Read for `baseUrl` and `apiKey` alone, and the key is optional here where
+ * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
  * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
  * config, and absent and empty already mean the same thing. The timeout is deliberately not in
  * it; see `listings`.
@@ -298,9 +298,9 @@ export const endpointKey = (config: EndpointIdentity) => JSON.stringify([config.
  * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
  * into the other.
  *
- * @param endpoint Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
+ * @param endpoint - Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
  * where the key may be written down.
- * @param model The model's name as the endpoint knows it.
+ * @param model - The model's name as the endpoint knows it.
  */
 export const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
@@ -312,7 +312,7 @@ export const modelKey = (endpoint: string, model: string) => JSON.stringify([end
  * A digest identifies the same endpoint on the next boot without saying what the key was, and it
  * is how a host finds its own endpoint's entry in a `CapabilitySnapshot`.
  *
- * @param config Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
+ * @param config - Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  */
 export const endpointId = (config: EndpointIdentity) => createHash('sha256').update(endpointKey(config)).digest('hex');
 
@@ -393,7 +393,7 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
  *
  * The listing is not read here; `contextLimitFor` reads it first and comes here after.
  *
- * @param config The endpoint, plus the model whose window is wanted.
+ * @param config - The endpoint, plus the model whose window is wanted.
  */
 export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
   const endpoint = endpointKey(config);
@@ -441,7 +441,7 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
 /**
  * Asks an endpoint what it serves, and remembers the answer.
  *
- * @param config The endpoint to ask. Remembered per base URL and key, not per model.
+ * @param config - The endpoint to ask. Remembered per base URL and key, not per model.
  * @returns The models in order of id, whatever order the endpoint listed them in.
  */
 export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
@@ -483,8 +483,8 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * first, they were also asked again every `listingMissMs` for the life of the process on a server
  * whose `/props` answers without a window, by any host that sizes the window per turn.
  *
- * @param config The endpoint, plus the model whose window is wanted.
- * @param declared The operator's own number. Above zero it wins and the endpoint is not asked.
+ * @param config - The endpoint, plus the model whose window is wanted.
+ * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
  */
 export async function contextLimitFor(config: Endpoint & { model: string }, declared = 0): Promise<number> {
   if (declared > 0) {
@@ -567,11 +567,11 @@ export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') ==
  * the same endpoint inherits the key as it inherits everything else, and the environment is the
  * last word on the endpoint that was configured rather than overridden.
  *
- * @param own The endpoint as the agent or profile states it. Its own key always wins. An empty or
+ * @param own - The endpoint as the agent or profile states it. Its own key always wins. An empty or
  * absent `baseUrl` is one that inherits the endpoint too.
- * @param inherited The settings it overrides. Absent treats `own` as the configured endpoint, so
+ * @param [inherited] - The settings it overrides. Absent treats `own` as the configured endpoint, so
  * only its key and the environment's are in play.
- * @param env Where `OPENAI_API_KEY` is read from, `process.env` by default.
+ * @param [env] - Where `OPENAI_API_KEY` is read from.
  */
 export function resolveApiKey(
   own: { baseUrl?: string; apiKey?: string },

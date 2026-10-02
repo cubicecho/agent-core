@@ -26,8 +26,8 @@ export const currentScope = (): Scope => active.getStore() ?? rootScope;
 /**
  * Runs `fn` with `scope` as the current one, for it and for everything it awaits or schedules.
  *
- * @param scope The runtime's state. Nested calls replace it for their own duration only.
- * @param fn What to run. Its return value, or what it throws, is handed straight back.
+ * @param scope - The runtime's state. Nested calls replace it for their own duration only.
+ * @param fn - What to run. Its return value, or what it throws, is handed straight back.
  */
 export const inScope = <T>(scope: Scope, fn: () => T): T => active.run(scope, fn);
 
@@ -46,7 +46,7 @@ export interface Scoped<T> {
  * and each use reads `cache()`. The copy is made lazily, so a runtime pays only for the modules
  * it touches.
  *
- * @param create Builds a fresh, empty copy. Called once per scope, and again after `reset`.
+ * @param create - Builds a fresh, empty copy. Called once per scope, and again after `reset`.
  */
 export function scoped<T>(create: () => T): Scoped<T> {
   const key = Symbol();
@@ -67,10 +67,9 @@ export function scoped<T>(create: () => T): Scoped<T> {
  * are used, so writing a field onto it is what makes the change apply from the next read. A field
  * that fails its check keeps what it had, which is how a half-built config narrows nothing.
  *
- * @param held The settings in force. Written to — the same object the module goes on reading.
- * @param options What to change. A field left out is left alone.
- * @param usable Whether a value may be written under a name. A number above zero by default,
- * which is what a limit has to be.
+ * @param held - The settings in force. Written to — the same object the module goes on reading.
+ * @param options - What to change. A field left out is left alone.
+ * @param [usable] - Whether a value may be written under a name.
  * @returns A copy of everything in force afterwards, including what this call did not change.
  */
 export function assignSettings<T extends object>(

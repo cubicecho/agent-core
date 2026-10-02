@@ -15,17 +15,17 @@ import { orderTools, type ToolOrder } from './tool-loading.ts';
  * `=== false` — `modelCapabilitiesFor` starts a model at `legacyTokenLimit: true` and an absent
  * one has to read the same — which is the test one of the three copies had inverted.
  *
- * @param config What to ask for. `maxTokens` of zero or less sends no ceiling; `reasoningEffort`
+ * @param config - What to ask for. `maxTokens` of zero or less sends no ceiling; `reasoningEffort`
  * absent or `"off"` sends no effort, and one the model has refused by value is stepped up to the
  * cheapest it takes by `effortFor`.
- * @param supports What the endpoint has refused, as `negotiate` hands it to `send`.
- * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model
+ * @param supports - What the endpoint has refused, as `negotiate` hands it to `send`.
+ * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
- * @param messages The request's messages, system prompt included, sent as they are.
- * @param tools The tool definitions. Ordered by name, sanitised here — a lookup for a definition
+ * @param messages - The request's messages, system prompt included, sent as they are.
+ * @param [tools] - The tool definitions. Ordered by name, sanitised here — a lookup for a definition
  * seen before — and relaxed where the endpoint needs it. Empty sends no `tools` field at all.
- * @param order How to order them before sending. `true`, the default, is by name, which keeps the
- * cache when the caller's array is assembled differently from one request to the next. See
+ * @param [order] - How to order them before sending. `true` is by name, which keeps the cache
+ * when the caller's array is assembled differently from one request to the next. See
  * `orderTools`.
  */
 export function buildBody(

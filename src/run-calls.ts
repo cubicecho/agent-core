@@ -37,8 +37,8 @@ import {
  *
  * For events, never for the transcript: the model reads the whole of what a tool returned.
  *
- * @param text What to show.
- * @param limit Characters kept, 2000 by default. Text at or under it comes back as it was.
+ * @param text - What to show.
+ * @param [limit] - Characters kept. Text at or under it comes back as it was.
  */
 export const preview = (text: string, limit = 2000) =>
   text.length > limit ? `${text.slice(0, limit)}… (${text.length} chars)` : text;
@@ -179,9 +179,9 @@ async function once(answered: Map<string, Promise<string>>, key: string, make: (
  * Runs one call to its result, telling the host of both. A tool that throws is that call's answer
  * rather than the run's end, unless the run was stopped.
  *
- * @param run The run the call belongs to.
- * @param entry The call, with its arguments read.
- * @param answered The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
+ * @param run - The run the call belongs to.
+ * @param entry - The call, with its arguments read.
+ * @param answered - The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
  */
 async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Promise<string>>) {
   const { catalog, onDemand, proxied, signal } = run;
@@ -253,10 +253,10 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
  * result is a transcript no endpoint takes back, so every call of the step is answered — with what
  * it returned where it had, and otherwise with a line saying it was stopped, or never run.
  *
- * @param run The run the step belongs to.
- * @param parsed The step's calls, with their arguments read.
- * @param messages The transcript the results are written into.
- * @param step Which step this is, for the host told of each result.
+ * @param run - The run the step belongs to.
+ * @param parsed - The step's calls, with their arguments read.
+ * @param messages - The transcript the results are written into.
+ * @param step - Which step this is, for the host told of each result.
  */
 export async function runCalls(
   run: Calling,
@@ -332,9 +332,9 @@ export async function runCalls(
  * it. Told to the host as a call the model made would be, so one pairing calls with results by id
  * shows this one like the rest.
  *
- * @param run The run it opens.
- * @param shortlist The definitions preselected, each of them in the catalogue.
- * @param messages The transcript, which the exchange is appended to.
+ * @param run - The run it opens.
+ * @param shortlist - The definitions preselected, each of them in the catalogue.
+ * @param messages - The transcript, which the exchange is appended to.
  */
 export async function loadShortlist(
   run: Calling,

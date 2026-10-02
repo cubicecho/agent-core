@@ -509,7 +509,7 @@ interface Standing {
  * that task's own settings — a setting the task leaves out is the side task's default, never the
  * run's `temperature` or `maxTokens`.
  *
- * @param options The config, transcript, tools and dispatcher, plus the optional hooks, events
+ * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {

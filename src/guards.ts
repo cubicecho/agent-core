@@ -11,7 +11,7 @@
 /**
  * Whether a value is a plain keyed object: not null, and not an array.
  *
- * @param value Anything, usually just parsed. An array is an object to `typeof` and not to this.
+ * @param value - Anything, usually just parsed. An array is an object to `typeof` and not to this.
  */
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -22,7 +22,7 @@ export const isRecord = (value: unknown): value is Record<string, unknown> =>
  * `Infinity` passes and `NaN` does not, so a caller lifting a bound and one handing over a
  * half-built config are told apart without either being asked.
  *
- * @param value Anything, usually a setting that may be absent, zero or mistyped.
+ * @param value - Anything, usually a setting that may be absent, zero or mistyped.
  */
 export const isPositive = (value: unknown): value is number => typeof value === 'number' && value > 0;
 
@@ -36,9 +36,9 @@ interface Lookup<K, V> {
 /**
  * What a map holds under a key, made and stored first where it holds nothing.
  *
- * @param map Where to look. Gains an entry on a miss, which is the point of calling this.
- * @param key What to look under.
- * @param create Builds the value on a miss, and is not called on a hit.
+ * @param map - Where to look. Gains an entry on a miss, which is the point of calling this.
+ * @param key - What to look under.
+ * @param create - Builds the value on a miss, and is not called on a hit.
  */
 export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V {
   if (!map.has(key)) {
@@ -50,7 +50,7 @@ export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V
 /**
  * A count and its noun, plural unless the count is one: `1 tool`, `3 tools`.
  *
- * @param count How many.
- * @param noun The singular, which takes an `s` and nothing cleverer.
+ * @param count - How many.
+ * @param noun - The singular, which takes an `s` and nothing cleverer.
  */
 export const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;

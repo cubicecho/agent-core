@@ -177,8 +177,8 @@ function poolsOf(parameters: Schema): Schema {
  * name the pools do not hold. A node that is not a reference resolves to itself, so a caller can
  * hand this a branch without first asking which spelling it is.
  *
- * @param node The schema position to resolve, reference or not.
- * @param defs The pools to resolve against, as `poolsOf` collects them from the root.
+ * @param node - The schema position to resolve, reference or not.
+ * @param defs - The pools to resolve against, as `poolsOf` collects them from the root.
  */
 function resolveRef(node: unknown, defs: Schema): Schema | undefined {
   const seen = new Set<string>();
@@ -429,7 +429,7 @@ function pruneRequired(schema: Schema): Schema {
  * wrap it in a definition to get here. Nothing is remembered — the cache is keyed on a tool
  * definition's identity, and a bare schema has no object that stands for it across requests.
  *
- * @param schema The schema as written. Never mutated. Its root is held to an object, as a tool's
+ * @param schema - The schema as written. Never mutated. Its root is held to an object, as a tool's
  * parameters are, and anything that is not a schema at all comes back as an object with no
  * properties.
  */
@@ -495,7 +495,7 @@ const through = (
  * The first call on a connection's tools does the work and every later one is a lookup, so
  * calling this per request costs nothing.
  *
- * @param tools The definitions as the pool hands them over. Never mutated — where a schema
+ * @param tools - The definitions as the pool hands them over. Never mutated — where a schema
  * changed, a new definition is returned in its place.
  */
 export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) => through(sanitized, tools, sanitizeSchema);
@@ -531,7 +531,7 @@ const strip = (node: unknown): unknown => {
  * The retry `relaxTools` makes, on a bare schema. Only the keywords go: a property that happens to
  * be called `format` is an argument name and stays.
  *
- * @param schema Already sanitised. Relaxing is the retry, not a substitute for `sanitizeSchema`.
+ * @param schema - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeSchema`.
  * Never mutated; anything that is not a schema comes back as an object with no properties.
  */
 export function relaxSchema(schema: unknown): Record<string, unknown> {
@@ -544,7 +544,7 @@ export function relaxSchema(schema: unknown): Record<string, unknown> {
  * `pattern` and most `format` values, both of which only ever narrowed a string the tool
  * re-validates anyway.
  *
- * @param tools Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
+ * @param tools - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) => through(relaxed, tools, relaxSchema);
 
@@ -563,7 +563,7 @@ const NO_USER_QUERY = 'no user query found';
  * by name. Since a grammar is only ever involved in constrained decoding, treat any mention of
  * one as ours; the retry is cheap and latches after a single request.
  *
- * @param message The server's error text. Matched case-insensitively.
+ * @param message - The server's error text. Matched case-insensitively.
  */
 export function isGrammarError(message: string): boolean {
   const text = message.toLowerCase();

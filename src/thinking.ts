@@ -93,9 +93,8 @@ export class FenceSplitter {
   #held = '';
 
   /**
-   * @param fences The fences to read, `DEFAULT_FENCES` unless given; an empty list passes
-   *   everything through as output.
-   * @param options Whether the reply starts inside the first fence.
+   * @param [fences] - The fences to read; an empty list passes everything through as output.
+   * @param [options] - Whether the reply starts inside the first fence.
    */
   constructor(fences: readonly Fence[] = DEFAULT_FENCES, { startInside }: FenceSplitterOptions = {}) {
     this.#fences = fences;
@@ -107,7 +106,7 @@ export class FenceSplitter {
   /**
    * Reads one more piece of content, returning what it settled, in order.
    *
-   * @param text The next delta.
+   * @param text - The next delta.
    */
   push(text: string): Split[] {
     const parts: Split[] = [];
@@ -213,8 +212,8 @@ export class FenceSplitter {
 /**
  * What is left of a complete reply once every scratchpad is taken out of it.
  *
- * @param text The whole reply.
- * @param fences The fences to read, every known one unless given.
+ * @param text - The whole reply.
+ * @param [fences] - The fences to read.
  */
 export function stripThinking(text: string, fences: readonly Fence[] = ALL_FENCES): string {
   const splitter = new FenceSplitter(fences);

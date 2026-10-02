@@ -183,9 +183,9 @@ const capabilities = scoped(() => new Map<string, Capabilities>());
  * What this endpoint is known not to support. The same object every time, so what `negotiate`
  * latches off stays off.
  *
- * @param baseUrl Where the endpoint is. The two flags on it are per-server; what is per-model
+ * @param baseUrl - Where the endpoint is. The two flags on it are per-server; what is per-model
  * hangs off `models`, which `modelCapabilitiesFor` reads.
- * @param apiKey The rest of the endpoint's identity. Optional, because it changes nothing for
+ * @param [apiKey] - The rest of the endpoint's identity. Optional, because it changes nothing for
  * the ordinary case of one key per base URL and a caller with one need not thread it through;
  * absent reads as `NO_KEY`, exactly as it does in `getClient`, so an endpoint with no key and
  * one that passes `undefined` share an entry rather than holding two.
@@ -203,8 +203,8 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
  * it does not really serve. One that refused a reasoning effort must not speak for the other.
  * Bounded by the models actually asked for on that endpoint, which is what a dropdown holds.
  *
- * @param supports The endpoint's own, as `capabilitiesFor` hands it over.
- * @param model The name the endpoint knows the model as — whatever goes in the request body,
+ * @param supports - The endpoint's own, as `capabilitiesFor` hands it over.
+ * @param model - The name the endpoint knows the model as — whatever goes in the request body,
  * since that is the only name the refusal is about.
  */
 export function modelCapabilitiesFor(supports: Capabilities, model: string): ModelCapabilities {
@@ -240,7 +240,7 @@ export function capabilitiesById(id: string): Capabilities {
  * *knows* it changed: a settings row saved, a health check that reads a new build string, an
  * operator pressing a button. See `expireCapabilities` for the case where nobody knows.
  *
- * @param endpoint Whose to forget, by the same identity `capabilitiesFor` takes. Absent clears
+ * @param [endpoint] - Whose to forget, by the same identity `capabilitiesFor` takes. Absent clears
  * every endpoint, which is what tests and `resetAll` mean by it.
  * @returns Whether there was anything to forget.
  */
@@ -266,8 +266,8 @@ export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
  * Nothing calls this on a timer. When to sweep is the consumer's, the same way how stale a
  * snapshot is too stale is, and a sweep costs a walk of one settings row's worth of entries.
  *
- * @param maxAgeMs How old an entry may be. Zero or less expires everything.
- * @param now The clock, for tests.
+ * @param maxAgeMs - How old an entry may be. Zero or less expires everything.
+ * @param [now] - The clock, for tests.
  * @returns How many endpoints were forgotten.
  */
 export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
@@ -372,8 +372,8 @@ function listedEfforts(detail: string): string[] | undefined {
  * rather than the one it was given. A refusal that names no value steps nothing: guessing which
  * rung was refused is how a ladder walks past the value that would have worked.
  *
- * @param detail The refusal.
- * @param supported What the same refusal listed, which the value cannot be one of.
+ * @param detail - The refusal.
+ * @param [supported] - What the same refusal listed, which the value cannot be one of.
  */
 function refusedEffortValue(detail: string, supported: readonly string[] = []): string | undefined {
   const found = detail.match(
@@ -417,9 +417,9 @@ function nextEffort(refused: ModelCapabilities, asked: string): string | undefin
  * all, and an absent or `"off"` setting, both answer the empty string, which is the body
  * builders' signal to send no field.
  *
- * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model that
+ * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model that
  * has refused nothing.
- * @param asked What the config asks for. `"off"` and absent mean no effort.
+ * @param asked - What the config asks for. `"off"` and absent mean no effort.
  */
 export function effortFor(refused: ModelCapabilities | undefined, asked: string | undefined) {
   if (!asked || asked === 'off') {
@@ -446,11 +446,11 @@ export function effortFor(refused: ModelCapabilities | undefined, asked: string 
  * temperature it was built with is sent none. Both are tested `=== false`, so a caller that named
  * no model sends what one that has refused nothing is sent; see `ModelCapabilities.legacyTokenLimit`.
  *
- * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model that
+ * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model that
  * has refused nothing.
- * @param maxTokens The ceiling. Zero or less sends none and leaves it to the server: a zero sent
+ * @param maxTokens - The ceiling. Zero or less sends none and leaves it to the server: a zero sent
  * as `max_tokens: 0` asks for an empty reply.
- * @param temperature What to sample at, where the model takes one that was picked for it.
+ * @param temperature - What to sample at, where the model takes one that was picked for it.
  */
 export const ceilingAndTemperature = (
   refused: ModelCapabilities | undefined,
@@ -757,11 +757,11 @@ const ANSWERS: readonly Answer[] = [
  * caller that passed it to only one of the two got a turn that had already streamed tokens sent
  * again, silently, with the watcher seeing every one of them twice.
  *
- * @param supports What this endpoint has already refused. Latched off further as it refuses more.
- * @param send Builds and sends the request. Called again per downgrade, never once tokens
+ * @param supports - What this endpoint has already refused. Latched off further as it refuses more.
+ * @param send - Builds and sends the request. Called again per downgrade, never once tokens
  * have arrived. Its third argument is what the named model has refused, absent when no model
  * was named.
- * @param options `produced` for a caller with its own retry budget, `onNotice` for a watcher,
+ * @param [options] - `produced` for a caller with its own retry budget, `onNotice` for a watcher,
  * `model` to negotiate the model's refusals alongside the endpoint's.
  */
 export async function negotiate<T>(

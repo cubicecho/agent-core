@@ -24,14 +24,14 @@ export const CHARS_PER_TOKEN = 4;
  * is below it — a message's characters, a tool block's, a request's, and the breakdown of a
  * window — so the module imports nothing but the SDK's types and anything may read it.
  *
- * @param text Prose or serialised JSON — both counted the same way, which is why JSON reads low.
+ * @param text - Prose or serialised JSON — both counted the same way, which is why JSON reads low.
  */
 export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
 
 /**
  * 1234 → "1.2k". The numbers in an overflow message are large and nobody reads the units digit.
  *
- * @param tokens The count to render.
+ * @param tokens - The count to render.
  */
 export const compact = (tokens: number) => (tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens));
 
@@ -95,7 +95,7 @@ const divisor = (charsPerToken: number | undefined) =>
 /**
  * How many characters one message is worth: its keys, and its content in whichever shape.
  *
- * @param message The message as it will be sent.
+ * @param message - The message as it will be sent.
  */
 export function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
   let chars = message.role.length + ENVELOPE;
@@ -166,7 +166,7 @@ const toolLengths = new WeakMap<OpenAI.ChatCompletionTool[], number>();
 /**
  * How many characters a tool array is worth, measured once per array.
  *
- * @param tools The tool definitions as they will be sent. An empty array is worth nothing.
+ * @param tools - The tool definitions as they will be sent. An empty array is worth nothing.
  */
 export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
   if (!tools.length) {
@@ -189,7 +189,7 @@ export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
  * What calibration reads a reported prompt count against, since a ratio is only as good as the
  * character count it was taken over agreeing with the one it is later applied to.
  *
- * @param body The request as it was sent, tools included.
+ * @param body - The request as it was sent, tools included.
  */
 export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): number {
   let chars = 0;
@@ -215,8 +215,8 @@ export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
  * escaping, which is not a constant and is small against an estimate that is already characters
  * over four.
  *
- * @param body The request as it will be sent, tools included.
- * @param options The divisor, `CHARS_PER_TOKEN` when none is given.
+ * @param body - The request as it will be sent, tools included.
+ * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
  */
 export const requestTokens = (
   body: OpenAI.ChatCompletionCreateParamsStreaming,
@@ -263,7 +263,7 @@ const PARTS = ['system', 'tools', 'history', 'toolResults'] as const;
  * conversion to tokens is `contextTokens`' business, because that is where an estimate and a
  * reported count have to be told apart.
  *
- * @param body The request as it will be sent, tools included.
+ * @param body - The request as it will be sent, tools included.
  */
 export function contextChars(body: OpenAI.ChatCompletionCreateParamsStreaming): ContextBreakdown {
   const out: ContextBreakdown = {
@@ -337,8 +337,8 @@ function share(chars: ContextBreakdown, over: readonly (keyof ContextBreakdown)[
  * that number is the server's, and the point of using it is that the parts sum to what was
  * charged.
  *
- * @param body The request as it will be sent, tools included.
- * @param options The divisor, and the reported prompt count when there is one.
+ * @param body - The request as it will be sent, tools included.
+ * @param [options] - The divisor, and the reported prompt count when there is one.
  */
 export function contextTokens(
   body: OpenAI.ChatCompletionCreateParamsStreaming,
@@ -363,8 +363,8 @@ export function contextTokens(
  * For the arithmetic that weighs part of a transcript against a window — `planCompaction`'s kept
  * tail — where `estimateTokens` on the text alone would leave out the calls and the envelope.
  *
- * @param message The message as it will be sent.
- * @param options The divisor, `CHARS_PER_TOKEN` when none is given.
+ * @param message - The message as it will be sent.
+ * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
  */
 export const messageTokens = (
   message: OpenAI.ChatCompletionMessageParam,

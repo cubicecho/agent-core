@@ -104,7 +104,7 @@ export type Runtime = typeof STATEFUL & {
    * It does not reach a callback that outlives `fn` and is called from elsewhere — a generator
    * resumed later, a function handed back and called by someone else. Call a method there.
    *
-   * @param fn What to run. Its return value, or what it throws, is handed straight back.
+   * @param fn - What to run. Its return value, or what it throws, is handed straight back.
    */
   run<T>(fn: () => T): T;
 };
@@ -145,7 +145,7 @@ function bind(scope: Scope): Runtime {
  * Nothing needs closing. A runtime is garbage once nothing holds it; its one timer, the event
  * bus's sweep, is unreferenced and stops rescheduling when its last run has been swept.
  *
- * @param options What to configure it with before first use. A part left out keeps the
+ * @param [options] - What to configure it with before first use. A part left out keeps the
  * defaults — not the default runtime's settings, which a new runtime does not inherit.
  */
 export function createRuntime(options: RuntimeOptions = {}): Runtime {

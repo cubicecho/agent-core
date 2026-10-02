@@ -162,7 +162,7 @@ export function exportCapabilities(): CapabilitySnapshot {
  * made on `savedAt` before importing, or afterwards per endpoint with `expireCapabilities`, since a
  * server behind a URL can be upgraded between boots.
  *
- * @param snapshot What `exportCapabilities` returned, as stored. Read defensively: a field of the
+ * @param snapshot - What `exportCapabilities` returned, as stored. Read defensively: a field of the
  * wrong type is skipped rather than trusted.
  * @returns Whether the snapshot was of this version and applied.
  */

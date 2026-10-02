@@ -136,11 +136,11 @@ export interface SideTask {
 /**
  * Runs a side task and returns the reply text, thinking stripped. Throws like any request.
  *
- * @param config Where to send it and how long to wait.
- * @param model The model to ask, usually smaller than the one running the work.
- * @param system The instruction.
- * @param user The input it applies to. Content parts where the model is being shown an image.
- * @param options Reply ceiling, temperature, a reasoning effort, cancellation, notices.
+ * @param config - Where to send it and how long to wait.
+ * @param model - The model to ask, usually smaller than the one running the work.
+ * @param system - The instruction.
+ * @param user - The input it applies to. Content parts where the model is being shown an image.
+ * @param [options] - Reply ceiling, temperature, a reasoning effort, cancellation, notices.
  */
 export function ask(
   config: Endpoint,
@@ -287,12 +287,12 @@ export interface AskJsonOptions extends SideTaskOptions {
  * latches it off and is asked in words: the schema rides on the system prompt either way, and
  * the reply goes through `parseJson`, which finds the JSON in whatever came back.
  *
- * @param config Where to send it and how long to wait.
- * @param model The model to ask.
- * @param system The instruction. The schema is appended to it.
- * @param user The input it applies to. Content parts where the model is being shown an image.
- * @param schema The JSON Schema of the answer. Its root is held to an object, as a tool's is.
- * @param options A side task's options, plus the schema's `name` and whether it is `strict`.
+ * @param config - Where to send it and how long to wait.
+ * @param model - The model to ask.
+ * @param system - The instruction. The schema is appended to it.
+ * @param user - The input it applies to. Content parts where the model is being shown an image.
+ * @param schema - The JSON Schema of the answer. Its root is held to an object, as a tool's is.
+ * @param [options] - A side task's options, plus the schema's `name` and whether it is `strict`.
  */
 export async function askJson<T>(
   config: Endpoint,
@@ -325,9 +325,9 @@ export async function askJson<T>(
  * A side task is never worth failing the work it supports. Callers that can carry on without
  * an answer use this and get `undefined` instead of an exception.
  *
- * @param label Names the task in the notice when it fails.
- * @param run The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
- * @param options `onNotice`, told what was given up on.
+ * @param label - Names the task in the notice when it fails.
+ * @param run - The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
+ * @param [options] - `onNotice`, told what was given up on.
  */
 export async function tryAsk<T>(
   label: string,
@@ -356,7 +356,7 @@ export async function tryAsk<T>(
  * `None`, bare keys, a trailing comma. A small model asked for a list gets these wrong as often in
  * a reply as in a call, and a side task that fails over one costs the run a second request.
  *
- * @param text The reply, fences and prose included. Nothing parseable gives `undefined`.
+ * @param text - The reply, fences and prose included. Nothing parseable gives `undefined`.
  */
 export function parseJson<T>(text: string): T | undefined {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -375,7 +375,7 @@ export function parseJson<T>(text: string): T | undefined {
 /**
  * Strips the quoting and list punctuation models decorate short answers with.
  *
- * @param line One line of a reply.
+ * @param line - One line of a reply.
  */
 export const clean = (line: string) =>
   line
@@ -389,9 +389,9 @@ export const clean = (line: string) =>
  * them with. Overlong items are dropped rather than truncated — a suggestion that has to be
  * squinted at is worse than one fewer suggestion.
  *
- * @param text The reply, one item per line.
- * @param max How many items to keep.
- * @param maxChars Longest item kept. Longer ones are dropped, not truncated.
+ * @param text - The reply, one item per line.
+ * @param max - How many items to keep.
+ * @param maxChars - Longest item kept. Longer ones are dropped, not truncated.
  */
 export const listLines = (text: string, max: number, maxChars: number) =>
   text
@@ -418,10 +418,10 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
  * agent's key is whatever the main turn is sent.
  *
- * @param task The task, ordinarily `resolved.tasks.<key>`.
- * @param options What the host adds — cancellation, notices, `keywords` — and its own defaults
+ * @param task - The task, ordinarily `resolved.tasks.<key>`.
+ * @param [options] - What the host adds — cancellation, notices, `keywords` — and its own defaults
  * for the settings a task may leave out.
- * @param agent The endpoint the main turn uses, key included. Absent sends the task's endpoint
+ * @param [agent] - The endpoint the main turn uses, key included. Absent sends the task's endpoint
  * as it stands.
  */
 export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(

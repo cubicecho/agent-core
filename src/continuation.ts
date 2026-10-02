@@ -32,7 +32,7 @@ export interface ContinueTurnOptions extends RunTurnOptions {
  * refuses a prefill outright on a template with thinking enabled. A tool call is excluded because
  * its arguments are what was cut, and `parseToolArguments` already reports that truncation.
  *
- * @param turn The turn as it came back.
+ * @param turn - The turn as it came back.
  */
 export const isContinuable = (turn: Turn) =>
   turn.finishReason === 'length' && turn.content.trim() !== '' && turn.toolCalls.length === 0;
@@ -125,12 +125,12 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
  * kept, with a notice. So is it when the continuation fails any other way, since the tokens
  * already in hand are worth more than the error; only a stop is thrown.
  *
- * @param client The pooled client for this endpoint.
- * @param supports What the endpoint has already refused.
- * @param request Builds the body the cut-off turn was sent, exactly as `runTurn` was given it. The
+ * @param client - The pooled client for this endpoint.
+ * @param supports - What the endpoint has already refused.
+ * @param request - Builds the body the cut-off turn was sent, exactly as `runTurn` was given it. The
  * prefill is appended to what it builds.
- * @param turn The turn that came back cut off.
- * @param options `runTurn`'s options, with `model` needed for the latch — without one nothing is
+ * @param turn - The turn that came back cut off.
+ * @param [options] - `runTurn`'s options, with `model` needed for the latch — without one nothing is
  * latched and each continuation finds out again — and the cap on continuations.
  */
 export async function continueTurn(

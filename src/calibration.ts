@@ -48,8 +48,8 @@ const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>()
  * them because a run's transcript grows by appending, so the latest requests are the best
  * likeness of the next.
  *
- * @param supports The endpoint, as `capabilitiesFor` hands it over.
- * @param model The name the endpoint knows the model as, as it goes in the body.
+ * @param supports - The endpoint, as `capabilitiesFor` hands it over.
+ * @param model - The name the endpoint knows the model as, as it goes in the body.
  */
 export function charsPerTokenFor(supports: Capabilities, model: string): number {
   const known = readings().get(supports)?.get(model);
@@ -70,9 +70,9 @@ const hasMedia = (messages: OpenAI.ChatCompletionMessageParam[]) =>
  * picture hundreds of tokens its characters say nothing about. Neither is a reading outside what a
  * tokenizer could produce, which is a miscount and not a tokenizer.
  *
- * @param supports The endpoint the request went to.
- * @param body The request as it was last sent, which names the model.
- * @param promptTokens The prompt count the endpoint reported for it. Zero or less is no report.
+ * @param supports - The endpoint the request went to.
+ * @param body - The request as it was last sent, which names the model.
+ * @param promptTokens - The prompt count the endpoint reported for it. Zero or less is no report.
  * @returns The ratio now in force for the model.
  */
 export function calibrate(

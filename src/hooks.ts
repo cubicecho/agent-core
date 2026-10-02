@@ -183,7 +183,7 @@ const usableHookSetting = (value: unknown, name: string) =>
  * window can afford more recall than an 8k one — passes `maxTokens` to `gather` instead, and a
  * `preface` passed to `withContext` or `runAgentLoop`'s hooks wins over this one the same way.
  *
- * @param options The settings to change. A field left out keeps what it has, and so does one given
+ * @param [options] - The settings to change. A field left out keeps what it has, and so does one given
  * the wrong kind of value — `contextTokens` anything but a number above zero, `preface` anything
  * but a string — so a half-built config narrows nothing. `Infinity` is a number above zero, and
  * lifts the shared budget entirely. An empty `preface` is a string, and turns the preface off.
@@ -237,9 +237,9 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
  * The note keeps each hook's text as it was cut, so a host can show exactly what the model was
  * given without re-deriving the caps or parsing the wrapper back off.
  *
- * @param outcomes What the runners returned. An injecting outcome on an event that cannot inject
+ * @param outcomes - What the runners returned. An injecting outcome on an event that cannot inject
  * adds nothing; a failed one is noted wherever it falls, including past the budget.
- * @param maxTokens The budget every block shares. Absent, or not a number above zero, is what
+ * @param [maxTokens] - The budget every block shares. Absent, or not a number above zero, is what
  * `configureHooks` last set — `HOOK_CONTEXT_TOKENS` unless something moved it.
  */
 export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: number): Gathered {
@@ -285,13 +285,13 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
  * — a question sent with its blocks one turn and bare the next is a different prompt from that
  * message on, and loses the server's prefix cache behind it.
  *
- * @param history The request's messages. Neither the array nor any message in it is changed.
- * @param index Where the question sits in `history` — which is not where it sits in the
+ * @param history - The request's messages. Neither the array nor any message in it is changed.
+ * @param index - Where the question sits in `history` — which is not where it sits in the
  * session once a compaction has folded the head into a summary. Anything but a user message there
  * leaves the request as it was.
- * @param context What `assembleContext` built, this turn or the turn the question was asked.
+ * @param context - What `assembleContext` built, this turn or the turn the question was asked.
  * Empty returns `history` itself.
- * @param preface Said above the blocks. Absent is what `configureHooks` last set — `HOOK_PREFACE`
+ * @param [preface] - Said above the blocks. Absent is what `configureHooks` last set — `HOOK_PREFACE`
  * unless something moved it. Empty says nothing, rather than leaving a blank line where it was.
  * @returns `history` when there was nothing to add or nowhere to add it, otherwise a new array.
  */
@@ -340,8 +340,8 @@ const UNTRUSTED_TAG = /<(\s*\/?\s*untrusted)/gi;
  * This is one layer and not a defence on its own. A model can still be talked out of a fence it
  * can see; what the text is allowed to make the agent do is the tool policy's to decide.
  *
- * @param text What came in. Kept whole, apart from the escaped tags.
- * @param options `source` names where it came from, for the model and for whoever reads the
+ * @param text - What came in. Kept whole, apart from the escaped tags.
+ * @param [options] - `source` names where it came from, for the model and for whoever reads the
  * transcript later — a URL, a sender, a tool's name. Left out, the block carries no attribute.
  * @returns The block, with the text on its own lines between the tags.
  */
@@ -358,7 +358,7 @@ export function untrusted(text: string, { source }: { source?: string } = {}): s
  * into the uuid a memory server dedups on. Compaction reads the same function, so the summariser
  * and the hook told about a fold see one message the same way. A refusal part is left out.
  *
- * @param content A message's `content`, in any of the shapes the API allows. One that is neither
+ * @param content - A message's `content`, in any of the shapes the API allows. One that is neither
  * a string nor a list reads as empty.
  */
 export const textOf = (content: unknown): string => {
@@ -392,12 +392,12 @@ export const textOf = (content: unknown): string => {
  * is what puts the numbering back on the host's own indexes; passing the stored transcript rather
  * than the request avoids the question entirely.
  *
- * @param sessionId Prefixes every uuid, so two sessions never share one.
- * @param messages The transcript, in whatever shape the host stores it, so long as each message
+ * @param sessionId - Prefixes every uuid, so two sessions never share one.
+ * @param messages - The transcript, in whatever shape the host stores it, so long as each message
  * has an OpenAI-style `role` and `content`.
- * @param from The first index, inclusive. Below zero reads from the start.
- * @param to The end, exclusive. Absent, or past the end, reads to the end.
- * @param options `offset` is what the array's first message is numbered as in the uuids — the
+ * @param from - The first index, inclusive. Below zero reads from the start.
+ * @param [to] - The end, exclusive. Absent, or past the end, reads to the end.
+ * @param [options] - `offset` is what the array's first message is numbered as in the uuids — the
  * stored index of `messages[0]`, when `messages` is a request a fold has shifted. Zero by default,
  * which numbers by position as before. `from` and `to` stay array indexes either way.
  */
@@ -437,10 +437,10 @@ export function turnMessages(
  * itself as turn two is the kind of thing a hook writes into a memory. Count over the stored
  * transcript, or add what the fold took as `offset`.
  *
- * @param messages The transcript.
- * @param before Where the turn begins. Absent is the end, which is the index of a turn whose
+ * @param messages - The transcript.
+ * @param [before] - Where the turn begins. Absent is the end, which is the index of a turn whose
  * question has not been appended yet.
- * @param offset Turns already folded away and so not in `messages`. Zero by default.
+ * @param [offset] - Turns already folded away and so not in `messages`.
  */
 export const turnIndex = (messages: readonly { role: string }[], before = messages.length, offset = 0) =>
   offset + messages.slice(0, before).filter((message) => message.role === 'user').length;
@@ -472,12 +472,12 @@ const runSafely = (run: HookRunner, event: HookEvent, context: HookContext, sign
  * go ahead. Bounding each hook's time is the runner's job; `signal` is how the turn ends all of
  * them.
  *
- * @param run Runs one event's hooks.
- * @param events Which to run: `["beforeTurn"]` ordinarily, and `sessionStart` ahead of it on a
+ * @param run - Runs one event's hooks.
+ * @param events - Which to run: `["beforeTurn"]` ordinarily, and `sessionStart` ahead of it on a
  * session's first turn. The outcomes are assembled in this order, so it is also the order the
  * budget is spent in.
- * @param context What the hooks are told.
- * @param options `signal` is handed to the runner, and should be the turn's own: a user who
+ * @param context - What the hooks are told.
+ * @param [options] - `signal` is handed to the runner, and should be the turn's own: a user who
  * stopped the turn stopped its recall. `onNote` hears each note as the whole is assembled.
  * `maxTokens` is the shared budget for this request, read as `assembleContext` reads it: absent
  * or unusable is the process's, from `configureHooks`.
@@ -504,11 +504,11 @@ export async function gather(
  * point has not asked for the turn not to be remembered. Nor is a `veto` read, since whatever it
  * would stop is already under way; `consult` is the one that waits for it.
  *
- * @param run Runs the event's hooks.
- * @param event `afterTurn`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
+ * @param run - Runs the event's hooks.
+ * @param event - `afterTurn`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
  * works too, but what its hooks return is dropped, since there is no request here to add it to.
- * @param context What the hooks are told.
- * @param onNote Hears each note — which, with nothing injected, is only ever a failure.
+ * @param context - What the hooks are told.
+ * @param [onNote] - Hears each note — which, with nothing injected, is only ever a failure.
  * @returns The same notes.
  */
 export async function notify(
@@ -534,10 +534,10 @@ export async function notify(
  * veto should call `notify` instead. Never rejects: a runner that throws is noted as a failure,
  * and a failure is not a veto — a memory server that is down has not asked for anything.
  *
- * @param run Runs the event's hooks.
- * @param event What is about to happen. Only `beforeCompact` has anything a veto can stop.
- * @param context What the hooks are told.
- * @param onNote Hears each note: every failure, and every veto, naming the hook that made it.
+ * @param run - Runs the event's hooks.
+ * @param event - What is about to happen. Only `beforeCompact` has anything a veto can stop.
+ * @param context - What the hooks are told.
+ * @param [onNote] - Hears each note: every failure, and every veto, naming the hook that made it.
  * @returns The same notes, and `vetoed` when any `ok` outcome carried `veto`.
  */
 export async function consult(

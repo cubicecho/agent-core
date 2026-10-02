@@ -10,7 +10,7 @@ import type { ToolCallOutcome } from './tool-calls.ts';
  * `catch` binds `unknown` — so the same three-branch ternary was being written at every site
  * that had to say what happened.
  *
- * @param error Whatever a `catch` bound. Anything that is not an `Error` is stringified.
+ * @param error - Whatever a `catch` bound. Anything that is not an `Error` is stringified.
  */
 export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -55,9 +55,9 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
   readonly used: string[];
 
   /**
-   * @param message What went wrong — the cause's own message, where there is a cause.
-   * @param run The run as it stood. Held, not copied.
-   * @param options The standard `cause`: what the loop caught, absent where the loop itself gave up.
+   * @param message - What went wrong — the cause's own message, where there is a cause.
+   * @param run - The run as it stood. Held, not copied.
+   * @param [options] - The standard `cause`: what the loop caught, absent where the loop itself gave up.
    */
   constructor(message: string, run: AgentLoopFailure, options?: ErrorOptions) {
     super(message, options);
@@ -95,9 +95,9 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
   readonly used: string[];
 
   /**
-   * @param message The overflow's own message.
-   * @param run The run as it stood. Held, not copied.
-   * @param options The standard `cause`: the `ContextOverflow` the loop caught.
+   * @param message - The overflow's own message.
+   * @param run - The run as it stood. Held, not copied.
+   * @param [options] - The standard `cause`: the `ContextOverflow` the loop caught.
    */
   constructor(message: string, run: AgentLoopFailure, options?: ErrorOptions) {
     super(message, options);
@@ -115,7 +115,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
  * Two classes carry it — an overflow has to stay a `ContextOverflow` and so cannot also be an
  * `AgentLoopError` — and a `catch` that only wants the transcript should not have to name both.
  *
- * @param error Whatever a `catch` around `runAgentLoop` bound. Anything the loop did not throw
+ * @param error - Whatever a `catch` around `runAgentLoop` bound. Anything the loop did not throw
  * answers `undefined`.
  */
 export const failedRun = (error: unknown): AgentLoopFailure | undefined =>

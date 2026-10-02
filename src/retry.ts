@@ -56,7 +56,7 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
  * Rate limits are ruled out first: they borrow the same words and mean the opposite, being worth
  * another attempt where an overflow never is.
  *
- * @param detail The endpoint's own message.
+ * @param detail - The endpoint's own message.
  */
 export const isOverflow = (detail: string) =>
   !RATE_LIMITED.test(detail) && OVERFLOW.some((pattern) => pattern.test(detail)) && /token|context/i.test(detail);
@@ -87,7 +87,7 @@ export const SMALLEST_LIKELY_WINDOW = 8192;
  * the same way on every attempt, and the two capability cases below are negotiated rather than
  * retried blindly.
  *
- * @param error The rejection, as caught. What is not an SDK error is not transient.
+ * @param error - The rejection, as caught. What is not an SDK error is not transient.
  */
 export function isTransient(error: unknown): boolean {
   if (error instanceof EndpointSilent) {
@@ -113,7 +113,7 @@ export function isTransient(error: unknown): boolean {
  * Catching everything is wider still, since an abort or a connection that never landed then
  * latches off whatever the re-send left out.
  *
- * @param error The rejection, as caught. What is not an SDK error refuses nothing.
+ * @param error - The rejection, as caught. What is not an SDK error refuses nothing.
  */
 export const refusesRequest = (error: unknown) =>
   error instanceof OpenAI.APIError && (error.status === 400 || error.status === 422);
@@ -126,7 +126,7 @@ export const refusesRequest = (error: unknown) =>
  * thirty to ninety seconds for a large model from a cold page cache, and `backoffMs` gives up
  * inside fifteen: sized for a busy host, not for one reading a file. A plain 503 is not this.
  *
- * @param error The rejection, as caught.
+ * @param error - The rejection, as caught.
  */
 export function isModelLoading(error: unknown): boolean {
   if (!(error instanceof OpenAI.APIError) || error.status !== 503) {
@@ -148,15 +148,15 @@ export const LOADING_TIMEOUT_MS = 120_000;
 /**
  * Exponential, with jitter so several tasks failing at once do not return in lockstep.
  *
- * @param attempt Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
+ * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
  */
 export const backoffMs = (attempt: number) => Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
 
 /**
  * A delay an abort cuts short, rejecting rather than resolving early.
  *
- * @param ms How long to wait.
- * @param signal Abandons the wait. One already aborted rejects without waiting at all.
+ * @param ms - How long to wait.
+ * @param [signal] - Abandons the wait. One already aborted rejects without waiting at all.
  */
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
