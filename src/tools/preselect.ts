@@ -1,10 +1,10 @@
-import type { OnNotice } from './capabilities.ts';
+import type { Endpoint } from '../core/config.ts';
+import { byCodeUnit, counted, isRecord } from '../core/guards.ts';
+import type { OnNotice } from '../endpoint/capabilities.ts';
+import { askJson, tryAsk } from '../turn/side-task.ts';
+import { SchemaType } from '../wire/wire.ts';
 import type { CatalogServer } from './catalog.ts';
-import type { Endpoint } from './config.ts';
-import { byCodeUnit, counted, isRecord } from './guards.ts';
-import { askJson, tryAsk } from './side-task.ts';
 import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
-import { SchemaType } from './wire.ts';
 
 /**
  * Choosing a run's tools before it starts, from the request and the catalogue's names.

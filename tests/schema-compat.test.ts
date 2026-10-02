@@ -1,7 +1,13 @@
 import type OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
-import { isGrammarError, relaxSchema, relaxTools, sanitizeSchema, sanitizeTools } from '../src/schema-compat.ts';
-import { FUNCTION_TOOL, SchemaType } from '../src/wire.ts';
+import {
+  isGrammarError,
+  relaxSchema,
+  relaxTools,
+  sanitizeSchema,
+  sanitizeTools,
+} from '../src/endpoint/schema-compat.ts';
+import { FUNCTION_TOOL, SchemaType } from '../src/wire/wire.ts';
 
 /** One function tool wrapping the parameters under test. */
 const tool = (parameters?: OpenAI.FunctionParameters): OpenAI.ChatCompletionTool => ({

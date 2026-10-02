@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentLoopOptions } from '../src/agent-loop.ts';
-import { ToolDiscovery } from '../src/config.ts';
-import { HOOK_EVENTS, HookEvent } from '../src/hook-events.ts';
+import { ToolDiscovery } from '../src/core/config.ts';
+import { HOOK_EVENTS, HookEvent } from '../src/hooks/hook-events.ts';
+import type { AgentLoopOptions } from '../src/run/agent-loop.ts';
 import {
   AGENT_SPEC,
   type AgentSpec,
@@ -10,8 +10,8 @@ import {
   type ResolvedAgent,
   resolveAgentSpec,
   SPEC_EVENTS,
-} from '../src/spec.ts';
-import { PartType } from '../src/wire.ts';
+} from '../src/spec/spec.ts';
+import { PartType } from '../src/wire/wire.ts';
 
 /** A document that parses cleanly, which each test then bends in one direction. */
 const doc = (extra: Record<string, unknown> = {}) => ({ spec: AGENT_SPEC, ...extra });

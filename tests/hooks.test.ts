@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HookEvent } from '../src/hook-events.ts';
+import { HookEvent } from '../src/hooks/hook-events.ts';
 import {
   assembleContext,
   configureHooks,
@@ -16,8 +16,8 @@ import {
   UNTRUSTED_PREFACE,
   untrusted,
   withContext,
-} from '../src/hooks.ts';
-import { FUNCTION_TOOL, PartType, Role } from '../src/wire.ts';
+} from '../src/hooks/hooks.ts';
+import { FUNCTION_TOOL, PartType, Role } from '../src/wire/wire.ts';
 import { outcome } from './helpers.ts';
 
 /**

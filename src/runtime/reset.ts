@@ -1,9 +1,9 @@
-import { resetCalibration } from './calibration.ts';
-import { resetCapabilities } from './capabilities.ts';
-import { resetClients } from './client.ts';
-import { resetEvents } from './events.ts';
-import { resetHooks } from './hooks.ts';
-import { resetHints } from './side-task.ts';
+import { resetCalibration } from '../endpoint/calibration.ts';
+import { resetCapabilities } from '../endpoint/capabilities.ts';
+import { resetClients } from '../endpoint/client.ts';
+import { resetHooks } from '../hooks/hooks.ts';
+import { resetEvents } from '../run/events.ts';
+import { resetHints } from '../turn/side-task.ts';
 
 /**
  * Forgets everything this package remembers between calls.

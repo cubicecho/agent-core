@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { capabilitiesFor, negotiate, resetCapabilities } from '../src/capabilities.ts';
-import { streamTurn } from '../src/stream.ts';
+import { capabilitiesFor, negotiate, resetCapabilities } from '../src/endpoint/capabilities.ts';
+import { streamTurn } from '../src/wire/stream.ts';
 import { clientOf, text } from './helpers.ts';
 import { NO_GRAMMAR } from './refusals.ts';
 

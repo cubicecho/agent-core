@@ -1,8 +1,8 @@
 import type OpenAI from 'openai';
+import { byCodeUnit, isRecord } from '../core/guards.ts';
+import { ARGUMENT_PREVIEW_CHARS } from '../wire/tool-calls.ts';
+import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
 import type { CatalogServer } from './catalog.ts';
-import { byCodeUnit, isRecord } from './guards.ts';
-import { ARGUMENT_PREVIEW_CHARS } from './tool-calls.ts';
-import { FUNCTION_TOOL, SchemaType } from './wire.ts';
 
 /**
  * On-demand tool loading.

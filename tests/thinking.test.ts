@@ -6,7 +6,7 @@ import {
   SPLIT_REASONING,
   type Split,
   stripThinking,
-} from '../src/thinking.ts';
+} from '../src/wire/thinking.ts';
 
 /** Every piece fed in one at a time, with what came out of each push and of the finish. */
 const split = (pieces: string[], splitter = new FenceSplitter()) => {

@@ -1,36 +1,26 @@
 import type OpenAI from 'openai';
-import { charsPerTokenFor } from './calibration.ts';
+import { type CompactionOptions, compactTranscript, planCompaction, summariser } from '../context/compaction.ts';
+import {
+  breakReason,
+  type LedgerRequest,
+  type RequestShape,
+  rebaseLedger,
+  recordRequest,
+  type TokenLedger,
+} from '../context/ledger.ts';
+import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from '../core/config.ts';
+import { ToolDiscovery } from '../core/config.ts';
+import { counted } from '../core/guards.ts';
+import { charsPerTokenFor } from '../endpoint/calibration.ts';
 import {
   type Capabilities,
   capabilitiesFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
   type OnNotice,
-} from './capabilities.ts';
-import type { CatalogServer } from './catalog.ts';
-import { firstTokenMs, getClient, loadingMs, timeoutMs } from './client.ts';
-import { type CompactionOptions, compactTranscript, planCompaction, summariser } from './compaction.ts';
-import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from './config.ts';
-import { ToolDiscovery } from './config.ts';
-import { continueTurn } from './continuation.ts';
-import {
-  AgentLoopError,
-  type AgentLoopFailure,
-  AgentLoopOverflow,
-  errorMessage,
-  ToolIterationLimit,
-} from './errors.ts';
-import {
-  type RunEvent,
-  type RunEventInput,
-  RunEventKind,
-  type RunMetrics,
-  RunOutcome,
-  runMetrics,
-  stamp,
-} from './events.ts';
-import { counted } from './guards.ts';
-import { HookEvent } from './hook-events.ts';
+} from '../endpoint/capabilities.ts';
+import { firstTokenMs, getClient, loadingMs, timeoutMs } from '../endpoint/client.ts';
+import { HookEvent } from '../hooks/hook-events.ts';
 import {
   configureHooks,
   type Gathered,
@@ -43,38 +33,9 @@ import {
   turnIndex,
   turnMessages,
   withContext,
-} from './hooks.ts';
-import {
-  breakReason,
-  type LedgerRequest,
-  type RequestShape,
-  rebaseLedger,
-  recordRequest,
-  type TokenLedger,
-} from './ledger.ts';
-import { type KeywordPreselectOptions, preselect } from './preselect.ts';
-import { buildBody } from './request-body.ts';
-import { ContextOverflow } from './retry.ts';
-import {
-  assistantMessage,
-  type Calling,
-  definedAs,
-  loadShortlist,
-  readCalls,
-  runCalls,
-  type ToolDispatch,
-} from './run-calls.ts';
-import { runTurn } from './run-turn.ts';
-import { type SideTask, taskCall, tryAsk } from './side-task.ts';
-import { addCounts, noUsage, type Turn, type TurnUsage } from './stream.ts';
-import { contextTokens, toolsChars } from './tokens.ts';
-import {
-  recoverToolCalls,
-  type ToolCall,
-  type ToolCallOutcome,
-  type ToolCallRequest,
-  type ToolCallResult,
-} from './tool-calls.ts';
+} from '../hooks/hooks.ts';
+import type { CatalogServer } from '../tools/catalog.ts';
+import { type KeywordPreselectOptions, preselect } from '../tools/preselect.ts';
 import {
   CALL_TOOL,
   catalogPrompt,
@@ -87,8 +48,47 @@ import {
   proxyCatalogPrompt,
   type ToolOrder,
   toolName,
-} from './tool-loading.ts';
-import { FinishReason, PartType, Role } from './wire.ts';
+} from '../tools/tool-loading.ts';
+import { continueTurn } from '../turn/continuation.ts';
+import { runTurn } from '../turn/run-turn.ts';
+import { type SideTask, taskCall, tryAsk } from '../turn/side-task.ts';
+import {
+  AgentLoopError,
+  type AgentLoopFailure,
+  AgentLoopOverflow,
+  errorMessage,
+  ToolIterationLimit,
+} from '../wire/errors.ts';
+import { ContextOverflow } from '../wire/retry.ts';
+import { addCounts, noUsage, type Turn, type TurnUsage } from '../wire/stream.ts';
+import { contextTokens, toolsChars } from '../wire/tokens.ts';
+import {
+  recoverToolCalls,
+  type ToolCall,
+  type ToolCallOutcome,
+  type ToolCallRequest,
+  type ToolCallResult,
+} from '../wire/tool-calls.ts';
+import { FinishReason, PartType, Role } from '../wire/wire.ts';
+import {
+  type RunEvent,
+  type RunEventInput,
+  RunEventKind,
+  type RunMetrics,
+  RunOutcome,
+  runMetrics,
+  stamp,
+} from './events.ts';
+import { buildBody } from './request-body.ts';
+import {
+  assistantMessage,
+  type Calling,
+  definedAs,
+  loadShortlist,
+  readCalls,
+  runCalls,
+  type ToolDispatch,
+} from './run-calls.ts';
 
 /**
  * The loop above a turn: send, run the tools the model asked for, send again, until it stops

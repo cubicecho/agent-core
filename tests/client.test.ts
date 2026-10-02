@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HttpStatus } from '../src/wire.ts';
+import { HttpStatus } from '../src/wire/wire.ts';
 import { endpoint } from './helpers.ts';
 
 const list = vi.fn();
@@ -20,7 +20,7 @@ const {
   NO_KEY,
   resetClients,
   resolveApiKey,
-} = await import('../src/client.ts');
+} = await import('../src/endpoint/client.ts');
 
 /** What a listing endpoint answers with: the OpenAI shape plus whatever window key it uses. */
 const listing = (...models: ({ id: string } & Record<string, unknown>)[]) => ({ data: models });

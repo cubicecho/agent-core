@@ -1,10 +1,10 @@
+import type { EndpointIdentity } from '../core/config.ts';
+import { getOrCreate } from '../core/guards.ts';
+import { scoped } from '../core/scope.ts';
+import { errorMessage } from '../wire/errors.ts';
+import type { Produced } from '../wire/stream.ts';
 import { endpointId } from './client.ts';
-import type { EndpointIdentity } from './config.ts';
-import { errorMessage } from './errors.ts';
-import { getOrCreate } from './guards.ts';
 import { isGrammarError } from './schema-compat.ts';
-import { scoped } from './scope.ts';
-import type { Produced } from './stream.ts';
 
 /**
  * What an endpoint turned out not to support, and answering it when it says so.

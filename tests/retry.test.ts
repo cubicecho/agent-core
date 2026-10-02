@@ -1,6 +1,14 @@
 import OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
-import { backoffMs, ContextOverflow, EndpointSilent, isAbort, isOverflow, isTransient, sleep } from '../src/retry.ts';
+import {
+  backoffMs,
+  ContextOverflow,
+  EndpointSilent,
+  isAbort,
+  isOverflow,
+  isTransient,
+  sleep,
+} from '../src/wire/retry.ts';
 import { apiError } from './helpers.ts';
 
 describe('isTransient', () => {

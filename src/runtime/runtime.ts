@@ -1,6 +1,7 @@
-import { runAgentLoop } from './agent-loop.ts';
-import { calibrate, charsPerTokenFor, resetCalibration } from './calibration.ts';
-import { capabilitiesFor, expireCapabilities, resetCapabilities } from './capabilities.ts';
+import { compactTranscript, runCompaction, summariser } from '../context/compaction.ts';
+import { inScope, rootScope, type Scope } from '../core/scope.ts';
+import { calibrate, charsPerTokenFor, resetCalibration } from '../endpoint/calibration.ts';
+import { capabilitiesFor, expireCapabilities, resetCapabilities } from '../endpoint/capabilities.ts';
 import {
   type ClientPoolOptions,
   configureClients,
@@ -9,10 +10,7 @@ import {
   listModels,
   resetClients,
   servedWindow,
-} from './client.ts';
-import { compactTranscript, runCompaction, summariser } from './compaction.ts';
-import { continueTurn } from './continuation.ts';
-import { configureEvents, type EventBusOptions, emit, endRun, history, resetEvents, watch } from './events.ts';
+} from '../endpoint/client.ts';
 import {
   assembleContext,
   configureHooks,
@@ -22,12 +20,14 @@ import {
   notify,
   resetHooks,
   withContext,
-} from './hooks.ts';
-import { preselect } from './preselect.ts';
+} from '../hooks/hooks.ts';
+import { runAgentLoop } from '../run/agent-loop.ts';
+import { configureEvents, type EventBusOptions, emit, endRun, history, resetEvents, watch } from '../run/events.ts';
+import { preselect } from '../tools/preselect.ts';
+import { continueTurn } from '../turn/continuation.ts';
+import { runTurn } from '../turn/run-turn.ts';
+import { ask, askJson, resetHints, tryAsk } from '../turn/side-task.ts';
 import { resetAll } from './reset.ts';
-import { runTurn } from './run-turn.ts';
-import { inScope, rootScope, type Scope } from './scope.ts';
-import { ask, askJson, resetHints, tryAsk } from './side-task.ts';
 import { exportCapabilities, importCapabilities } from './snapshot.ts';
 
 /**

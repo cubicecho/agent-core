@@ -1,8 +1,8 @@
 import type OpenAI from 'openai';
-import { calibrate, charsPerTokenFor } from './calibration.ts';
-import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from './capabilities.ts';
-import { errorMessage } from './errors.ts';
-import { MS_PER_SECOND } from './platform.ts';
+import { MS_PER_SECOND } from '../core/platform.ts';
+import { calibrate, charsPerTokenFor } from '../endpoint/calibration.ts';
+import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from '../endpoint/capabilities.ts';
+import { errorMessage } from '../wire/errors.ts';
 import {
   backoffMs,
   ContextOverflow,
@@ -14,9 +14,9 @@ import {
   LOADING_TIMEOUT_MS,
   SMALLEST_LIKELY_WINDOW,
   sleep,
-} from './retry.ts';
-import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from './stream.ts';
-import { compact, requestTokens } from './tokens.ts';
+} from '../wire/retry.ts';
+import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from '../wire/stream.ts';
+import { compact, requestTokens } from '../wire/tokens.ts';
 
 /**
  * One turn, given as many attempts as the caller allows.

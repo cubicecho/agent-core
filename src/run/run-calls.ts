@@ -1,16 +1,5 @@
 import type OpenAI from 'openai';
-import type { CatalogServer } from './catalog.ts';
-import { errorMessage } from './errors.ts';
-import type { RunEventInput } from './events.ts';
-import { RunEventKind } from './events.ts';
-import type { Turn } from './stream.ts';
-import {
-  parseToolArguments,
-  type ToolCall,
-  type ToolCallOutcome,
-  type ToolCallRequest,
-  type ToolCallResult,
-} from './tool-calls.ts';
+import type { CatalogServer } from '../tools/catalog.ts';
 import {
   CALL_TOOL,
   expandNames,
@@ -22,8 +11,19 @@ import {
   requestedNames,
   shownCall,
   toolName,
-} from './tool-loading.ts';
-import { FUNCTION_TOOL, Role } from './wire.ts';
+} from '../tools/tool-loading.ts';
+import { errorMessage } from '../wire/errors.ts';
+import type { Turn } from '../wire/stream.ts';
+import {
+  parseToolArguments,
+  type ToolCall,
+  type ToolCallOutcome,
+  type ToolCallRequest,
+  type ToolCallResult,
+} from '../wire/tool-calls.ts';
+import { FUNCTION_TOOL, Role } from '../wire/wire.ts';
+import type { RunEventInput } from './events.ts';
+import { RunEventKind } from './events.ts';
 
 /**
  * The tools between two turns: a step's calls read, run and written into the transcript.

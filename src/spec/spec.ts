@@ -1,6 +1,6 @@
-import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS, ToolDiscovery } from './config.ts';
-import { isRecord } from './guards.ts';
-import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from './hook-events.ts';
+import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS, ToolDiscovery } from '../core/config.ts';
+import { isRecord } from '../core/guards.ts';
+import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.

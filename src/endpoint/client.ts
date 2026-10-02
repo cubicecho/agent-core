@@ -1,10 +1,10 @@
 import OpenAI from 'openai';
-import type { Endpoint, EndpointIdentity, RetryPolicy } from './config.ts';
-import { digestOf } from './digest.ts';
-import { byCodeUnit, isPositive } from './guards.ts';
-import { MS_PER_SECOND } from './platform.ts';
-import { assignSettings, scoped } from './scope.ts';
-import { HttpStatus } from './wire.ts';
+import type { Endpoint, EndpointIdentity, RetryPolicy } from '../core/config.ts';
+import { digestOf } from '../core/digest.ts';
+import { byCodeUnit, isPositive } from '../core/guards.ts';
+import { MS_PER_SECOND } from '../core/platform.ts';
+import { assignSettings, scoped } from '../core/scope.ts';
+import { HttpStatus } from '../wire/wire.ts';
 
 /**
  * The SDK insists on a non-empty key even where the server will not look at it. This is what it

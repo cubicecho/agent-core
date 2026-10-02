@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { preview } from '../src/run-calls.ts';
+import { preview } from '../src/run/run-calls.ts';
 
 describe('preview', () => {
   it('cuts long text and says how long it was', () => {

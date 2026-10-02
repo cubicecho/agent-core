@@ -1,19 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CatalogServer } from '../src/catalog.ts';
-import { MAX_PER_LOAD } from '../src/tool-loading.ts';
-import { JSON_SCHEMA_FORMAT } from '../src/wire.ts';
+import type { CatalogServer } from '../src/tools/catalog.ts';
+import { MAX_PER_LOAD } from '../src/tools/tool-loading.ts';
+import { JSON_SCHEMA_FORMAT } from '../src/wire/wire.ts';
 import { catalog, config } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
-vi.mock('../src/client.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/client.ts')>()),
+vi.mock('../src/endpoint/client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
 const { PRESELECT_SYSTEM, preselect, preselectByKeywords, preselectInput, preselection, preselectSystem } =
-  await import('../src/preselect.ts');
-const { resetCapabilities } = await import('../src/capabilities.ts');
+  await import('../src/tools/preselect.ts');
+const { resetCapabilities } = await import('../src/endpoint/capabilities.ts');
 
 beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());

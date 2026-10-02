@@ -12,10 +12,10 @@ import {
   resetEvents,
   runMetrics,
   watch,
-} from '../src/events.ts';
-import { CacheBreakReason } from '../src/stream.ts';
-import { LOAD_TOOLS } from '../src/tool-loading.ts';
-import { FinishReason } from '../src/wire.ts';
+} from '../src/run/events.ts';
+import { LOAD_TOOLS } from '../src/tools/tool-loading.ts';
+import { CacheBreakReason } from '../src/wire/stream.ts';
+import { FinishReason } from '../src/wire/wire.ts';
 
 beforeEach(() => resetEvents());
 afterEach(() => {

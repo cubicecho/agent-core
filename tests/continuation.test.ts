@@ -1,9 +1,9 @@
 import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
-import { continueTurn, isContinuable } from '../src/continuation.ts';
-import type { Turn } from '../src/stream.ts';
-import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire.ts';
+import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/endpoint/capabilities.ts';
+import { continueTurn, isContinuable } from '../src/turn/continuation.ts';
+import type { Turn } from '../src/wire/stream.ts';
+import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire/wire.ts';
 import { apiError, type Body, chunks, clientOf } from './helpers.ts';
 
 /** A reply that says this, stops for this reason, and reports these counts and timings. */

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { ABORT_ERROR, ABORT_EVENT } from './platform.ts';
+import { ABORT_ERROR, ABORT_EVENT } from '../core/platform.ts';
 import { HttpStatus } from './wire.ts';
 
 /**

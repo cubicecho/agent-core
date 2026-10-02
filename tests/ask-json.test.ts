@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { JSON_SCHEMA_FORMAT, SchemaType } from '../src/wire.ts';
+import { JSON_SCHEMA_FORMAT, SchemaType } from '../src/wire/wire.ts';
 import { answer, apiError } from './helpers.ts';
 
 const create = vi.fn();
-vi.mock('../src/client.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/client.ts')>()),
+vi.mock('../src/endpoint/client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { askJson } = await import('../src/side-task.ts');
-const { capabilitiesFor, modelCapabilitiesFor } = await import('../src/capabilities.ts');
-const { resetAll } = await import('../src/reset.ts');
+const { askJson } = await import('../src/turn/side-task.ts');
+const { capabilitiesFor, modelCapabilitiesFor } = await import('../src/endpoint/capabilities.ts');
+const { resetAll } = await import('../src/runtime/reset.ts');
 
 const config = { baseUrl: 'http://box/v1', apiKey: '', requestTimeoutSeconds: 60 };
 const refusal = (message: string) => apiError(400, message);

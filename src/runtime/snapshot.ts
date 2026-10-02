@@ -1,13 +1,13 @@
+import { isRecord } from '../core/guards.ts';
 import {
   capabilitiesById,
   knownCapabilities,
   MODEL_FLAGS,
   modelCapabilitiesFor,
   OPTIMISTIC_MODEL,
-} from './capabilities.ts';
-import { modelKey } from './client.ts';
-import { isRecord } from './guards.ts';
-import { refusedHints } from './side-task.ts';
+} from '../endpoint/capabilities.ts';
+import { modelKey } from '../endpoint/client.ts';
+import { refusedHints } from '../turn/side-task.ts';
 
 /**
  * What endpoints and models refused, carried across a restart.

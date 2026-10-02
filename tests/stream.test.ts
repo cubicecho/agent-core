@@ -1,8 +1,8 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EndpointSilent } from '../src/retry.ts';
-import { streamTurn } from '../src/stream.ts';
-import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire.ts';
+import { EndpointSilent } from '../src/wire/retry.ts';
+import { streamTurn } from '../src/wire/stream.ts';
+import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire/wire.ts';
 import { type Chunk, chunk, chunks, clientOf, text } from './helpers.ts';
 
 /**

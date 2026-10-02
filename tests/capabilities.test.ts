@@ -8,8 +8,8 @@ import {
   modelCapabilitiesFor,
   negotiate,
   resetCapabilities,
-} from '../src/capabilities.ts';
-import type { Produced } from '../src/stream.ts';
+} from '../src/endpoint/capabilities.ts';
+import type { Produced } from '../src/wire/stream.ts';
 import { apiError } from './helpers.ts';
 import { NO_EFFORT, NO_GRAMMAR, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from './refusals.ts';
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RunEventKind } from '../src/events.ts';
-import { Role } from '../src/wire.ts';
+import { RunEventKind } from '../src/run/events.ts';
+import { Role } from '../src/wire/wire.ts';
 import { endpoint, reply } from './helpers.ts';
 
 const list = vi.fn();
@@ -19,13 +19,13 @@ vi.mock('openai', async () => {
 });
 
 const OpenAI = (await import('openai')).default;
-const { configureClients, getClient } = await import('../src/client.ts');
-const { capabilitiesFor } = await import('../src/capabilities.ts');
-const { emit, history } = await import('../src/events.ts');
-const { configureHooks, HOOK_PREFACE } = await import('../src/hooks.ts');
-const { ask } = await import('../src/side-task.ts');
-const { resetAll } = await import('../src/reset.ts');
-const { calibrate, charsPerTokenFor } = await import('../src/calibration.ts');
+const { configureClients, getClient } = await import('../src/endpoint/client.ts');
+const { capabilitiesFor } = await import('../src/endpoint/capabilities.ts');
+const { emit, history } = await import('../src/run/events.ts');
+const { configureHooks, HOOK_PREFACE } = await import('../src/hooks/hooks.ts');
+const { ask } = await import('../src/turn/side-task.ts');
+const { resetAll } = await import('../src/runtime/reset.ts');
+const { calibrate, charsPerTokenFor } = await import('../src/endpoint/calibration.ts');
 
 /** Whether the no-thinking hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];

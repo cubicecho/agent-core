@@ -8,13 +8,13 @@ const create = vi.fn();
  * it is pure — `endpointKey` is what every cache in this package agrees an endpoint is — and a
  * blanket mock takes those out from under the modules under test too.
  */
-vi.mock('../src/client.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/client.ts')>()),
+vi.mock('../src/endpoint/client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { ask, resetHints } = await import('../src/side-task.ts');
-const { modelCapabilitiesFor, capabilitiesFor, resetCapabilities } = await import('../src/capabilities.ts');
+const { ask, resetHints } = await import('../src/turn/side-task.ts');
+const { modelCapabilitiesFor, capabilitiesFor, resetCapabilities } = await import('../src/endpoint/capabilities.ts');
 
 const endpoint = (baseUrl: string) => ({ baseUrl, apiKey: '', requestTimeoutSeconds: 60 });
 const call = (config: ReturnType<typeof endpoint>, model = 'm') => ask(config, model, 'system', 'user');

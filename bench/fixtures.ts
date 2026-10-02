@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
-import type { RunEvent } from '../src/events.ts';
-import { RunEventKind } from '../src/events.ts';
-import { FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
+import type { RunEvent } from '../src/run/events.ts';
+import { RunEventKind } from '../src/run/events.ts';
+import { FUNCTION_TOOL, Role, SchemaType } from '../src/wire/wire.ts';
 
 /**
  * Shapes big enough for the costs to show.

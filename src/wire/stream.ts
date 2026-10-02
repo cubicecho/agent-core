@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { MS_PER_SECOND } from './platform.ts';
+import { MS_PER_SECOND } from '../core/platform.ts';
 import { EndpointSilent } from './retry.ts';
 import { DEFAULT_FENCES, type Fence, FenceSplitter, SPLIT_REASONING, type Split } from './thinking.ts';
 import type { ContextBreakdown } from './tokens.ts';

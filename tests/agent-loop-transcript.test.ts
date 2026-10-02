@@ -1,23 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ToolDiscovery } from '../src/config.ts';
-import { FinishReason, Role } from '../src/wire.ts';
+import { ToolDiscovery } from '../src/core/config.ts';
+import { FinishReason, Role } from '../src/wire/wire.ts';
 import { apiError, type Body, chunks, config, type Message, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
-vi.mock('../src/client.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/client.ts')>()),
+vi.mock('../src/endpoint/client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { runAgentLoop } = await import('../src/agent-loop.ts');
-const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = await import('../src/errors.ts');
-const { ContextOverflow } = await import('../src/retry.ts');
-const { resetCapabilities } = await import('../src/capabilities.ts');
-const { CALL_TOOL, LOAD_TOOLS } = await import('../src/tool-loading.ts');
+const { runAgentLoop } = await import('../src/run/agent-loop.ts');
+const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = await import('../src/wire/errors.ts');
+const { ContextOverflow } = await import('../src/wire/retry.ts');
+const { resetCapabilities } = await import('../src/endpoint/capabilities.ts');
+const { CALL_TOOL, LOAD_TOOLS } = await import('../src/tools/tool-loading.ts');
 
-type Turn = import('../src/stream.ts').Turn;
-type ToolCallRequest = import('../src/tool-calls.ts').ToolCallRequest;
+type Turn = import('../src/wire/stream.ts').Turn;
+type ToolCallRequest = import('../src/wire/tool-calls.ts').ToolCallRequest;
 
 /** A turn that asks for these calls, thinking first where told to, and reports what it cost. */
 const calls = (list: [name: string, args: string][], reasoning = '') =>

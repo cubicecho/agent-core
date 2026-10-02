@@ -1,10 +1,10 @@
 import type OpenAI from 'openai';
-import { type Capabilities, modelCapabilitiesFor } from './capabilities.ts';
-import { errorMessage } from './errors.ts';
-import { ContextOverflow, refusesRequest } from './retry.ts';
+import { type Capabilities, modelCapabilitiesFor } from '../endpoint/capabilities.ts';
+import { errorMessage } from '../wire/errors.ts';
+import { ContextOverflow, refusesRequest } from '../wire/retry.ts';
+import { addCounts, type Turn, type TurnUsage } from '../wire/stream.ts';
+import { FinishReason, Role } from '../wire/wire.ts';
 import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from './run-turn.ts';
-import { addCounts, type Turn, type TurnUsage } from './stream.ts';
-import { FinishReason, Role } from './wire.ts';
 
 /**
  * Picking up an answer the token ceiling cut off, instead of keeping half of it.

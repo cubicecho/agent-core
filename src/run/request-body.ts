@@ -1,8 +1,13 @@
 import type OpenAI from 'openai';
-import { type Capabilities, ceilingAndTemperature, effortFor, type ModelCapabilities } from './capabilities.ts';
-import { type ModelParams, RESERVED_BODY_FIELDS } from './config.ts';
-import { relaxTools, sanitizeTools } from './schema-compat.ts';
-import { orderTools, type ToolOrder } from './tool-loading.ts';
+import { type ModelParams, RESERVED_BODY_FIELDS } from '../core/config.ts';
+import {
+  type Capabilities,
+  ceilingAndTemperature,
+  effortFor,
+  type ModelCapabilities,
+} from '../endpoint/capabilities.ts';
+import { relaxTools, sanitizeTools } from '../endpoint/schema-compat.ts';
+import { orderTools, type ToolOrder } from '../tools/tool-loading.ts';
 
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and

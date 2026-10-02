@@ -1,9 +1,9 @@
 import type OpenAI from 'openai';
+import { getOrCreate } from '../core/guards.ts';
+import { scoped } from '../core/scope.ts';
+import { CHARS_PER_TOKEN, requestChars, toolsChars } from '../wire/tokens.ts';
+import { PartType } from '../wire/wire.ts';
 import type { Capabilities } from './capabilities.ts';
-import { getOrCreate } from './guards.ts';
-import { scoped } from './scope.ts';
-import { CHARS_PER_TOKEN, requestChars, toolsChars } from './tokens.ts';
-import { PartType } from './wire.ts';
 
 /**
  * How many characters a token is worth on one model, learned from what its endpoint reports.

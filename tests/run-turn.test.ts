@@ -1,9 +1,9 @@
 import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
-import { ContextOverflow, EndpointSilent } from '../src/retry.ts';
-import { runTurn } from '../src/run-turn.ts';
-import { Role } from '../src/wire.ts';
+import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/endpoint/capabilities.ts';
+import { runTurn } from '../src/turn/run-turn.ts';
+import { ContextOverflow, EndpointSilent } from '../src/wire/retry.ts';
+import { Role } from '../src/wire/wire.ts';
 import { apiError, chunk, chunks, clientOf, text } from './helpers.ts';
 
 /** Lost rather than refused: nothing about the request, and the only thing worth waiting out. */

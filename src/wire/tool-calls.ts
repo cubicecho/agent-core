@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { isRecord } from './guards.ts';
+import { isRecord } from '../core/guards.ts';
 import { THINK_FENCE } from './thinking.ts';
 import { FinishReason, FUNCTION_TOOL } from './wire.ts';
 

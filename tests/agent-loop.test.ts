@@ -1,34 +1,34 @@
 import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PRESELECT_APPEND } from '../src/agent-loop.ts';
-import { ToolDiscovery } from '../src/config.ts';
-import { RunEventKind, RunOutcome } from '../src/events.ts';
-import { HookEvent } from '../src/hook-events.ts';
-import type { HookOutcome, HookRunner } from '../src/hooks.ts';
-import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
+import { ToolDiscovery } from '../src/core/config.ts';
+import { HookEvent } from '../src/hooks/hook-events.ts';
+import type { HookOutcome, HookRunner } from '../src/hooks/hooks.ts';
+import { PRESELECT_APPEND } from '../src/run/agent-loop.ts';
+import { RunEventKind, RunOutcome } from '../src/run/events.ts';
+import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire/wire.ts';
 import { apiError, type Body, chunks, config, type Message, outcome, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
-vi.mock('../src/client.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/client.ts')>()),
+vi.mock('../src/endpoint/client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { runAgentLoop } = await import('../src/agent-loop.ts');
-const { preview } = await import('../src/run-calls.ts');
-const { resetCapabilities } = await import('../src/capabilities.ts');
-const { CALL_TOOL, LOAD_TOOLS } = await import('../src/tool-loading.ts');
-const { configureHooks, resetHooks, withContext } = await import('../src/hooks.ts');
-const { tokensBetween } = await import('../src/ledger.ts');
+const { runAgentLoop } = await import('../src/run/agent-loop.ts');
+const { preview } = await import('../src/run/run-calls.ts');
+const { resetCapabilities } = await import('../src/endpoint/capabilities.ts');
+const { CALL_TOOL, LOAD_TOOLS } = await import('../src/tools/tool-loading.ts');
+const { configureHooks, resetHooks, withContext } = await import('../src/hooks/hooks.ts');
+const { tokensBetween } = await import('../src/context/ledger.ts');
 
-type Turn = import('../src/stream.ts').Turn;
-type ToolCall = import('../src/tool-calls.ts').ToolCall;
-type ToolCallRequest = import('../src/tool-calls.ts').ToolCallRequest;
-type AgentLoopRequest = import('../src/agent-loop.ts').AgentLoopRequest;
-type ToolCallResult = import('../src/tool-calls.ts').ToolCallResult;
-type RunEventInput = import('../src/events.ts').RunEventInput;
-type RunUsage = import('../src/events.ts').RunUsage;
+type Turn = import('../src/wire/stream.ts').Turn;
+type ToolCall = import('../src/wire/tool-calls.ts').ToolCall;
+type ToolCallRequest = import('../src/wire/tool-calls.ts').ToolCallRequest;
+type AgentLoopRequest = import('../src/run/agent-loop.ts').AgentLoopRequest;
+type ToolCallResult = import('../src/wire/tool-calls.ts').ToolCallResult;
+type RunEventInput = import('../src/run/events.ts').RunEventInput;
+type RunUsage = import('../src/run/events.ts').RunUsage;
 
 /** A turn that asks for these calls. */
 const calls = (...list: [name: string, args: string][]) =>

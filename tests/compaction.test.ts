@@ -8,11 +8,11 @@ import {
   runCompaction,
   SUMMARY_LEAD,
   summaryInput,
-} from '../src/compaction.ts';
-import { HookEvent } from '../src/hook-events.ts';
-import { type HookRunner, turnMessages } from '../src/hooks.ts';
-import { expandNames, loadResult, proxyLoadResult } from '../src/tool-loading.ts';
-import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
+} from '../src/context/compaction.ts';
+import { HookEvent } from '../src/hooks/hook-events.ts';
+import { type HookRunner, turnMessages } from '../src/hooks/hooks.ts';
+import { expandNames, loadResult, proxyLoadResult } from '../src/tools/tool-loading.ts';
+import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire/wire.ts';
 import { assistant, type Message, outcome, result, user } from './helpers.ts';
 
 /** Every message costs ten, so the arithmetic below can be read off the counts. */

@@ -1,8 +1,8 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it } from 'vitest';
-import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
-import { buildBody } from '../src/request-body.ts';
-import { FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
+import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/endpoint/capabilities.ts';
+import { buildBody } from '../src/run/request-body.ts';
+import { FUNCTION_TOOL, Role, SchemaType } from '../src/wire/wire.ts';
 import { type Body, config, type Message, tool } from './helpers.ts';
 
 afterEach(() => resetCapabilities());

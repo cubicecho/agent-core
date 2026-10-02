@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planCompaction } from '../src/compaction.ts';
+import { planCompaction } from '../src/context/compaction.ts';
 import {
   estimateFrom,
   type LedgerRequest,
@@ -7,9 +7,9 @@ import {
   recordRequest,
   type TokenLedger,
   tokensBetween,
-} from '../src/ledger.ts';
-import { messageChars } from '../src/tokens.ts';
-import { Role } from '../src/wire.ts';
+} from '../src/context/ledger.ts';
+import { messageChars } from '../src/wire/tokens.ts';
+import { Role } from '../src/wire/wire.ts';
 import { assistant, type Message, result, user } from './helpers.ts';
 
 /** Every unmeasured message costs seven, so an estimate is easy to tell from a measurement. */

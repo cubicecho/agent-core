@@ -1,11 +1,19 @@
 import type OpenAI from 'openai';
-import type { Endpoint } from './config.ts';
-import { HookEvent } from './hook-events.ts';
-import { consult, type HookContext, type HookRunner, notify, type OnNote, textOf, turnMessages } from './hooks.ts';
-import { ask, type SideTaskOptions } from './side-task.ts';
-import { messageTokens } from './tokens.ts';
-import { holdsDefinitions } from './tool-loading.ts';
-import { FUNCTION_TOOL, Role } from './wire.ts';
+import type { Endpoint } from '../core/config.ts';
+import { HookEvent } from '../hooks/hook-events.ts';
+import {
+  consult,
+  type HookContext,
+  type HookRunner,
+  notify,
+  type OnNote,
+  textOf,
+  turnMessages,
+} from '../hooks/hooks.ts';
+import { holdsDefinitions } from '../tools/tool-loading.ts';
+import { ask, type SideTaskOptions } from '../turn/side-task.ts';
+import { messageTokens } from '../wire/tokens.ts';
+import { FUNCTION_TOOL, Role } from '../wire/wire.ts';
 
 /**
  * Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded

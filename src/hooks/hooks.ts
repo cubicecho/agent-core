@@ -1,11 +1,11 @@
 import type OpenAI from 'openai';
-import { digestOf } from './digest.ts';
-import { errorMessage } from './errors.ts';
-import { isPositive } from './guards.ts';
+import { digestOf } from '../core/digest.ts';
+import { isPositive } from '../core/guards.ts';
+import { assignSettings, scoped } from '../core/scope.ts';
+import { errorMessage } from '../wire/errors.ts';
+import { CHARS_PER_TOKEN, estimateTokens } from '../wire/tokens.ts';
+import { PartType, Role } from '../wire/wire.ts';
 import { type HookEvent, INJECT_EVENTS } from './hook-events.ts';
-import { assignSettings, scoped } from './scope.ts';
-import { CHARS_PER_TOKEN, estimateTokens } from './tokens.ts';
-import { PartType, Role } from './wire.ts';
 
 /**
  * Lifecycle hooks, from the host's side: what a session looks like to them, where their context

@@ -8,8 +8,8 @@ import {
   messageTokens,
   requestTokens,
   toolsChars,
-} from '../src/tokens.ts';
-import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
+} from '../src/wire/tokens.ts';
+import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire/wire.ts';
 
 describe('requestTokens', () => {
   it('sizes a request from what is actually sent, tools included', () => {

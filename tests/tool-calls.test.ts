@@ -5,8 +5,8 @@ import {
   parseToolArguments,
   recoverToolCalls,
   ToolArgumentsError,
-} from '../src/tool-calls.ts';
-import { FinishReason, FUNCTION_TOOL } from '../src/wire.ts';
+} from '../src/wire/tool-calls.ts';
+import { FinishReason, FUNCTION_TOOL } from '../src/wire/wire.ts';
 
 describe('parseToolArguments', () => {
   it('reads an object, and reads empty as none', () => {

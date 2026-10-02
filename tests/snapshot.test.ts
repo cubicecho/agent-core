@@ -2,16 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiError, reply } from './helpers.ts';
 
 const create = vi.fn();
-vi.mock('../src/client.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/client.ts')>()),
+vi.mock('../src/endpoint/client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { capabilitiesFor, modelCapabilitiesFor } = await import('../src/capabilities.ts');
-const { endpointId } = await import('../src/client.ts');
-const { resetAll } = await import('../src/reset.ts');
-const { ask } = await import('../src/side-task.ts');
-const { CAPABILITY_SNAPSHOT_VERSION, exportCapabilities, importCapabilities } = await import('../src/snapshot.ts');
+const { capabilitiesFor, modelCapabilitiesFor } = await import('../src/endpoint/capabilities.ts');
+const { endpointId } = await import('../src/endpoint/client.ts');
+const { resetAll } = await import('../src/runtime/reset.ts');
+const { ask } = await import('../src/turn/side-task.ts');
+const { CAPABILITY_SNAPSHOT_VERSION, exportCapabilities, importCapabilities } = await import(
+  '../src/runtime/snapshot.ts'
+);
 
 const config = { baseUrl: 'http://box/v1', apiKey: 'sk-secret', requestTimeoutSeconds: 60 };
 const refuseHints = apiError(400, 'no');

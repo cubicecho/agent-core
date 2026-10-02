@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CatalogServer } from '../src/catalog.ts';
+import type { CatalogServer } from '../src/tools/catalog.ts';
 import {
   CALL_TOOL,
   carryOver,
@@ -19,8 +19,8 @@ import {
   proxyLoadResult,
   requestedNames,
   shownCall,
-} from '../src/tool-loading.ts';
-import { FUNCTION_TOOL, SchemaType } from '../src/wire.ts';
+} from '../src/tools/tool-loading.ts';
+import { FUNCTION_TOOL, SchemaType } from '../src/wire/wire.ts';
 import { catalog, catalogTool } from './helpers.ts';
 
 describe('expandNames and loadResult', () => {

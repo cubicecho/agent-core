@@ -1,4 +1,6 @@
 import type OpenAI from 'openai';
+import type { Endpoint, EndpointIdentity } from '../core/config.ts';
+import { scoped } from '../core/scope.ts';
 import {
   type Capabilities,
   capabilitiesFor,
@@ -9,16 +11,14 @@ import {
   modelCapabilitiesFor,
   negotiate,
   type OnNotice,
-} from './capabilities.ts';
-import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from './client.ts';
-import type { Endpoint, EndpointIdentity } from './config.ts';
-import { errorMessage } from './errors.ts';
-import { isAbort, refusesRequest } from './retry.ts';
-import { relaxSchema, sanitizeSchema } from './schema-compat.ts';
-import { scoped } from './scope.ts';
-import { stripThinking } from './thinking.ts';
-import { CODE_FENCE, looseJson } from './tool-calls.ts';
-import { JSON_SCHEMA_FORMAT, Role } from './wire.ts';
+} from '../endpoint/capabilities.ts';
+import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from '../endpoint/client.ts';
+import { relaxSchema, sanitizeSchema } from '../endpoint/schema-compat.ts';
+import { errorMessage } from '../wire/errors.ts';
+import { isAbort, refusesRequest } from '../wire/retry.ts';
+import { stripThinking } from '../wire/thinking.ts';
+import { CODE_FENCE, looseJson } from '../wire/tool-calls.ts';
+import { JSON_SCHEMA_FORMAT, Role } from '../wire/wire.ts';
 
 /**
  * One-shot calls that support a run without being one: picking tools, naming a session,

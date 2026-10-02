@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
-import { getOrCreate, isRecord } from './guards.ts';
-import { FUNCTION_TOOL, SchemaType } from './wire.ts';
+import { getOrCreate, isRecord } from '../core/guards.ts';
+import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
 
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.

@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
 import { describe, expect, it, vi } from 'vitest';
-import { sleep } from '../src/retry.ts';
-import { clean, listLines, parseJson, tryAsk } from '../src/side-task.ts';
-import { estimateTokens } from '../src/tokens.ts';
+import { clean, listLines, parseJson, tryAsk } from '../src/turn/side-task.ts';
+import { sleep } from '../src/wire/retry.ts';
+import { estimateTokens } from '../src/wire/tokens.ts';
 
 describe('clean', () => {
   it('strips the decoration models put around a short answer', () => {

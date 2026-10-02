@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byCodeUnit, getOrCreate } from '../src/guards.ts';
+import { byCodeUnit, getOrCreate } from '../src/core/guards.ts';
 
 describe('byCodeUnit', () => {
   it('puts a capital before a lowercase letter, as their code units stand', () => {

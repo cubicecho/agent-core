@@ -1,8 +1,8 @@
 import type OpenAI from 'openai';
-import type { TurnUsage } from './stream.ts';
-import { CacheBreakReason } from './stream.ts';
-import { messageChars, messageTokens, type TokenEstimateOptions } from './tokens.ts';
-import { Role } from './wire.ts';
+import type { TurnUsage } from '../wire/stream.ts';
+import { CacheBreakReason } from '../wire/stream.ts';
+import { messageChars, messageTokens, type TokenEstimateOptions } from '../wire/tokens.ts';
+import { Role } from '../wire/wire.ts';
 
 /**
  * What stretches of a transcript cost, read off the prompt counts the server already reported.

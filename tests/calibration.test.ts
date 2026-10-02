@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { calibrate, charsPerTokenFor, resetCalibration } from '../src/calibration.ts';
-import { capabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
-import { ContextOverflow } from '../src/retry.ts';
-import { runTurn } from '../src/run-turn.ts';
-import { CHARS_PER_TOKEN, requestChars, requestTokens, toolsChars } from '../src/tokens.ts';
-import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
+import { calibrate, charsPerTokenFor, resetCalibration } from '../src/endpoint/calibration.ts';
+import { capabilitiesFor, resetCapabilities } from '../src/endpoint/capabilities.ts';
+import { runTurn } from '../src/turn/run-turn.ts';
+import { ContextOverflow } from '../src/wire/retry.ts';
+import { CHARS_PER_TOKEN, requestChars, requestTokens, toolsChars } from '../src/wire/tokens.ts';
+import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire/wire.ts';
 import { type Body, chunks, clientOf } from './helpers.ts';
 
 const asking = (content: string, model = 'm'): Body => ({

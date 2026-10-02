@@ -1,33 +1,33 @@
 import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ToolDiscovery } from '../src/config.ts';
-import { RunEventKind } from '../src/events.ts';
-import { FinishReason, Role } from '../src/wire.ts';
+import { ToolDiscovery } from '../src/core/config.ts';
+import { RunEventKind } from '../src/run/events.ts';
+import { FinishReason, Role } from '../src/wire/wire.ts';
 import { answer, type Message, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Every endpoint a client was asked for, in order, so a test can say where a request went. */
 const reached: { baseUrl: string; apiKey: string }[] = [];
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
-vi.mock('../src/client.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/client.ts')>()),
+vi.mock('../src/endpoint/client.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/endpoint/client.ts')>()),
   getClient: (config: { baseUrl: string; apiKey: string }) => {
     reached.push({ baseUrl: config.baseUrl, apiKey: config.apiKey });
     return { chat: { completions: { create } } };
   },
 }));
 
-const { runAgentLoop } = await import('../src/agent-loop.ts');
-const { preselect } = await import('../src/preselect.ts');
-const { capabilitiesFor, resetCapabilities } = await import('../src/capabilities.ts');
-const { NO_KEY } = await import('../src/client.ts');
-const { SUMMARY_LEAD, summariser } = await import('../src/compaction.ts');
-const { ask, resetHints, taskCall } = await import('../src/side-task.ts');
-const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../src/spec.ts');
+const { runAgentLoop } = await import('../src/run/agent-loop.ts');
+const { preselect } = await import('../src/tools/preselect.ts');
+const { capabilitiesFor, resetCapabilities } = await import('../src/endpoint/capabilities.ts');
+const { NO_KEY } = await import('../src/endpoint/client.ts');
+const { SUMMARY_LEAD, summariser } = await import('../src/context/compaction.ts');
+const { ask, resetHints, taskCall } = await import('../src/turn/side-task.ts');
+const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../src/spec/spec.ts');
 
-type AgentSpec = import('../src/spec.ts').AgentSpec;
-type SideTask = import('../src/side-task.ts').SideTask;
-type RunEventInput = import('../src/events.ts').RunEventInput;
+type AgentSpec = import('../src/spec/spec.ts').AgentSpec;
+type SideTask = import('../src/turn/side-task.ts').SideTask;
+type RunEventInput = import('../src/run/events.ts').RunEventInput;
 
 /** A streamed turn that asks for one call. */
 const calls = (name: string) => ({
