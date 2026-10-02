@@ -144,6 +144,14 @@ What a run is doing, while it is doing it.
 - `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
 - `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
 
+### hook-events
+
+The points in a session a hook can be bound to, apart from everything that runs one.
+
+- `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
+- `HookEvent` (type) — A point in a session a hook can be bound to.
+- `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
+
 ### hooks
 
 Lifecycle hooks, from the host's side: what a session looks like to them, where their context lands in a request, and what is said about each one.
@@ -154,16 +162,13 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `Gathered` (type) — The context a set of outcomes adds to a request, and a note for each hook worth mentioning.
 - `gather` — Runs the hooks ahead of a request and builds what they add to it.
 - `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens.
-- `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
 - `HOOK_PREFACE` — Said once, above the blocks, so the model reads them as background rather than instructions.
 - `HookContext` (type) — What a host knows at an event.
-- `HookEvent` (type) — A point in a session a hook can be bound to.
 - `HookMessage` (type) — One message of a session as a hook is handed it.
 - `HookNote` (type) — One hook's line for whoever is watching: the context it added, or why it added none.
 - `HookOptions` (type) — What hooks are held to across a process.
 - `HookOutcome` (type) — What one hook did.
 - `HookRunner` (type) — Runs one event's hooks.
-- `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
 - `notify` — Runs the hooks for an event that reads what happened and adds nothing to a request.
 - `resetHooks` — Test seam: puts `configureHooks` back to the defaults, so one test's budget or preface is not the next's.
 - `turnIndex` — Which turn of a session begins at a point, from 0: the user messages ahead of it.
@@ -285,7 +290,7 @@ A JSON document that defines an agent, and the rules for reading one.
 - `ResolvedTask` (type) — One side task, resolved: a model, and the endpoint it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
 - `resolveAgentSpec` — Layers documents into the flat object the loop takes, weakest first.
-- `SPEC_EVENTS` — Every event a hook may be bound to, restated so this module stays free of `node:crypto`.
+- `SPEC_EVENTS` — Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
 - `SpecBundle` (type) — What an agent carries so it can travel whole: the definitions of the servers it names.
 - `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
 - `TaskSpec` (type) — One side task, which may run on a different model — and a different machine — than the agent.

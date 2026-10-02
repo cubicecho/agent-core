@@ -1,6 +1,6 @@
 import type { AgentConfig, Endpoint } from "./config.ts";
 import { isRecord } from "./guards.ts";
-import type { HookEvent } from "./hooks.ts";
+import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
@@ -12,12 +12,12 @@ import type { HookEvent } from "./hooks.ts";
  * real ceiling of zero* in the third. This is the shape they can all write and all read, argued
  * out in `docs/agent-spec.md` before any of it was code.
  *
- * Nothing else in `src/` imports this module, and this module imports nothing that needs Node —
- * types, and a leaf with no imports of its own. That is
- * the same seam `config.ts` draws — the loop takes the parts it reads, not a config object — and
- * it is what lets the document travel between hosts without the loop growing an opinion about
- * where an agent comes from. It is also why this is importable in a browser, where `client.ts`
- * and `hooks.ts` are not: a host validating a pasted document in a form needs no `node:crypto`.
+ * Nothing else in `src/` imports this module, and this module imports nothing that needs Node:
+ * types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
+ * loop takes the parts it reads, not a config object — and it is what lets the document travel
+ * between hosts without the loop growing an opinion about where an agent comes from. It is also
+ * why this is importable in a browser, where `client.ts` and `hooks.ts` are not: a host validating
+ * a pasted document in a form needs no `node:crypto`.
  */
 
 /** The token a document declares itself with. A loader refuses anything else. */
@@ -36,24 +36,13 @@ export const AGENT_SPEC_VERSION = 1;
 export const AGENT_TASKS = ["compaction", "toolSelect", "title", "followups"] as const;
 
 /**
- * Every event a hook may be bound to, restated so this module stays free of `node:crypto`.
+ * Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
  *
- * `hooks.ts` owns the list; importing its `HOOK_EVENTS` would pull the whole module, and its
- * `createHash` with it, into a file whose whole point is that a browser can load it. The `HookEvent`
- * type is imported and erased, so a removed event fails to compile here, and a test asserts this
- * list and `HOOK_EVENTS` are the same list so an added one cannot drift quietly.
+ * The same array, not a copy. It comes from `hook-events.ts` rather than `hooks.ts` because that
+ * module's `createHash` would otherwise come with it, into a file whose whole point is that a
+ * browser can load it.
  */
-export const SPEC_EVENTS: readonly HookEvent[] = [
-  "sessionStart",
-  "beforeTurn",
-  "afterTurn",
-  "beforeCompact",
-  "sessionEnd",
-  "sessionDelete",
-];
-
-/** The events whose output can still reach a request, so the only ones `inject` means anything on. */
-const SPEC_INJECT: ReadonlySet<string> = new Set(["sessionStart", "beforeTurn"]);
+export const SPEC_EVENTS: readonly HookEvent[] = HOOK_EVENTS;
 
 /** Body fields the loop owns. `buildBody` would overwrite them anyway; better to say so on import. */
 const RESERVED_BODY = ["model", "messages", "stream", "tools"];
@@ -540,7 +529,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
     // otherwise good agent unimportable. Kept and noted instead.
     if (!events.includes(on)) report.note(`${path}.on`, `"${on}" is never fired by this host`);
     let inject = report.boolean(`${path}.inject`, held.inject);
-    if (inject && !SPEC_INJECT.has(on)) {
+    if (inject && !INJECT_EVENTS.has(on as HookEvent)) {
       report.drop(`${path}.inject`, `"${on}" runs after the model has already answered`);
       inject = undefined;
     }

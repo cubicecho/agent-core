@@ -113,6 +113,7 @@ export {
   type TurnReport,
   watch,
 } from "./events.ts";
+export { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 export {
   assembleContext,
   configureHooks,
@@ -120,16 +121,13 @@ export {
   type Gathered,
   gather,
   HOOK_CONTEXT_TOKENS,
-  HOOK_EVENTS,
   HOOK_PREFACE,
   type HookContext,
-  type HookEvent,
   type HookMessage,
   type HookNote,
   type HookOptions,
   type HookOutcome,
   type HookRunner,
-  INJECT_EVENTS,
   notify,
   resetHooks,
   turnIndex,

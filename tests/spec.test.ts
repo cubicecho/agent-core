@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentLoopOptions } from "../src/agent-loop.ts";
-import { HOOK_EVENTS } from "../src/hooks.ts";
+import { HOOK_EVENTS } from "../src/hook-events.ts";
 import {
   AGENT_SPEC,
   type AgentSpec,
@@ -230,7 +230,7 @@ describe("parseSpec hooks", () => {
   });
 
   it("binds to the same events the host side fires", () => {
-    // SPEC_EVENTS is restated so this module pulls no `node:crypto`. This is what stops it drifting.
+    // SPEC_EVENTS is HOOK_EVENTS from a leaf that pulls no `node:crypto`, so the two cannot drift.
     expect([...SPEC_EVENTS].sort()).toEqual([...HOOK_EVENTS].sort());
   });
 });

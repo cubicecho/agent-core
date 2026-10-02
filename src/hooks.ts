@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type OpenAI from "openai";
 import { errorMessage } from "./errors.ts";
+import { type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 import { scoped } from "./scope.ts";
 import { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
 
@@ -14,36 +15,6 @@ import { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
  * `runHooks` is a runner as it stands and its outcomes pass straight through, without this
  * package depending on it.
  */
-
-/**
- * A point in a session a hook can be bound to. Named after Claude Code's hooks of the same shape
- * — `sessionStart` (SessionStart), `beforeTurn` (UserPromptSubmit), `afterTurn` (Stop),
- * `beforeCompact` (PreCompact), `sessionEnd` (SessionEnd) — plus `sessionDelete`, for when the host
- * deletes a session's record.
- */
-export type HookEvent =
-  | "sessionStart"
-  | "beforeTurn"
-  | "afterTurn"
-  | "beforeCompact"
-  | "sessionEnd"
-  | "sessionDelete";
-
-/** Every event a hook can be bound to, in the order a session meets them. */
-export const HOOK_EVENTS: readonly HookEvent[] = [
-  "sessionStart",
-  "beforeTurn",
-  "afterTurn",
-  "beforeCompact",
-  "sessionEnd",
-  "sessionDelete",
-];
-
-/**
- * The events whose hooks run before a request, and so the only ones whose output can reach it.
- * Anything later runs once the model has already answered.
- */
-export const INJECT_EVENTS: ReadonlySet<HookEvent> = new Set(["sessionStart", "beforeTurn"]);
 
 /**
  * One message of a session as a hook is handed it. The shape a memory server's `remember` takes,

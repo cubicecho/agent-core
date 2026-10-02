@@ -26,12 +26,12 @@ import {
   ToolIterationLimit,
 } from "./errors.ts";
 import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics } from "./events.ts";
+import type { HookEvent } from "./hook-events.ts";
 import {
   configureHooks,
   type Gathered,
   gather,
   type HookContext,
-  type HookEvent,
   type HookNote,
   type HookRunner,
   notify,
