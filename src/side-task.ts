@@ -9,7 +9,7 @@ import {
   negotiate,
   type OnNotice,
 } from "./capabilities.ts";
-import { endpointId, getClient } from "./client.ts";
+import { endpointId, getClient, modelKey } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { refusesRequest } from "./retry.ts";
@@ -52,12 +52,10 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  * Keyed on the host alone, the first model to refuse spoke for every model on it.
  *
  * Only the `chat_template_kwargs` half is here. `reasoning_effort` is `negotiate`'s to latch, on
- * the same (endpoint, model) pair, where a run on that model can read it too.
+ * the same (endpoint, model) pair, where a run on that model can read it too. A pair is held as
+ * `modelKey(endpointId, model)`, which is what `importCapabilities` adds to it by.
  */
 const noHints = scoped(() => new Set<string>());
-
-/** An (endpoint, model) pair as `noHints` holds it: `[endpointId, model]`, stringified. */
-export const hintKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
 /** The pairs that refused the hints, the live set, for `exportCapabilities` and `importCapabilities`. */
 export const refusedHints = (): Set<string> => noHints();
@@ -216,7 +214,7 @@ async function complete(
       onNotice,
     });
 
-  const key = hintKey(endpointId(config), model);
+  const key = modelKey(endpointId(config), model);
   // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
   // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
   const hints = !level && !noHints().has(key);

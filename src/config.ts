@@ -48,6 +48,20 @@ export interface Endpoint {
 }
 
 /**
+ * What makes an endpoint the one it is: where it lives and whose key reaches it.
+ *
+ * The narrow half of `Endpoint`, for everything that only has to tell two endpoints apart — the
+ * client pool, the capability latches, a side task borrowing the agent's key. The timeouts are
+ * not in it, since a different patience is not a different server.
+ */
+export interface EndpointIdentity {
+  /** The base URL as given. Compared as written, so a trailing slash is another endpoint. */
+  baseUrl: string;
+  /** Absent and empty mean the same: no key, which `endpointKey` reads as `NO_KEY`. */
+  apiKey?: string;
+}
+
+/**
  * The request fields `extraBody` may not set, because the loop's request is built around them.
  *
  * Here beside `extraBody` rather than with `buildBody`, which is what enforces it, because `spec`

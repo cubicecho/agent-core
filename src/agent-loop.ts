@@ -19,6 +19,7 @@ import {
 } from "./compaction.ts";
 import {
   type Endpoint,
+  type EndpointIdentity,
   type ModelParams,
   RESERVED_BODY_FIELDS,
   type RetryPolicy,
@@ -180,7 +181,7 @@ const sameUrl = (a: string, b: string) =>
  */
 export function resolveApiKey(
   own: { baseUrl?: string; apiKey?: string },
-  inherited?: { baseUrl: string; apiKey?: string },
+  inherited?: EndpointIdentity,
   env: Record<string, string | undefined> = process.env,
 ): string {
   if (own.apiKey) return own.apiKey;
@@ -216,7 +217,7 @@ export function resolveApiKey(
 export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   task: SideTask,
   options?: Options,
-  agent?: { baseUrl: string; apiKey?: string },
+  agent?: EndpointIdentity,
 ): { endpoint: Endpoint; model: string; options: Options } {
   const own = task.endpoint;
   const shared = agent && (!own.baseUrl.trim() || sameUrl(own.baseUrl, agent.baseUrl));

@@ -1,4 +1,5 @@
 import { endpointId } from "./client.ts";
+import type { EndpointIdentity } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { getOrCreate } from "./guards.ts";
 import { isGrammarError } from "./schema-compat.ts";
@@ -243,7 +244,7 @@ export function capabilitiesById(id: string): Capabilities {
  * every endpoint, which is what tests and `resetAll` mean by it.
  * @returns Whether there was anything to forget.
  */
-export function resetCapabilities(endpoint?: { baseUrl: string; apiKey?: string }): boolean {
+export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
   if (!endpoint) {
     const held = capabilities().size > 0;
     capabilities().clear();

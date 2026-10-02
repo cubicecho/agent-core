@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
-import type { Endpoint, RetryPolicy } from "./config.ts";
+import type { Endpoint, EndpointIdentity, RetryPolicy } from "./config.ts";
 import { isPositive } from "./guards.ts";
 import { scoped } from "./scope.ts";
 
@@ -300,11 +300,18 @@ const misses = scoped(() => new Map<string, number>());
  * config, and absent and empty already mean the same thing. The timeout is deliberately not in
  * it; see `listings`.
  */
-export const endpointKey = (config: { baseUrl: string; apiKey?: string }) =>
+export const endpointKey = (config: EndpointIdentity) =>
   JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
 
-/** One model on one endpoint, as the caches below key it: stringified, so neither half runs into the other. */
-const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
+/**
+ * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
+ * into the other.
+ *
+ * @param endpoint Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
+ * where the key may be written down.
+ * @param model The model's name as the endpoint knows it.
+ */
+export const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
 /**
  * `endpointKey` hashed, for the remembered facts that can leave the process.
@@ -316,7 +323,7 @@ const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, 
  *
  * @param config Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  */
-export const endpointId = (config: { baseUrl: string; apiKey?: string }) =>
+export const endpointId = (config: EndpointIdentity) =>
   createHash("sha256").update(endpointKey(config)).digest("hex");
 
 /**
