@@ -209,6 +209,9 @@ export interface CompactionPlan {
   after?: number;
 }
 
+/** An index held between the start of the transcript and `most`, for a caller's `from` that is neither. */
+const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most);
+
 /**
  * Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
  *
@@ -257,7 +260,7 @@ export function planCompaction(
   if (cost < limit * compactAt) return undefined;
 
   const head = systemHead(messages);
-  const from = Math.min(Math.max(givenFrom ?? head.from, 0), messages.length);
+  const from = clamp(givenFrom ?? head.from, messages.length);
   const previous = givenPrevious ?? head.previous;
 
   let cut = messages.length;
@@ -434,7 +437,7 @@ export function applyCompaction(
   { from }: { from?: number } = {},
 ): Message[] {
   if (!record?.summary.trim()) return messages;
-  const head = Math.min(Math.max(from ?? systemHead(messages).from, 0), record.through);
+  const head = clamp(from ?? systemHead(messages).from, record.through);
   return [
     ...messages.slice(0, head).filter((message) => !isSummary(message)),
     summaryMessage(record.summary),
