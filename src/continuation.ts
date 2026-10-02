@@ -3,7 +3,7 @@ import { type Capabilities, modelCapabilitiesFor } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
 import { ContextOverflow, refusesRequest } from "./retry.ts";
 import { type RequestBuilder, type RunTurnOptions, runTurn } from "./run-turn.ts";
-import type { Turn, TurnUsage } from "./stream.ts";
+import { addCounts, type Turn, type TurnUsage } from "./stream.ts";
 
 /**
  * Picking up an answer the token ceiling cut off, instead of keeping half of it.
@@ -79,10 +79,7 @@ const RATES = [
 function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
   const joined: TurnUsage = {
     ...first,
-    prompt: first.prompt + next.prompt,
-    completion: first.completion + next.completion,
-    total: first.total + next.total,
-    cached: first.cached + next.cached,
+    ...addCounts(first, next),
     continuations: (first.continuations ?? 0) + 1,
   };
   for (const field of ADDED) {

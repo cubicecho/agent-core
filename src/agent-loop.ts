@@ -50,7 +50,7 @@ import { ContextOverflow, contextTokens, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { askJson, type SideTask, type SideTaskOptions, tryAsk } from "./side-task.ts";
-import { noUsage, type Turn, type TurnUsage } from "./stream.ts";
+import { addCounts, noUsage, type Turn, type TurnUsage } from "./stream.ts";
 import { parseToolArguments, recoverToolCalls, type ToolCall } from "./tool-calls.ts";
 import {
   CALL_TOOL,
@@ -710,17 +710,6 @@ export interface AgentLoopResult {
   ledger: TokenLedger;
 }
 
-/**
- * The four token counts of one usage added into another. Only those: the rest are measurements a
- * sum of would mean nothing, or would mean something only `runMetrics` knows how to weigh.
- */
-const accumulate = (total: TurnUsage, turn: TurnUsage) => {
-  total.prompt += turn.prompt;
-  total.completion += turn.completion;
-  total.total += turn.total;
-  total.cached += turn.cached;
-};
-
 /** What the loop remembers of one request, to explain the next one's cache. */
 interface Sent {
   messages: OpenAI.ChatCompletionMessageParam[];
@@ -1346,7 +1335,7 @@ async function runSteps(
   const byName = (names: Iterable<string>) => definedAs(definitions, names);
 
   let messages = [...options.messages];
-  const usage = noUsage();
+  let usage = noUsage();
   const toolCalls: ToolCallOutcome[] = [];
   standing.read = () => ({
     messages,
@@ -1539,7 +1528,7 @@ async function runSteps(
       prompt: firstPrompt,
       completion: turn.usage.completion,
     };
-    accumulate(usage, turn.usage);
+    usage = addCounts(usage, turn.usage);
     onEvent({
       kind: "usage",
       usage: {

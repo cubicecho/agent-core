@@ -118,6 +118,20 @@ export interface TurnUsage {
  */
 export const noUsage = (): TurnUsage => ({ prompt: 0, completion: 0, total: 0, cached: 0 });
 
+/**
+ * The four token counts of two usages, added. Only those: the rest are measurements a sum of
+ * would mean nothing, or would mean something only `runMetrics` knows how to weigh.
+ *
+ * @param a One usage. Neither is changed.
+ * @param b The other.
+ */
+export const addCounts = (a: TurnUsage, b: TurnUsage): TurnUsage => ({
+  prompt: a.prompt + b.prompt,
+  completion: a.completion + b.completion,
+  total: a.total + b.total,
+  cached: a.cached + b.cached,
+});
+
 /** llama.cpp's per-response `timings`, which Lemonade and other servers fronting it pass through. */
 interface Timings {
   cache_n?: number;
