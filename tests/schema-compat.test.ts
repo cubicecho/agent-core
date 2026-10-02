@@ -86,7 +86,7 @@ describe('sanitizeTools', () => {
     expect(Object.keys(out.definitions as object)).toEqual(['Filters', 'Note']);
   });
 
-  it('a nullable union keeps the constraints of the branch that survives', () => {
+  it('keeps the constraints of the surviving branch of a nullable union', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({
@@ -99,13 +99,13 @@ describe('sanitizeTools', () => {
     expect(properties.name).toEqual({ nullable: true, type: SchemaType.String, maxLength: 3 });
   });
 
-  it('a union of two real branches is left as it was', () => {
+  it('leaves a union of two real branches as it was', () => {
     const anyOf = [{ type: SchemaType.String }, { type: SchemaType.Number }];
     const out = paramsOf(sanitizeTools([tool({ type: SchemaType.Object, properties: { a: { anyOf } } })]));
     expect((out.properties as Record<string, unknown>).a).toEqual({ anyOf });
   });
 
-  it('a pattern a grammar can express is kept, and so are enums and descriptions', () => {
+  it('keeps a pattern a grammar can express, and enums and descriptions too', () => {
     const schema = {
       type: SchemaType.Object,
       properties: {
@@ -119,7 +119,7 @@ describe('sanitizeTools', () => {
 });
 
 describe('sanitizeTools on a root that is a reference or a combinator', () => {
-  it('a root-level $ref is resolved rather than left dangling over no arguments', () => {
+  it('resolves a root-level $ref rather than leaving it dangling over no arguments', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({
@@ -136,7 +136,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toEqual(['query']);
   });
 
-  it('a root $ref that resolves to nothing gives an honestly empty object', () => {
+  it('gives an honestly empty object for a root $ref that resolves to nothing', () => {
     for (const parameters of [
       { $ref: '#/definitions/Missing' },
       { $ref: 'https://example.com/schema.json' },
@@ -146,7 +146,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     }
   });
 
-  it('a root allOf keeps its arguments instead of leaving required naming nothing', () => {
+  it('keeps the arguments of a root allOf instead of leaving required naming nothing', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({
@@ -161,7 +161,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toEqual(['a']);
   });
 
-  it('required never names an argument the rewrites removed', () => {
+  it('never names in required an argument the rewrites removed', () => {
     // A union of non-objects has no properties to fold in, so the combinator still goes and
     // `required` is left naming nothing.
     const out = paramsOf(
@@ -170,7 +170,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out).toEqual({ type: SchemaType.Object, properties: {} });
   });
 
-  it('a root union keeps its arguments, requiring only what every branch asks for', () => {
+  it('keeps the arguments of a root union, requiring only what every branch asks for', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({
@@ -200,7 +200,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toEqual(['id']);
   });
 
-  it('a single-branch root union is the named argument type, required and all', () => {
+  it('reads a single-branch root union as the named argument type, required and all', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({ oneOf: [{ type: SchemaType.Object, properties: { a: { type: SchemaType.String } }, required: ['a'] }] }),
@@ -209,7 +209,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out).toEqual({ type: SchemaType.Object, properties: { a: { type: SchemaType.String } }, required: ['a'] });
   });
 
-  it('a root union of references keeps the arguments its branches name', () => {
+  it('keeps the arguments the branches of a root union of references name', () => {
     // How a discriminated union actually arrives: the branches live in `$defs` and the root
     // points at them. Reading only inline branches left this advertising no arguments at all.
     const out = paramsOf(
@@ -234,7 +234,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toBeUndefined();
   });
 
-  it('a mixed root union reads the referenced half too', () => {
+  it('reads the referenced half of a mixed root union too', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({
@@ -255,7 +255,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toBeUndefined();
   });
 
-  it('a root allOf of references keeps the arguments its branches name', () => {
+  it('keeps the arguments the branches of a root allOf of references name', () => {
     // What Pydantic emits for a nested model: the type goes in `definitions` and `allOf` points
     // at it.
     const out = paramsOf(
@@ -273,7 +273,7 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toEqual(['q']);
   });
 
-  it('a root union branch that resolves nowhere never claims a required name', () => {
+  it('never claims a required name for a root union branch that resolves nowhere', () => {
     for (const branch of [
       { $ref: '#/definitions/Missing' },
       { $ref: 'https://example.com/schema.json' },
@@ -318,7 +318,7 @@ describe('sanitizeTools on definitions', () => {
     expect(JSON.stringify(out)).not.toContain('$defs/');
   });
 
-  it('a definition a surviving reference reaches is kept, along with what it names', () => {
+  it('keeps a definition a surviving reference reaches, along with what it names', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({
@@ -337,7 +337,7 @@ describe('sanitizeTools on definitions', () => {
     expect(Object.keys(out.definitions as object)).toEqual(['Filters', 'Field']);
   });
 
-  it('a definition that only refers to itself goes with the rest', () => {
+  it('drops a definition that only refers to itself, with the rest', () => {
     const out = paramsOf(
       sanitizeTools([
         tool({
@@ -353,7 +353,7 @@ describe('sanitizeTools on definitions', () => {
 });
 
 describe('relaxTools', () => {
-  it('relaxing strips pattern and format at every depth', () => {
+  it('strips pattern and format at every depth', () => {
     const out = paramsOf(
       relaxTools([
         tool({
@@ -368,7 +368,7 @@ describe('relaxTools', () => {
     expect(items).toEqual({ type: SchemaType.String });
   });
 
-  it('relaxing keeps an argument that happens to be called format or pattern', () => {
+  it('keeps an argument that happens to be called format or pattern', () => {
     const out = paramsOf(
       relaxTools([
         tool({
@@ -389,7 +389,7 @@ describe('relaxTools', () => {
     expect(out.required).toEqual(['format', 'pattern']);
   });
 
-  it('relaxing does not reach into data that merely looks like schema', () => {
+  it('does not reach into data that merely looks like schema', () => {
     const out = paramsOf(
       relaxTools([
         tool({
@@ -409,7 +409,7 @@ describe('relaxTools', () => {
 });
 
 describe('sanitizeTools and relaxTools', () => {
-  it('the same tool object is walked once, however often it is sent', () => {
+  it('walk the same tool object once, however often it is sent', () => {
     const declared = [
       tool({
         type: SchemaType.Object,
@@ -426,7 +426,7 @@ describe('sanitizeTools and relaxTools', () => {
     expect(relaxed[0]).not.toBe(sanitized[0]);
   });
 
-  it('neither pass writes back into the tool it was given', () => {
+  it('never write back into the tool they were given', () => {
     const parameters = {
       type: SchemaType.Object,
       properties: { q: { type: SchemaType.String, pattern: '^a' } },
@@ -439,7 +439,7 @@ describe('sanitizeTools and relaxTools', () => {
 });
 
 describe('sanitizeSchema and relaxSchema', () => {
-  it("a bare schema is sanitised and relaxed exactly as a tool's parameters are", () => {
+  it("sanitise and relax a bare schema exactly as a tool's parameters are", () => {
     const schema = {
       type: SchemaType.Object,
       properties: {
@@ -470,13 +470,13 @@ describe('sanitizeSchema and relaxSchema', () => {
     expect(JSON.stringify(schema)).toBe(before);
   });
 
-  it('what is not a schema at all comes back as an object taking nothing', () => {
+  it('give back an object taking nothing for what is not a schema at all', () => {
     expect(sanitizeSchema(undefined)).toEqual({ type: SchemaType.Object, properties: {} });
     expect(sanitizeSchema(SchemaType.Object)).toEqual({ type: SchemaType.Object, properties: {} });
     expect(relaxSchema(null)).toEqual({ type: SchemaType.Object, properties: {} });
   });
 
-  it('a bare schema is not remembered, so two calls give two objects', () => {
+  it('do not remember a bare schema, so two calls give two objects', () => {
     const schema = { type: SchemaType.Object, properties: { q: { type: SchemaType.String } } };
     expect(sanitizeSchema(schema)).not.toBe(sanitizeSchema(schema));
   });

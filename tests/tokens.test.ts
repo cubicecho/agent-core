@@ -12,7 +12,7 @@ import {
 import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
 
 describe('requestTokens', () => {
-  it('a request is sized from what is actually sent, tools included', () => {
+  it('sizes a request from what is actually sent, tools included', () => {
     const messages = [{ role: Role.User, content: 'x'.repeat(400) }];
     const bare = requestTokens({ model: 'm', stream: true, messages });
     const withTools = requestTokens({
@@ -25,7 +25,7 @@ describe('requestTokens', () => {
     expect(withTools).toBeGreaterThan(bare);
   });
 
-  it('a request is sized at the characters per token it is given, and at four otherwise', () => {
+  it('sizes a request at the characters per token it is given, and at four otherwise', () => {
     const message = { role: Role.User, content: 'x'.repeat(1000) };
     const body = {
       model: 'm',
@@ -43,7 +43,7 @@ describe('requestTokens', () => {
     expect(requestTokens(body, { charsPerToken: -3 })).toBe(atFour);
   });
 
-  it('a transcript costs more the longer it gets, and the walk sees every part of it', () => {
+  it('charges a transcript more the longer it gets, and walks every part of it', () => {
     const turn = (n: number) => [
       { role: Role.User, content: `ask ${n} ${'x'.repeat(200)}` },
       {
@@ -75,7 +75,7 @@ describe('requestTokens', () => {
     expect(walked).toBeLessThan(serialized * 1.1);
   });
 
-  it('the keys only some messages carry are counted, not only their values', () => {
+  it('counts the keys only some messages carry, not only their values', () => {
     // `ENVELOPE` is the two keys every message has. It was being applied to the three shapes that
     // carry another, whose value was counted and whose key was not — 4.5 tokens on every tool
     // result, the message a tool-using run accumulates most of, and short in the one direction
@@ -115,7 +115,7 @@ describe('requestTokens', () => {
     expect(sized(run)).toBe(serialized(run));
   });
 
-  it('a message whose content is parts is sized from the parts it has text in', () => {
+  it('sizes a message whose content is parts from the parts it has text in', () => {
     const sized = (content: OpenAI.ChatCompletionUserMessageParam['content']) =>
       requestTokens({ model: 'm', stream: true, messages: [{ role: Role.User, content }] });
     const serialized = (content: OpenAI.ChatCompletionUserMessageParam['content']) =>
@@ -147,14 +147,14 @@ describe('requestTokens', () => {
     expect(withImage).toBe(one);
   });
 
-  it('a refusal part is charged its own envelope too', () => {
+  it('charges a refusal part its own envelope too', () => {
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: Role.Assistant, content: [{ type: PartType.Refusal, refusal: 'no'.repeat(100) }] },
     ];
     expect(requestTokens({ model: 'm', stream: true, messages })).toBe(estimateTokens(JSON.stringify(messages)));
   });
 
-  it('the same tools array is only measured once', () => {
+  it('measures the same tools array only once', () => {
     const tools: OpenAI.ChatCompletionTool[] = [
       { type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } },
     ];
@@ -168,7 +168,7 @@ describe('requestTokens', () => {
 });
 
 describe('compact', () => {
-  it('token counts are shortened the way they are read', () => {
+  it('shortens token counts the way they are read', () => {
     expect(compact(999)).toBe('999');
     expect(compact(1234)).toBe('1.2k');
   });
@@ -188,7 +188,7 @@ describe('contextTokens and contextChars', () => {
     tools: [{ type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } }],
   });
 
-  it('a request is cut along the levers an operator actually has', () => {
+  it('cut a request along the levers an operator actually has', () => {
     const chars = contextChars(fourParts());
     // Each part holds the thing named after it, and the four are exhaustive.
     expect(chars.system).toBeGreaterThan(800);
@@ -200,7 +200,7 @@ describe('contextTokens and contextChars', () => {
     expect(chars.toolResults).toBeLessThan(2100);
   });
 
-  it('a developer message is charged to the system prompt, wherever it sits', () => {
+  it('charge a developer message to the system prompt, wherever it sits', () => {
     const body: OpenAI.ChatCompletionCreateParamsStreaming = {
       model: 'm',
       stream: true,
@@ -212,7 +212,7 @@ describe('contextTokens and contextChars', () => {
     expect(contextChars(body).system).toBeGreaterThan(500);
   });
 
-  it('the parts add up to the total exactly, estimated or reported', () => {
+  it('add up to the total exactly, estimated or reported', () => {
     const body = fourParts();
     const sum = (b: ReturnType<typeof contextTokens>) => b.system + b.tools + b.history + b.toolResults;
 
@@ -230,7 +230,7 @@ describe('contextTokens and contextChars', () => {
     expect(reported.toolResults).toBe(Math.round((chars.toolResults / chars.total) * 1000));
   });
 
-  it('the tool block agrees with the turn metrics rather than being shared out', () => {
+  it('agree with the turn metrics on the tool block rather than sharing it out', () => {
     const body = fourParts();
     // `TurnMetrics.toolSchemaTokens` is this expression; a readout that disagreed with it by a
     // token would have an operator chasing a difference that is only rounding.
@@ -238,7 +238,7 @@ describe('contextTokens and contextChars', () => {
     expect(contextTokens(body, { charsPerToken: 3 }).tools).toBe(Math.ceil(toolsChars(body.tools ?? []) / 3));
   });
 
-  it('an odd total still lands somewhere, and an empty request breaks into nothing', () => {
+  it('land an odd total somewhere, and break an empty request into nothing', () => {
     // One token to share over four parts: it goes to the biggest, and nothing is lost.
     const one = contextTokens(fourParts(), { promptTokens: 1 });
     expect(one.toolResults).toBe(1);

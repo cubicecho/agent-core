@@ -30,7 +30,7 @@ describe('expandNames and loadResult', () => {
     expect(resolved.unknown).toEqual([]);
   });
 
-  it('a bare name matching two servers is not guessed at', () => {
+  it('do not guess at a bare name matching two servers', () => {
     const ambiguous: CatalogServer[] = [
       { id: '1', label: 'A', tools: [catalogTool('a__read_file')] },
       { id: '2', label: 'B', tools: [catalogTool('b__read_file')] },
@@ -41,13 +41,13 @@ describe('expandNames and loadResult', () => {
     });
   });
 
-  it('a wildcard expands, by prefix or by suffix', () => {
+  it('expand a wildcard, by prefix or by suffix', () => {
     expect(expandNames(['gmail__*'], catalog).matched).toHaveLength(3);
     // The model dropped the server prefix; `__gmail` still finds the group.
     expect(expandNames(['files__read*'], catalog).matched).toEqual(['files__read_file']);
   });
 
-  it('an over-broad wildcard is refused with its hits listed', () => {
+  it('refuse an over-broad wildcard with its hits listed', () => {
     const many: CatalogServer[] = [
       {
         id: '1',
@@ -64,7 +64,7 @@ describe('expandNames and loadResult', () => {
     expect(report).toContain('gmail__tool_0');
   });
 
-  it('loading reports the descriptions the catalogue withheld', () => {
+  it('report the descriptions the catalogue withheld', () => {
     const resolved = expandNames(['gmail__send_email', 'nope'], catalog);
     const report = loadResult(resolved, catalog);
     expect(report).toContain('gmail__send_email: does gmail__send_email');
@@ -72,7 +72,7 @@ describe('expandNames and loadResult', () => {
     expect(loadResult(expandNames([], catalog), catalog)).toBe('No tool names were given.');
   });
 
-  it('loading a tool already loaded says so instead of loading it again', () => {
+  it('say a tool is already loaded instead of loading it again', () => {
     const resolved = expandNames(['gmail__send_email', 'files__read_file'], catalog);
     const report = loadResult(resolved, catalog, new Set(['gmail__send_email']));
     expect(report).toContain('Loaded 1 tool(s)');
@@ -82,19 +82,19 @@ describe('expandNames and loadResult', () => {
     expect(loadResult(resolved, catalog)).toContain('Loaded 2 tool(s)');
   });
 
-  it('a name that matches nothing is reported, and a match is never counted twice', () => {
+  it('report a name that matches nothing, and never count a match twice', () => {
     const { matched, unknown } = expandNames(['gmail__send_email', 'gmail__*', 'nope'], catalog);
     expect(matched).toHaveLength(3);
     expect(unknown).toEqual(['nope']);
   });
 
-  it('loading says which names it could not place', () => {
+  it('say which names could not be placed', () => {
     expect(
       loadResult({ matched: [], unknown: ['nope'], overBroad: [], deferred: [], maxPerLoad: MAX_PER_LOAD }, catalog),
     ).toContain('Not in the catalogue: nope');
   });
 
-  it('an over-broad wildcard comes back with the names it would have loaded', () => {
+  it('answer an over-broad wildcard with the names it would have loaded', () => {
     const wide: CatalogServer[] = [
       {
         id: '3',
@@ -107,7 +107,7 @@ describe('expandNames and loadResult', () => {
     expect(text).toContain('mail__tool_3');
   });
 
-  it('the load cap is what one call may load, not what one name may match', () => {
+  it('hold the load cap to what one call may load, not what one name may match', () => {
     const dozen = (prefix: string) => Array.from({ length: MAX_PER_LOAD }, (_, i) => catalogTool(`${prefix}__t${i}`));
     const wide: CatalogServer[] = [
       { id: '1', label: 'A', tools: dozen('a') },
@@ -124,7 +124,7 @@ describe('expandNames and loadResult', () => {
     expect(loadResult(resolved, wide)).toContain('Ask for them on your next step');
   });
 
-  it('a precise name that only misses the budget is not called over-broad', () => {
+  it('do not call a precise name over-broad when it only misses the budget', () => {
     const wide: CatalogServer[] = [
       {
         id: '4',
@@ -148,13 +148,13 @@ describe('expandNames and loadResult', () => {
     expect(text).toContain(`many__t${MAX_PER_LOAD}`);
   });
 
-  it('a name that only repeats an earlier match does not spend budget', () => {
+  it('do not spend budget on a name that only repeats an earlier match', () => {
     const resolved = expandNames(['gmail__send_email', 'send_email', 'gmail__*'], catalog);
     expect(resolved.matched.sort()).toEqual(['gmail__list_labels', 'gmail__read_email', 'gmail__send_email']);
     expect(resolved.overBroad).toEqual([]);
   });
 
-  it('a bare wildcard is answered with the names rather than the whole catalogue', () => {
+  it('answer a bare wildcard with the names rather than the whole catalogue', () => {
     const resolved = expandNames(['*'], catalog);
     expect(resolved.matched).toEqual([]);
     expect(resolved.overBroad).toHaveLength(1);
@@ -162,7 +162,7 @@ describe('expandNames and loadResult', () => {
     expect(loadResult(resolved, catalog)).toContain('Name the ones you need from:');
   });
 
-  it("a caller's own cap is what the resolution is held to and what it reports", () => {
+  it("hold the resolution to a caller's own cap, and report it", () => {
     const resolved = expandNames(['gmail__*'], catalog, 2);
     expect(resolved.matched).toEqual([]);
     expect(resolved.overBroad[0].name).toBe('gmail__*');
@@ -172,7 +172,7 @@ describe('expandNames and loadResult', () => {
     expect(loadResult(resolved, catalog)).toContain('more than the 2 one call may load');
   });
 
-  it("a caller's own cap defers what does not fit it", () => {
+  it("defer what does not fit a caller's own cap", () => {
     const resolved = expandNames(['gmail__send_email', 'files__read_file'], catalog, 1);
     expect(resolved.matched).toEqual(['gmail__send_email']);
     expect(resolved.deferred).toEqual(['files__read_file']);
@@ -181,7 +181,7 @@ describe('expandNames and loadResult', () => {
 });
 
 describe('catalogPrompt', () => {
-  it('the catalogue lists names only, marking what is already loaded', () => {
+  it('lists names only, marking what is already loaded', () => {
     const prompt = catalogPrompt(catalog, new Set(['gmail__send_email']));
     expect(prompt).toContain('Gmail:');
     expect(prompt).toContain('  gmail__send_email (loaded)');
@@ -191,18 +191,18 @@ describe('catalogPrompt', () => {
     expect(catalogPrompt([])).toBe('');
   });
 
-  it('the catalogue marks nothing unless asked, so it reads the same after a load', () => {
+  it('marks nothing unless asked, so it reads the same after a load', () => {
     expect(catalogPrompt(catalog)).not.toContain('(loaded)');
     expect(catalogPrompt(catalog)).toBe(catalogPrompt(catalog));
   });
 
-  it('an empty catalogue produces no prompt at all', () => {
+  it('produces no prompt at all for an empty catalogue', () => {
     // Not a heading with nothing under it: a run with no servers must not be told about a
     // mechanism it has nothing to use it on.
     expect(catalogPrompt([])).toBe('');
   });
 
-  it('a server with no tools is not given a heading with nothing under it', () => {
+  it('leaves out the heading of a server with no tools', () => {
     const empty: CatalogServer[] = [{ id: '1', label: 'Gmail', tools: [] }];
     expect(catalogPrompt(empty)).toBe('');
 
@@ -216,7 +216,7 @@ describe('catalogPrompt', () => {
 });
 
 describe('loadedTools', () => {
-  it('loaded definitions are appended in load order, never moved', () => {
+  it('appends loaded definitions in load order, never moving them', () => {
     const definition = (name: string) => ({
       type: FUNCTION_TOOL,
       function: { name, parameters: { type: SchemaType.Object } },
@@ -266,27 +266,27 @@ describe('requestedNames', () => {
 });
 
 describe('inCatalog', () => {
-  it('inCatalog knows a tool the model called without loading', () => {
+  it('knows a tool the model called without loading', () => {
     expect(inCatalog(catalog, 'files__write_file')).toBe(true);
     expect(inCatalog(catalog, 'files__delete_file')).toBe(false);
   });
 });
 
 describe('carryOver', () => {
-  it('carry-over keeps what was used, newly used last', () => {
+  it('keeps what was used, newly used last', () => {
     expect(carryOver(['a', 'b'], new Set(['b', 'c']))).toEqual(['a', 'b', 'c']);
   });
 
-  it('carry-over leaves a carried tool where it was when it is used again', () => {
+  it('leaves a carried tool where it was when it is used again', () => {
     // Moving it to the end reorders the tool array between turns, and loses the prompt cache.
     expect(carryOver(['a', 'b', 'c'], new Set(['a']))).toEqual(['a', 'b', 'c']);
   });
 
-  it('carry-over drops the earliest unused before anything used this turn', () => {
+  it('drops the earliest unused before anything used this turn', () => {
     expect(carryOver(['a', 'b', 'c'], new Set(['a', 'd']), 3)).toEqual(['a', 'c', 'd']);
   });
 
-  it('carry-over drops the least recently used past the cap', () => {
+  it('drops the least recently used past the cap', () => {
     const previous = Array.from({ length: MAX_CARRIED }, (_, i) => `old_${i}`);
     const out = carryOver(previous, new Set(['fresh']));
     expect(out).toHaveLength(MAX_CARRIED);
@@ -294,7 +294,7 @@ describe('carryOver', () => {
     expect(out).not.toContain('old_0');
   });
 
-  it('carry-over carries as many as it was asked to', () => {
+  it('carries as many as it was asked to', () => {
     expect(carryOver(['a', 'b', 'c'], new Set(['d']), 2)).toEqual(['c', 'd']);
     // A cap of nobody's is not a cap of none: `slice(-0)` is the whole array, which is the one
     // answer a caller asking for zero cannot have meant.
@@ -312,7 +312,7 @@ describe('the proxied tools', () => {
     },
   });
 
-  it('the proxied tool array is load_tools and call_tool, frozen, with open arguments', () => {
+  it('are load_tools and call_tool, frozen, with open arguments', () => {
     const names = PROXY_TOOLS.map((tool) => (tool.type === FUNCTION_TOOL ? tool.function.name : ''));
     expect(names).toEqual([LOAD_TOOLS, CALL_TOOL]);
     expect(Object.isFrozen(PROXY_TOOLS)).toBe(true);
@@ -327,7 +327,7 @@ describe('the proxied tools', () => {
     });
   });
 
-  it('the proxied catalogue points at call_tool, and never at a tool list', () => {
+  it('point the catalogue at call_tool, and never at a tool list', () => {
     const prompt = proxyCatalogPrompt(catalog);
     expect(prompt).toContain('run them with `call_tool`');
     expect(prompt).toContain('gmail__send_email');
@@ -335,7 +335,7 @@ describe('the proxied tools', () => {
     expect(proxyCatalogPrompt([{ id: '1', label: 'Empty', tools: [] }])).toBe('');
   });
 
-  it("a proxied load answers with each new tool's whole definition", () => {
+  it("answer a load with each new tool's whole definition", () => {
     const resolved = expandNames(['gmail__send_email', 'files__read_file'], catalog);
     const send = definition('gmail__send_email');
     const read = definition('files__read_file');
@@ -357,7 +357,7 @@ describe('the proxied tools', () => {
     ]);
   });
 
-  it('a proxied load points back at what is loaded, and says what it could not define', () => {
+  it('point a load back at what is loaded, and say what it could not define', () => {
     const resolved = expandNames(['gmail__send_email', 'files__read_file', 'files__write_file', 'nope'], catalog);
     const result = proxyLoadResult(
       resolved,
@@ -374,14 +374,14 @@ describe('the proxied tools', () => {
     expect(result).toContain('Not in the catalogue: nope.');
   });
 
-  it("a proxied load that matched nothing is refused in on-demand's words", () => {
+  it("refuse a load that matched nothing in on-demand's words", () => {
     for (const names of [[], ['*'], ['nope']]) {
       const resolved = expandNames(names, catalog);
       expect(proxyLoadResult(resolved, catalog, [])).toBe(loadResult(resolved, catalog));
     }
   });
 
-  it('only a proxied load carrying definitions is one a prune has to keep', () => {
+  it('make a prune keep only a load that carries definitions', () => {
     const resolved = expandNames(['gmail__send_email'], catalog);
     const send = definition('gmail__send_email');
     expect(holdsDefinitions(proxyLoadResult(resolved, catalog, [send]))).toBe(true);
@@ -391,7 +391,7 @@ describe('the proxied tools', () => {
     expect(holdsDefinitions(loadResult(resolved, catalog))).toBe(false);
   });
 
-  it('call_tool is read as the tool it names, with arguments as an object or as JSON', () => {
+  it('read call_tool as the tool it names, with arguments as an object or as JSON', () => {
     expect(proxiedCall({ name: 'files__read_file', arguments: { path: 'a' } }, catalog)).toEqual({
       name: 'files__read_file',
       input: { path: 'a' },
@@ -400,7 +400,7 @@ describe('the proxied tools', () => {
     expect(proxiedCall({ name: 'files__read_file' }, catalog).input).toEqual({});
   });
 
-  it('call_tool refuses what it cannot run, in words the model can act on', () => {
+  it('refuse through call_tool what it cannot run, in words the model can act on', () => {
     expect(() => proxiedCall({ arguments: {} }, catalog)).toThrow('call_tool needs a name');
     expect(() => proxiedCall({ name: 'shell', arguments: {} }, catalog)).toThrow('Not in the catalogue: shell.');
     expect(() => proxiedCall({ name: 'files__read_file', arguments: '{oops' }, catalog)).toThrow(
@@ -410,7 +410,7 @@ describe('the proxied tools', () => {
     expect(() => proxiedCall({ name: 'files__read_file', arguments: 3 }, catalog)).toThrow('must be an object');
   });
 
-  it('a call is shown as the tool a call_tool ran, and otherwise as it came', () => {
+  it('show a call as the tool a call_tool ran, and otherwise as it came', () => {
     expect(shownCall(CALL_TOOL, '{"name":"files__read_file","arguments":{"path":"a"}}')).toEqual({
       name: 'files__read_file',
       input: '{"path":"a"}',

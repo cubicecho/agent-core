@@ -113,14 +113,14 @@ describe('preselect', () => {
 });
 
 describe('preselection', () => {
-  it('a preselection is resolved against the catalogue and capped', () => {
+  it('is resolved against the catalogue and capped', () => {
     expect(preselection(['gmail__send_email', 'invented'], catalog)).toEqual(['gmail__send_email']);
     expect(preselection({ tools: ['gmail__send_email', 'invented'] }, catalog)).toEqual(['gmail__send_email']);
     // A model that answers with prose instead of an array selects nothing at all.
     expect(preselection('gmail__send_email', catalog)).toEqual([]);
   });
 
-  it('a malformed preselection reply means no preselection, not a failure', () => {
+  it('is none, not a failure, when the reply is malformed', () => {
     expect(preselection(undefined, catalog)).toEqual([]);
     expect(preselection({ names: ['gmail__send_email'] }, catalog)).toEqual([]);
     expect(preselection({ tools: 'gmail__send_email' }, catalog)).toEqual([]);
@@ -129,7 +129,7 @@ describe('preselection', () => {
 });
 
 describe('preselectInput and preselectSystem', () => {
-  it('the preselect prompt carries the catalogue and the task, and not the meta-tool', () => {
+  it('carry the catalogue and the task, and not the meta-tool', () => {
     const input = preselectInput(catalog, 'read my notes file');
     expect(input).toContain('files__read_file');
     expect(input).toContain('read my notes file');
@@ -138,13 +138,13 @@ describe('preselectInput and preselectSystem', () => {
     expect(input).not.toContain('load_tools');
   });
 
-  it('the preselector is told the cap it will be held to', () => {
+  it('tell the preselector the cap it will be held to', () => {
     expect(preselectSystem(3)).toContain('at most 3');
     expect(PRESELECT_SYSTEM).toContain(`at most ${MAX_PER_LOAD}`);
     expect(preselection(['gmail__send_email', 'gmail__read_email'], catalog, 1)).toEqual(['gmail__send_email']);
   });
 
-  it('the preselect prompt is cut where the caller says', () => {
+  it('cut the prompt where the caller says', () => {
     const input = preselectInput(catalog, 'read my notes file', 7);
     expect(input).toContain('read my');
     expect(input).not.toContain('notes');
@@ -225,7 +225,7 @@ describe('preselectByKeywords', () => {
     ['Put a dentist appointment on my calendar for Tuesday', 'cal__create_event'],
   ];
 
-  it('the words alone find the tool a request is asking for', () => {
+  it('finds the tool a request is asking for from the words alone', () => {
     // Recall over the whole fixture, which is the number worth having: on a catalogue this size
     // the top of the ranking is the tool asked for every time, and every one of those is a round
     // trip to a model not spent. A regression here is a threshold or a stopword gone wrong.
@@ -237,7 +237,7 @@ describe('preselectByKeywords', () => {
     }
   });
 
-  it('a word the whole catalogue uses is worth less than one that names a tool', () => {
+  it('weighs a word the whole catalogue uses below one that names a tool', () => {
     const shared: CatalogServer[] = [
       {
         id: '1',
@@ -256,7 +256,7 @@ describe('preselectByKeywords', () => {
     expect(ranked[0].name).toBe('desk__zebra');
   });
 
-  it('a tie breaks on the name by code unit, whatever order the catalogue came in', () => {
+  it('breaks a tie on the name by code unit, whatever order the catalogue came in', () => {
     const twins: CatalogServer[] = [
       {
         id: '1',
@@ -285,7 +285,7 @@ describe('preselectByKeywords', () => {
     }
   });
 
-  it('a request that names a whole server is not confident about which of its tools', () => {
+  it('is not confident about which tool when a request names a whole server', () => {
     // Every database tool scores nearly the same on "database", so the cut between them is
     // arbitrary — which is the case the model is worth spending on.
     const broad = preselectByKeywords(desks, 'Do something with the database', { maxPerLoad: 2 });
@@ -293,7 +293,7 @@ describe('preselectByKeywords', () => {
     expect(broad.confident).toBe(false);
   });
 
-  it('the ranking does not depend on the order servers connected in', () => {
+  it('ranks the same whatever order the servers connected in', () => {
     const prompt = 'read the file and commit it';
     const forwards = preselectByKeywords(desks, prompt);
     const backwards = preselectByKeywords([...desks].reverse(), prompt);
@@ -309,7 +309,7 @@ describe('preselectByKeywords', () => {
     expect(preselectByKeywords(camel, 'create a note').names).toEqual(['notes__createNote']);
   });
 
-  it('the request is read only as far as the preselector reads it', () => {
+  it('reads the request only as far as the preselector reads it', () => {
     const buried = `${'filler words '.repeat(300)}commit the changes`;
     expect(preselectByKeywords(desks, buried).names).not.toContain('git__commit');
     expect(preselectByKeywords(desks, buried, { maxPromptChars: 10_000 }).names).toContain('git__commit');
