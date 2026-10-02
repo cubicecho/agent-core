@@ -194,7 +194,6 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 Everything about a request failing that is not about what the request said.
 
 - `backoffMs` — Exponential, with jitter so several tasks failing at once do not return in lockstep.
-- `CHARS_PER_TOKEN` — The divisor behind `estimateTokens`, applied here to a character count rather than a string.
 - `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
 - `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
 - `ContextOverflow` — The request was bigger than the model will read.
@@ -317,6 +316,7 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 
 ### tokens
 
+- `CHARS_PER_TOKEN` — The characters one token is taken to be, where nothing has measured it.
 - `estimateTokens` — Rough token count.
 
 ### tool-calls

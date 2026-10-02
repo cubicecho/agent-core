@@ -151,7 +151,6 @@ export {
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,
-  CHARS_PER_TOKEN,
   type ContextBreakdown,
   type ContextBreakdownOptions,
   ContextOverflow,
@@ -238,7 +237,7 @@ export {
   stripThinking,
   THINK_FENCE,
 } from "./thinking.ts";
-export { estimateTokens } from "./tokens.ts";
+export { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
 export {
   parseToolArguments,
   recoverToolCalls,

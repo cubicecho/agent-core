@@ -1,4 +1,12 @@
 /**
+ * The characters one token is taken to be, where nothing has measured it.
+ *
+ * The fallback, not the rule: once a turn has come back with a reported prompt count, `runTurn`
+ * divides by what that endpoint's model was measured at instead. See `charsPerTokenFor`.
+ */
+export const CHARS_PER_TOKEN = 4;
+
+/**
  * Rough token count. Characters over four, because there is no tokenizer here and there is not
  * going to be one: a server that will not say how big its window is will not lend us its
  * vocabulary either.
@@ -15,4 +23,4 @@
  *
  * @param text Prose or serialised JSON — both counted the same way, which is why JSON reads low.
  */
-export const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);

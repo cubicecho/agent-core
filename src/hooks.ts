@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type OpenAI from "openai";
 import { errorMessage } from "./errors.ts";
 import { scoped } from "./scope.ts";
-import { estimateTokens } from "./tokens.ts";
+import { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
 
 /**
  * Lifecycle hooks, from the host's side: what a session looks like to them, where their context
@@ -272,7 +272,7 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
     if (!text) continue;
     const cap = Math.min(outcome.maxTokens, remaining);
     if (cap <= 0) continue;
-    if (estimateTokens(text) > cap) text = `${text.slice(0, cap * 4 - 1).trimEnd()}…`;
+    if (estimateTokens(text) > cap) text = `${text.slice(0, cap * CHARS_PER_TOKEN - 1).trimEnd()}…`;
     const tokens = estimateTokens(text);
     remaining -= tokens;
     blocks.push(`<context source="${attribute(outcome.label)}">\n${text}\n</context>`);

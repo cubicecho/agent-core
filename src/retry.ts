@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { CHARS_PER_TOKEN } from "./tokens.ts";
 
 /**
  * Everything about a request failing that is not about what the request said.
@@ -78,14 +79,6 @@ const REASONING_KEY = 23;
 
 /** The same for `"reasoning":"",`, OpenRouter's spelling of it. */
 const REASONING_ALT_KEY = 15;
-
-/**
- * The divisor behind `estimateTokens`, applied here to a character count rather than a string.
- *
- * The fallback, not the rule: once a turn has come back with a reported prompt count, `runTurn`
- * divides by what that endpoint's model was measured at instead. See `charsPerTokenFor`.
- */
-export const CHARS_PER_TOKEN = 4;
 
 /** What the two token estimates below take besides what they measure. */
 export interface TokenEstimateOptions {

@@ -2,14 +2,9 @@ import type OpenAI from "openai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { calibrate, charsPerTokenFor, resetCalibration } from "../src/calibration.ts";
 import { capabilitiesFor, resetCapabilities } from "../src/capabilities.ts";
-import {
-  CHARS_PER_TOKEN,
-  ContextOverflow,
-  requestChars,
-  requestTokens,
-  toolsChars,
-} from "../src/retry.ts";
+import { ContextOverflow, requestChars, requestTokens, toolsChars } from "../src/retry.ts";
 import { runTurn } from "../src/run-turn.ts";
+import { CHARS_PER_TOKEN } from "../src/tokens.ts";
 
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
