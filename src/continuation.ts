@@ -140,8 +140,8 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
  * continuation's `finishReason` and tool calls.
  *
  * @remarks
- * Only a turn `isContinuable` accepts is continued; any other comes back as it was. Content and
- * reasoning are joined in order, the tool calls a continuation makes are kept, and usage is summed
+ * Only a turn cut off at the ceiling, with an answer begun and no tool call in it, is continued;
+ * any other comes back as it was. Content and reasoning are joined in order, the tool calls a continuation makes are kept, and usage is summed
  * across the requests with `continuations` counting them. The continuation is read as starting in
  * the answer, whatever `startInReasoning` says: a template that opens a fence for a fresh reply
  * does not open one for a prefill. Its tokens reach `onOutput` as they arrive, so a watcher sees

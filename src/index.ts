@@ -69,7 +69,6 @@ export {
   SUMMARY_LEAD,
   SUMMARY_PROMPT,
   summariser,
-  summaryInput,
 } from './compaction.ts';
 export {
   type AgentConfig,
@@ -82,7 +81,6 @@ export {
 export {
   type ContinueTurnOptions,
   continueTurn,
-  isContinuable,
 } from './continuation.ts';
 export {
   AgentLoopError,
@@ -166,7 +164,6 @@ export {
   isOverflow,
   isTransient,
   SMALLEST_LIKELY_WINDOW,
-  sleep,
 } from './retry.ts';
 export { preview } from './run-calls.ts';
 export { type RunTurnOptions, runTurn } from './run-turn.ts';
@@ -258,7 +255,6 @@ export {
   requestChars,
   requestTokens,
   type TokenEstimateOptions,
-  toolsChars,
 } from './tokens.ts';
 export {
   ARGUMENTS_MALFORMED,
