@@ -6,6 +6,7 @@ import {
   type HookNote,
   type HookRunner,
   notify,
+  textOf,
   turnMessages,
 } from "./hooks.ts";
 import { messageTokens } from "./retry.ts";
@@ -54,14 +55,6 @@ export const SUMMARY_PROMPT =
  */
 export const SUMMARY_LEAD =
   "Summary of the earlier part of this conversation, which is no longer shown in full:\n\n";
-
-/** A message's content as plain text: parts joined, anything but text left out. */
-const textOf = (content: Message["content"]): string =>
-  typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content.map((part) => ("text" in part ? part.text : "")).join(" ")
-      : "";
 
 /** What the summariser reads for one message: its text and the calls it made. */
 const messageText = (message: Message): string => {

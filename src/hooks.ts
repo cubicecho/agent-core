@@ -337,8 +337,18 @@ export function untrusted(text: string, { source }: { source?: string } = {}): s
   return `<untrusted${attrs}>\n${text.replace(UNTRUSTED_TAG, "&lt;$1")}\n</untrusted>`;
 }
 
-/** A message's text, whether its content is a string or a list of parts. */
-const textOf = (content: unknown): string => {
+/**
+ * A message's text, whether its content is a string or a list of parts.
+ *
+ * Parts are joined with nothing between them, because they are one text an API split rather than
+ * several: a space put in is a character the sender never wrote, and `turnMessages` hashes this
+ * into the uuid a memory server dedups on. Compaction reads the same function, so the summariser
+ * and the hook told about a fold see one message the same way. A refusal part is left out.
+ *
+ * @param content A message's `content`, in any of the shapes the API allows. One that is neither
+ * a string nor a list reads as empty.
+ */
+export const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
