@@ -1,3 +1,13 @@
+## [2.25.1](https://github.com/cubicecho/agent-core/compare/v2.25.0...v2.25.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* a side task asks the signal whether it was cancelled, not only the error ([2472cd5](https://github.com/cubicecho/agent-core/commit/2472cd526d23a649431b6b4786552c74aa13d0e5))
+* a side task lets through an abort that lands between attempts (B2) ([06e7d5e](https://github.com/cubicecho/agent-core/commit/06e7d5e7209cfa7de85752466151144359b16a9c))
+* the keyword pass cannot pick more tools than preselect's ceiling (B5) ([a89dd86](https://github.com/cubicecho/agent-core/commit/a89dd86055206b06b2270ca6f4e7cfb0c81d6449))
+* the model listing and a ranking tie order by code unit, not by locale (B1) ([bcfa50e](https://github.com/cubicecho/agent-core/commit/bcfa50e34a21842717079a3272d391a6e7f4c755))
+
 # [2.25.0](https://github.com/cubicecho/agent-core/compare/v2.24.0...v2.25.0) (2026-10-02)
 
 
