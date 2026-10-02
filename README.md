@@ -316,7 +316,7 @@ and wrong for what a tool-using run is made of — JSON schemas and tool results
 three characters a token — so a request the guard let through was refused anyway. The divisor is
 learned instead. Every turn `runTurn` answers comes back with the endpoint's exact prompt count for a
 body whose characters were already counted, and `calibrate` keeps that ratio per endpoint and model;
-the next request to the same model is sized by `charsPerTokenFor`, which is `CHARS_PER_TOKEN` (4)
+the next request to the same model is sized by `charsPerTokenFor`, which is four
 until a turn has reported one. It is the highest of the model's last four readings, which is the
 lowest token count: a count that comes out high refuses a run that would have fit, and one that
 comes out low only costs the round trip the guard was saving. A reading from a request carrying an
@@ -349,7 +349,7 @@ large for gpt-4o ... on tokens per min"); that is ruled out and waited through a
 A server still loading the model is waited for on its own clock. llama.cpp answers 503 `Loading
 model` (type `unavailable_error`) until the weights are mapped, thirty to ninety seconds for a large
 model from a cold cache, and a router build says the same while it swaps models; `backoffMs` would
-give up inside fifteen. `isModelLoading` recognises it, and `runTurn` polls every `LOADING_POLL_MS`
+give up inside fifteen. `isModelLoading` recognises it, and `runTurn` polls every three seconds
 for up to `loadingTimeoutMs` (two minutes by default, zero to turn it off) without spending
 `maxRetries`, with one notice at the start. `runAgentLoop` reads it as `loadingTimeoutSeconds` off
 the config. A 503 that says nothing about loading stays on the ordinary backoff.
@@ -985,7 +985,7 @@ not turn the backlog off. `resetEvents` (and `resetAll`) puts the defaults back,
 is not the next one's.
 
 `expandNames`, `carryOver`, `preselection`, `preselectInput` and `preselectSystem` take their caps
-the same way — as a last argument defaulting to `MAX_PER_LOAD` or `MAX_CARRIED`. A resolution
+the same way — as a last argument, which is 12 tools a load and 16 carried unless given. A resolution
 carries the cap it was held to, so `loadResult` tells the model the number it was actually
 measured against rather than the module's own.
 

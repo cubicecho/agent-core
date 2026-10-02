@@ -155,7 +155,7 @@ export const FIRST_TOKEN_FACTOR = 5;
  *
  * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
  * @returns Milliseconds. `firstTokenSeconds` where it is given, zero or less being no limit;
- * otherwise `FIRST_TOKEN_FACTOR` request timeouts, and no limit where the request has none.
+ * otherwise five request timeouts, and no limit where the request has none.
  */
 export const firstTokenMs = (
   config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,

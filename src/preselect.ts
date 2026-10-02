@@ -127,7 +127,7 @@ const IDF_SMOOTHING = 0.5;
  * clears it. That is the right answer rather than a gap: a catalogue that small is not costing
  * enough tokens to be worth choosing from in the first place.
  */
-export const KEYWORD_MIN_SCORE = 1;
+const KEYWORD_MIN_SCORE = 1;
 
 /**
  * How far the best unpicked tool must fall below the last picked one for the cut to count clean.
@@ -137,7 +137,7 @@ export const KEYWORD_MIN_SCORE = 1;
  * as much as one just above means the ranking chose arbitrarily, which is exactly the case a
  * model should be spent on.
  */
-export const KEYWORD_DROPOFF = 0.5;
+const KEYWORD_DROPOFF = 0.5;
 
 /** The longest word `terms` leaves its trailing `s` on: `bus` and `was` are not plurals. */
 const SHORTEST_PLURAL = 3;
@@ -209,19 +209,19 @@ export interface KeywordPreselectOptions {
   /**
    * The most to pick. The same cap the model is held to.
    *
-   * @defaultValue `MAX_PER_LOAD`
+   * @defaultValue `12`
    */
   maxPerLoad?: number;
   /**
    * The floor under a confident best match.
    *
-   * @defaultValue `KEYWORD_MIN_SCORE`
+   * @defaultValue `1`
    */
   minScore?: number;
   /**
    * The gap a confident cut needs.
    *
-   * @defaultValue `KEYWORD_DROPOFF`
+   * @defaultValue `0.5`
    */
   dropoff?: number;
   /**
@@ -350,7 +350,7 @@ export interface PreselectOptions {
   /**
    * The most tools the choice may name.
    *
-   * @defaultValue `MAX_PER_LOAD`
+   * @defaultValue `12`
    */
   maxPerLoad?: number;
   /**

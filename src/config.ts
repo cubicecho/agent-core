@@ -37,7 +37,7 @@ export interface Endpoint {
   /**
    * How long a streamed turn may wait for its first chunk. Zero or less is no limit.
    *
-   * @defaultValue `FIRST_TOKEN_FACTOR` times `requestTimeoutSeconds`
+   * @defaultValue Five times `requestTimeoutSeconds`
    *
    * @remarks
    * Its own number because the first wait is prefill, and on a local server prefill of a long
