@@ -22,6 +22,15 @@ export const ARGUMENTS_TRUNCATED = 'truncated' as const;
 /** The `ToolArgumentsError` kind for a call the model wrote wrongly. */
 export const ARGUMENTS_MALFORMED = 'malformed' as const;
 
+/**
+ * A fenced block in a model's reply, tagged `json` or not tagged; the first group is what it holds.
+ *
+ * @remarks
+ * Global, for `matchAll`, which reads from a copy: nothing here keeps a place in the text between
+ * two uses. What it captures still wants trimming.
+ */
+export const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/gi;
+
 /** A tool call as the loop handles it, recovered or streamed. */
 export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
 
@@ -438,7 +447,7 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
       return [{ start, end: read.end, calls }];
     }
   }
-  const fences = [...text.matchAll(/```(?:json)?[ \t]*\n?([\s\S]*?)```/gi)];
+  const fences = [...text.matchAll(CODE_FENCE)];
   if (fences.length !== 1) {
     return [];
   }

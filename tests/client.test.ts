@@ -289,6 +289,20 @@ describe('contextLimitFor', () => {
   });
 });
 
+describe('listModels', () => {
+  beforeEach(() => {
+    resetClients();
+    list.mockReset();
+  });
+
+  it('orders the ids by code unit, the same on every host', async () => {
+    list.mockResolvedValue(listing({ id: 'beta' }, { id: 'Zeta' }, { id: 'alpha' }));
+    const models = await listModels(endpoint);
+    // A locale's order would put `alpha` first; which locale is the host's to say.
+    expect(models.map((model) => model.id)).toEqual(['Zeta', 'alpha', 'beta']);
+  });
+});
+
 describe('getClient', () => {
   beforeEach(() => {
     resetClients();

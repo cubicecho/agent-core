@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
-import { backoffMs, ContextOverflow, EndpointSilent, isOverflow, isTransient, sleep } from '../src/retry.ts';
+import { backoffMs, ContextOverflow, EndpointSilent, isAbort, isOverflow, isTransient, sleep } from '../src/retry.ts';
 import { apiError } from './helpers.ts';
 
 describe('isTransient', () => {
@@ -16,6 +16,17 @@ describe('isTransient', () => {
     expect(isTransient(new Error('something else'))).toBe(false);
     // Its own class precisely so nothing retries it.
     expect(isTransient(new ContextOverflow('too big'))).toBe(false);
+  });
+});
+
+describe('isAbort', () => {
+  it("knows the SDK's abort and a signal's, and nothing else", () => {
+    expect(isAbort(new OpenAI.APIUserAbortError())).toBe(true);
+    expect(isAbort(AbortSignal.abort().reason)).toBe(true);
+    expect(isAbort(new DOMException('too slow', 'TimeoutError'))).toBe(false);
+    expect(isAbort(new Error('aborted'))).toBe(false);
+    expect(isAbort(apiError(500))).toBe(false);
+    expect(isAbort('AbortError')).toBe(false);
   });
 });
 

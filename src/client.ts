@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { Endpoint, EndpointIdentity, RetryPolicy } from './config.ts';
 import { digestOf } from './digest.ts';
-import { isPositive } from './guards.ts';
+import { byCodeUnit, isPositive } from './guards.ts';
 import { MS_PER_SECOND } from './platform.ts';
 import { assignSettings, scoped } from './scope.ts';
 import { HttpStatus } from './wire.ts';
@@ -526,7 +526,7 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
     }
     models.push({ id: model.id, contextLength: window.contextLength });
   }
-  models.sort((a, b) => a.id.localeCompare(b.id));
+  models.sort((a, b) => byCodeUnit(a.id, b.id));
   const key = endpointKey(config);
   listings().set(key, models);
   trainedOnly().set(key, trained);

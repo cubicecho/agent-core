@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import {
   type Capabilities,
   capabilitiesFor,
@@ -13,11 +13,11 @@ import {
 import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from './client.ts';
 import type { Endpoint, EndpointIdentity } from './config.ts';
 import { errorMessage } from './errors.ts';
-import { refusesRequest } from './retry.ts';
+import { isAbort, refusesRequest } from './retry.ts';
 import { relaxSchema, sanitizeSchema } from './schema-compat.ts';
 import { scoped } from './scope.ts';
 import { stripThinking } from './thinking.ts';
-import { looseJson } from './tool-calls.ts';
+import { CODE_FENCE, looseJson } from './tool-calls.ts';
 import { JSON_SCHEMA_FORMAT, Role } from './wire.ts';
 
 /**
@@ -386,9 +386,10 @@ export async function askJson<T>(
  *
  * @param label - Names the task in the notice when it fails.
  * @param run - The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
- * @param [options] - `onNotice`, told what was given up on.
- * @returns What `run` resolved with, or `undefined` when it threw. An `APIUserAbortError` is thrown
- * on and raises no notice.
+ * @param [options] - `onNotice`, told what was given up on, and the `signal` that `run` is
+ * cancelled by.
+ * @returns What `run` resolved with, or `undefined` when it threw. Whatever it threw once the
+ * signal had aborted is thrown on and raises no notice, as is an error that is itself an abort.
  *
  * @remarks
  * A side task is never worth failing the work it supports. Callers that can carry on without
@@ -397,14 +398,16 @@ export async function askJson<T>(
 export async function tryAsk<T>(
   label: string,
   run: () => Promise<T>,
-  { onNotice }: Pick<SideTaskOptions, 'onNotice'> = {},
+  { onNotice, signal }: Pick<SideTaskOptions, 'onNotice' | 'signal'> = {},
 ): Promise<T | undefined> {
   try {
     return await run();
   } catch (error) {
     // A cancelled run is not a failed side task. Swallowing the abort made the two
-    // indistinguishable and left the cancellation with nowhere to go.
-    if (error instanceof OpenAI.APIUserAbortError) {
+    // indistinguishable and left the cancellation with nowhere to go. The signal is asked first:
+    // an abort with a reason of the caller's own rejects with that reason, which no class names.
+    const wasCancelled = signal?.aborted === true || isAbort(error);
+    if (wasCancelled) {
       throw error;
     }
     onNotice?.(`${label}: ${errorMessage(error)}`);
@@ -430,7 +433,7 @@ export async function tryAsk<T>(
  * a reply as in a call, and a side task that fails over one costs the run a second request.
  */
 export function parseJson<T>(text: string): T | undefined {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const [fenced] = text.matchAll(CODE_FENCE);
   const body = (fenced?.[1] ?? text).trim();
   const start = body.search(/[[{]/);
   if (start < 0) {

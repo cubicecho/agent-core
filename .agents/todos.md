@@ -15,8 +15,10 @@ The canonical way this codebase does things. New code and refactors follow these
 - Events: one bus in `events.ts`; run events are plain tagged objects
 - Per-scope state: a `scoped()` store in the module that owns the concept, listed in
   `runtime.ts` `STATEFUL` and cleared through `reset.ts` `resetAll`
-- Shared helpers live in: `guards.ts` (predicates and small value helpers), `tokens.ts`
-  (sizing), `scope.ts` (per-scope stores)
+- Shared helpers live in: `guards.ts` (predicates and small value helpers, no imports),
+  `retry.ts` (what an error is: transient, a refusal, an abort), `tokens.ts` (sizing), `scope.ts`
+  (per-scope stores)
+- Sorting: `byCodeUnit` wherever the order is relied on
 - Test helpers live in: `tests/helpers.ts` once a second file needs one; `bench/fixtures.ts` for
   the bench
 - Test layout: `describe` named for the export, `it` for each case; a test lives in the file of
@@ -24,7 +26,7 @@ The canonical way this codebase does things. New code and refactors follow these
 - Generated files and the command that rebuilds them: `llms.txt` → `npm run build`
 - Docs: `docs-comments.md` in the `cubicecho_typescript` skill; AGENTS.md adds only that the
   first sentence stands alone, because `llms.txt` takes it verbatim
-- Code style: the `cubicecho_typescript` skill and the `coding-standards` skill's preferences P1–P18
+- Code style: the `cubicecho_typescript` skill and the `coding-standards` skill's preferences P1–P21
 - `CHANGELOG.md` and the `package.json` version belong to semantic-release
 
 ## Refactoring
@@ -116,10 +118,9 @@ Answers given at the gate, which the items follow (all recorded in the skills):
   `as OpenAI.ReasoningEffort` in `request-body.ts`; body fields the SDK type lacks in
   `side-task.ts`; `taskCall`'s `{ ...options, ...stated } as Options`, which the compiler will
   not take without; the one assertion inside `kept` in `spec.ts`. `schema-compat.ts`
-  `schema[key] as Schema` is B4.
+  `schema[key] as Schema` went with B4.
 - **R19** — loops that do more than one thing per pass (`hooks.ts`, `ledger.ts`,
   `tool-calls.ts`) and two-line block lambdas.
-- **D4** — `preselect`'s `@returns` does not promise at most `maxPerLoad` names; see B5.
 
 ---
 
@@ -150,10 +151,6 @@ and after each, and the same titles.
 - **T2** — titles were not reworded. Some start with a noun and read oddly after `it`.
 - **T3** — a cast that is the test stays: a wrong type handed in to see it refused (`'900' as
   never`, `'8' as never`, `[...] as never[]`, `emit(... as never)`, `reasoning_content`).
-- **T3, open** — ten `as never` on a fake hook runner (`compaction.test.ts`, `agent-loop.test.ts`)
-  and one tuple cast on its recorded calls. Typing the fake as `HookRunner` does not compile,
-  because the hand-written outcomes leave out `ms`, `inject` and `maxTokens`. Keep the cast,
-  build outcomes through a typed helper that fills those in, or cast once in a helper?
 
 ---
 
@@ -166,35 +163,42 @@ D5: `CLAUDE.md` is a symlink to `AGENTS.md` (`835b7e3`).
 
 ## Bugs
 
-Open questions, not approved.
+Reviewed 2026-10-02, one answer each. Done on `fix/review-findings`, one commit each.
 
-### B1 — sorting with `localeCompare` where a comment promises a stable byte order
+| ID | What | Commit |
+| --- | --- | --- |
+| B1 | `listModels` and the ranking tie-break order by code unit; `byCodeUnit` lives in `guards.ts` | `bcfa50e` |
+| B2 | `tryAsk` lets through an abort that is the signal's own `AbortError`; `isAbort` in `retry.ts` | `06e7d5e` |
+| B2 | `tryAsk` is handed the signal and asks it first, so a reason of the caller's own is an abort too | `2472cd5` |
+| B3 | one `CODE_FENCE` pattern for `parseJson` and `bareCalls` (they matched the same text) | `a4cdfb0` |
+| B4 | not a bug: `pruneDefs` had checked the pool and then cast it; it keeps what it checked | `7c095fd` |
+| B5 | the keyword pass takes the smaller of its own cap and `preselect`'s ceiling | `a89dd86` |
+| T3 | fake hook runners are typed `HookRunner`, built with `outcome()` from `tests/helpers.ts` | `38a85de` |
 
-**File:** `tool-loading.ts:878`, `client.ts:442`, comment at `tool-loading.ts:187`.
+Answers given, which the items follow:
 
-### B2 — `tryAsk` recognises an abort by error class, the rest by the signal
+- An order the program depends on compares by code unit. `localeCompare` is for text sorted for
+  a person to read.
+- A value a guard has narrowed is kept and passed on, not looked up again and asserted.
+- A pattern written in two places for the same thing is one named constant, even where the two
+  spellings accept the same text.
+- A fake in a test is typed as the thing it stands in for, and a builder fills in what the test
+  is not about.
 
-**File:** `side-task.ts:334`
+The first three are in the `coding-standards` skill's preferences (P21, and added to P17 and
+P16); the fourth is in its `tests.md`.
 
-### B3 — two regexes for a code fence that accept different things
+### Left as they are, and why
 
-**File:** `side-task.ts:352`, `tool-calls.ts:316` Is the difference intended?
-
-### B4 — a schema keyword's value is taken as a schema without a look
-
-**File:** `schema-compat.ts` (`schema[key] as Schema`). A guard would replace the assertion and
-add a runtime check, which is why R18 left it.
-
-### B5 — `preselect` lets `keywords.maxPerLoad` override the outer `maxPerLoad`
-
-**File:** `preselect.ts`, the call to `preselectByKeywords`. The `keywords` object is spread
-after `maxPerLoad`, so a larger one inside it returns more names than the outer ceiling. Found
-while documenting; is it intended?
+- **B2** — `isAbort` is in `retry.ts` rather than `guards.ts`, which has no imports and would
+  need the SDK. It looks at the error only, so `tryAsk` asks the signal as well; a host calling
+  `tryAsk` itself has to hand it the signal to get that.
 
 ### B6 — `getOrCreate` reads a stored `undefined` as a miss
 
 **File:** `guards.ts`. Changed by R18 to drop an assertion (`has` then `get as V`). No caller
-stores `undefined`; recorded because it is a behaviour change in a refactor.
+stores `undefined`; recorded because it is a behaviour change in a refactor. Open: accept or
+reverse.
 
 ---
 

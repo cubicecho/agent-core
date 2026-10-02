@@ -675,7 +675,7 @@ function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
   const call = taskCall(compactor, { signal, onNotice: notice }, config);
   const write = summariser(call.endpoint, call.model, call.options);
   // A summary that fails folds nothing, and the step goes out as it was.
-  return async (text: string) => (await tryAsk('compaction', () => write(text), { onNotice: notice })) ?? '';
+  return async (text: string) => (await tryAsk('compaction', () => write(text), { onNotice: notice, signal })) ?? '';
 }
 
 /**

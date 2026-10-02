@@ -42,6 +42,20 @@ describe('preselect', () => {
     expect(notices).toEqual([expect.stringContaining('boom')]);
   });
 
+  it('rejects rather than picking nothing when the run it supports was cancelled', async () => {
+    const controller = new AbortController();
+    const reason = new Error('the user closed the tab');
+    controller.abort(reason);
+    const notices: string[] = [];
+    create.mockRejectedValueOnce(reason);
+    const picking = preselect(config, 'small', catalog, 'x', {
+      signal: controller.signal,
+      onNotice: (n) => notices.push(n),
+    });
+    await expect(picking).rejects.toBe(reason);
+    expect(notices).toEqual([]);
+  });
+
   it("spends no round trip when the request's own words name the tool", async () => {
     // A catalogue with something to discriminate between: a term is only distinctive against
     // other terms, so one tool alone can never be a confident match, and does not need to be.
@@ -60,6 +74,29 @@ describe('preselect', () => {
     // The whole point: the model was never asked.
     expect(create).not.toHaveBeenCalled();
     expect(notices).toEqual([expect.stringContaining('by name')]);
+  });
+
+  it('holds the words to the ceiling, which their own cap can lower and cannot raise', async () => {
+    const desks = [
+      { id: 's', label: 'S', tools: [{ name: 's__read', description: 'Read a file' }] },
+      { id: 'd', label: 'D', tools: [{ name: 'd__query', description: 'Query the database' }] },
+      { id: 'c', label: 'C', tools: [{ name: 'c__event', description: 'Add a calendar event' }] },
+      { id: 'w', label: 'W', tools: [{ name: 'w__fetch', description: 'Fetch a URL' }] },
+    ];
+    const prompt = 'read the file, query the database and fetch the url';
+    // Sure of itself whatever it finds, so what is counted is the cap and nothing else.
+    const sure = { minScore: 0, dropoff: Number.POSITIVE_INFINITY };
+    const raised = await preselect(config, 'small', desks, prompt, {
+      maxPerLoad: 2,
+      keywords: { ...sure, maxPerLoad: 3 },
+    });
+    expect(raised).toHaveLength(2);
+    const lowered = await preselect(config, 'small', desks, prompt, {
+      maxPerLoad: 2,
+      keywords: { ...sure, maxPerLoad: 1 },
+    });
+    expect(lowered).toHaveLength(1);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('falls through to the model when the words settle nothing', async () => {
@@ -217,6 +254,25 @@ describe('preselectByKeywords', () => {
     // it decides the ranking. What the request is actually about is the word only one tool uses.
     const ranked = preselectByKeywords(shared, 'the thing zebra').ranked;
     expect(ranked[0].name).toBe('desk__zebra');
+  });
+
+  it('a tie breaks on the name by code unit, whatever order the catalogue came in', () => {
+    const twins: CatalogServer[] = [
+      {
+        id: '1',
+        label: 'Desk',
+        tools: [
+          { name: 'desk__alpha', description: 'Fetch the ledger' },
+          { name: 'desk__Zed', description: 'Fetch the ledger' },
+        ],
+      },
+    ];
+    const reversed = [{ ...twins[0], tools: [...twins[0].tools].reverse() }];
+    const names = (catalog: CatalogServer[]) =>
+      preselectByKeywords(catalog, 'fetch the ledger').ranked.map((hit) => hit.name);
+    // A locale's order would put `desk__alpha` first; which locale is the host's to say.
+    expect(names(twins)).toEqual(['desk__Zed', 'desk__alpha']);
+    expect(names(reversed)).toEqual(['desk__Zed', 'desk__alpha']);
   });
 
   it('words the catalogue does not use pick nothing, and say so', () => {

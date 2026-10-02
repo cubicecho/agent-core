@@ -1,10 +1,12 @@
 import OpenAI from 'openai';
 import type { CatalogServer } from '../src/catalog.ts';
+import { HookEvent } from '../src/hook-events.ts';
+import type { HookOutcome } from '../src/hooks.ts';
 import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
 
 /**
  * What more than one test file builds the same way: the fake client, the errors the SDK raises,
- * a streamed turn, and the smallest config, tool and message that will do.
+ * a streamed turn, a hook's outcome, and the smallest config, tool and message that will do.
  *
  * A helper only one file uses stays in that file. One that closes over a file's own mock (`create`,
  * `list`) stays there too, since `vi.mock` is hoisted per file and the mock cannot be shared.
@@ -142,6 +144,25 @@ export const assistant = (content: string): Message => ({ role: Role.Assistant, 
  * @returns The message, answering a call with the id `c`.
  */
 export const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
+
+/**
+ * What a hook's runner reports for one hook, whole, so a fake runner can be typed as a real one.
+ *
+ * @param [given] - The fields the test is about. The rest describe a memory hook that ran before
+ * the turn, succeeded, and asked for nothing to be injected.
+ * @returns The outcome.
+ */
+export const outcome = (given: Partial<HookOutcome> = {}): HookOutcome => ({
+  serverId: 'mem',
+  label: 'Memory',
+  hookId: 'recall',
+  event: HookEvent.BeforeTurn,
+  ok: true,
+  ms: 1,
+  inject: false,
+  maxTokens: 1000,
+  ...given,
+});
 
 /** An endpoint with no key and a minute's timeout. */
 export const endpoint = { baseUrl: 'http://local/v1', apiKey: '', requestTimeoutSeconds: 60 };

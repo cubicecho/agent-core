@@ -1,7 +1,7 @@
 import type { OnNotice } from './capabilities.ts';
 import type { CatalogServer } from './catalog.ts';
 import type { Endpoint } from './config.ts';
-import { counted, isRecord } from './guards.ts';
+import { byCodeUnit, counted, isRecord } from './guards.ts';
 import { askJson, tryAsk } from './side-task.ts';
 import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
 import { SchemaType } from './wire.ts';
@@ -316,7 +316,7 @@ export function preselectByKeywords(
   }
   // Ties break on the name, not on where the tool sat in the catalogue, so reconnecting a
   // server in a different order does not change what a run opens with.
-  ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  ranked.sort((a, b) => b.score - a.score || byCodeUnit(a.name, b.name));
   if (!ranked.length) {
     return empty;
   }
@@ -355,7 +355,8 @@ export interface PreselectOptions {
   maxPerLoad?: number;
   /**
    * Try `preselectByKeywords` first and spend the model only on what it cannot settle. `true`
-   * takes its defaults; an object tunes the thresholds. An empty `model` still means no
+   * takes its defaults; an object tunes the thresholds. Its own `maxPerLoad` can ask the words
+   * for fewer than `maxPerLoad` above, never for more. An empty `model` still means no
    * preselection at all, words included — that is what `toolSelectModel: ""` asks for.
    */
   keywords?: boolean | KeywordPreselectOptions;
@@ -371,8 +372,8 @@ export interface PreselectOptions {
  * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
  * @param [options] - Cancellation, notices, the reply ceiling, the temperature and reasoning effort
  * as `ask` reads them, the cap the choice is held to, and whether to try the words first.
- * @returns Names as the catalogue spells them. Empty where `model` is empty, the catalogue has no
- * tools, the call failed, or its reply named nothing in the catalogue.
+ * @returns Names as the catalogue spells them, never more than `maxPerLoad`. Empty where `model` is
+ * empty, the catalogue has no tools, the call failed, or its reply named nothing in the catalogue.
  *
  * @remarks
  * On-demand loading otherwise spends a round trip on reading the catalogue and calling
@@ -405,9 +406,10 @@ export async function preselect(
     return [];
   }
   if (keywords) {
+    const tuned = keywords === true ? {} : keywords;
     const guess = preselectByKeywords(catalog, prompt, {
-      maxPerLoad,
-      ...(keywords === true ? {} : keywords),
+      ...tuned,
+      maxPerLoad: Math.min(maxPerLoad, tuned.maxPerLoad ?? maxPerLoad),
     });
     if (guess.confident) {
       onNotice?.(`chose ${counted(guess.names.length, 'tool')} by name`);
@@ -425,7 +427,7 @@ export async function preselect(
         signal,
         onNotice,
       }),
-    { onNotice },
+    { onNotice, signal },
   );
   return preselection(reply, catalog, maxPerLoad);
 }

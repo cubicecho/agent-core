@@ -3,9 +3,10 @@
  *
  * A leaf with no imports, because the modules that need these — a browser-safe `spec`, the schema
  * walk, the tool-call reader, the snapshot importer — otherwise share nothing, and each had grown
- * its own copy. `getOrCreate` and `counted` are here for the same reason and are the two things that
- * are not checks: every cache in the package fills itself on a miss, and each had written that
- * out, and a notice that counts something is written in more than one module.
+ * its own copy. `getOrCreate`, `counted` and `byCodeUnit` are here for the same reason and are the
+ * three things that are not checks: every cache in the package fills itself on a miss, and each had
+ * written that out; a notice that counts something is written in more than one module; and so is a
+ * sort whose order must not depend on the host.
  */
 
 /**
@@ -64,3 +65,25 @@ export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V
  * @returns The phrase. Only a count of exactly one is singular: zero reads `0 tools`.
  */
 export const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
+/**
+ * Orders two strings by code unit, which is the same on every host.
+ *
+ * @param a - The string on the left.
+ * @param b - The string on the right.
+ * @returns Negative where `a` sorts first, positive where `b` does, zero where they are the same.
+ *
+ * @remarks
+ * Rather than `localeCompare`, whose answer depends on the host's locale. An order the package
+ * relies on — the tool array a prompt cache matches, a tie between two ranked tools, a listing a
+ * host may key on — has to come out the same wherever it runs.
+ */
+export function byCodeUnit(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
+}
