@@ -427,7 +427,7 @@ export async function preselect(
         signal,
         onNotice,
       }),
-    { onNotice },
+    { onNotice, signal },
   );
   return preselection(reply, catalog, maxPerLoad);
 }

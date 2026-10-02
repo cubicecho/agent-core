@@ -42,6 +42,20 @@ describe('preselect', () => {
     expect(notices).toEqual([expect.stringContaining('boom')]);
   });
 
+  it('rejects rather than picking nothing when the run it supports was cancelled', async () => {
+    const controller = new AbortController();
+    const reason = new Error('the user closed the tab');
+    controller.abort(reason);
+    const notices: string[] = [];
+    create.mockRejectedValueOnce(reason);
+    const picking = preselect(config, 'small', catalog, 'x', {
+      signal: controller.signal,
+      onNotice: (n) => notices.push(n),
+    });
+    await expect(picking).rejects.toBe(reason);
+    expect(notices).toEqual([]);
+  });
+
   it("spends no round trip when the request's own words name the tool", async () => {
     // A catalogue with something to discriminate between: a term is only distinctive against
     // other terms, so one tool alone can never be a confident match, and does not need to be.

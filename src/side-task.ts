@@ -386,9 +386,10 @@ export async function askJson<T>(
  *
  * @param label - Names the task in the notice when it fails.
  * @param run - The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
- * @param [options] - `onNotice`, told what was given up on.
- * @returns What `run` resolved with, or `undefined` when it threw. An abort — the SDK's, or a
- * signal's `AbortError` — is thrown on and raises no notice.
+ * @param [options] - `onNotice`, told what was given up on, and the `signal` that `run` is
+ * cancelled by.
+ * @returns What `run` resolved with, or `undefined` when it threw. Whatever it threw once the
+ * signal had aborted is thrown on and raises no notice, as is an error that is itself an abort.
  *
  * @remarks
  * A side task is never worth failing the work it supports. Callers that can carry on without
@@ -397,14 +398,16 @@ export async function askJson<T>(
 export async function tryAsk<T>(
   label: string,
   run: () => Promise<T>,
-  { onNotice }: Pick<SideTaskOptions, 'onNotice'> = {},
+  { onNotice, signal }: Pick<SideTaskOptions, 'onNotice' | 'signal'> = {},
 ): Promise<T | undefined> {
   try {
     return await run();
   } catch (error) {
     // A cancelled run is not a failed side task. Swallowing the abort made the two
-    // indistinguishable and left the cancellation with nowhere to go.
-    if (isAbort(error)) {
+    // indistinguishable and left the cancellation with nowhere to go. The signal is asked first:
+    // an abort with a reason of the caller's own rejects with that reason, which no class names.
+    const wasCancelled = signal?.aborted === true || isAbort(error);
+    if (wasCancelled) {
       throw error;
     }
     onNotice?.(`${label}: ${errorMessage(error)}`);

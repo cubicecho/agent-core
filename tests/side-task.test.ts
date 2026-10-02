@@ -116,4 +116,34 @@ describe('tryAsk', () => {
     await expect(waiting).rejects.toBe(controller.signal.reason);
     expect(notices).toEqual([]);
   });
+
+  it("lets through an abort whose reason is the caller's own, which no error class names", async () => {
+    const controller = new AbortController();
+    const reason = new Error('the user closed the tab');
+    controller.abort(reason);
+    const notices: string[] = [];
+    const waiting = tryAsk('naming', () => sleep(1000, controller.signal), {
+      onNotice: (message) => notices.push(message),
+      signal: controller.signal,
+    });
+    await expect(waiting).rejects.toBe(reason);
+    expect(notices).toEqual([]);
+  });
+
+  it('lets through whatever a cancelled call threw, since the cancel is why it threw', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const cut = new Error('socket hang up');
+    await expect(tryAsk('naming', () => Promise.reject(cut), { signal: controller.signal })).rejects.toBe(cut);
+  });
+
+  it('still reports a failure while the signal it was handed has not aborted', async () => {
+    const notices: string[] = [];
+    const got = await tryAsk('naming', () => Promise.reject(new Error('nope')), {
+      onNotice: (message) => notices.push(message),
+      signal: new AbortController().signal,
+    });
+    expect(got).toBeUndefined();
+    expect(notices).toEqual(['naming: nope']);
+  });
 });

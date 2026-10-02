@@ -150,7 +150,8 @@ export const refusesRequest = (error: unknown) =>
  * An abort reaches a catch in two shapes. The SDK raises its own class when a request in flight is
  * cancelled, and `sleep` rejects with the signal's reason when the cancel lands between attempts.
  * A catch that knew only the first reported the second as a failure. A signal aborted with a
- * reason of the caller's own making is not recognised: only the error is looked at.
+ * reason of the caller's own making is not recognised, since only the error is looked at: a
+ * catch that holds the signal asks it as well, as `tryAsk` does.
  */
 export const isAbort = (error: unknown) =>
   error instanceof OpenAI.APIUserAbortError || (error instanceof Error && error.name === ABORT_ERROR);
