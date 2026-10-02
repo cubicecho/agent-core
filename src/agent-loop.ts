@@ -25,7 +25,7 @@ import {
   errorMessage,
   ToolIterationLimit,
 } from "./errors.ts";
-import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics } from "./events.ts";
+import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics, stamp } from "./events.ts";
 import type { HookEvent } from "./hook-events.ts";
 import {
   configureHooks,
@@ -908,17 +908,7 @@ async function runSteps(
   const recorded: RunEvent[] = [];
   const record = (input: RunEventInput) => {
     if (input.kind === "thinking" || input.kind === "output") return;
-    recorded.push({
-      runId: "",
-      seq: recorded.length + 1,
-      at: Date.now(),
-      text: "",
-      name: "",
-      step: "",
-      ok: null,
-      usage: null,
-      ...input,
-    });
+    recorded.push(stamp(input, "", recorded.length + 1, Date.now()));
   };
   const onEvent = (input: RunEventInput) => {
     record(input);

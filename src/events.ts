@@ -216,6 +216,30 @@ export interface RunEvent {
 export type RunEventInput = Pick<RunEvent, "kind"> &
   Partial<Omit<RunEvent, "kind" | "runId" | "seq">>;
 
+/**
+ * A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
+ *
+ * The one place the defaults are written, so an event the bus stamps, one the loop keeps for its
+ * own metrics and the notice a slow watcher is sent cannot come to disagree about what an unset
+ * field reads as.
+ *
+ * @param input What happened. An `at` it carries wins over the one given here.
+ * @param runId The run it belongs to. Written after `input`, which gets no say in it.
+ * @param seq Its place in that run, the same.
+ * @param at When, for an input that does not say.
+ */
+export const stamp = (input: RunEventInput, runId: string, seq: number, at: number): RunEvent => ({
+  at,
+  text: "",
+  name: "",
+  step: "",
+  ok: null,
+  usage: null,
+  ...input,
+  runId,
+  seq,
+});
+
 interface Stream {
   events: RunEvent[];
   listeners: Set<(event: RunEvent) => void>;
@@ -303,18 +327,7 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   const stream = streamFor(held, runId);
   // One clock read, used for both the event and the sweep's bookkeeping.
   const at = Date.now();
-  const event: RunEvent = {
-    at,
-    text: "",
-    name: "",
-    step: "",
-    ok: null,
-    usage: null,
-    ...input,
-    // After the spread, not before: these are the bus's and a caller does not get a say.
-    runId,
-    seq: ++stream.seq,
-  };
+  const event = stamp(input, runId, ++stream.seq, at);
   stream.events.push(event);
   stream.touched = at;
   if (stream.events.length > limits.maxEvents + limits.trimSlack) {
@@ -417,17 +430,16 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
           // Inside the gap there is nothing to collide with: those seqs reach no watcher.
           const gap = dropped;
           dropped = 0;
-          yield {
+          yield stamp(
+            {
+              kind: "notice",
+              text: `${gap} event(s) dropped: this watcher fell too far behind`,
+              step: event.step,
+            },
             runId,
-            seq: event.seq - 1,
-            at: event.at,
-            kind: "notice",
-            text: `${gap} event(s) dropped: this watcher fell too far behind`,
-            name: "",
-            step: event.step,
-            ok: null,
-            usage: null,
-          };
+            event.seq - 1,
+            event.at,
+          );
         }
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
