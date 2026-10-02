@@ -144,6 +144,14 @@ What a run is doing, while it is doing it.
 - `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
 - `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
 
+### hook-events
+
+The points in a session a hook can be bound to, apart from everything that runs one.
+
+- `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
+- `HookEvent` (type) — A point in a session a hook can be bound to.
+- `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
+
 ### hooks
 
 Lifecycle hooks, from the host's side: what a session looks like to them, where their context lands in a request, and what is said about each one.
@@ -154,16 +162,13 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `Gathered` (type) — The context a set of outcomes adds to a request, and a note for each hook worth mentioning.
 - `gather` — Runs the hooks ahead of a request and builds what they add to it.
 - `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens.
-- `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
 - `HOOK_PREFACE` — Said once, above the blocks, so the model reads them as background rather than instructions.
 - `HookContext` (type) — What a host knows at an event.
-- `HookEvent` (type) — A point in a session a hook can be bound to.
 - `HookMessage` (type) — One message of a session as a hook is handed it.
 - `HookNote` (type) — One hook's line for whoever is watching: the context it added, or why it added none.
 - `HookOptions` (type) — What hooks are held to across a process.
 - `HookOutcome` (type) — What one hook did.
 - `HookRunner` (type) — Runs one event's hooks.
-- `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
 - `notify` — Runs the hooks for an event that reads what happened and adds nothing to a request.
 - `resetHooks` — Test seam: puts `configureHooks` back to the defaults, so one test's budget or preface is not the next's.
 - `turnIndex` — Which turn of a session begins at a point, from 0: the user messages ahead of it.
@@ -194,7 +199,6 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 Everything about a request failing that is not about what the request said.
 
 - `backoffMs` — Exponential, with jitter so several tasks failing at once do not return in lockstep.
-- `CHARS_PER_TOKEN` — The divisor behind `estimateTokens`, applied here to a character count rather than a string.
 - `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
 - `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
 - `ContextOverflow` — The request was bigger than the model will read.
@@ -234,7 +238,9 @@ One turn, given as many attempts as the caller allows.
 JSON Schema compatibility for llama.cpp-backed servers.
 
 - `isGrammarError` — Does this failure look like the server could not build a grammar from our tool schemas?
+- `relaxSchema` — One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
 - `relaxTools` — The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in `pattern` and most `format` values, both of which only ever narrowed a string the tool re-validates anyway.
+- `sanitizeSchema` — One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
 - `sanitizeTools` — Tool definitions a strict server will accept, remembered per definition object.
 
 ### side-task
@@ -286,7 +292,7 @@ A JSON document that defines an agent, and the rules for reading one.
 - `ResolvedTask` (type) — One side task, resolved: a model, and the endpoint it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
 - `resolveAgentSpec` — Layers documents into the flat object the loop takes, weakest first.
-- `SPEC_EVENTS` — Every event a hook may be bound to, restated so this module stays free of `node:crypto`.
+- `SPEC_EVENTS` — Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
 - `SpecBundle` (type) — What an agent carries so it can travel whole: the definitions of the servers it names.
 - `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
 - `TaskSpec` (type) — One side task, which may run on a different model — and a different machine — than the agent.
@@ -317,6 +323,7 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 
 ### tokens
 
+- `CHARS_PER_TOKEN` — The characters one token is taken to be, where nothing has measured it.
 - `estimateTokens` — Rough token count.
 
 ### tool-calls

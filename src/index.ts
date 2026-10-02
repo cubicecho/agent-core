@@ -113,6 +113,7 @@ export {
   type TurnReport,
   watch,
 } from "./events.ts";
+export { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 export {
   assembleContext,
   configureHooks,
@@ -120,16 +121,13 @@ export {
   type Gathered,
   gather,
   HOOK_CONTEXT_TOKENS,
-  HOOK_EVENTS,
   HOOK_PREFACE,
   type HookContext,
-  type HookEvent,
   type HookMessage,
   type HookNote,
   type HookOptions,
   type HookOutcome,
   type HookRunner,
-  INJECT_EVENTS,
   notify,
   resetHooks,
   turnIndex,
@@ -151,7 +149,6 @@ export {
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,
-  CHARS_PER_TOKEN,
   type ContextBreakdown,
   type ContextBreakdownOptions,
   ContextOverflow,
@@ -174,7 +171,13 @@ export {
 } from "./retry.ts";
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from "./runtime.ts";
-export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";
+export {
+  isGrammarError,
+  relaxSchema,
+  relaxTools,
+  sanitizeSchema,
+  sanitizeTools,
+} from "./schema-compat.ts";
 export {
   type AskJsonOptions,
   ask,
@@ -238,7 +241,7 @@ export {
   stripThinking,
   THINK_FENCE,
 } from "./thinking.ts";
-export { estimateTokens } from "./tokens.ts";
+export { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
 export {
   parseToolArguments,
   recoverToolCalls,

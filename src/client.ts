@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import type { Endpoint } from "./config.ts";
+import { isPositive } from "./guards.ts";
 import { scoped } from "./scope.ts";
 
 /**
@@ -10,15 +11,16 @@ import { scoped } from "./scope.ts";
  */
 export const NO_KEY = "agent-core";
 
+/** A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit. */
+const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
+
 /**
  * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
  *
  * @param config Read for `requestTimeoutSeconds` alone.
  */
-export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined => {
-  const seconds = config.requestTimeoutSeconds ?? 0;
-  return seconds > 0 ? seconds * 1000 : undefined;
-};
+export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined =>
+  limitMs(config.requestTimeoutSeconds ?? 0);
 
 /**
  * A client per endpoint, made once and kept.
@@ -113,9 +115,7 @@ const evict = () => {
  */
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
   for (const [name, value] of Object.entries(options)) {
-    if (typeof value === "number" && value > 0) {
-      poolLimits()[name as keyof ClientPoolOptions] = value;
-    }
+    if (isPositive(value)) poolLimits()[name as keyof ClientPoolOptions] = value;
   }
   evict();
   return { ...poolLimits() };
@@ -136,7 +136,7 @@ export const firstTokenMs = (
     const idle = timeoutMs(config);
     return idle === undefined ? undefined : idle * FIRST_TOKEN_FACTOR;
   }
-  return config.firstTokenSeconds > 0 ? config.firstTokenSeconds * 1000 : undefined;
+  return limitMs(config.firstTokenSeconds);
 };
 
 /**
@@ -191,7 +191,7 @@ const CONTEXT_KEYS = [
   "n_ctx",
 ];
 
-const positive = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
+const positive = (value: unknown) => (isPositive(value) ? value : 0);
 
 /**
  * A listing entry's window, and whether it is only the one the model was trained with.
@@ -286,6 +286,9 @@ const misses = scoped(() => new Map<string, number>());
  */
 export const endpointKey = (config: { baseUrl: string; apiKey?: string }) =>
   JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
+
+/** One model on one endpoint, as the caches below key it: stringified, so neither half runs into the other. */
+const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
 /**
  * `endpointKey` hashed, for the remembered facts that can leave the process.
@@ -385,7 +388,7 @@ async function probe(
 export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
   const endpoint = endpointKey(config);
   if (unserved().has(endpoint)) return 0;
-  const key = JSON.stringify([endpoint, config.model]);
+  const key = modelKey(endpoint, config.model);
   const known = served().get(key);
   if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs))
     return known.window;
@@ -485,7 +488,7 @@ export async function contextLimitFor(
   // context meter and, in a consumer that compacts on it, compaction: the session then runs at
   // the window instead of under it and fails against the endpoint's own refusal.
   if (!listed()) {
-    const missKey = JSON.stringify([key, config.model]);
+    const missKey = modelKey(key, config.model);
     const asked = misses().get(missKey);
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the endpoint is asked, and a caller sizing a window per turn pays a round

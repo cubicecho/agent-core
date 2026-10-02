@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import {
   type Capabilities,
   capabilitiesFor,
+  ceilingAndTemperature,
   effortFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
@@ -10,10 +11,11 @@ import {
 import { endpointId, getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
-import { isTransient } from "./retry.ts";
-import { relaxTools, sanitizeTools } from "./schema-compat.ts";
+import { refusesRequest } from "./retry.ts";
+import { relaxSchema, sanitizeSchema } from "./schema-compat.ts";
 import { scoped } from "./scope.ts";
 import { stripThinking } from "./thinking.ts";
+import { looseJson } from "./tool-calls.ts";
 
 /**
  * One-shot calls that support a run without being one: picking tools, naming a session,
@@ -61,25 +63,6 @@ export const refusedHints = (): Set<string> => noHints();
 
 /** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
 export const resetHints = () => noHints().clear();
-
-/**
- * Whether a failure is the server complaining about the request, rather than failing to answer.
- *
- * The retry below used to catch everything, so an aborted first call — or a connection that
- * never landed — latched the hints off for the life of the process and every later side task
- * paid for it by burning a whole budget on deliberation. Narrowing that to any 4xx was still
- * too wide: 401, 404 and 429 are all 4xx and none of them is about the fields. A 429 was the
- * worst of them, because the retry then re-sent the whole request immediately — doubling the
- * rate against a server that had just asked for less of it — and `isTransient` accepts exactly
- * that status, so the two halves of this package disagreed about one error.
- *
- * 400 and 422 are what a server says when it read the body and disliked it. Everything else
- * is left to the caller's own retry.
- */
-function rejectedTheRequest(error: unknown): boolean {
-  if (!(error instanceof OpenAI.APIError) || isTransient(error)) return false;
-  return error.status === 400 || error.status === 422;
-}
 
 /**
  * The input a side task applies its instruction to: text, or the content parts a vision model
@@ -203,16 +186,10 @@ async function complete(
       {
         model,
         // The reasoning models want the ceiling spelled the other way, and they are exactly the
-        // models a side task most wants to stop deliberating. Zero is no ceiling, as it is on the
-        // main model: a spec's `maxTokens: 0` sent as `max_tokens: 0` asks for an empty reply.
-        ...(maxTokens > 0
-          ? refused && !refused.legacyTokenLimit
-            ? { max_completion_tokens: maxTokens }
-            : { max_tokens: maxTokens }
-          : {}),
-        // One that will only run at the temperature it was built with is sent none: a side task
-        // wants the same answer twice, and 1.0 from that model is as close as it gets.
-        ...(refused && !refused.chosenTemperature ? {} : { temperature }),
+        // models a side task most wants to stop deliberating. One that will only run at its own
+        // temperature is sent none: a side task wants the same answer twice, and 1.0 from that
+        // model is as close as it gets.
+        ...ceilingAndTemperature(refused, maxTokens, temperature),
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -251,7 +228,7 @@ async function complete(
     // does not offer as `none`. Or a 400 about something else entirely, which is why the
     // notice says what was tried rather than what was wrong.
     const effort = sentEffort;
-    if (!(hints || effort) || !rejectedTheRequest(error)) throw error;
+    if (!(hints || effort) || !refusesRequest(error)) throw error;
     onNotice?.(
       level
         ? `${model} rejected a request carrying a reasoning effort; retrying without it`
@@ -317,14 +294,8 @@ export async function askJson<T>(
   schema: Record<string, unknown>,
   { name = "answer", strict = true, ...options }: AskJsonOptions = {},
 ): Promise<T | undefined> {
-  const tool = (parameters: Record<string, unknown>): OpenAI.ChatCompletionTool => ({
-    type: "function",
-    function: { name, parameters },
-  });
-  const [sanitized] = sanitizeTools([tool(schema)]);
-  const shapeOf = (definition: OpenAI.ChatCompletionTool | undefined) =>
-    definition?.type === "function" ? (definition.function.parameters ?? {}) : {};
-  const instruction = `${system}\n\nReply with JSON alone, matching this JSON Schema:\n${JSON.stringify(shapeOf(sanitized))}`;
+  const sanitized = sanitizeSchema(schema);
+  const instruction = `${system}\n\nReply with JSON alone, matching this JSON Schema:\n${JSON.stringify(sanitized)}`;
   const reply = await complete(config, model, instruction, user, options, (supports, refused) =>
     refused.structuredOutput
       ? {
@@ -333,7 +304,7 @@ export async function askJson<T>(
             json_schema: {
               name,
               strict,
-              schema: shapeOf(supports.strictSchemas ? sanitized : relaxTools([sanitized])[0]),
+              schema: supports.strictSchemas ? sanitized : relaxSchema(sanitized),
             },
           },
         }
@@ -370,6 +341,11 @@ export async function tryAsk<T>(
  * Models are asked for JSON and often answer with prose around it, or a fenced block. Pull out
  * the first array or object rather than failing the task over a wrapper.
  *
+ * What is pulled out is read the way a tool call's arguments are: as written where that parses,
+ * and otherwise with the almost-JSON a local model writes repaired — single quotes, `True` and
+ * `None`, bare keys, a trailing comma. A small model asked for a list gets these wrong as often in
+ * a reply as in a call, and a side task that fails over one costs the run a second request.
+ *
  * @param text The reply, fences and prose included. Nothing parseable gives `undefined`.
  */
 export function parseJson<T>(text: string): T | undefined {
@@ -379,11 +355,7 @@ export function parseJson<T>(text: string): T | undefined {
   if (start < 0) return undefined;
   const end = Math.max(body.lastIndexOf("]"), body.lastIndexOf("}"));
   if (end <= start) return undefined;
-  try {
-    return JSON.parse(body.slice(start, end + 1)) as T;
-  } catch {
-    return undefined;
-  }
+  return looseJson(body.slice(start, end + 1)) as T | undefined;
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { AgentConfig, Endpoint } from "./config.ts";
-import type { HookEvent } from "./hooks.ts";
+import { isRecord } from "./guards.ts";
+import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
@@ -11,11 +12,12 @@ import type { HookEvent } from "./hooks.ts";
  * real ceiling of zero* in the third. This is the shape they can all write and all read, argued
  * out in `docs/agent-spec.md` before any of it was code.
  *
- * Nothing else in `src/` imports this module, and this module imports nothing but types. That is
- * the same seam `config.ts` draws — the loop takes the parts it reads, not a config object — and
- * it is what lets the document travel between hosts without the loop growing an opinion about
- * where an agent comes from. It is also why this is importable in a browser, where `client.ts`
- * and `hooks.ts` are not: a host validating a pasted document in a form needs no `node:crypto`.
+ * Nothing else in `src/` imports this module, and this module imports nothing that needs Node:
+ * types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
+ * loop takes the parts it reads, not a config object — and it is what lets the document travel
+ * between hosts without the loop growing an opinion about where an agent comes from. It is also
+ * why this is importable in a browser, where `client.ts` and `hooks.ts` are not: a host validating
+ * a pasted document in a form needs no `node:crypto`.
  */
 
 /** The token a document declares itself with. A loader refuses anything else. */
@@ -34,24 +36,13 @@ export const AGENT_SPEC_VERSION = 1;
 export const AGENT_TASKS = ["compaction", "toolSelect", "title", "followups"] as const;
 
 /**
- * Every event a hook may be bound to, restated so this module stays free of `node:crypto`.
+ * Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
  *
- * `hooks.ts` owns the list; importing its `HOOK_EVENTS` would pull the whole module, and its
- * `createHash` with it, into a file whose whole point is that a browser can load it. The `HookEvent`
- * type is imported and erased, so a removed event fails to compile here, and a test asserts this
- * list and `HOOK_EVENTS` are the same list so an added one cannot drift quietly.
+ * The same array, not a copy. It comes from `hook-events.ts` rather than `hooks.ts` because that
+ * module's `createHash` would otherwise come with it, into a file whose whole point is that a
+ * browser can load it.
  */
-export const SPEC_EVENTS: readonly HookEvent[] = [
-  "sessionStart",
-  "beforeTurn",
-  "afterTurn",
-  "beforeCompact",
-  "sessionEnd",
-  "sessionDelete",
-];
-
-/** The events whose output can still reach a request, so the only ones `inject` means anything on. */
-const SPEC_INJECT: ReadonlySet<string> = new Set(["sessionStart", "beforeTurn"]);
+export const SPEC_EVENTS: readonly HookEvent[] = HOOK_EVENTS;
 
 /** Body fields the loop owns. `buildBody` would overwrite them anyway; better to say so on import. */
 const RESERVED_BODY = ["model", "messages", "stream", "tools"];
@@ -192,7 +183,6 @@ export interface AgentHook {
   enabled?: boolean;
 }
 
-/** One bundled MCP server, as far as this package reads it. */
 /** A bundled MCP server, validated only as far as a round trip needs and otherwise passed through. */
 export interface SpecServer {
   id?: string;
@@ -302,9 +292,6 @@ export interface ParseSpecOptions {
   understands?: readonly string[];
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** Absent and null are the same thing: a nullable column round-trips through JSON as `null`. */
 const absent = (value: unknown) => value === undefined || value === null;
 
@@ -391,6 +378,13 @@ function parseEndpoint(report: Report, path: string, value: unknown): EndpointSp
   return said(endpoint) ? endpoint : undefined;
 }
 
+/** The three fields a model and a side task both carry, held to the same bounds in each. */
+const parseSampling = (report: Report, path: string, value: Record<string, unknown>) => ({
+  maxTokens: report.number(`${path}.maxTokens`, value.maxTokens, 0),
+  temperature: report.number(`${path}.temperature`, value.temperature, 0, 2),
+  reasoningEffort: report.string(`${path}.reasoningEffort`, value.reasoningEffort),
+});
+
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (absent(value)) return undefined;
   if (!isRecord(value)) return void report.drop("model", "must be an object");
@@ -408,9 +402,7 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   }
   return kept({
     model: report.string("model.model", value.model),
-    maxTokens: report.number("model.maxTokens", value.maxTokens, 0),
-    temperature: report.number("model.temperature", value.temperature, 0, 2),
-    reasoningEffort: report.string("model.reasoningEffort", value.reasoningEffort),
+    ...parseSampling(report, "model", value),
     contextLength: report.number("model.contextLength", value.contextLength, 0),
     extraBody,
   });
@@ -510,9 +502,7 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
     tasks[key] = kept({
       model: report.string(`${path}.model`, held.model),
       endpoint: parseEndpoint(report, `${path}.endpoint`, held.endpoint),
-      maxTokens: report.number(`${path}.maxTokens`, held.maxTokens, 0),
-      temperature: report.number(`${path}.temperature`, held.temperature, 0, 2),
-      reasoningEffort: report.string(`${path}.reasoningEffort`, held.reasoningEffort),
+      ...parseSampling(report, path, held),
     });
   }
   return tasks;
@@ -542,7 +532,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
     // otherwise good agent unimportable. Kept and noted instead.
     if (!events.includes(on)) report.note(`${path}.on`, `"${on}" is never fired by this host`);
     let inject = report.boolean(`${path}.inject`, held.inject);
-    if (inject && !SPEC_INJECT.has(on)) {
+    if (inject && !INJECT_EVENTS.has(on as HookEvent)) {
       report.drop(`${path}.inject`, `"${on}" runs after the model has already answered`);
       inject = undefined;
     }
@@ -737,17 +727,8 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
 }
 
 /** Merges the layers that named a key, last one winning, and leaves it absent if none did. */
-function mergeEndpoints(layers: (EndpointSpec | undefined)[]): EndpointSpec {
-  const out: EndpointSpec = {};
-  for (const layer of layers) {
-    if (!layer) continue;
-    if (layer.baseUrl !== undefined) out.baseUrl = layer.baseUrl;
-    if (layer.requestTimeoutSeconds !== undefined)
-      out.requestTimeoutSeconds = layer.requestTimeoutSeconds;
-    if (layer.firstTokenSeconds !== undefined) out.firstTokenSeconds = layer.firstTokenSeconds;
-  }
-  return out;
-}
+const mergeLayers = <T extends object>(layers: readonly (T | undefined)[]): T =>
+  Object.assign({}, ...layers.map((layer) => kept(layer ?? {})));
 
 /** An `Endpoint` as the loop takes one. `apiKey` is always empty; see `resolveAgentSpec`. */
 const asEndpoint = (spec: EndpointSpec): Endpoint => ({
@@ -780,7 +761,7 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
  * @param layers The documents, weakest first: settings, then the agent, then a task, then a step.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
-  const endpoint = mergeEndpoints(layers.map((layer) => layer.endpoint));
+  const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
 
   const model: ModelSpec = {};
   const extraBody: Record<string, unknown> = {};
@@ -797,21 +778,13 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     for (const part of layer.prompt ?? [])
       parts.set(part.id, { ...(parts.get(part.id) ?? { id: part.id }), ...part });
 
-  const tools: ToolsSpec = {};
-  for (const layer of layers) {
-    if (layer.tools?.discovery !== undefined) tools.discovery = layer.tools.discovery;
-    if (layer.tools?.maxIterations !== undefined) tools.maxIterations = layer.tools.maxIterations;
-    // Replaced whole rather than unioned: a list, an empty list and no list are three answers,
-    // and a union of the first two is the first, which loses the scoping the operator asked for.
-    if (layer.tools?.servers !== undefined) tools.servers = [...layer.tools.servers];
-  }
+  // `servers` is replaced whole rather than unioned: a list, an empty list and no list are three
+  // answers, and a union of the first two is the first, which loses the scoping the operator
+  // asked for. Copied, so the resolved agent does not share an array with the layer it came from.
+  const tools = mergeLayers(layers.map((layer) => layer.tools));
+  if (tools.servers) tools.servers = [...tools.servers];
 
-  const retry: RetrySpec = {};
-  for (const layer of layers) {
-    if (layer.retry?.maxRetries !== undefined) retry.maxRetries = layer.retry.maxRetries;
-    if (layer.retry?.loadingTimeoutSeconds !== undefined)
-      retry.loadingTimeoutSeconds = layer.retry.loadingTimeoutSeconds;
-  }
+  const retry = mergeLayers(layers.map((layer) => layer.retry));
 
   const merged = new Map<string, TaskSpec>();
   for (const layer of layers)
@@ -819,7 +792,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
       merged.set(key, {
         ...(merged.get(key) ?? {}),
         ...task,
-        endpoint: mergeEndpoints([merged.get(key)?.endpoint, task.endpoint]),
+        endpoint: mergeLayers([merged.get(key)?.endpoint, task.endpoint]),
       });
   const tasks: Record<string, ResolvedTask> = {};
   for (const [key, task] of merged) {
@@ -828,7 +801,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     if (!task.model) continue;
     tasks[key] = kept({
       model: task.model,
-      endpoint: asEndpoint(mergeEndpoints([endpoint, task.endpoint])),
+      endpoint: asEndpoint(mergeLayers([endpoint, task.endpoint])),
       maxTokens: task.maxTokens,
       temperature: task.temperature,
       reasoningEffort: task.reasoningEffort,
@@ -853,9 +826,9 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const requires = new Set<string>();
   for (const layer of layers) for (const key of layer.requires ?? []) requires.add(key);
 
-  const id = [...layers].reverse().find((layer) => layer.id)?.id ?? "";
-  const name = [...layers].reverse().find((layer) => layer.name)?.name;
-  const description = [...layers].reverse().find((layer) => layer.description)?.description;
+  const id = layers.findLast((layer) => layer.id)?.id ?? "";
+  const name = layers.findLast((layer) => layer.name)?.name;
+  const description = layers.findLast((layer) => layer.description)?.description;
   const prompt = [...parts.values()];
 
   return {

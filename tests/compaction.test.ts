@@ -30,6 +30,16 @@ describe("pruneToolResults", () => {
     expect(messages[1].content).toBe(big);
   });
 
+  it("counts a result sent as parts by its text alone, with nothing added between them", () => {
+    const parts = [
+      { type: "text" as const, text: "x".repeat(200) },
+      { type: "text" as const, text: "y".repeat(200) },
+    ];
+    const split: Message = { role: "tool", tool_call_id: "c", content: parts };
+    const pruned = pruneToolResults([split, result("kept")], { keepLast: 1 });
+    expect(pruned[0].content).toBe("[result cleared, 400 chars]");
+  });
+
   it("keeps short results, and hands back the same array when nothing changed", () => {
     const messages = [result("short"), result("short"), result("x".repeat(300))];
     expect(pruneToolResults(messages, { keepLast: 1 })).toBe(messages);
@@ -181,6 +191,39 @@ describe("summaryInput", () => {
       ],
     });
     expect(text).toBe(`user: ${"y".repeat(4000)}\n\nassistant: read({})`);
+  });
+});
+
+describe("a message whose content is a list of parts", () => {
+  const split: Message = {
+    role: "user",
+    content: [
+      { type: "text", text: "the dead" },
+      { type: "text", text: "line is Friday" },
+    ],
+  };
+
+  it("is summarised as the text the hooks are told was folded", () => {
+    const text = summaryInput({ from: 0, cut: 1, toSummarise: [split] });
+    expect(text).toBe("user: the deadline is Friday");
+    expect(turnMessages("s", [split], 0, 1)[0].text).toBe("the deadline is Friday");
+  });
+
+  it("leaves a part that is not text out of it", () => {
+    const text = summaryInput({
+      from: 0,
+      cut: 1,
+      toSummarise: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "look at this" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+          ],
+        },
+      ],
+    });
+    expect(text).toBe("user: look at this");
   });
 });
 

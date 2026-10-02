@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import { isRecord } from "./guards.ts";
 
 /**
  * Reading what a model meant by a tool call when it did not write one cleanly.
@@ -34,9 +35,6 @@ export class ToolArgumentsError extends Error {
     this.kind = kind;
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * Rewrites the almost-JSON local models write into JSON, in one pass that knows where strings are.
@@ -88,8 +86,15 @@ function repairJson(text: string): string {
   return out;
 }
 
-/** JSON as it was written, then repaired, then undefined. A string holding JSON is opened once. */
-function looseJson(text: string): unknown {
+/**
+ * JSON as it was written, then repaired, then undefined. A string holding JSON is opened once.
+ *
+ * Read as written first, so the repair can only ever add to what parses: nothing valid is
+ * reinterpreted on its way through.
+ *
+ * @param text What a model wrote where JSON was asked for, with no prose around it.
+ */
+export function looseJson(text: string): unknown {
   for (const candidate of [text, repairJson(text)]) {
     try {
       const value: unknown = JSON.parse(candidate);
@@ -179,8 +184,11 @@ function readValue(text: string, at: number): { value: unknown; end: number } | 
   return value === undefined ? undefined : { value, end };
 }
 
+/** A call as a template wrote it into the text: the name, and the arguments still serialised. */
+type WrittenCall = { name: string; arguments: string };
+
 /** One call in any of the shapes templates write: `{name, arguments}`, `{name, parameters}`, `{function: {...}}`. */
-function toCall(entry: unknown): { name: string; arguments: string } | undefined {
+function toCall(entry: unknown): WrittenCall | undefined {
   if (!isRecord(entry)) return undefined;
   const inner = isRecord(entry.function) ? entry.function : entry;
   const name = inner.name;
@@ -190,12 +198,10 @@ function toCall(entry: unknown): { name: string; arguments: string } | undefined
 }
 
 /** Every call in a value that is one call or a list of them, or undefined if any entry is not one. */
-function toCalls(value: unknown): { name: string; arguments: string }[] | undefined {
+function toCalls(value: unknown): WrittenCall[] | undefined {
   const entries = Array.isArray(value) ? value : [value];
   const calls = entries.map(toCall);
-  return calls.length && calls.every((call) => call)
-    ? (calls as { name: string; arguments: string }[])
-    : undefined;
+  return calls.length && calls.every((call) => call) ? (calls as WrittenCall[]) : undefined;
 }
 
 /** A value read as text: JSON where it parses, the string where it does not. */
@@ -210,7 +216,7 @@ function scalar(text: string): unknown {
 interface Found {
   start: number;
   end: number;
-  calls: { name: string; arguments: string }[];
+  calls: WrittenCall[];
 }
 
 /** `<tool_call>` blocks: Hermes and Qwen's JSON, and Qwen3-Coder's `<function=…>` markup. */
@@ -274,7 +280,7 @@ function mistralCalls(text: string): Found[] {
 function pythonTagCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/<\|python_tag\|>/g)) {
-    const calls: { name: string; arguments: string }[] = [];
+    const calls: WrittenCall[] = [];
     let end = match.index + match[0].length;
     for (;;) {
       const read = readValue(text, end);
@@ -299,7 +305,7 @@ function pythonTagCalls(text: string): Found[] {
  */
 function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
   if (!names.size) return [];
-  const known = (calls: { name: string; arguments: string }[] | undefined) =>
+  const known = (calls: WrittenCall[] | undefined) =>
     calls?.every((call) => names.has(call.name)) ? calls : undefined;
   const start = text.search(/\S/);
   if (start >= 0 && (text[start] === "{" || text[start] === "[")) {

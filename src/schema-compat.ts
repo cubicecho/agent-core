@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import { isRecord } from "./guards.ts";
 
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.
@@ -19,9 +20,6 @@ import type OpenAI from "openai";
  */
 
 type Schema = Record<string, unknown>;
-
-const isObject = (value: unknown): value is Schema =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Lookahead and lookbehind: `(?=`, `(?!`, `(?<=`, `(?<!`. */
 const LOOKAROUND = /\(\?<?[=!]/;
@@ -47,6 +45,27 @@ const SCHEMA_KEYS = new Set([
 /** Keys whose value is a name -> schema map. */
 const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
 
+/** The two spellings of a schema's own pool of named definitions. */
+const POOL_KEYS = ["definitions", "$defs"] as const;
+
+/**
+ * One keyword's value with `fn` applied wherever it holds a schema, and untouched where it holds
+ * data — which is what keeps a walk out of `default`, `enum` and `const`.
+ */
+const mapChildren = (key: string, value: unknown, fn: (node: unknown) => unknown): unknown => {
+  if (SCHEMA_KEYS.has(key)) return Array.isArray(value) ? value.map((sub) => fn(sub)) : fn(value);
+  // The keys here are argument names; only the values are schemas.
+  if (SCHEMA_MAPS.has(key) && isRecord(value))
+    return Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, fn(sub)]));
+  return value;
+};
+
+/** The names a schema's `required` lists, without whatever in it is not a name. */
+const requiredOf = (node: Schema): string[] =>
+  Array.isArray(node.required)
+    ? node.required.filter((name): name is string => typeof name === "string")
+    : [];
+
 /**
  * Coerces one schema position. Malformed MCP output sometimes puts a bare type name where a
  * whole schema belongs, which the grammar converter reports as `Unrecognized schema: "object"`.
@@ -55,7 +74,7 @@ function asSchema(node: unknown): unknown {
   if (typeof node === "string")
     return PRIMITIVES.has(node) && node !== "object" ? { type: node } : EMPTY_OBJECT();
   if (typeof node === "boolean") return node;
-  if (!isObject(node)) return EMPTY_OBJECT();
+  if (!isRecord(node)) return EMPTY_OBJECT();
   return normalize(node);
 }
 
@@ -71,14 +90,8 @@ function normalize(node: Schema): Schema {
       if (concrete.length === 1) out.type = concrete[0];
       else if (concrete.length > 1) out.anyOf = concrete.map((name) => ({ type: name }));
       else out.type = "null";
-    } else if (SCHEMA_KEYS.has(key)) {
-      out[key] = Array.isArray(value) ? value.map(asSchema) : asSchema(value);
-    } else if (SCHEMA_MAPS.has(key) && isObject(value)) {
-      out[key] = Object.fromEntries(
-        Object.entries(value).map(([name, sub]) => [name, asSchema(sub)]),
-      );
     } else {
-      out[key] = value;
+      out[key] = mapChildren(key, value, asSchema);
     }
   }
 
@@ -88,7 +101,7 @@ function normalize(node: Schema): Schema {
   // can accept it. Dropping it costs one advisory constraint on one string field.
   if (typeof out.pattern === "string" && LOOKAROUND.test(out.pattern)) delete out.pattern;
   // `{"type": "object"}` with no properties produces invalid GBNF.
-  if (out.type === "object" && !isObject(out.properties)) out.properties = {};
+  if (out.type === "object" && !isRecord(out.properties)) out.properties = {};
   // Strict validators reject any sibling of `$ref`, and draft-07 ignores them, so a reference
   // stands alone or not at all. This is not hypothetical tidying: collapsing `anyOf: [{$ref},
   // {type: "null"}]` — the shape a schema-generated server emits at every optional argument —
@@ -109,11 +122,11 @@ function collapseNullableUnion(node: Schema) {
   for (const key of ["anyOf", "oneOf"] as const) {
     const variants = node[key];
     if (!Array.isArray(variants)) continue;
-    const concrete = variants.filter((item) => !(isObject(item) && item.type === "null"));
+    const concrete = variants.filter((item) => !(isRecord(item) && item.type === "null"));
     if (concrete.length !== 1 || concrete.length === variants.length) continue;
 
     delete node[key];
-    Object.assign(node, { nullable: true, ...(isObject(concrete[0]) ? concrete[0] : {}) });
+    Object.assign(node, { nullable: true, ...(isRecord(concrete[0]) ? concrete[0] : {}) });
   }
 }
 
@@ -126,8 +139,7 @@ const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
 /** The `definitions` and `$defs` that a local pointer in this schema resolves against. */
 function poolsOf(parameters: Schema): Schema {
   const defs: Schema = {};
-  for (const key of ["definitions", "$defs"] as const)
-    if (isObject(parameters[key])) defs[key] = parameters[key];
+  for (const key of POOL_KEYS) if (isRecord(parameters[key])) defs[key] = parameters[key];
   return defs;
 }
 
@@ -143,15 +155,15 @@ function poolsOf(parameters: Schema): Schema {
 function resolveRef(node: unknown, defs: Schema): Schema | undefined {
   const seen = new Set<string>();
   let current = node;
-  while (isObject(current) && typeof current.$ref === "string") {
+  while (isRecord(current) && typeof current.$ref === "string") {
     const pointer = current.$ref;
     const target = LOCAL_POINTER.exec(pointer);
     if (!target || seen.has(pointer)) return undefined;
     seen.add(pointer);
     const pool = defs[target[1]];
-    current = isObject(pool) ? pool[target[2]] : undefined;
+    current = isRecord(pool) ? pool[target[2]] : undefined;
   }
-  return isObject(current) ? current : undefined;
+  return isRecord(current) ? current : undefined;
 }
 
 /**
@@ -188,16 +200,13 @@ function mergeRootAllOf(out: Schema) {
   if (!Array.isArray(branches)) return;
 
   const defs = poolsOf(out);
-  const properties: Schema = isObject(out.properties) ? { ...out.properties } : {};
-  const required = new Set<string>(
-    Array.isArray(out.required) ? out.required.filter((name) => typeof name === "string") : [],
-  );
+  const properties: Schema = isRecord(out.properties) ? { ...out.properties } : {};
+  const required = new Set(requiredOf(out));
   for (const raw of branches) {
     const branch = resolveRef(raw, defs);
     if (!branch) continue;
-    if (isObject(branch.properties)) Object.assign(properties, branch.properties);
-    if (Array.isArray(branch.required))
-      for (const name of branch.required) if (typeof name === "string") required.add(name);
+    if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
+    for (const name of requiredOf(branch)) required.add(name);
   }
 
   if (!Object.keys(properties).length) return;
@@ -236,21 +245,14 @@ function mergeRootUnion(out: Schema) {
         shared = new Set<string>();
         continue;
       }
-      if (isObject(branch.properties)) Object.assign(properties, branch.properties);
-      const names = Array.isArray(branch.required)
-        ? branch.required.filter((name): name is string => typeof name === "string")
-        : [];
+      if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
+      const names = requiredOf(branch);
       shared = previous === null ? new Set(names) : new Set(names.filter((n) => previous.has(n)));
     }
 
     if (!Object.keys(properties).length) continue;
-    out.properties = { ...(isObject(out.properties) ? out.properties : {}), ...properties };
-    if (shared?.size) {
-      const already = Array.isArray(out.required)
-        ? out.required.filter((name): name is string => typeof name === "string")
-        : [];
-      out.required = [...new Set([...already, ...shared])];
-    }
+    out.properties = { ...(isRecord(out.properties) ? out.properties : {}), ...properties };
+    if (shared?.size) out.required = [...new Set([...requiredOf(out), ...shared])];
   }
 }
 
@@ -267,7 +269,7 @@ function collectRefs(node: unknown, into: Set<string>) {
     for (const item of node) collectRefs(item, into);
     return;
   }
-  if (!isObject(node)) return;
+  if (!isRecord(node)) return;
   for (const [key, value] of Object.entries(node)) {
     if (key === "$ref" && typeof value === "string") into.add(value);
     else collectRefs(value, into);
@@ -288,7 +290,7 @@ function collectRefs(node: unknown, into: Set<string>) {
  * outside it still refers in.
  */
 function pruneDefs(out: Schema) {
-  const pools = (["definitions", "$defs"] as const).filter((key) => isObject(out[key]));
+  const pools = POOL_KEYS.filter((key) => isRecord(out[key]));
   if (!pools.length) return;
 
   const live: Record<string, Set<string>> = {};
@@ -300,7 +302,7 @@ function pruneDefs(out: Schema) {
       if (!target) continue;
       const [, poolKey, name] = target;
       const pool = out[poolKey];
-      if (!isObject(pool) || !(name in pool)) continue;
+      if (!isRecord(pool) || !(name in pool)) continue;
       live[poolKey] ??= new Set<string>();
       const names = live[poolKey];
       if (names.has(name)) continue;
@@ -333,21 +335,33 @@ function pruneDefs(out: Schema) {
  */
 function pruneRequired(out: Schema) {
   if (!Array.isArray(out.required)) return;
-  const properties = isObject(out.properties) ? out.properties : {};
+  const properties = isRecord(out.properties) ? out.properties : {};
   const kept = out.required.filter((name) => typeof name === "string" && name in properties);
   if (kept.length) out.required = kept;
   else delete out.required;
 }
 
-function sanitizeParameters(parameters: unknown): Schema {
-  if (!isObject(parameters)) return EMPTY_OBJECT();
-  const out = normalize(inlineRootRef(parameters));
+/**
+ * One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
+ *
+ * What `sanitizeTools` does to each tool, without the tool: a `response_format` schema goes through
+ * the same grammar converter a tool's parameters do, and a caller holding only the schema had to
+ * wrap it in a definition to get here. Nothing is remembered — the cache is keyed on a tool
+ * definition's identity, and a bare schema has no object that stands for it across requests.
+ *
+ * @param schema The schema as written. Never mutated. Its root is held to an object, as a tool's
+ * parameters are, and anything that is not a schema at all comes back as an object with no
+ * properties.
+ */
+export function sanitizeSchema(schema: unknown): Record<string, unknown> {
+  if (!isRecord(schema)) return EMPTY_OBJECT();
+  const out = normalize(inlineRootRef(schema));
 
   mergeRootAllOf(out);
   mergeRootUnion(out);
   for (const key of TOP_LEVEL_COMBINATORS) delete out[key];
   if (out.type !== "object") out.type = "object";
-  if (!isObject(out.properties)) out.properties = {};
+  if (!isRecord(out.properties)) out.properties = {};
   pruneRequired(out);
   pruneDefs(out);
   return out;
@@ -411,7 +425,7 @@ const through = (
  * changed, a new definition is returned in its place.
  */
 export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
-  through(sanitized, tools, sanitizeParameters);
+  through(sanitized, tools, sanitizeSchema);
 
 /**
  * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are keyword
@@ -420,24 +434,31 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
  * argument that no longer existed — which every strict validator rejects, so the retry produced
  * the failure it was reaching for. The same distinction keeps the walk out of `default`, `enum`
  * and `const`, whose contents are data, not schema.
- *
- * At module scope rather than inside `relaxTools`, so the closure is made once rather than per
- * call — which, on the path this is on, is per request.
  */
 const strip = (node: unknown): unknown => {
   if (Array.isArray(node)) return node.map(strip);
-  if (!isObject(node)) return node;
+  if (!isRecord(node)) return node;
   const out: Schema = {};
   for (const [key, value] of Object.entries(node)) {
     if (key === "pattern" || key === "format") continue;
-    if (SCHEMA_KEYS.has(key)) out[key] = Array.isArray(value) ? value.map(strip) : strip(value);
-    else if (SCHEMA_MAPS.has(key) && isObject(value))
-      // The keys here are argument names; only the values are schemas.
-      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, strip(sub)]));
-    else out[key] = value;
+    out[key] = mapChildren(key, value, strip);
   }
   return out;
 };
+
+/**
+ * One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
+ *
+ * The retry `relaxTools` makes, on a bare schema. Only the keywords go: a property that happens to
+ * be called `format` is an argument name and stays.
+ *
+ * @param schema Already sanitised. Relaxing is the retry, not a substitute for `sanitizeSchema`.
+ * Never mutated; anything that is not a schema comes back as an object with no properties.
+ */
+export function relaxSchema(schema: unknown): Record<string, unknown> {
+  const stripped = strip(schema);
+  return isRecord(stripped) ? stripped : EMPTY_OBJECT();
+}
 
 /**
  * The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in
@@ -447,10 +468,7 @@ const strip = (node: unknown): unknown => {
  * @param tools Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) =>
-  through(relaxed, tools, (parameters) => {
-    const stripped = strip(parameters);
-    return isObject(stripped) ? stripped : EMPTY_OBJECT();
-  });
+  through(relaxed, tools, relaxSchema);
 
 /**
  * Qwen chat templates raise this when the transcript has no user turn. Some servers wrap it

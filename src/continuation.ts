@@ -1,8 +1,8 @@
-import OpenAI from "openai";
-import { type Capabilities, type ModelCapabilities, modelCapabilitiesFor } from "./capabilities.ts";
+import type OpenAI from "openai";
+import { type Capabilities, modelCapabilitiesFor } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
-import { ContextOverflow } from "./retry.ts";
-import { type RunTurnOptions, runTurn } from "./run-turn.ts";
+import { ContextOverflow, refusesRequest } from "./retry.ts";
+import { type RequestBuilder, type RunTurnOptions, runTurn } from "./run-turn.ts";
 import type { Turn, TurnUsage } from "./stream.ts";
 
 /**
@@ -104,10 +104,6 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
   return joined;
 }
 
-/** Whether a failure is the endpoint refusing the request as written, rather than losing it. */
-const refusesRequest = (error: unknown) =>
-  error instanceof OpenAI.APIError && (error.status === 400 || error.status === 422);
-
 /**
  * Carries on an answer the token ceiling cut off, by sending the transcript again with the answer
  * so far as a trailing assistant message, and joins the pieces into one turn.
@@ -137,10 +133,7 @@ const refusesRequest = (error: unknown) =>
 export async function continueTurn(
   client: OpenAI,
   supports: Capabilities,
-  request: (
-    supports: Capabilities,
-    model: ModelCapabilities | undefined,
-  ) => OpenAI.ChatCompletionCreateParamsStreaming,
+  request: RequestBuilder,
   turn: Turn,
   { maxContinuations = 1, ...options }: ContinueTurnOptions = {},
 ): Promise<Turn> {

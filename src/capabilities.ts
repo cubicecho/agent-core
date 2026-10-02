@@ -126,6 +126,29 @@ export interface ModelCapabilities {
   assistantPrefill: boolean;
 }
 
+/** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
+export type ModelFlag = {
+  [Key in keyof ModelCapabilities]-?: ModelCapabilities[Key] extends boolean ? Key : never;
+}[keyof ModelCapabilities];
+
+/**
+ * A model's on/off flags as it starts out, every one optimistic.
+ *
+ * A record over every boolean on `ModelCapabilities`, so a flag added there does not compile until
+ * it is listed here — and this is the list a snapshot is exported, imported and judged empty by,
+ * where each of those used to name the flags again and one could be missed.
+ */
+export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
+  reasoningEffort: true,
+  legacyTokenLimit: true,
+  chosenTemperature: true,
+  structuredOutput: true,
+  assistantPrefill: true,
+};
+
+/** The names of those flags, for a caller that reads or latches each in turn. */
+export const MODEL_FLAGS = Object.keys(OPTIMISTIC_MODEL) as ModelFlag[];
+
 /**
  * What each endpoint cannot do, remembered for the life of the process.
  *
@@ -177,15 +200,7 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
 export function modelCapabilitiesFor(supports: Capabilities, model: string): ModelCapabilities {
   let known = supports.models.get(model);
   if (!known) {
-    known = {
-      reasoningEffort: true,
-      legacyTokenLimit: true,
-      chosenTemperature: true,
-      refusedFields: new Set(),
-      structuredOutput: true,
-      refusedEfforts: new Set(),
-      assistantPrefill: true,
-    };
+    known = { ...OPTIMISTIC_MODEL, refusedFields: new Set(), refusedEfforts: new Set() };
     supports.models.set(model, known);
   }
   return known;
@@ -403,6 +418,32 @@ export function effortFor(refused: ModelCapabilities | undefined, asked: string 
   return nextEffort(refused, asked) ?? asked;
 }
 
+/**
+ * The reply ceiling and the temperature as this model takes them, to spread into a request body.
+ *
+ * The reasoning models want the ceiling spelled the other way, and one that will only run at the
+ * temperature it was built with is sent none. Both are tested `=== false`, so a caller that named
+ * no model sends what one that has refused nothing is sent; see `ModelCapabilities.legacyTokenLimit`.
+ *
+ * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model that
+ * has refused nothing.
+ * @param maxTokens The ceiling. Zero or less sends none and leaves it to the server: a zero sent
+ * as `max_tokens: 0` asks for an empty reply.
+ * @param temperature What to sample at, where the model takes one that was picked for it.
+ */
+export const ceilingAndTemperature = (
+  refused: ModelCapabilities | undefined,
+  maxTokens: number,
+  temperature: number,
+) => ({
+  ...(maxTokens > 0
+    ? refused?.legacyTokenLimit === false
+      ? { max_completion_tokens: maxTokens }
+      : { max_tokens: maxTokens }
+    : {}),
+  ...(refused?.chosenTemperature === false ? {} : { temperature }),
+});
+
 /** What answering a refused effort *value* would latch, and the rung it would try next. */
 interface EffortStep {
   /** The effort the refusal named, to latch into `refusedEfforts`. */
@@ -508,15 +549,6 @@ function unknownFields(detail: string): string[] {
     .filter(Boolean);
 }
 
-/** Whether a refusal names a droppable field this model has not already refused. */
-const refusesDroppable = (
-  detail: string,
-  droppable: ReadonlySet<string>,
-  refused: ModelCapabilities,
-) =>
-  droppable.size > 0 &&
-  unknownFields(detail).some((field) => droppable.has(field) && !refused.refusedFields.has(field));
-
 /** What `negotiate` takes besides the request. All optional. */
 export interface NegotiateOptions {
   /**
@@ -559,6 +591,115 @@ export interface NegotiateOptions {
    */
   droppable?: Iterable<string>;
 }
+
+/** One refusal, and everything an answer to it may read or latch. */
+interface Refusal {
+  /** The server's error text. */
+  detail: string;
+  supports: Capabilities;
+  /**
+   * The name and what it has refused, bound together because the notices need both. They exist
+   * or are absent as one — the second is resolved from the first — but that is a fact about two
+   * values, and narrowing one of those tells TypeScript nothing about the other.
+   */
+  named: { name: string; refused: ModelCapabilities } | undefined;
+  /** The fields the caller said a refusal may take away. */
+  droppable: ReadonlySet<string>;
+}
+
+/**
+ * One way of answering a refusal: latches what it learned and returns the notice, or returns
+ * `undefined` having touched nothing, which leaves the refusal to the next.
+ */
+type Answer = (refusal: Refusal) => string | undefined;
+
+/** The answer to a refusal that is the endpoint's: a flag still set, and a wording that clears it. */
+const endpointAnswer =
+  (
+    flag: "strictSchemas" | "usageInStream",
+    matches: (detail: string) => boolean,
+    notice: string,
+  ): Answer =>
+  ({ detail, supports }) => {
+    if (!supports[flag] || !matches(detail)) return undefined;
+    supports[flag] = false;
+    return notice;
+  };
+
+/** The same for a refusal that is the model's, which only a request that named one can meet. */
+const modelAnswer =
+  (
+    flag: ModelFlag,
+    matches: (detail: string) => boolean,
+    notice: (name: string) => string,
+  ): Answer =>
+  ({ detail, named }) => {
+    if (!named?.refused[flag] || !matches(detail)) return undefined;
+    named.refused[flag] = false;
+    return notice(named.name);
+  };
+
+/** An effort refused by value: latched, so `effortFor` sends the next rung down. */
+const effortStepAnswer: Answer = ({ detail, named }) => {
+  const stepped = named && planEffortStep(detail, named.refused);
+  if (!named || !stepped) return undefined;
+  named.refused.refusedEfforts.add(stepped.value);
+  if (stepped.supported) named.refused.supportedEfforts = stepped.supported;
+  return `${named.name} does not reason at ${stepped.value}; retrying at ${stepped.next}`;
+};
+
+/** Fields the endpoint has never heard of, where they are droppable and not refused already. */
+const droppedFieldsAnswer: Answer = ({ detail, named, droppable }) => {
+  if (!named || droppable.size === 0) return undefined;
+  const fields = unknownFields(detail).filter(
+    (field) => droppable.has(field) && !named.refused.refusedFields.has(field),
+  );
+  if (!fields.length) return undefined;
+  for (const field of fields) named.refused.refusedFields.add(field);
+  return `${named.name} does not take ${fields.join(", ")}; retrying without ${fields.length > 1 ? "them" : "it"}`;
+};
+
+/**
+ * Every refusal `negotiate` answers, in the order it asks. The first to answer is the only one.
+ *
+ * The order is behaviour rather than layout: one error text can satisfy two of these — a message
+ * about `reasoning_effort` is a refused field to one and a refused value to the next — and the
+ * earlier row is the reading that wins.
+ */
+const ANSWERS: readonly Answer[] = [
+  endpointAnswer(
+    "strictSchemas",
+    isGrammarError,
+    "server could not build a grammar; retrying without pattern/format",
+  ),
+  endpointAnswer(
+    "usageInStream",
+    (detail) => REJECTS_USAGE.test(detail),
+    "server rejected stream_options; token counts unavailable",
+  ),
+  modelAnswer(
+    "reasoningEffort",
+    rejectsEffort,
+    (name) => `${name} does not take a reasoning effort; retrying without one`,
+  ),
+  effortStepAnswer,
+  modelAnswer(
+    "legacyTokenLimit",
+    wantsCompletionLimit,
+    (name) => `${name} wants max_completion_tokens; retrying with the limit spelled that way`,
+  ),
+  modelAnswer(
+    "chosenTemperature",
+    refusesChosenTemperature,
+    (name) => `${name} takes only its own temperature; retrying without ours`,
+  ),
+  modelAnswer(
+    "structuredOutput",
+    rejectsResponseFormat,
+    (name) => `${name} does not take response_format; asking for JSON in words instead`,
+  ),
+  droppedFieldsAnswer,
+];
 
 /**
  * Sends a request, re-sending it each time the answer is this endpoint refusing something the
@@ -604,61 +745,32 @@ export async function negotiate<T>(
   { produced = { any: false }, onNotice, model: name, droppable }: NegotiateOptions = {},
 ): Promise<T> {
   const optional = new Set(droppable);
-  // The name and what it has refused, bound together because the notices below need both. They
-  // exist or are absent as one — the second is resolved from the first — but that is a fact
-  // about two locals, and narrowing one of those tells TypeScript nothing about the other.
   const named =
     name === undefined ? undefined : { name, refused: modelCapabilitiesFor(supports, name) };
   const model = named?.refused;
   for (;;) {
     // What this attempt was built with. `capabilitiesFor` and `modelCapabilitiesFor` hand one
     // object per endpoint and per model to everyone on them, so a run starting alongside this
-    // one may latch a flag off while this call is in flight — and the branches below are guarded
-    // on the flag still being set.
+    // one may latch a flag off while this call is in flight — and every answer in `ANSWERS` is
+    // guarded on its flag still being set.
     const sent = flagsOf(supports, model);
     try {
       return await send(supports, produced, model);
     } catch (error) {
       if (produced.any) throw error;
-      const detail = errorMessage(error);
-      const stepped = named && planEffortStep(detail, named.refused);
-      if (supports.strictSchemas && isGrammarError(detail)) {
-        supports.strictSchemas = false;
-        onNotice?.("server could not build a grammar; retrying without pattern/format");
-      } else if (supports.usageInStream && REJECTS_USAGE.test(detail)) {
-        supports.usageInStream = false;
-        onNotice?.("server rejected stream_options; token counts unavailable");
-      } else if (named?.refused.reasoningEffort && rejectsEffort(detail)) {
-        named.refused.reasoningEffort = false;
-        onNotice?.(`${named.name} does not take a reasoning effort; retrying without one`);
-      } else if (named && stepped) {
-        named.refused.refusedEfforts.add(stepped.value);
-        if (stepped.supported) named.refused.supportedEfforts = stepped.supported;
-        onNotice?.(
-          `${named.name} does not reason at ${stepped.value}; retrying at ${stepped.next}`,
-        );
-      } else if (named?.refused.legacyTokenLimit && wantsCompletionLimit(detail)) {
-        named.refused.legacyTokenLimit = false;
-        onNotice?.(
-          `${named.name} wants max_completion_tokens; retrying with the limit spelled that way`,
-        );
-      } else if (named?.refused.chosenTemperature && refusesChosenTemperature(detail)) {
-        named.refused.chosenTemperature = false;
-        onNotice?.(`${named.name} takes only its own temperature; retrying without ours`);
-      } else if (named?.refused.structuredOutput && rejectsResponseFormat(detail)) {
-        named.refused.structuredOutput = false;
-        onNotice?.(`${named.name} does not take response_format; asking for JSON in words instead`);
-      } else if (named && refusesDroppable(detail, optional, named.refused)) {
-        const fields = unknownFields(detail).filter(
-          (field) => optional.has(field) && !named.refused.refusedFields.has(field),
-        );
-        for (const field of fields) named.refused.refusedFields.add(field);
-        onNotice?.(
-          `${named.name} does not take ${fields.join(", ")}; retrying without ${fields.length > 1 ? "them" : "it"}`,
-        );
-      } else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) {
-        throw error;
+      const refusal: Refusal = {
+        detail: errorMessage(error),
+        supports,
+        named,
+        droppable: optional,
+      };
+      let notice: string | undefined;
+      for (const answer of ANSWERS) {
+        notice = answer(refusal);
+        if (notice !== undefined) break;
       }
+      if (notice !== undefined) onNotice?.(notice);
+      else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) throw error;
       // Otherwise the refusal was answered by whoever got there first, and this attempt was
       // built before the answer existed. Two runs opening on a fresh llama.cpp box both get the
       // grammar error; the first latches it off and re-sends, and the second used to find the

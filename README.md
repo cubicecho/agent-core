@@ -22,7 +22,7 @@ only, Node >=22.
 
 | Module | What it does |
 | --- | --- |
-| `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`. |
+| `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`, and `sanitizeSchema` and `relaxSchema` for a schema that is not a tool's. |
 | `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model, and the proxied form of the same thing — `PROXY_TOOLS`, `proxyLoadResult`, `proxiedCall` — for a server whose prompt cache a growing tool array throws away. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, fenced reasoning taken out of the answer, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
@@ -232,7 +232,9 @@ tasks and model listings, the same way.
 hold the reply to, so a small model that wraps JSON in prose on its own cannot do so here. The
 schema is normalised the way a tool's parameters are, and relaxed where the endpoint could not
 build a grammar, because llama.cpp reads both with the same converter. It also rides on the system
-prompt, and the reply goes through `parseJson` either way.
+prompt, and the reply goes through `parseJson` either way — which finds the JSON inside prose or a
+fence and repairs what a local model gets nearly right: single quotes, `True` and `None`, bare keys,
+a trailing comma.
 
 ```ts
 const picked = await askJson<{ tools: string[] }>(config, small, system, request, PRESELECT_SCHEMA, {

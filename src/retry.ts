@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { CHARS_PER_TOKEN } from "./tokens.ts";
 
 /**
  * Everything about a request failing that is not about what the request said.
@@ -78,14 +79,6 @@ const REASONING_KEY = 23;
 
 /** The same for `"reasoning":"",`, OpenRouter's spelling of it. */
 const REASONING_ALT_KEY = 15;
-
-/**
- * The divisor behind `estimateTokens`, applied here to a character count rather than a string.
- *
- * The fallback, not the rule: once a turn has come back with a reported prompt count, `runTurn`
- * divides by what that endpoint's model was measured at instead. See `charsPerTokenFor`.
- */
-export const CHARS_PER_TOKEN = 4;
 
 /** What the two token estimates below take besides what they measure. */
 export interface TokenEstimateOptions {
@@ -426,6 +419,21 @@ export function isTransient(error: unknown): boolean {
   const { status } = error;
   return status === 408 || status === 409 || status === 429 || (status ?? 0) >= 500;
 }
+
+/**
+ * Whether a failure is the endpoint refusing the request as written, rather than losing it.
+ *
+ * 400 and 422 are what a server says when it read the body and disliked it, which makes them the
+ * only statuses worth answering by sending something different. Any 4xx is too wide: 401, 404 and
+ * 429 are 4xx and none of them is about the fields, and a 429 is one `isTransient` accepts — a
+ * caller that re-sent on it at once doubled the rate against a server that had just asked for less.
+ * Catching everything is wider still, since an abort or a connection that never landed then
+ * latches off whatever the re-send left out.
+ *
+ * @param error The rejection, as caught. What is not an SDK error refuses nothing.
+ */
+export const refusesRequest = (error: unknown) =>
+  error instanceof OpenAI.APIError && (error.status === 400 || error.status === 422);
 
 /**
  * Whether a failure is a local server still loading the model, rather than one failing to serve.

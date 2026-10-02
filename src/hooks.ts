@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import type OpenAI from "openai";
 import { errorMessage } from "./errors.ts";
+import { isPositive } from "./guards.ts";
+import { type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 import { scoped } from "./scope.ts";
-import { estimateTokens } from "./tokens.ts";
+import { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
 
 /**
  * Lifecycle hooks, from the host's side: what a session looks like to them, where their context
@@ -14,36 +16,6 @@ import { estimateTokens } from "./tokens.ts";
  * `runHooks` is a runner as it stands and its outcomes pass straight through, without this
  * package depending on it.
  */
-
-/**
- * A point in a session a hook can be bound to. Named after Claude Code's hooks of the same shape
- * — `sessionStart` (SessionStart), `beforeTurn` (UserPromptSubmit), `afterTurn` (Stop),
- * `beforeCompact` (PreCompact), `sessionEnd` (SessionEnd) — plus `sessionDelete`, for when the host
- * deletes a session's record.
- */
-export type HookEvent =
-  | "sessionStart"
-  | "beforeTurn"
-  | "afterTurn"
-  | "beforeCompact"
-  | "sessionEnd"
-  | "sessionDelete";
-
-/** Every event a hook can be bound to, in the order a session meets them. */
-export const HOOK_EVENTS: readonly HookEvent[] = [
-  "sessionStart",
-  "beforeTurn",
-  "afterTurn",
-  "beforeCompact",
-  "sessionEnd",
-  "sessionDelete",
-];
-
-/**
- * The events whose hooks run before a request, and so the only ones whose output can reach it.
- * Anything later runs once the model has already answered.
- */
-export const INJECT_EVENTS: ReadonlySet<HookEvent> = new Set(["sessionStart", "beforeTurn"]);
 
 /**
  * One message of a session as a hook is handed it. The shape a memory server's `remember` takes,
@@ -212,9 +184,7 @@ const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }))
  */
 export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
   const { contextTokens, preface } = options;
-  if (typeof contextTokens === "number" && contextTokens > 0) {
-    hookSettings().contextTokens = contextTokens;
-  }
+  if (isPositive(contextTokens)) hookSettings().contextTokens = contextTokens;
   if (typeof preface === "string") hookSettings().preface = preface;
   return { ...hookSettings() };
 }
@@ -233,11 +203,23 @@ export const resetHooks = () => {
  * same rule `configureHooks` applies, so a `0` threaded through for "no opinion" does not quietly
  * turn every hook's context off.
  */
-const budget = (given?: number) =>
-  typeof given === "number" && given > 0 ? given : hookSettings().contextTokens;
+const budget = (given?: number) => (isPositive(given) ? given : hookSettings().contextTokens);
 
 const attribute = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+
+/** What every note about an outcome opens with: which hook it was, and on which event. */
+const noteOf = (outcome: HookOutcome) => ({
+  event: outcome.event,
+  source: outcome.label,
+  hookId: outcome.hookId,
+});
+
+/** The note a failed outcome leaves, the same whichever of the three callers reports it. */
+const failureNote = (outcome: HookOutcome): HookNote => ({
+  ...noteOf(outcome),
+  error: outcome.error ?? "failed",
+});
 
 /**
  * Builds the context a set of outcomes adds and the notes that go with it.
@@ -262,9 +244,8 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
   const notes: HookNote[] = [];
   let remaining = budget(maxTokens);
   for (const outcome of outcomes) {
-    const base = { event: outcome.event, source: outcome.label, hookId: outcome.hookId };
     if (!outcome.ok) {
-      notes.push({ ...base, error: outcome.error ?? "failed" });
+      notes.push(failureNote(outcome));
       continue;
     }
     if (!outcome.inject || !INJECT_EVENTS.has(outcome.event)) continue;
@@ -272,11 +253,11 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
     if (!text) continue;
     const cap = Math.min(outcome.maxTokens, remaining);
     if (cap <= 0) continue;
-    if (estimateTokens(text) > cap) text = `${text.slice(0, cap * 4 - 1).trimEnd()}…`;
+    if (estimateTokens(text) > cap) text = `${text.slice(0, cap * CHARS_PER_TOKEN - 1).trimEnd()}…`;
     const tokens = estimateTokens(text);
     remaining -= tokens;
     blocks.push(`<context source="${attribute(outcome.label)}">\n${text}\n</context>`);
-    notes.push({ ...base, tokens, text });
+    notes.push({ ...noteOf(outcome), tokens, text });
   }
   return { context: blocks.join("\n\n"), notes };
 }
@@ -356,8 +337,18 @@ export function untrusted(text: string, { source }: { source?: string } = {}): s
   return `<untrusted${attrs}>\n${text.replace(UNTRUSTED_TAG, "&lt;$1")}\n</untrusted>`;
 }
 
-/** A message's text, whether its content is a string or a list of parts. */
-const textOf = (content: unknown): string => {
+/**
+ * A message's text, whether its content is a string or a list of parts.
+ *
+ * Parts are joined with nothing between them, because they are one text an API split rather than
+ * several: a space put in is a character the sender never wrote, and `turnMessages` hashes this
+ * into the uuid a memory server dedups on. Compaction reads the same function, so the summariser
+ * and the hook told about a fold see one message the same way. A refusal part is left out.
+ *
+ * @param content A message's `content`, in any of the shapes the API allows. One that is neither
+ * a string nor a list reads as empty.
+ */
+export const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
@@ -513,9 +504,7 @@ export async function notify(
   onNote?: (note: HookNote) => void,
 ): Promise<HookNote[]> {
   const outcomes = await runSafely(run, event, context);
-  const notes = outcomes
-    .filter((outcome) => !outcome.ok)
-    .map((outcome) => assembleContext([outcome]).notes[0]);
+  const notes = outcomes.filter((outcome) => !outcome.ok).map(failureNote);
   for (const note of notes) onNote?.(note);
   return notes;
 }
@@ -544,15 +533,8 @@ export async function consult(
   const outcomes = await runSafely(run, event, context);
   const notes: HookNote[] = [];
   for (const outcome of outcomes) {
-    if (!outcome.ok) notes.push(assembleContext([outcome]).notes[0]);
-    else if (outcome.veto === true) {
-      notes.push({
-        event: outcome.event,
-        source: outcome.label,
-        hookId: outcome.hookId,
-        veto: true,
-      });
-    }
+    if (!outcome.ok) notes.push(failureNote(outcome));
+    else if (outcome.veto === true) notes.push({ ...noteOf(outcome), veto: true });
   }
   for (const note of notes) onNote?.(note);
   return { notes, vetoed: notes.some((note) => note.veto) };

@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import type { CatalogServer } from "./catalog.ts";
+import { isRecord } from "./guards.ts";
 
 /**
  * On-demand tool loading.
@@ -114,6 +115,18 @@ export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<str
 const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server.tools);
 
 /**
+ * The name a tool definition is called by, or `undefined` for one that is not a function.
+ *
+ * Undefined rather than empty, so a caller that skips such a tool and one that has to place it
+ * somewhere each say which they mean — a sort and a positional comparison want `?? ""`, a lookup
+ * by name wants the tool left out.
+ *
+ * @param tool The definition, as a request declares it.
+ */
+export const toolName = (tool: OpenAI.ChatCompletionTool) =>
+  tool.type === "function" ? tool.function.name : undefined;
+
+/**
  * A tool array with newly loaded definitions appended, in the order they were loaded.
  *
  * Appended and never rebuilt from a set, so what a load adds is decided by the load and not by
@@ -128,12 +141,10 @@ export function loadedTools(
   previous: readonly OpenAI.ChatCompletionTool[],
   matched: readonly OpenAI.ChatCompletionTool[],
 ): OpenAI.ChatCompletionTool[] {
-  const nameOf = (tool: OpenAI.ChatCompletionTool) =>
-    tool.type === "function" ? tool.function.name : undefined;
-  const declared = new Set(previous.map(nameOf));
+  const declared = new Set(previous.map(toolName));
   const tools = [...previous];
   for (const tool of matched) {
-    const name = nameOf(tool);
+    const name = toolName(tool);
     if (name !== undefined && declared.has(name)) continue;
     declared.add(name);
     tools.push(tool);
@@ -172,8 +183,7 @@ export function orderTools(
   order: ToolOrder = true,
 ): OpenAI.ChatCompletionTool[] {
   if (order === false) return tools;
-  const nameOf = (tool: OpenAI.ChatCompletionTool) =>
-    tool.type === "function" ? tool.function.name : "";
+  const nameOf = (tool: OpenAI.ChatCompletionTool) => toolName(tool) ?? "";
   // Code-unit order rather than `localeCompare`, whose answer depends on the host's locale —
   // which is the kind of instability this exists to remove.
   const compare =
@@ -692,10 +702,7 @@ export function preselection(
   catalog: CatalogServer[],
   maxPerLoad = MAX_PER_LOAD,
 ): string[] {
-  const list =
-    names && typeof names === "object" && !Array.isArray(names)
-      ? (names as { tools?: unknown }).tools
-      : names;
+  const list = isRecord(names) ? names.tools : names;
   if (!Array.isArray(list)) return [];
   const wanted = list.filter((name): name is string => typeof name === "string");
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
