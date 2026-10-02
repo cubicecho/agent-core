@@ -1,6 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
-  "vcs": { "enabled": false, "clientKind": "git", "useIgnoreFile": true },
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": true,
     "includes": ["src/**", "tests/**", "bench/**", "scripts/**", "*.ts", "*.json", "!.claude"]
@@ -9,23 +9,42 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 100
+    "lineWidth": 120
   },
   "linter": {
     "enabled": true,
     "rules": {
       "preset": "recommended",
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "error"
+      },
       "style": {
+        "useImportType": "error",
         "useConst": "error",
-        "noNonNullAssertion": "error"
+        "useBlockStatements": "error",
+        "noCommonJs": "error",
+        "noEnum": "error",
+        "noNamespace": "error",
+        "noParameterProperties": "error",
+        "noNonNullAssertion": "error",
+        "noMagicNumbers": "warn",
+        "useFilenamingConvention": { "level": "error", "options": { "filenameCases": ["kebab-case"] } }
       },
       "suspicious": {
         "noExplicitAny": "error"
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["tests/**", "bench/**"],
+      "linter": { "rules": { "style": { "noMagicNumbers": "off" } } }
+    }
+  ],
   "javascript": {
-    "formatter": { "quoteStyle": "double", "trailingCommas": "all" }
+    "formatter": { "quoteStyle": "single", "trailingCommas": "all", "semicolons": "always" }
   },
   "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } }
 }

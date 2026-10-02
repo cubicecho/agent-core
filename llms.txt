@@ -17,6 +17,8 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
 - `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
 - `AgentLoopResult` (type) — What a finished loop hands back.
+- `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
+- `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 
@@ -35,6 +37,8 @@ What an endpoint turned out not to support, and answering it when it says so.
 - `Capabilities` (type) — What one endpoint turned out not to support.
 - `capabilitiesFor` — What this endpoint is known not to support.
 - `EFFORT_LADDER` — The efforts this package can place, cheapest first.
+- `EFFORT_NONE` — The lowest effort the wire has a word for, which is what a side task asks for.
+- `EFFORT_OFF` — The setting that asks for no `reasoning_effort` field at all.
 - `effortFor` — What to actually put in `reasoning_effort` for a model that has refused the value asked for.
 - `expireCapabilities` — Forgets every endpoint whose entry is older than this, so the next request finds out again.
 - `ModelCapabilities` (type) — What one model on that endpoint turned out not to support.
@@ -65,7 +69,7 @@ The contract between whatever holds the tools and the loop that offers them to a
 - `resetClients` — Forgets every cached client and listing, and puts `configureClients` back to the defaults.
 - `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `servedWindow` — The window a local server's own API says it is serving a model in, for the servers whose listing does not say.
-- `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
+- `timeoutMs` — An endpoint's request timeout in the SDK's spelling: milliseconds, and `undefined` for no limit.
 
 ### compaction
 
@@ -97,6 +101,7 @@ What this package needs to know about a caller's configuration.
 - `Endpoint` (type) — Where to send a request and how long to wait.
 - `ModelParams` (type) — What to ask the model for.
 - `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
+- `ToolDiscovery` — Any one of the modes in `ToolDiscovery`.
 - `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
 
 ### continuation
@@ -124,13 +129,14 @@ What a run is doing, while it is doing it.
 - `EventBusOptions` (type) — What the bus keeps and for how long.
 - `emit` — Records one event and hands it to everyone watching that run.
 - `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
-- `fold` — Consecutive tokens of one kind are one thing being said, not hundreds of things.
+- `fold` — A run's events with each stretch of `thinking` or of `output` joined into one block, for a reader that takes a run in snapshots.
 - `history` — The backlog alone, for a caller that wants a snapshot rather than a subscription.
 - `RunEvent` (type) — One thing that happened in a run, as a watcher receives it.
 - `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
-- `RunEventKind` (type) — Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it.
+- `RunEventKind` — Any one of the kinds in `RunEventKind`.
 - `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
 - `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
+- `RunOutcome` — Any one of the outcomes in `RunOutcome`.
 - `RunUsage` (type) — What a run has spent, counted from the start of the run rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
 - `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
 - `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
@@ -142,7 +148,7 @@ What a run is doing, while it is doing it.
 The points in a session a hook can be bound to, apart from everything that runs one.
 
 - `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
-- `HookEvent` (type) — A point in a session a hook can be bound to.
+- `HookEvent` — Any one of the events in `HookEvent`.
 - `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
 
 ### hooks
@@ -212,7 +218,7 @@ Choosing a run's tools before it starts, from the request and the catalogue's na
 
 Everything about a request failing that is not about what the request said.
 
-- `backoffMs` — Exponential, with jitter so several tasks failing at once do not return in lockstep.
+- `backoffMs` — How long to wait before a retry: exponential, with jitter so several tasks failing at once do not return in lockstep.
 - `ContextOverflow` — The request was bigger than the model will read.
 - `EndpointSilent` — The endpoint stopped answering mid-request.
 - `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
@@ -234,7 +240,7 @@ The tools between two turns: a step's calls read, run and written into the trans
 One turn, given as many attempts as the caller allows.
 
 - `RunTurnOptions` (type) — A retry is not the same event as a downgrade, but a watcher wants to be told about both.
-- `runTurn` — `request` is a callback rather than a body because the body has to be rebuilt from whatever the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools` has to apply to the schemas that were just sanitised.
+- `runTurn` — One turn seen through to an answer: negotiated with the endpoint, retried where the failure is transient, and waited for where the model is still loading.
 
 ### runtime
 
@@ -247,9 +253,9 @@ One turn, given as many attempts as the caller allows.
 
 JSON Schema compatibility for llama.cpp-backed servers.
 
-- `isGrammarError` — Does this failure look like the server could not build a grammar from our tool schemas?
+- `isGrammarError` — Whether a failure looks like the server could not build a grammar from our tool schemas.
 - `relaxSchema` — One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
-- `relaxTools` — The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in `pattern` and most `format` values, both of which only ever narrowed a string the tool re-validates anyway.
+- `relaxTools` — The tool array with every schema's `pattern` and `format` keywords gone — the shape a turn is retried with.
 - `sanitizeSchema` — One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
 - `sanitizeTools` — Tool definitions a strict server will accept, remembered per definition object.
 
@@ -262,13 +268,13 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `askJson` — A side task whose answer is JSON matching a schema, parsed.
 - `clean` — Strips the quoting and list punctuation models decorate short answers with.
 - `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
-- `parseJson` — Models are asked for JSON and often answer with prose around it, or a fenced block.
+- `parseJson` — The first array or object in a model's reply, parsed, whatever prose or fence surrounds it.
 - `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
 - `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
 - `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
-- `tryAsk` — A side task is never worth failing the work it supports.
+- `tryAsk` — Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
 
 ### snapshot
 
@@ -298,6 +304,8 @@ A JSON document that defines an agent, and the rules for reading one.
 - `ParseSpecOptions` (type) — What `parseSpec` takes besides the document.
 - `PromptPart` (type) — One layer of system prompt, named so a layer above can stack beside it or replace it.
 - `parseSpec` — Reads a document, dropping what it cannot use and refusing only what it cannot identify.
+- `REF_FILE` — The `ref.type` of a prompt part whose text is in a file.
+- `REF_URL` — The `ref.type` of a prompt part whose text is behind a URL.
 - `RESOLVED_DEFAULTS` — What a field falls back to when no layer said anything at all.
 - `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the host's to act on.
 - `ResolvedTask` (type) — One side task, resolved: a model, and the endpoint it is reached through.
@@ -313,6 +321,7 @@ A JSON document that defines an agent, and the rules for reading one.
 
 Reading one streamed turn back into a message.
 
+- `CacheBreakReason` — Any one of the reasons in `CacheBreakReason`.
 - `Produced` (type) — Whether the model has said anything a second attempt would say twice.
 - `StreamTurnOptions` (type) — What `streamTurn` takes besides the request body.
 - `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
@@ -328,6 +337,8 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `Fence` (type) — One way a model marks off its scratchpad inside `content`.
 - `FenceSplitter` — A state machine over a stream of `content` that routes fenced text to reasoning.
 - `FenceSplitterOptions` (type) — What `FenceSplitter` takes besides its fences.
+- `SPLIT_OUTPUT` — What a `Split` is called when it was not.
+- `SPLIT_REASONING` — What a `Split` is called when it was inside a fence.
 - `Split` (type) — A piece of `content`, said to be one or the other.
 - `stripThinking` — What is left of a complete reply once every scratchpad is taken out of it.
 - `THINK_FENCE` — DeepSeek, Qwen3, QwQ and most distills.
@@ -337,7 +348,7 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `CHARS_PER_TOKEN` — The characters one token is taken to be, where nothing has measured it.
 - `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
 - `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
-- `compact` — 1234 → "1.2k".
+- `compact` — A token count as a message shows it: 1234 → "1.2k".
 - `contextChars` — What each part of a request is worth in characters, by the same walk `requestTokens` divides.
 - `contextTokens` — What each part of a request costs the window, in tokens, adding up to the whole.
 - `estimateTokens` — Rough token count.
@@ -351,6 +362,8 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 
 Reading what a model meant by a tool call when it did not write one cleanly.
 
+- `ARGUMENTS_MALFORMED` — The `ToolArgumentsError` kind for a call the model wrote wrongly.
+- `ARGUMENTS_TRUNCATED` — The `ToolArgumentsError` kind for a call cut off at the reply ceiling.
 - `parseToolArguments` — A tool call's arguments as the object the tool is handed.
 - `recoverToolCalls` — Tool calls a model wrote into its reply as text, taken out of it and made into calls.
 - `ToolArgumentsError` — Tool arguments that could not be read as an object, with why.
@@ -382,3 +395,14 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
 - `shownCall` — A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it is.
 - `ToolOrder` (type) — How a tool array is ordered before it is sent: `true` by name, `false` as the caller built it, or a comparator over the two names.
+
+### wire
+
+The words the chat-completions wire is written in, each under a name.
+
+- `FinishReason` — Any one of the reasons in `FinishReason`.
+- `FUNCTION_TOOL` — The one `type` a tool definition or a tool call has on this wire.
+- `JSON_SCHEMA_FORMAT` — The `response_format` type that carries a schema the reply has to fit.
+- `PartType` — Any one of the part types in `PartType`.
+- `Role` — Any one of the roles in `Role`.
+- `SchemaType` — Any one of the types in `SchemaType`.

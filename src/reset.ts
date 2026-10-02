@@ -1,13 +1,14 @@
-import { resetCalibration } from "./calibration.ts";
-import { resetCapabilities } from "./capabilities.ts";
-import { resetClients } from "./client.ts";
-import { resetEvents } from "./events.ts";
-import { resetHooks } from "./hooks.ts";
-import { resetHints } from "./side-task.ts";
+import { resetCalibration } from './calibration.ts';
+import { resetCapabilities } from './capabilities.ts';
+import { resetClients } from './client.ts';
+import { resetEvents } from './events.ts';
+import { resetHooks } from './hooks.ts';
+import { resetHints } from './side-task.ts';
 
 /**
  * Forgets everything this package remembers between calls.
  *
+ * @remarks
  * Six modules here keep state for the life of the runtime — the process's, unless this is called
  * as a method of one `createRuntime` made, which clears that one alone — each for a good reason
  * and each with its own seam: the pooled clients and their model listings, the endpoints that turned

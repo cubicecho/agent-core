@@ -1,8 +1,9 @@
-import type OpenAI from "openai";
-import type { Capabilities } from "./capabilities.ts";
-import { getOrCreate } from "./guards.ts";
-import { scoped } from "./scope.ts";
-import { CHARS_PER_TOKEN, requestChars, toolsChars } from "./tokens.ts";
+import type OpenAI from 'openai';
+import type { Capabilities } from './capabilities.ts';
+import { getOrCreate } from './guards.ts';
+import { scoped } from './scope.ts';
+import { CHARS_PER_TOKEN, requestChars, toolsChars } from './tokens.ts';
+import { PartType } from './wire.ts';
 
 /**
  * How many characters a token is worth on one model, learned from what its endpoint reports.
@@ -41,48 +42,59 @@ const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>()
  * The characters per token to size a request to this model with, `CHARS_PER_TOKEN` until a turn
  * has reported one.
  *
+ * @param supports - The endpoint, as `capabilitiesFor` hands it over.
+ * @param model - The name the endpoint knows the model as, as it goes in the body.
+ * @returns The highest of the readings held for the model in the current runtime, or
+ * `CHARS_PER_TOKEN` where it holds none.
+ *
+ * @remarks
  * The highest of the model's last few readings rather than their mean. The estimate guards a
  * window, and `estimateTokens` says which side of wrong that should be on: a count that comes out
  * high refuses a run that would have fit, one that comes out low only costs the round trip the
  * guard was saving. The highest ratio is the lowest count, and the last few rather than all of
  * them because a run's transcript grows by appending, so the latest requests are the best
  * likeness of the next.
- *
- * @param supports The endpoint, as `capabilitiesFor` hands it over.
- * @param model The name the endpoint knows the model as, as it goes in the body.
  */
 export function charsPerTokenFor(supports: Capabilities, model: string): number {
   const known = readings().get(supports)?.get(model);
   return known?.length ? Math.max(...known) : CHARS_PER_TOKEN;
 }
 
-/** Whether any message carries a part whose tokens its characters do not count. */
+/**
+ * Whether any message carries a part whose tokens its characters do not count.
+ *
+ * @param messages - A request's messages.
+ * @returns True where some message's content is an array holding a part that is neither text nor
+ * a refusal. Content that is a string never counts.
+ */
 const hasMedia = (messages: OpenAI.ChatCompletionMessageParam[]) =>
   messages.some(
     ({ content }) =>
-      Array.isArray(content) &&
-      content.some((part) => part.type !== "text" && part.type !== "refusal"),
+      Array.isArray(content) && content.some((part) => part.type !== PartType.Text && part.type !== PartType.Refusal),
   );
 
 /**
  * Takes one reading from a request that was answered, so the next one to this model is sized by it.
  *
+ * @param supports - The endpoint the request went to.
+ * @param body - The request as it was last sent, which names the model.
+ * @param promptTokens - The prompt count the endpoint reported for it. Zero or less is no report.
+ * @returns The ratio now in force for the model.
+ *
+ * @remarks
  * `runTurn` calls it after every turn whose prompt was reported, so a caller using that has
  * nothing to do. A request carrying an image or audio is not read: a vision model charges a
  * picture hundreds of tokens its characters say nothing about. Neither is a reading outside what a
  * tokenizer could produce, which is a miscount and not a tokenizer.
- *
- * @param supports The endpoint the request went to.
- * @param body The request as it was last sent, which names the model.
- * @param promptTokens The prompt count the endpoint reported for it. Zero or less is no report.
- * @returns The ratio now in force for the model.
  */
 export function calibrate(
   supports: Capabilities,
   body: OpenAI.ChatCompletionCreateParamsStreaming,
   promptTokens: number,
 ): number {
-  if (!(promptTokens > 0) || hasMedia(body.messages)) return charsPerTokenFor(supports, body.model);
+  if (!(promptTokens > 0) || hasMedia(body.messages)) {
+    return charsPerTokenFor(supports, body.model);
+  }
   const ratio = (requestChars(body) + toolsChars(body.tools ?? [])) / promptTokens;
   if (ratio < PLAUSIBLE.least || ratio > PLAUSIBLE.most) {
     return charsPerTokenFor(supports, body.model);
@@ -90,7 +102,9 @@ export function calibrate(
   const models = getOrCreate(readings(), supports, () => new Map<string, number[]>());
   const known = getOrCreate(models, body.model, () => []);
   known.push(ratio);
-  if (known.length > READINGS) known.shift();
+  if (known.length > READINGS) {
+    known.shift();
+  }
   return charsPerTokenFor(supports, body.model);
 }
 

@@ -1,8 +1,8 @@
-import { bench, describe } from "vitest";
-import { emit, fold, resetEvents, watch } from "../src/events.ts";
-import { relaxTools, sanitizeTools } from "../src/schema-compat.ts";
-import { requestTokens } from "../src/tokens.ts";
-import { deltas, mcpTools, streamingBody, transcript } from "./fixtures.ts";
+import { bench, describe } from 'vitest';
+import { emit, fold, RunEventKind, resetEvents, watch } from '../src/events.ts';
+import { relaxTools, sanitizeTools } from '../src/schema-compat.ts';
+import { requestTokens } from '../src/tokens.ts';
+import { deltas, mcpTools, streamingBody, transcript } from './fixtures.ts';
 
 /**
  * The four places the loop spends time that are not the request.
@@ -12,51 +12,55 @@ import { deltas, mcpTools, streamingBody, transcript } from "./fixtures.ts";
  * after a change: a change that does not move its own bench is a change to drop.
  */
 
-describe("schema-compat", () => {
+describe('schema-compat', () => {
   const declared = sanitizeTools(mcpTools());
 
   // The documented per-request call once `strictSchemas` has latched off. See README's turn.
-  bench("relaxTools over 25 MCP schemas", () => {
+  bench('relaxTools over 25 MCP schemas', () => {
     relaxTools(declared);
   });
 
   // The once-per-connection call, already memoised — the baseline a cached relax should approach.
-  bench("sanitizeTools over 25 MCP schemas (cached)", () => {
+  bench('sanitizeTools over 25 MCP schemas (cached)', () => {
     sanitizeTools(declared);
   });
 });
 
-describe("retry", () => {
+describe('retry', () => {
   const body = streamingBody(transcript(), sanitizeTools(mcpTools()));
 
-  bench("requestTokens over a 40-turn transcript", () => {
+  bench('requestTokens over a 40-turn transcript', () => {
     requestTokens(body);
   });
 });
 
-describe("events", () => {
+describe('events', () => {
   const events = deltas();
 
-  bench("fold over 20k deltas", () => {
+  bench('fold over 20k deltas', () => {
     fold(events);
   });
 
   // `emit` is the only thing in the package that runs once per streamed token, so its per-call
   // cost is multiplied by the length of a reasoning turn — which made it, not the drain, the
   // bulk of what a combined watch bench was measuring. Split out so each is readable.
-  bench("emit 10k deltas", () => {
+  bench('emit 10k deltas', () => {
     resetEvents();
-    for (let i = 0; i < 10_000; i++) emit("bench", { kind: "thinking", text: "token " });
+    for (let i = 0; i < 10_000; i++) {
+      emit('bench', { kind: RunEventKind.Thinking, text: 'token ' });
+    }
   });
 
   // The same emits plus a full drain, so the drain is the difference between the two. It cannot
   // be timed alone: a per-iteration setup is not something tinybench offers — its `setup` runs
   // once, and every iteration after the first would find an empty stream and wait on it forever.
-  bench("emit and drain 10k deltas", async () => {
+  bench('emit and drain 10k deltas', async () => {
     resetEvents();
-    for (let i = 0; i < 10_000; i++) emit("drain", { kind: "thinking", text: "token " });
-    emit("drain", { kind: "done", ok: true });
-    for await (const _ of watch("drain")) {
+    for (let i = 0; i < 10_000; i++) {
+      emit('drain', { kind: RunEventKind.Thinking, text: 'token ' });
+    }
+    emit('drain', { kind: RunEventKind.Done, ok: true });
+    for await (const _ of watch('drain')) {
     }
   });
 });

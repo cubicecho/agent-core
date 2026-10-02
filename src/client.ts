@@ -1,46 +1,54 @@
-import { createHash } from "node:crypto";
-import OpenAI from "openai";
-import type { Endpoint, EndpointIdentity, RetryPolicy } from "./config.ts";
-import { isPositive } from "./guards.ts";
-import { assignSettings, scoped } from "./scope.ts";
+import OpenAI from 'openai';
+import type { Endpoint, EndpointIdentity, RetryPolicy } from './config.ts';
+import { digestOf } from './digest.ts';
+import { isPositive } from './guards.ts';
+import { MS_PER_SECOND } from './platform.ts';
+import { assignSettings, scoped } from './scope.ts';
+import { HttpStatus } from './wire.ts';
 
 /**
  * The SDK insists on a non-empty key even where the server will not look at it. This is what it
  * gets. It also reads as "this endpoint has no key" at a call site, which an empty string does
  * not — a caller must not let a local endpoint silently borrow the key meant for a paid one.
  */
-export const NO_KEY = "agent-core";
-
-/** A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit. */
-const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
+export const NO_KEY = 'agent-core';
 
 /**
- * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
+ * A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit.
  *
- * @param config Read for `requestTimeoutSeconds` alone.
+ * @param seconds - The wait as a config states it.
+ * @returns Milliseconds, or `undefined` for zero or less.
  */
-export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined =>
+const limitMs = (seconds: number) => (seconds > 0 ? seconds * MS_PER_SECOND : undefined);
+
+/**
+ * An endpoint's request timeout in the SDK's spelling: milliseconds, and `undefined` for no limit.
+ *
+ * @param config - Read for `requestTimeoutSeconds` alone. Zero, less, or absent means no limit.
+ * @returns The request timeout in milliseconds, or `undefined` for no limit.
+ */
+export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
 
 /**
  * How long to wait out a model that is still loading, in milliseconds — `undefined` where the
  * config has no opinion, and zero where it says not to wait at all.
  *
+ * @param config - Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
+ * @returns Milliseconds: `undefined` only where the field is absent, and zero where it is zero or
+ * less.
+ *
+ * @remarks
  * Zero rather than the SDK's `undefined` for "no wait", because here absent already means
  * something else: `runTurn`'s own default.
- *
- * @param config Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
  */
-export const loadingMs = (
-  config: Pick<RetryPolicy, "loadingTimeoutSeconds">,
-): number | undefined =>
-  config.loadingTimeoutSeconds === undefined
-    ? undefined
-    : (limitMs(config.loadingTimeoutSeconds) ?? 0);
+export const loadingMs = (config: Pick<RetryPolicy, 'loadingTimeoutSeconds'>): number | undefined =>
+  config.loadingTimeoutSeconds === undefined ? undefined : (limitMs(config.loadingTimeoutSeconds) ?? 0);
 
 /**
  * A client per endpoint, made once and kept.
  *
+ * @remarks
  * The SDK holds its own connection pool, and a run makes a request per tool iteration on top of
  * whatever side tasks it asks for — building a fresh client for each of them throws that pool
  * away every time. A map rather than the single slot it would otherwise be, because agents each
@@ -59,6 +67,7 @@ const clients = scoped(() => new Map<string, OpenAI>());
 /**
  * How many endpoints' clients are kept at once, until `configureClients` moves it.
  *
+ * @remarks
  * This is a backstop rather than a design. The key includes the API key, and every argument in
  * this file for what bounds these caches is "a settings row's worth" — true of the deployments
  * this was written for, and false the moment a consumer mints a key per *user*, where the map
@@ -104,7 +113,9 @@ const poolLimits = scoped((): Required<ClientPoolOptions> => ({ ...CLIENT_DEFAUL
  */
 const evict = () => {
   for (const oldest of clients().keys()) {
-    if (clients().size <= poolLimits().maxClients) break;
+    if (clients().size <= poolLimits().maxClients) {
+      break;
+    }
     clients().delete(oldest);
   }
 };
@@ -113,6 +124,13 @@ const evict = () => {
  * Changes what the client pool is held to, for a process whose endpoints are not shaped like the
  * deployments these defaults were chosen for.
  *
+ * @param [options] - The bounds to change. A field left out — or given anything that is not a number
+ * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
+ * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
+ * about again until `resetClients`.
+ * @returns Everything in force afterwards, including what this call did not change.
+ *
+ * @remarks
  * One setting per runtime for the same reason `configureEvents` is: the pool is one thing per
  * runtime, and its size is a deployment's setting, said once at startup. A multi-tenant host
  * keying on a key per user raises `maxClients` so its tenants stop evicting each other's
@@ -122,12 +140,6 @@ const evict = () => {
  * A `maxClients` below the pool's current size evicts down to it at once, least recently asked
  * for first, as the next `getClient` would have. A shorter `listingMissMs` applies to misses
  * already remembered, since each is a timestamp compared against it when read.
- *
- * @param options The bounds to change. A field left out — or given anything that is not a number
- * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
- * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
- * about again until `resetClients`.
- * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
   const inForce = assignSettings(poolLimits(), options);
@@ -141,10 +153,12 @@ export const FIRST_TOKEN_FACTOR = 5;
 /**
  * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
  *
- * @param config Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
+ * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
+ * @returns Milliseconds. `firstTokenSeconds` where it is given, zero or less being no limit;
+ * otherwise `FIRST_TOKEN_FACTOR` request timeouts, and no limit where the request has none.
  */
 export const firstTokenMs = (
-  config: Pick<Endpoint, "requestTimeoutSeconds" | "firstTokenSeconds">,
+  config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,
 ): number | undefined => {
   if (config.firstTokenSeconds === undefined) {
     const idle = timeoutMs(config);
@@ -156,6 +170,11 @@ export const firstTokenMs = (
 /**
  * The client for an endpoint, built once and kept.
  *
+ * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
+ * @returns The pooled client: the same object for the same base URL, key and timeout, until it is
+ * evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
+ *
+ * @remarks
  * Pooled on the three fields that change how a request is sent, so agents sharing a server share
  * a connection and agents on different servers never share a client.
  *
@@ -165,8 +184,6 @@ export const firstTokenMs = (
  * connection pools rather than sharing them and holding every one of them — `maxClients` keeps
  * that from being unbounded, and it is the point at which a client of your own, built and held
  * per tenant, is the better answer than this.
- *
- * @param config Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
  */
 export function getClient(config: Endpoint): OpenAI {
   const apiKey = config.apiKey || NO_KEY;
@@ -191,25 +208,32 @@ export function getClient(config: Endpoint): OpenAI {
 /**
  * The context window, spelled every way a server spells it at the top of a listing entry.
  *
+ * @remarks
  * None of these is in the OpenAI listing schema, so every server that says anything says it as
  * an extra key of its own: `max_model_len` is vLLM, `context_length` OpenRouter, `n_ctx` the raw
  * llama bindings. Whichever turns up first is taken — a server reporting two of them is
  * reporting the same number twice. llama.cpp puts its number under `meta` instead, and LM Studio
  * and Ollama put none on this route at all; see `servedWindow`.
  */
-const CONTEXT_KEYS = [
-  "context_length",
-  "max_context_window",
-  "max_model_len",
-  "context_window",
-  "n_ctx",
-];
+const CONTEXT_KEYS = ['context_length', 'max_context_window', 'max_model_len', 'context_window', 'n_ctx'];
 
+/**
+ * A number above zero as itself and anything else as zero, which here means "not stated".
+ *
+ * @param value - Whatever a server put under a key. Absent, a string and a negative all read as
+ * zero.
+ * @returns The number, or 0.
+ */
 const positive = (value: unknown) => (isPositive(value) ? value : 0);
 
 /**
  * A listing entry's window, and whether it is only the one the model was trained with.
  *
+ * @param model - A listing entry as the server sent it, extra keys included. Not written to.
+ * @returns The window in tokens, and `trained` where it came from `meta.n_ctx_train`. An entry
+ * that states neither answers zero and `false`.
+ *
+ * @remarks
  * The two are told apart because they are trusted differently: a top-level key is taken as the
  * window being served and settles the lookup, and a trained one is a ceiling the server may be
  * running well under, so `contextLimitFor` still asks the native routes before settling for it.
@@ -218,7 +242,9 @@ function contextLengthOf(model: object): { contextLength: number; trained: boole
   const record = model as Record<string, unknown>;
   for (const key of CONTEXT_KEYS) {
     const value = positive(record[key]);
-    if (value) return { contextLength: value, trained: false };
+    if (value) {
+      return { contextLength: value, trained: false };
+    }
   }
   // llama.cpp's, and the window the model was trained with rather than the one it is served in:
   // a 256k model started at `-c 16384` lists 262144 here. Better than nothing, and why the
@@ -231,6 +257,7 @@ function contextLengthOf(model: object): { contextLength: number; trained: boole
 /**
  * A model an endpoint offers, and what it says the model will read. Zero means it did not say.
  *
+ * @remarks
  * The number is whatever the listing carried, which from llama.cpp is the trained window rather
  * than the served one; `contextLimitFor` is the lookup that knows the difference.
  */
@@ -242,6 +269,7 @@ export interface ModelInfo {
 /**
  * The last listing from each endpoint, so a run can size its window without a round trip.
  *
+ * @remarks
  * Keyed by `endpointKey`, because two endpoints are two different sets of models and one of
  * them having answered says nothing about the other — and because a key can be the difference
  * between what a router will show one caller and another.
@@ -258,6 +286,7 @@ const listings = scoped(() => new Map<string, ModelInfo[]>());
 /**
  * The models in each endpoint's last listing whose window is only the trained one, by id.
  *
+ * @remarks
  * Kept beside `listings` rather than on `ModelInfo`, so what `listModels` hands back is the shape
  * it has always been. Replaced with each listing that lands, and left alone by one that fails.
  */
@@ -266,6 +295,7 @@ const trainedOnly = scoped(() => new Map<string, Set<string>>());
 /**
  * When an endpoint was last asked about a model it did not name, keyed on the two together.
  *
+ * @remarks
  * `contextLimitFor` asks again whenever the listing does not hold the model, which is right for
  * a model that arrives late and wrong for one that is never coming. The second is the ordinary
  * case rather than the exotic one — a llama.cpp box served under a `-a` alias that does not
@@ -283,6 +313,13 @@ const misses = scoped(() => new Map<string, number>());
  * What counts as one endpoint, everywhere in this package that has to remember something about
  * one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
  *
+ * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
+ * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
+ * config, and absent and empty already mean the same thing. The timeout is deliberately not in
+ * it; see `listings`.
+ * @returns The URL and the key as one JSON string, the key in the clear.
+ *
+ * @remarks
  * The URL and the key together, because the key is part of what is on the other end rather than
  * only how it is paid for: a router is free to send two keys to two different backends, and then
  * what one of them refused is not a fact about the other. Absent reads as `NO_KEY`, so an
@@ -292,41 +329,39 @@ const misses = scoped(() => new Map<string, number>());
  * is impossible in a URL or a key, and two endpoints must never collide on one entry. A host
  * keeping its own per-endpoint state keys it on this rather than on a copy of it, so the two
  * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
- *
- * @param config Read for `baseUrl` and `apiKey` alone, and the key is optional here where
- * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
- * config, and absent and empty already mean the same thing. The timeout is deliberately not in
- * it; see `listings`.
  */
-export const endpointKey = (config: EndpointIdentity) =>
-  JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
+export const endpointKey = (config: EndpointIdentity) => JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
 
 /**
  * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
  * into the other.
  *
- * @param endpoint Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
+ * @param endpoint - Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
  * where the key may be written down.
- * @param model The model's name as the endpoint knows it.
+ * @param model - The model's name as the endpoint knows it.
+ * @returns The pair as a JSON array, which `JSON.parse` takes apart again.
  */
 export const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
 /**
  * `endpointKey` hashed, for the remembered facts that can leave the process.
  *
+ * @param config - Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
+ * @returns The digest of that endpoint's `endpointKey`: the same for the same URL and key in any
+ * process, and no key to be read out of it.
+ *
+ * @remarks
  * What an endpoint refused is exported by `exportCapabilities` to be written into a settings row
  * or a file, and a key inside that blob is a credential copied somewhere nobody meant to keep one.
  * A digest identifies the same endpoint on the next boot without saying what the key was, and it
  * is how a host finds its own endpoint's entry in a `CapabilitySnapshot`.
- *
- * @param config Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  */
-export const endpointId = (config: EndpointIdentity) =>
-  createHash("sha256").update(endpointKey(config)).digest("hex");
+export const endpointId = (config: EndpointIdentity) => digestOf(endpointKey(config));
 
 /**
  * Served windows found by asking a server's own API, keyed on endpoint and model together.
  *
+ * @remarks
  * A model's entry stays until `resetClients`, like a listing; a server that answered without one
  * is asked again after `listingMissMs`, like a listing that did not name the model.
  */
@@ -338,6 +373,7 @@ const unserved = scoped(() => new Set<string>());
 /**
  * Endpoints whose `/api/v0/models` answered with an error, and when.
  *
+ * @remarks
  * `gone` is a route the server does not have (`NOT_THERE`), which is a fact about the server and
  * stands until `resetClients`. Any other error stands for `listingMissMs` only, because it may be
  * one the server gets over, and LM Studio latched for good on a passing 5xx would have no window
@@ -348,38 +384,59 @@ const unserved = scoped(() => new Set<string>());
  */
 const refusals = scoped(() => new Map<string, { at: number; gone: boolean }>());
 
-/** Whether `/api/v0/models` is to be left alone on this endpoint for now. */
+/**
+ * Whether `/api/v0/models` is to be left alone on this endpoint for now.
+ *
+ * @param endpoint - The endpoint, by `endpointKey`.
+ * @returns `true` where the route last answered as one the server does not have, or with any other
+ * error inside `listingMissMs`; `false` for an endpoint with no error on record.
+ */
 const refused = (endpoint: string) => {
   const refusal = refusals().get(endpoint);
-  return (
-    refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs)
-  );
+  return refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs);
 };
 
 /** How long a probe may take before the window is taken from the listing instead. */
 const PROBE_TIMEOUT_MS = 10_000;
 
-/** The server root behind an OpenAI-compatible base URL, which is where the native APIs live. */
-const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+/**
+ * The server root behind an OpenAI-compatible base URL, which is where the native APIs live.
+ *
+ * @param baseUrl - The base URL as configured. Not trimmed of whitespace.
+ * @returns The URL less its trailing slashes and then one trailing `/v1`; one that ends in neither
+ * comes back as given.
+ */
+const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
 
 /** A route this server does not have, rather than one that failed to answer. */
-const NOT_THERE = new Set([404, 405, 501]);
+const NOT_THERE: ReadonlySet<number> = new Set([
+  HttpStatus.NotFound,
+  HttpStatus.MethodNotAllowed,
+  HttpStatus.NotImplemented,
+]);
 
 /**
- * Asks one native endpoint. `failed` is any answer that was not a 2xx and `missing` the ones among
- * them that mean a server without the route; `body` is absent for both, and for a 2xx that was not
- * JSON. A server that could not be reached throws.
+ * Asks one native endpoint.
+ *
+ * @param config - The endpoint. Its key goes as a bearer token where it has one, and its request
+ * timeout bounds the wait — `PROBE_TIMEOUT_MS` where it has none.
+ * @param path - The route and its query, from the server root rather than from the base URL.
+ * @returns How the server answered, with `body` only for a 2xx that parsed as JSON.
+ *
+ * @remarks
+ * `failed` is any answer that was not a 2xx and `missing` the ones among them that mean a server
+ * without the route; `body` is absent for both, and for a 2xx that was not JSON. A server that
+ * could not be reached throws.
  */
-async function probe(
-  config: Endpoint,
-  path: string,
-): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
+async function probe(config: Endpoint, path: string): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
   const apiKey = config.apiKey || undefined;
   const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
     headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
     signal: AbortSignal.timeout(timeoutMs(config) ?? PROBE_TIMEOUT_MS),
   });
-  if (!response.ok) return { failed: true, missing: NOT_THERE.has(response.status) };
+  if (!response.ok) {
+    return { failed: true, missing: NOT_THERE.has(response.status) };
+  }
   try {
     return { failed: false, missing: false, body: await response.json() };
   } catch {
@@ -391,6 +448,11 @@ async function probe(
  * The window a local server's own API says it is serving a model in, for the servers whose
  * listing does not say.
  *
+ * @param config - The endpoint, plus the model whose window is wanted.
+ * @returns The window in tokens, or zero where none was found. Never rejects: a server that could
+ * not be reached answers zero too.
+ *
+ * @remarks
  * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
  * Studio on `/api/v0/models` as `loaded_context_length` while the model is loaded. Both differ
  * from the trained window in the case that matters, a model started in a smaller one than it was
@@ -403,34 +465,35 @@ async function probe(
  * other error. A server that could not be reached is not remembered at all.
  *
  * The listing is not read here; `contextLimitFor` reads it first and comes here after.
- *
- * @param config The endpoint, plus the model whose window is wanted.
  */
 export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
   const endpoint = endpointKey(config);
-  if (unserved().has(endpoint)) return 0;
+  if (unserved().has(endpoint)) {
+    return 0;
+  }
   const key = modelKey(endpoint, config.model);
   const known = served().get(key);
-  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs))
+  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs)) {
     return known.window;
+  }
 
   let window = 0;
   try {
     // Named, for a llama.cpp router serving several models; a single-model server ignores it.
     const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`);
-    const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })
-      ?.default_generation_settings;
+    const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })?.default_generation_settings;
     window = positive(settings?.n_ctx);
     if (!window) {
       if (!refused(endpoint)) {
-        const lmstudio = await probe(config, "/api/v0/models");
-        if (lmstudio.failed) refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
-        else refusals().delete(endpoint);
+        const lmstudio = await probe(config, '/api/v0/models');
+        if (lmstudio.failed) {
+          refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
+        } else {
+          refusals().delete(endpoint);
+        }
         const { data } = (lmstudio.body ?? {}) as { data?: unknown };
         const entry = Array.isArray(data)
-          ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find(
-              (model) => model?.id === config.model,
-            )
+          ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find((model) => model?.id === config.model)
           : undefined;
         window = positive(entry?.loaded_context_length);
       }
@@ -449,7 +512,7 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
 /**
  * Asks an endpoint what it serves, and remembers the answer.
  *
- * @param config The endpoint to ask. Remembered per base URL and key, not per model.
+ * @param config - The endpoint to ask. Remembered per base URL and key, not per model.
  * @returns The models in order of id, whatever order the endpoint listed them in.
  */
 export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
@@ -458,7 +521,9 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
   const models: ModelInfo[] = [];
   for (const model of data) {
     const window = contextLengthOf(model);
-    if (window.trained) trained.add(model.id);
+    if (window.trained) {
+      trained.add(model.id);
+    }
     models.push({ id: model.id, contextLength: window.contextLength });
   }
   models.sort((a, b) => a.id.localeCompare(b.id));
@@ -471,6 +536,12 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
 /**
  * How much a model will read, in tokens. Zero means nobody knows.
  *
+ * @param config - The endpoint, plus the model whose window is wanted.
+ * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
+ * @returns The window in tokens, or zero. Never rejects: a listing or a native route that failed
+ * is an unknown window.
+ *
+ * @remarks
  * `declared` is the operator's own number, and it wins outright: an endpoint can report the
  * window a model was *built* with while serving it in a much smaller one — llama.cpp will
  * happily load a 256k model at `-c 16384` and go on listing it as 256k — and a run refused on
@@ -488,15 +559,11 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * are two more requests that a server stating its window in the listing never needed. Asked
  * first, they were also asked again every `listingMissMs` for the life of the process on a server
  * whose `/props` answers without a window, by any host that sizes the window per turn.
- *
- * @param config The endpoint, plus the model whose window is wanted.
- * @param declared The operator's own number. Above zero it wins and the endpoint is not asked.
  */
-export async function contextLimitFor(
-  config: Endpoint & { model: string },
-  declared = 0,
-): Promise<number> {
-  if (declared > 0) return declared;
+export async function contextLimitFor(config: Endpoint & { model: string }, declared = 0): Promise<number> {
+  if (declared > 0) {
+    return declared;
+  }
   const key = endpointKey(config);
   const listed = () =>
     listings()
@@ -527,8 +594,11 @@ export async function contextLimitFor(
       // than the interval, which is a memory that never expires rather than one that expires in
       // half a minute.
       if (answered) {
-        if (listed()) misses().delete(missKey);
-        else misses().set(missKey, Date.now());
+        if (listed()) {
+          misses().delete(missKey);
+        } else {
+          misses().set(missKey, Date.now());
+        }
       }
     }
   }
@@ -536,7 +606,9 @@ export async function contextLimitFor(
   const fromListing = entry?.contextLength ?? 0;
   // A top-level key settles it. A trained window does not: llama.cpp lists the one the model was
   // built with, and taking it over what `/props` says lets an overflow through the guard.
-  if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) return fromListing;
+  if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) {
+    return fromListing;
+  }
   const window = await servedWindow(config);
   return window > 0 ? window : fromListing;
 }
@@ -556,33 +628,46 @@ export function resetClients() {
   refusals().clear();
 }
 
-/** A base URL as two settings rows would agree on it: trimmed, without the trailing slash. */
-export const sameUrl = (a: string, b: string) =>
-  a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+/**
+ * A base URL as two settings rows would agree on it: trimmed, without the trailing slash.
+ *
+ * @param a - The URL as one row has it.
+ * @param b - The URL as the other has it.
+ * @returns `true` where the two differ in nothing but surrounding whitespace and trailing slashes.
+ * Case counts, and so does a `/v1`.
+ */
+export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '');
 
 /**
  * The key to send, where an endpoint may inherit one from the settings it overrides.
  *
+ * @param own - The endpoint as the agent or profile states it. Its own key always wins. An empty or
+ * absent `baseUrl` is one that inherits the endpoint too.
+ * @param [inherited] - The settings it overrides. Absent treats `own` as the configured endpoint, so
+ * only its key and the environment's are in play.
+ * @param [env] - Where `OPENAI_API_KEY` is read from.
+ * @returns The key, never empty: `own`'s, else `NO_KEY` for an endpoint other than the inherited
+ * one, else the inherited key, then the environment's, then `NO_KEY`.
+ *
+ * @remarks
  * A credential issued for one endpoint has no business being posted to another. A profile that
  * names its own `baseUrl` and no key of its own is sent `NO_KEY` — not the operator's key, and
  * not `$OPENAI_API_KEY` — because "I pointed an agent at a friend's server and it sent my OpenAI
  * key" is not a mistake worth being able to make, and a local server wants no key anyway. One on
  * the same endpoint inherits the key as it inherits everything else, and the environment is the
  * last word on the endpoint that was configured rather than overridden.
- *
- * @param own The endpoint as the agent or profile states it. Its own key always wins. An empty or
- * absent `baseUrl` is one that inherits the endpoint too.
- * @param inherited The settings it overrides. Absent treats `own` as the configured endpoint, so
- * only its key and the environment's are in play.
- * @param env Where `OPENAI_API_KEY` is read from, `process.env` by default.
  */
 export function resolveApiKey(
   own: { baseUrl?: string; apiKey?: string },
   inherited?: EndpointIdentity,
   env: Record<string, string | undefined> = process.env,
 ): string {
-  if (own.apiKey) return own.apiKey;
+  if (own.apiKey) {
+    return own.apiKey;
+  }
   const baseUrl = own.baseUrl?.trim();
-  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) return NO_KEY;
+  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) {
+    return NO_KEY;
+  }
   return inherited?.apiKey || env.OPENAI_API_KEY || NO_KEY;
 }

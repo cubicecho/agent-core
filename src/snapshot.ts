@@ -4,10 +4,10 @@ import {
   MODEL_FLAGS,
   modelCapabilitiesFor,
   OPTIMISTIC_MODEL,
-} from "./capabilities.ts";
-import { modelKey } from "./client.ts";
-import { isRecord } from "./guards.ts";
-import { refusedHints } from "./side-task.ts";
+} from './capabilities.ts';
+import { modelKey } from './client.ts';
+import { isRecord } from './guards.ts';
+import { refusedHints } from './side-task.ts';
 
 /**
  * What endpoints and models refused, carried across a restart.
@@ -41,7 +41,7 @@ export interface ModelSnapshot {
    * none refused.
    */
   refusedEfforts?: string[];
-  /** The efforts a refusal published as this model's, in ladder order. Absent is none published. */
+  /** The efforts a refusal published as this model's, in the order it gave them. Absent is none published. */
   supportedEfforts?: string[];
 }
 
@@ -68,6 +68,11 @@ export interface CapabilitySnapshot {
   endpoints: Record<string, EndpointSnapshot>;
 }
 
+/**
+ * A model's snapshot as it starts out: every flag on, and both refused lists empty.
+ *
+ * @returns A fresh object each time, since `exportCapabilities` writes onto what it is given.
+ */
 const optimisticModel = (): ModelSnapshot => ({
   ...OPTIMISTIC_MODEL,
   thinkingHints: true,
@@ -75,21 +80,44 @@ const optimisticModel = (): ModelSnapshot => ({
   refusedEfforts: [],
 });
 
+/**
+ * Whether a model's snapshot holds a refusal, which is what earns it a place in the blob.
+ *
+ * @param model - The snapshot. Its `supportedEfforts` is not read: a published list latches
+ * nothing.
+ * @returns `true` where a flag is off, the hints were refused, or either refused list has an entry.
+ */
 const refusedAnything = (model: ModelSnapshot) =>
   MODEL_FLAGS.some((flag) => !model[flag]) ||
   !model.thinkingHints ||
   model.refusedFields.length > 0 ||
   (model.refusedEfforts?.length ?? 0) > 0;
 
-/** Latches every string in a stored list into a live set, skipping what is not a list of them. */
+/**
+ * Latches every string in a stored list into a live set, skipping what is not a list of them.
+ *
+ * @param held - The live set. Written to, and only ever added to.
+ * @param stored - The list as the snapshot holds it. Anything but an array is skipped whole, and
+ * an entry that is not a string is skipped on its own.
+ */
 const latchInto = (held: Set<string>, stored: unknown) => {
-  if (!Array.isArray(stored)) return;
-  for (const value of stored) if (typeof value === "string") held.add(value);
+  if (!Array.isArray(stored)) {
+    return;
+  }
+  for (const value of stored) {
+    if (typeof value === 'string') {
+      held.add(value);
+    }
+  }
 };
 
 /**
  * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
  *
+ * @returns A fresh object that shares nothing with the live latches, its lists copied and the two
+ * refused ones sorted.
+ *
+ * @remarks
  * Covers what `negotiate` latches on endpoints and models and the models `ask` found refusing the
  * no-thinking hints. Only what was actually refused is in it, so a snapshot of a process that met
  * no refusals has no endpoints. Endpoints are named by digest rather than URL and key, since the
@@ -100,10 +128,14 @@ export function exportCapabilities(): CapabilitySnapshot {
   const endpoints: Record<string, EndpointSnapshot> = {};
   const entry = (id: string) => {
     const held = endpoints[id];
-    if (held) return held;
+    if (held) {
+      return held;
+    }
     const fresh: EndpointSnapshot = { strictSchemas: true, usageInStream: true, models: {} };
     const since = knownCapabilities().get(id)?.since;
-    if (since !== undefined) fresh.since = since;
+    if (since !== undefined) {
+      fresh.since = since;
+    }
     endpoints[id] = fresh;
     return fresh;
   };
@@ -111,13 +143,19 @@ export function exportCapabilities(): CapabilitySnapshot {
     const models: Record<string, ModelSnapshot> = {};
     for (const [name, refused] of supports.models) {
       const model = optimisticModel();
-      for (const flag of MODEL_FLAGS) model[flag] = refused[flag];
+      for (const flag of MODEL_FLAGS) {
+        model[flag] = refused[flag];
+      }
       model.refusedFields = [...refused.refusedFields].sort();
       model.refusedEfforts = [...refused.refusedEfforts].sort();
       // Only alongside a refusal, since on its own a published list latches nothing: the model
       // named it while refusing a rung, and that rung is in `refusedEfforts`.
-      if (refused.supportedEfforts) model.supportedEfforts = [...refused.supportedEfforts];
-      if (refusedAnything(model)) models[name] = model;
+      if (refused.supportedEfforts) {
+        model.supportedEfforts = [...refused.supportedEfforts];
+      }
+      if (refusedAnything(model)) {
+        models[name] = model;
+      }
     }
     if (!supports.strictSchemas || !supports.usageInStream || Object.keys(models).length) {
       Object.assign(entry(id), {
@@ -139,44 +177,67 @@ export function exportCapabilities(): CapabilitySnapshot {
 /**
  * Latches what a stored snapshot says was refused, on top of whatever this process has learned.
  *
+ * @param snapshot - What `exportCapabilities` returned, as stored. Read defensively: a field of the
+ * wrong type is skipped rather than trusted.
+ * @returns Whether the snapshot was of this version and applied.
+ *
+ * @remarks
  * Refusals only ever latch off, so importing merges rather than replaces: a flag already off stays
  * off whatever the snapshot says, and one the snapshot has off is turned off. A snapshot of another
  * version, or anything that is not one, is ignored — a stale shape costs the refused requests it
  * would have saved, which is what a restart cost before. How old is too old is the consumer's call,
  * made on `savedAt` before importing, or afterwards per endpoint with `expireCapabilities`, since a
  * server behind a URL can be upgraded between boots.
- *
- * @param snapshot What `exportCapabilities` returned, as stored. Read defensively: a field of the
- * wrong type is skipped rather than trusted.
- * @returns Whether the snapshot was of this version and applied.
  */
 export function importCapabilities(snapshot: unknown): boolean {
-  if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) return false;
-  if (!isRecord(snapshot.endpoints)) return false;
+  if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) {
+    return false;
+  }
+  if (!isRecord(snapshot.endpoints)) {
+    return false;
+  }
   for (const [id, endpoint] of Object.entries(snapshot.endpoints)) {
-    if (!isRecord(endpoint)) continue;
+    if (!isRecord(endpoint)) {
+      continue;
+    }
     const supports = capabilitiesById(id);
-    if (endpoint.strictSchemas === false) supports.strictSchemas = false;
-    if (endpoint.usageInStream === false) supports.usageInStream = false;
+    if (endpoint.strictSchemas === false) {
+      supports.strictSchemas = false;
+    }
+    if (endpoint.usageInStream === false) {
+      supports.usageInStream = false;
+    }
     // Older of the two, so a snapshot ages an entry and never rejuvenates one: importing must not
     // be a way to keep a latch from ever reaching `expireCapabilities`.
-    if (typeof endpoint.since === "number" && endpoint.since < supports.since) {
+    if (typeof endpoint.since === 'number' && endpoint.since < supports.since) {
       supports.since = endpoint.since;
     }
-    if (!isRecord(endpoint.models)) continue;
+    if (!isRecord(endpoint.models)) {
+      continue;
+    }
     for (const [name, model] of Object.entries(endpoint.models)) {
-      if (!isRecord(model)) continue;
+      if (!isRecord(model)) {
+        continue;
+      }
       const refused = modelCapabilitiesFor(supports, name);
-      for (const flag of MODEL_FLAGS) if (model[flag] === false) refused[flag] = false;
+      for (const flag of MODEL_FLAGS) {
+        if (model[flag] === false) {
+          refused[flag] = false;
+        }
+      }
       latchInto(refused.refusedEfforts, model.refusedEfforts);
       // Replaced rather than merged: two lists of what one model takes are two readings of the
       // same fact, and the stored one is at least as recent as an empty absent.
       if (Array.isArray(model.supportedEfforts)) {
-        const listed = model.supportedEfforts.filter((value) => typeof value === "string");
-        if (listed.length) refused.supportedEfforts = listed;
+        const listed = model.supportedEfforts.filter((value) => typeof value === 'string');
+        if (listed.length) {
+          refused.supportedEfforts = listed;
+        }
       }
       latchInto(refused.refusedFields, model.refusedFields);
-      if (model.thinkingHints === false) refusedHints().add(modelKey(id, name));
+      if (model.thinkingHints === false) {
+        refusedHints().add(modelKey(id, name));
+      }
     }
   }
   return true;

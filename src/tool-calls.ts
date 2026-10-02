@@ -1,6 +1,7 @@
-import type OpenAI from "openai";
-import { isRecord } from "./guards.ts";
-import { THINK_FENCE } from "./thinking.ts";
+import type OpenAI from 'openai';
+import { isRecord } from './guards.ts';
+import { THINK_FENCE } from './thinking.ts';
+import { FinishReason, FUNCTION_TOOL } from './wire.ts';
 
 /**
  * Reading what a model meant by a tool call when it did not write one cleanly.
@@ -12,26 +13,36 @@ import { THINK_FENCE } from "./thinking.ts";
  * a different one. Both were being handled in every consumer, differently, or not at all.
  */
 
+/** How much of a call's unreadable arguments an error quotes back. */
+export const ARGUMENT_PREVIEW_CHARS = 200;
+
+/** The `ToolArgumentsError` kind for a call cut off at the reply ceiling. */
+export const ARGUMENTS_TRUNCATED = 'truncated' as const;
+
+/** The `ToolArgumentsError` kind for a call the model wrote wrongly. */
+export const ARGUMENTS_MALFORMED = 'malformed' as const;
+
 /** A tool call as the loop handles it, recovered or streamed. */
 export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
 
 /**
  * Tool arguments that could not be read as an object, with why.
  *
+ * @remarks
  * `truncated` is a call cut off at the reply ceiling, which no repair can finish and the fix for
  * is a larger `maxTokens`; `malformed` is one the model wrote wrongly, which it can be told about
  * and try again.
  */
 export class ToolArgumentsError extends Error {
-  override readonly name = "ToolArgumentsError";
+  override readonly name = 'ToolArgumentsError';
   /** Whether the model ran out of room or wrote something unreadable. */
-  readonly kind: "truncated" | "malformed";
+  readonly kind: typeof ARGUMENTS_TRUNCATED | typeof ARGUMENTS_MALFORMED;
 
   /**
-   * @param kind Why the arguments could not be read.
-   * @param message What the model is handed back as the tool's result.
+   * @param kind - Why the arguments could not be read.
+   * @param message - What the model is handed back as the tool's result.
    */
-  constructor(kind: "truncated" | "malformed", message: string) {
+  constructor(kind: typeof ARGUMENTS_TRUNCATED | typeof ARGUMENTS_MALFORMED, message: string) {
     super(message);
     this.kind = kind;
   }
@@ -40,19 +51,23 @@ export class ToolArgumentsError extends Error {
 /**
  * Rewrites the almost-JSON local models write into JSON, in one pass that knows where strings are.
  *
+ * @param text - What the model wrote. A string left open is closed at the end of the text.
+ * @returns The rewritten text, which nothing here has checked parses.
+ *
+ * @remarks
  * Single-quoted strings become double-quoted, Python's `True`, `False` and `None` become their JSON
  * spellings, bare keys are quoted, and a comma before a closing bracket is dropped. Nothing inside
  * a string is touched, so an argument that happens to say `True` or `a, }` survives.
  */
 function repairJson(text: string): string {
-  let out = "";
+  let out = '';
   for (let i = 0; i < text.length; ) {
     const char = text[i];
     if (char === '"' || char === "'") {
-      let body = "";
+      let body = '';
       let j = i + 1;
       for (; j < text.length && text[j] !== char; j++) {
-        if (text[j] === "\\" && j + 1 < text.length) {
+        if (text[j] === '\\' && j + 1 < text.length) {
           // `\'` means nothing in JSON; a quote that needed escaping in single quotes does not.
           body += char === "'" && text[j + 1] === "'" ? "'" : text[j] + text[j + 1];
           j++;
@@ -64,20 +79,21 @@ function repairJson(text: string): string {
       i = j + 1;
       continue;
     }
-    if (char === ",") {
+    if (char === ',') {
       const next = text.slice(i + 1).match(/^\s*([\]}])?/);
       if (next?.[1]) {
         i++;
         continue;
       }
     }
-    const word = /[A-Za-z_$]/.test(char)
-      ? text.slice(i).match(/^[A-Za-z_$][\w$]*/)?.[0]
-      : undefined;
+    const word = /[A-Za-z_$]/.test(char) ? text.slice(i).match(/^[A-Za-z_$][\w$]*/)?.[0] : undefined;
     if (word) {
-      const python = { True: "true", False: "false", None: "null" }[word];
-      if (/^\s*:/.test(text.slice(i + word.length))) out += `"${word}"`;
-      else out += python ?? word;
+      const python = { True: 'true', False: 'false', None: 'null' }[word];
+      if (/^\s*:/.test(text.slice(i + word.length))) {
+        out += `"${word}"`;
+      } else {
+        out += python ?? word;
+      }
       i += word.length;
       continue;
     }
@@ -90,18 +106,25 @@ function repairJson(text: string): string {
 /**
  * JSON as it was written, then repaired, then undefined. A string holding JSON is opened once.
  *
+ * @param text - What a model wrote where JSON was asked for, with no prose around it.
+ * @returns The value — `null` for a JSON `null` — or `undefined` where neither the text nor its
+ * repair parses. A string holding an object or array that does not parse stays the string.
+ *
+ * @remarks
  * Read as written first, so the repair can only ever add to what parses: nothing valid is
  * reinterpreted on its way through.
- *
- * @param text What a model wrote where JSON was asked for, with no prose around it.
  */
 export function looseJson(text: string): unknown {
   for (const candidate of [text, repairJson(text)]) {
     try {
       const value: unknown = JSON.parse(candidate);
-      if (typeof value !== "string") return value;
+      if (typeof value !== 'string') {
+        return value;
+      }
       const inner = value.trim();
-      if (!/^[[{]/.test(inner)) return value;
+      if (!/^[[{]/.test(inner)) {
+        return value;
+      }
       return looseJson(inner) ?? value;
     } catch {
       // The next candidate.
@@ -113,72 +136,104 @@ export function looseJson(text: string): unknown {
 /**
  * A tool call's arguments as the object the tool is handed. Empty is no arguments.
  *
+ * @param raw - The arguments as the model sent them: usually the streamed string, sometimes an
+ * object a server parsed already. Null, absent or blank is no arguments.
+ * @param [options] - `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
+ * `truncated`, since a call cut off at the ceiling reads exactly like a malformed one.
+ * @returns `raw` itself where it was already an object, otherwise what its text parsed to, and a
+ * new empty object for no arguments.
+ *
+ * @remarks
  * Lenient where the model's meaning is plain and strict where it is not: an object already
  * parsed passes through, JSON inside a string is opened, and the almost-JSON local models write —
  * single quotes, `True`, bare keys, a trailing comma — is repaired. What is still not an object
  * throws a `ToolArgumentsError`, and the loop hands its message back to the model as the tool's
  * result so it can try again.
- *
- * @param raw The arguments as the model sent them: usually the streamed string, sometimes an
- * object a server parsed already. Null, absent or blank is no arguments.
- * @param options `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
- * `truncated`, since a call cut off at the ceiling reads exactly like a malformed one.
  */
 export function parseToolArguments(
   raw: unknown,
   { finishReason }: { finishReason?: string | null } = {},
 ): Record<string, unknown> {
-  if (isRecord(raw)) return raw;
-  if (raw === null || raw === undefined) return {};
-  const text = typeof raw === "string" ? raw.trim() : JSON.stringify(raw);
-  if (!text) return {};
+  if (isRecord(raw)) {
+    return raw;
+  }
+  if (raw === null || raw === undefined) {
+    return {};
+  }
+  const text = typeof raw === 'string' ? raw.trim() : JSON.stringify(raw);
+  if (!text) {
+    return {};
+  }
   const parsed = looseJson(text);
-  if (isRecord(parsed)) return parsed;
-  if (finishReason === "length") {
+  if (isRecord(parsed)) {
+    return parsed;
+  }
+  if (finishReason === FinishReason.Length) {
     throw new ToolArgumentsError(
-      "truncated",
-      `the tool call was cut off at the reply ceiling before its arguments were complete; raise maxTokens: ${text.slice(0, 200)}`,
+      ARGUMENTS_TRUNCATED,
+      `the tool call was cut off at the reply ceiling before its arguments were complete; raise maxTokens: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
     );
   }
   throw new ToolArgumentsError(
-    "malformed",
+    ARGUMENTS_MALFORMED,
     parsed === undefined
-      ? `model produced invalid tool arguments: ${text.slice(0, 200)}`
-      : `model produced tool arguments that are not an object: ${text.slice(0, 200)}`,
+      ? `model produced invalid tool arguments: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`
+      : `model produced tool arguments that are not an object: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
   );
 }
 
 /**
  * Where the JSON value opening at `start` closes, one past its last character, or -1 when it
- * never does. Brackets inside either kind of string are not counted.
+ * never does.
+ *
+ * @param text - The text the value is in.
+ * @param start - The index of the value's opening `{` or `[`, which the caller has checked.
+ * @returns An index to slice up to, or -1 for a value still open where the text ends.
+ *
+ * @remarks
+ * Brackets inside either kind of string are not counted.
  */
 function valueEnd(text: string, start: number): number {
   let depth = 0;
-  let quote = "";
+  let quote = '';
   for (let i = start; i < text.length; i++) {
     const char = text[i];
     if (quote) {
-      if (char === "\\") i++;
-      else if (char === quote) quote = "";
+      if (char === '\\') {
+        i++;
+      } else if (char === quote) {
+        quote = '';
+      }
     } else if (char === '"' || char === "'") {
       quote = char;
-    } else if (char === "{" || char === "[") {
+    } else if (char === '{' || char === '[') {
       depth++;
-    } else if (char === "}" || char === "]") {
+    } else if (char === '}' || char === ']') {
       depth--;
-      if (depth === 0) return i + 1;
+      if (depth === 0) {
+        return i + 1;
+      }
     }
   }
   return -1;
 }
 
 /**
- * The JSON value opening at or after `at`, past whitespace, and where it ends. An unclosed one
- * runs to the end of the text; one that does not parse even repaired is undefined.
+ * The JSON value opening at or after `at`, past whitespace, and where it ends.
+ *
+ * @param text - The text to read from.
+ * @param at - Where to look. Only whitespace may sit between it and the value's `{` or `[`.
+ * @returns The value and the index one past it, or `undefined` where no object or array opens
+ * there.
+ *
+ * @remarks
+ * An unclosed one runs to the end of the text; one that does not parse even repaired is undefined.
  */
 function readValue(text: string, at: number): { value: unknown; end: number } | undefined {
   const start = at + (text.slice(at).match(/^\s*/)?.[0].length ?? 0);
-  if (text[start] !== "{" && text[start] !== "[") return undefined;
+  if (text[start] !== '{' && text[start] !== '[') {
+    return undefined;
+  }
   const closed = valueEnd(text, start);
   const end = closed < 0 ? text.length : closed;
   const value = looseJson(text.slice(start, end));
@@ -188,24 +243,45 @@ function readValue(text: string, at: number): { value: unknown; end: number } | 
 /** A call as a template wrote it into the text: the name, and the arguments still serialised. */
 type WrittenCall = { name: string; arguments: string };
 
-/** One call in any of the shapes templates write: `{name, arguments}`, `{name, parameters}`, `{function: {...}}`. */
+/**
+ * One call in any of the shapes templates write: `{name, arguments}`, `{name, parameters}`, `{function: {...}}`.
+ *
+ * @param entry - A parsed value. Its arguments are read from `arguments`, else `parameters`, else
+ * `args`, and none of them is no arguments.
+ * @returns The name, and the arguments as JSON text — a string kept as it was written, unchecked.
+ * `undefined` for anything that is not an object with a non-empty string for a name.
+ */
 function toCall(entry: unknown): WrittenCall | undefined {
-  if (!isRecord(entry)) return undefined;
+  if (!isRecord(entry)) {
+    return undefined;
+  }
   const inner = isRecord(entry.function) ? entry.function : entry;
   const name = inner.name;
-  if (typeof name !== "string" || !name) return undefined;
+  if (typeof name !== 'string' || !name) {
+    return undefined;
+  }
   const args = inner.arguments ?? inner.parameters ?? inner.args ?? {};
-  return { name, arguments: typeof args === "string" ? args : JSON.stringify(args) };
+  return { name, arguments: typeof args === 'string' ? args : JSON.stringify(args) };
 }
 
-/** Every call in a value that is one call or a list of them, or undefined if any entry is not one. */
+/**
+ * Every call in a value that is one call or a list of them, or undefined if any entry is not one.
+ *
+ * @param value - A parsed value: one call, or an array of them, in the shapes `toCall` reads.
+ * @returns The calls in the order written. An empty array is `undefined` too.
+ */
 function toCalls(value: unknown): WrittenCall[] | undefined {
   const entries = Array.isArray(value) ? value : [value];
-  const calls = entries.map(toCall);
-  return calls.length && calls.every((call) => call) ? (calls as WrittenCall[]) : undefined;
+  const calls = entries.flatMap((entry) => toCall(entry) ?? []);
+  return calls.length && calls.length === entries.length ? calls : undefined;
 }
 
-/** A value read as text: JSON where it parses, the string where it does not. */
+/**
+ * A value read as text: JSON where it parses, the string where it does not.
+ *
+ * @param text - A parameter's body, as the markup held it.
+ * @returns The parsed value, so `3` is a number and `true` a boolean, or `text` as it was given.
+ */
 function scalar(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -220,7 +296,14 @@ interface Found {
   calls: WrittenCall[];
 }
 
-/** `<tool_call>` blocks: Hermes and Qwen's JSON, and Qwen3-Coder's `<function=…>` markup. */
+/**
+ * `<tool_call>` blocks: Hermes and Qwen's JSON, and Qwen3-Coder's `<function=…>` markup.
+ *
+ * @param text - The reply to search.
+ * @returns One span per block that held a call, in the order they appear: where it starts and ends
+ * in `text`, the closing tag included where there is one, and its calls. A block whose JSON does
+ * not read as calls is left out. Empty for none.
+ */
 function taggedCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/<tool_call>/g)) {
@@ -229,21 +312,24 @@ function taggedCalls(text: string): Found[] {
     const xml = text.slice(at).match(/^\s*<function=([^>\s]+)>([\s\S]*?)<\/function>/);
     if (xml) {
       const args: Record<string, unknown> = {};
-      for (const param of xml[2].matchAll(/<parameter=([^>\s]+)>\n?([\s\S]*?)\n?<\/parameter>/g)) {
-        args[param[1]] = scalar(param[2]);
+      const [block, name, body] = xml;
+      for (const [, key, value] of body.matchAll(/<parameter=([^>\s]+)>\n?([\s\S]*?)\n?<\/parameter>/g)) {
+        args[key] = scalar(value);
       }
-      closing.lastIndex = at + xml[0].length;
-      const end = closing.test(text) ? closing.lastIndex : at + xml[0].length;
+      closing.lastIndex = at + block.length;
+      const end = closing.test(text) ? closing.lastIndex : at + block.length;
       found.push({
         start: match.index,
         end,
-        calls: [{ name: xml[1], arguments: JSON.stringify(args) }],
+        calls: [{ name, arguments: JSON.stringify(args) }],
       });
       continue;
     }
     const read = readValue(text, at);
     const calls = read && toCalls(read.value);
-    if (!read || !calls) continue;
+    if (!read || !calls) {
+      continue;
+    }
     closing.lastIndex = read.end;
     found.push({
       start: match.index,
@@ -254,7 +340,14 @@ function taggedCalls(text: string): Found[] {
   return found;
 }
 
-/** Mistral's `[TOOL_CALLS] [...]`, and the newer `[TOOL_CALLS]name[ARGS]{...}`. */
+/**
+ * Mistral's `[TOOL_CALLS] [...]`, and the newer `[TOOL_CALLS]name[ARGS]{...}`.
+ *
+ * @param text - The reply to search.
+ * @returns One span per marker with calls after it, in the order they appear, from the marker to
+ * the end of its JSON. A marker followed by anything else is left out — the newer spelling's
+ * arguments have to be an object. Empty for none.
+ */
 function mistralCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/\[TOOL_CALLS\]/g)) {
@@ -262,7 +355,9 @@ function mistralCalls(text: string): Found[] {
     const named = text.slice(at).match(/^\s*([\w.-]+)\[ARGS\]/);
     if (named) {
       const read = readValue(text, at + named[0].length);
-      if (!read || !isRecord(read.value)) continue;
+      if (!read || !isRecord(read.value)) {
+        continue;
+      }
       found.push({
         start: match.index,
         end: read.end,
@@ -272,12 +367,21 @@ function mistralCalls(text: string): Found[] {
     }
     const read = readValue(text, at);
     const calls = read && toCalls(read.value);
-    if (read && calls) found.push({ start: match.index, end: read.end, calls });
+    if (read && calls) {
+      found.push({ start: match.index, end: read.end, calls });
+    }
   }
   return found;
 }
 
-/** Llama 3's `<|python_tag|>{...}`, several calls separated by semicolons, up to `<|eom_id|>`. */
+/**
+ * Llama 3's `<|python_tag|>{...}`, several calls separated by semicolons, up to `<|eom_id|>`.
+ *
+ * @param text - The reply to search.
+ * @returns One span per tag with at least one call after it, in the order they appear, from the
+ * tag through its last call, a semicolon and an `<|eom_id|>` straight after it included. Empty
+ * for none.
+ */
 function pythonTagCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/<\|python_tag\|>/g)) {
@@ -286,36 +390,58 @@ function pythonTagCalls(text: string): Found[] {
     for (;;) {
       const read = readValue(text, end);
       const more = read && toCalls(read.value);
-      if (!read || !more) break;
+      if (!read || !more) {
+        break;
+      }
       calls.push(...more);
       end = read.end;
       const separator = text.slice(end).match(/^\s*;/);
-      if (!separator) break;
+      if (!separator) {
+        break;
+      }
       end += separator[0].length;
     }
     const eom = text.slice(end).match(/^\s*<\|eom_id\|>/);
-    if (eom) end += eom[0].length;
-    if (calls.length) found.push({ start: match.index, end, calls });
+    if (eom) {
+      end += eom[0].length;
+    }
+    if (calls.length) {
+      found.push({ start: match.index, end, calls });
+    }
   }
   return found;
 }
 
 /**
  * A bare JSON call — the whole reply, or its one fenced block — naming only tools that exist.
+ *
+ * @param text - The reply to search.
+ * @param names - The tools that exist. Empty finds nothing, and one call naming a tool outside it
+ * disqualifies the calls written beside it.
+ * @returns At most one span: the JSON where the reply is nothing else, or the fenced block, fences
+ * included, where the reply holds exactly one and it holds nothing but calls.
+ *
+ * @remarks
  * Without the names this is too easily an answer that happens to be JSON.
  */
 function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
-  if (!names.size) return [];
+  if (!names.size) {
+    return [];
+  }
   const known = (calls: WrittenCall[] | undefined) =>
     calls?.every((call) => names.has(call.name)) ? calls : undefined;
   const start = text.search(/\S/);
-  if (start >= 0 && (text[start] === "{" || text[start] === "[")) {
+  if (start >= 0 && (text[start] === '{' || text[start] === '[')) {
     const read = readValue(text, start);
     const calls = read && !text.slice(read.end).trim() ? known(toCalls(read.value)) : undefined;
-    if (read && calls) return [{ start, end: read.end, calls }];
+    if (read && calls) {
+      return [{ start, end: read.end, calls }];
+    }
   }
   const fences = [...text.matchAll(/```(?:json)?[ \t]*\n?([\s\S]*?)```/gi)];
-  if (fences.length !== 1) return [];
+  if (fences.length !== 1) {
+    return [];
+  }
   const [fence] = fences;
   const body = fence[1].trim();
   const read = /^[[{]/.test(body) ? readValue(body, 0) : undefined;
@@ -326,6 +452,12 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
 /**
  * Tool calls a model wrote into its reply as text, taken out of it and made into calls.
  *
+ * @param content - The turn's text.
+ * @param [options] - `names`, the tools that exist. Without them only the templates' markers count.
+ * @returns The text with the calls taken out, and the calls, numbered `call_recovered_0` onward.
+ * No calls leaves the text as it was.
+ *
+ * @remarks
  * A server whose tool-call parser does not match the model's chat template streams the call as
  * content, and the run ends on what reads like a finished answer. The templates' own markers are
  * looked for — `<tool_call>` (Hermes, Qwen, Qwen3-Coder's markup included), `[TOOL_CALLS]`
@@ -333,11 +465,6 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  * nothing but a JSON call, or holds one fenced one, provided every name in it is in `names`. Only
  * text after the last `</think>` is searched, since a model deliberating about a call is not making
  * one.
- *
- * @param content The turn's text.
- * @param options `names`, the tools that exist. Without them only the templates' markers count.
- * @returns The text with the calls taken out, and the calls, numbered `call_recovered_0` onward.
- * No calls leaves the text as it was.
  */
 export function recoverToolCalls(
   content: string,
@@ -347,21 +474,27 @@ export function recoverToolCalls(
   const from = thought < 0 ? 0 : thought + THINK_FENCE.close.length;
   const tail = content.slice(from);
   let found = [...taggedCalls(tail), ...mistralCalls(tail), ...pythonTagCalls(tail)];
-  if (!found.length) found = bareCalls(tail, new Set(names));
-  if (!found.length) return { content, toolCalls: [] };
+  if (!found.length) {
+    found = bareCalls(tail, new Set(names));
+  }
+  if (!found.length) {
+    return { content, toolCalls: [] };
+  }
 
   found.sort((a, b) => a.start - b.start);
-  let rest = "";
+  let rest = '';
   let cursor = 0;
   const toolCalls: ToolCall[] = [];
   for (const span of found) {
-    if (span.start < cursor) continue;
+    if (span.start < cursor) {
+      continue;
+    }
     rest += tail.slice(cursor, span.start);
     cursor = span.end;
     for (const call of span.calls) {
       toolCalls.push({
         id: `call_recovered_${toolCalls.length}`,
-        type: "function",
+        type: FUNCTION_TOOL,
         function: call,
       });
     }
@@ -373,6 +506,7 @@ export function recoverToolCalls(
 /**
  * One call the model made, as `dispatch` and `onToolCall` are handed it.
  *
+ * @remarks
  * A `call_tool` arrives as the tool it names — that tool's name and arguments, under the
  * `call_tool`'s id — so a dispatcher is the same in every discovery mode.
  */
@@ -409,6 +543,7 @@ export interface ToolCallOutcome {
 /**
  * One call's whole answer, as `onToolResult` is handed it.
  *
+ * @remarks
  * The `tool-result` event carries the same answer cut by `preview`, which is right for a readout
  * and wrong for a host that renders or stores the result: this is the text the model reads.
  */

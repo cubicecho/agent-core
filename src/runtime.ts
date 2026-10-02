@@ -1,6 +1,6 @@
-import { runAgentLoop } from "./agent-loop.ts";
-import { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
-import { capabilitiesFor, expireCapabilities, resetCapabilities } from "./capabilities.ts";
+import { runAgentLoop } from './agent-loop.ts';
+import { calibrate, charsPerTokenFor, resetCalibration } from './calibration.ts';
+import { capabilitiesFor, expireCapabilities, resetCapabilities } from './capabilities.ts';
 import {
   type ClientPoolOptions,
   configureClients,
@@ -9,18 +9,10 @@ import {
   listModels,
   resetClients,
   servedWindow,
-} from "./client.ts";
-import { compactTranscript, runCompaction, summariser } from "./compaction.ts";
-import { continueTurn } from "./continuation.ts";
-import {
-  configureEvents,
-  type EventBusOptions,
-  emit,
-  endRun,
-  history,
-  resetEvents,
-  watch,
-} from "./events.ts";
+} from './client.ts';
+import { compactTranscript, runCompaction, summariser } from './compaction.ts';
+import { continueTurn } from './continuation.ts';
+import { configureEvents, type EventBusOptions, emit, endRun, history, resetEvents, watch } from './events.ts';
 import {
   assembleContext,
   configureHooks,
@@ -30,13 +22,13 @@ import {
   notify,
   resetHooks,
   withContext,
-} from "./hooks.ts";
-import { preselect } from "./preselect.ts";
-import { resetAll } from "./reset.ts";
-import { runTurn } from "./run-turn.ts";
-import { inScope, rootScope, type Scope } from "./scope.ts";
-import { ask, askJson, resetHints, tryAsk } from "./side-task.ts";
-import { exportCapabilities, importCapabilities } from "./snapshot.ts";
+} from './hooks.ts';
+import { preselect } from './preselect.ts';
+import { resetAll } from './reset.ts';
+import { runTurn } from './run-turn.ts';
+import { inScope, rootScope, type Scope } from './scope.ts';
+import { ask, askJson, resetHints, tryAsk } from './side-task.ts';
+import { exportCapabilities, importCapabilities } from './snapshot.ts';
 
 /**
  * Every exported function that reads or writes what a runtime remembers, itself or through what
@@ -98,6 +90,7 @@ export interface RuntimeOptions {
 /**
  * One set of the package's caches, with the functions that use them as methods.
  *
+ * @remarks
  * Each method is the top-level function of the same name, with the same signature and doc
  * comment, run against this runtime's state instead of the process's: its pooled clients and
  * model listings, latched capabilities, measured characters per token, no-thinking hints, event
@@ -109,25 +102,29 @@ export type Runtime = typeof STATEFUL & {
    * an `await`, or from a timer it sets — uses this runtime's state. What the methods do, for
    * code that calls the top-level functions itself.
    *
+   * @param fn - What to run. Its return value, or what it throws, is handed straight back.
+   *
+   * @remarks
    * It does not reach a callback that outlives `fn` and is called from elsewhere — a generator
    * resumed later, a function handed back and called by someone else. Call a method there.
-   *
-   * @param fn What to run. Its return value, or what it throws, is handed straight back.
    */
   run<T>(fn: () => T): T;
 };
 
-/** Makes the methods of the runtime whose state is `scope`. */
+/**
+ * Makes the methods of the runtime whose state is `scope`.
+ *
+ * @param scope - The state the methods run against. Held, not copied.
+ * @returns Every function in `STATEFUL` wrapped to run in `scope`, and `run`. What `summariser`
+ * hands back is wrapped as well, since it is called after the method has returned.
+ */
 function bind(scope: Scope): Runtime {
   const within =
     <A extends unknown[], R>(fn: (...args: A) => R) =>
     (...args: A): R =>
       inScope(scope, () => fn(...args));
   const methods = Object.fromEntries(
-    Object.entries(STATEFUL).map(([name, fn]) => [
-      name,
-      within(fn as (...args: unknown[]) => unknown),
-    ]),
+    Object.entries(STATEFUL).map(([name, fn]) => [name, within(fn as (...args: unknown[]) => unknown)]),
   ) as typeof STATEFUL;
   return {
     ...methods,
@@ -141,6 +138,11 @@ function bind(scope: Scope): Runtime {
  * A runtime of its own: separate clients, listings, capability latches, hints, event bus and hook
  * settings from the process's and from every other runtime's.
  *
+ * @param [options] - What to configure it with before first use. A part left out keeps the
+ * defaults — not the default runtime's settings, which a new runtime does not inherit.
+ * @returns A runtime whose state starts empty, with whatever `options` gave already applied.
+ *
+ * @remarks
  * For a host that must not share them — one that mints a key per tenant, where a shared pool has
  * tenants evicting each other's clients and a shared bus has one tenant's run id readable by
  * another — and for tests, where a runtime per case needs no `resetAll` between them and can run
@@ -155,21 +157,25 @@ function bind(scope: Scope): Runtime {
  *
  * Nothing needs closing. A runtime is garbage once nothing holds it; its one timer, the event
  * bus's sweep, is unreferenced and stops rescheduling when its last run has been swept.
- *
- * @param options What to configure it with before first use. A part left out keeps the
- * defaults — not the default runtime's settings, which a new runtime does not inherit.
  */
 export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const runtime = bind(new Map());
-  if (options.clients) runtime.configureClients(options.clients);
-  if (options.events) runtime.configureEvents(options.events);
-  if (options.hooks) runtime.configureHooks(options.hooks);
+  if (options.clients) {
+    runtime.configureClients(options.clients);
+  }
+  if (options.events) {
+    runtime.configureEvents(options.events);
+  }
+  if (options.hooks) {
+    runtime.configureHooks(options.hooks);
+  }
   return runtime;
 }
 
 /**
  * The runtime the top-level functions use when no other is running.
  *
+ * @remarks
  * `defaultRuntime.getClient(endpoint)` and `getClient(endpoint)` are the same call outside any
  * runtime. Inside one they differ: the top-level function follows the runtime that is running,
  * and this always reaches the process-wide state.

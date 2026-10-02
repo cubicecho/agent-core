@@ -15,18 +15,19 @@ export interface Fence {
 }
 
 /** DeepSeek, Qwen3, QwQ and most distills. */
-export const THINK_FENCE: Fence = { open: "<think>", close: "</think>" };
+export const THINK_FENCE: Fence = { open: '<think>', close: '</think>' };
 
 /**
  * The fences nobody writes by accident, and so the ones `streamTurn` reads by default.
  *
+ * @remarks
  * `<think>` opening a reply is never meant as output, and the other two are made of tokens that
  * only a model's template produces: gpt-oss's harmony analysis channel, served raw, and Kimi's.
  */
 export const DEFAULT_FENCES: readonly Fence[] = [
   THINK_FENCE,
-  { open: "<|channel|>analysis<|message|>", close: "<|end|>" },
-  { open: "◁think▷", close: "◁/think▷" },
+  { open: '<|channel|>analysis<|message|>', close: '<|end|>' },
+  { open: '◁think▷', close: '◁/think▷' },
 ];
 
 /**
@@ -36,27 +37,30 @@ export const DEFAULT_FENCES: readonly Fence[] = [
  */
 export const ALL_FENCES: readonly Fence[] = [
   ...DEFAULT_FENCES,
-  { open: "<thinking>", close: "</thinking>" },
-  { open: "<reasoning>", close: "</reasoning>" },
+  { open: '<thinking>', close: '</thinking>' },
+  { open: '<reasoning>', close: '</reasoning>' },
 ];
 
 /**
  * Framing that is neither scratchpad nor answer, dropped wherever it turns up outside a fence.
  *
+ * @remarks
  * Only harmony has any: after the analysis channel closes, raw gpt-oss output announces the final
  * channel before the answer and ends with a return token.
  */
 const FRAMING: Readonly<Record<string, readonly string[]>> = {
-  "<|channel|>analysis<|message|>": [
-    "<|start|>assistant",
-    "<|channel|>final<|message|>",
-    "<|return|>",
-  ],
+  '<|channel|>analysis<|message|>': ['<|start|>assistant', '<|channel|>final<|message|>', '<|return|>'],
 };
+
+/** What a `Split` is called when it was inside a fence. */
+export const SPLIT_REASONING = 'reasoning' as const;
+
+/** What a `Split` is called when it was not. */
+export const SPLIT_OUTPUT = 'output' as const;
 
 /** A piece of `content`, said to be one or the other. */
 export interface Split {
-  kind: "reasoning" | "output";
+  kind: typeof SPLIT_REASONING | typeof SPLIT_OUTPUT;
   text: string;
 }
 
@@ -65,6 +69,7 @@ export interface FenceSplitterOptions {
   /**
    * The template already opened the first fence in the prompt, so the reply starts inside it.
    *
+   * @remarks
    * Several chat templates end the prompt with `<think>` rather than leaving the model to write
    * it. Without this the splitter still catches it once `</think>` arrives, and moves what came
    * before into `reasoning`, but a watcher will have been shown it as output by then.
@@ -75,6 +80,7 @@ export interface FenceSplitterOptions {
 /**
  * A state machine over a stream of `content` that routes fenced text to reasoning.
  *
+ * @remarks
  * The reference shape is Vercel's `extractReasoningMiddleware`. A tag can be split across chunks,
  * so the tail of each push that could be the start of one is held until the next push settles
  * it; `finish` releases it. A reply cut off mid-scratchpad ends with the fence still open and its
@@ -86,31 +92,23 @@ export interface FenceSplitterOptions {
  */
 export class FenceSplitter {
   /** The answer so far, with every fence taken out. */
-  output = "";
+  output = '';
   /** Everything that was inside a fence so far. */
-  reasoning = "";
+  reasoning = '';
 
   readonly #fences: readonly Fence[];
   readonly #markers: string[];
   #inside: Fence | undefined;
   #seenFence: boolean;
-  #held = "";
+  #held = '';
 
   /**
-   * @param fences The fences to read, `DEFAULT_FENCES` unless given; an empty list passes
-   *   everything through as output.
-   * @param options Whether the reply starts inside the first fence.
+   * @param [fences] - The fences to read; an empty list passes everything through as output.
+   * @param [options] - Whether the reply starts inside the first fence.
    */
-  constructor(
-    fences: readonly Fence[] = DEFAULT_FENCES,
-    { startInside }: FenceSplitterOptions = {},
-  ) {
+  constructor(fences: readonly Fence[] = DEFAULT_FENCES, { startInside }: FenceSplitterOptions = {}) {
     this.#fences = fences;
-    this.#markers = fences.flatMap((fence) => [
-      fence.open,
-      fence.close,
-      ...(FRAMING[fence.open] ?? []),
-    ]);
+    this.#markers = fences.flatMap((fence) => [fence.open, fence.close, ...(FRAMING[fence.open] ?? [])]);
     this.#inside = startInside ? fences[0] : undefined;
     this.#seenFence = this.#inside !== undefined;
   }
@@ -118,12 +116,14 @@ export class FenceSplitter {
   /**
    * Reads one more piece of content, returning what it settled, in order.
    *
-   * @param text The next delta.
+   * @param text - The next delta.
+   * @returns The pieces now settled, neighbours of one kind merged, and added to `output` and
+   * `reasoning` already. Empty where the delta was all markers or all held back as a possible one.
    */
   push(text: string): Split[] {
     const parts: Split[] = [];
     let rest = this.#held + text;
-    this.#held = "";
+    this.#held = '';
     while (rest) {
       const found = this.#next(rest);
       if (!found) {
@@ -139,44 +139,78 @@ export class FenceSplitter {
     return parts;
   }
 
-  /** Releases whatever was held back as a possible tag, now that no more is coming. */
+  /**
+   * Releases whatever was held back as a possible tag, now that no more is coming.
+   *
+   * @returns The held text as one piece — reasoning where the reply ended inside a fence, output
+   * otherwise — or nothing where none was held.
+   */
   finish(): Split[] {
     const parts: Split[] = [];
     this.#emitInto(parts, this.#held);
-    this.#held = "";
+    this.#held = '';
     return parts;
   }
 
-  /** The markers worth looking for: only the close inside a fence, every one outside it. */
+  /**
+   * The markers worth looking for: only the close inside a fence, every one outside it.
+   *
+   * @returns Outside a fence, the splitter's own list of opens, closes and framing — not a copy.
+   */
   #candidates(): readonly string[] {
     return this.#inside ? [this.#inside.close] : this.#markers;
   }
 
-  /** The earliest marker that means something in the current state. */
+  /**
+   * The earliest marker that means something in the current state.
+   *
+   * @param text - What is left of this push to read.
+   * @returns The marker and where in `text` it starts — the longer of two that start at one place —
+   * or `undefined` where none is whole in it.
+   */
   #next(text: string): { at: number; marker: string } | undefined {
     let best: { at: number; marker: string } | undefined;
     for (const marker of this.#candidates()) {
       const at = text.indexOf(marker);
-      if (at === -1) continue;
+      if (at === -1) {
+        continue;
+      }
       const earlier = !best || at < best.at;
       const longerAtTheSamePlace = best && at === best.at && marker.length > best.marker.length;
-      if (earlier || longerAtTheSamePlace) best = { at, marker };
+      if (earlier || longerAtTheSamePlace) {
+        best = { at, marker };
+      }
     }
     return best;
   }
 
-  /** How much of the end of `text` could be the beginning of a marker. */
+  /**
+   * How much of the end of `text` could be the beginning of a marker.
+   *
+   * @param text - Text with no whole marker in it.
+   * @returns The length of the longest such tail over every marker worth looking for, zero where
+   * there is none. Always short of a whole marker.
+   */
   #partialTail(text: string): number {
     let keep = 0;
-    for (const marker of this.#candidates())
-      for (let length = Math.min(marker.length - 1, text.length); length > keep; length--)
+    for (const marker of this.#candidates()) {
+      for (let length = Math.min(marker.length - 1, text.length); length > keep; length--) {
         if (text.endsWith(marker.slice(0, length))) {
           keep = length;
           break;
         }
+      }
+    }
     return keep;
   }
 
+  /**
+   * Moves the state past a marker just read: out of a fence, into one, or nowhere.
+   *
+   * @param marker - The marker found. Inside a fence any marker leaves it, since only its close is
+   * looked for there. Outside, an open enters its fence, framing changes nothing, and a close met
+   * before any fence was seen moves all of `output` so far into `reasoning`.
+   */
   #take(marker: string) {
     if (this.#inside) {
       this.#inside = undefined;
@@ -193,26 +227,43 @@ export class FenceSplitter {
     const closes = this.#fences.some((fence) => fence.close === marker);
     if (closes && !this.#seenFence) {
       this.reasoning += this.output;
-      this.output = "";
+      this.output = '';
     }
-    if (closes) this.#seenFence = true;
+    if (closes) {
+      this.#seenFence = true;
+    }
   }
 
+  /**
+   * Files text under the side the state is on: in `output` or `reasoning`, and in the pieces a call
+   * is returning.
+   *
+   * @param parts - The pieces settled so far. Written to — the text joins the last piece where
+   * that is of the same kind, and is pushed as a new one where it is not.
+   * @param text - What to file. Empty files nothing.
+   */
   #emitInto(parts: Split[], text: string) {
-    if (!text) return;
-    const kind = this.#inside ? "reasoning" : "output";
+    if (!text) {
+      return;
+    }
+    const kind = this.#inside ? SPLIT_REASONING : SPLIT_OUTPUT;
     this[kind] += text;
     const last = parts.at(-1);
-    if (last?.kind === kind) last.text += text;
-    else parts.push({ kind, text });
+    if (last?.kind === kind) {
+      last.text += text;
+    } else {
+      parts.push({ kind, text });
+    }
   }
 }
 
 /**
  * What is left of a complete reply once every scratchpad is taken out of it.
  *
- * @param text The whole reply.
- * @param fences The fences to read, every known one unless given.
+ * @param text - The whole reply.
+ * @param [fences] - The fences to read.
+ * @returns The answer alone, untrimmed. A fence left open takes everything after it, and a close
+ * with no open before any other fence takes everything before it.
  */
 export function stripThinking(text: string, fences: readonly Fence[] = ALL_FENCES): string {
   const splitter = new FenceSplitter(fences);

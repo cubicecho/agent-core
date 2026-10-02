@@ -1,8 +1,11 @@
-import { getOrCreate } from "./guards.ts";
-import type { TokenLedger } from "./ledger.ts";
-import { assignSettings, scoped } from "./scope.ts";
-import type { TurnUsage } from "./stream.ts";
-import { LOAD_TOOLS } from "./tool-loading.ts";
+import { getOrCreate } from './guards.ts';
+import type { TokenLedger } from './ledger.ts';
+import { ABORT_EVENT, MS_PER_MINUTE } from './platform.ts';
+import { assignSettings, scoped } from './scope.ts';
+import type { TurnUsage } from './stream.ts';
+import { CacheBreakReason } from './stream.ts';
+import { LOAD_TOOLS } from './tool-loading.ts';
+import { FinishReason } from './wire.ts';
 
 /**
  * What a run is doing, while it is doing it.
@@ -23,6 +26,7 @@ export interface EventBusOptions {
   /**
    * How far past the cap the backlog is allowed to run before it is trimmed.
    *
+   * @remarks
    * Dropping the oldest event on every push means shifting a thousand-element array tens of
    * thousands of times over a reasoning run — the one thing in here that would ever show up in a
    * profile. Trimming in batches makes it a few dozen splices instead, at the cost of the backlog
@@ -36,6 +40,7 @@ export interface EventBusOptions {
   /**
    * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
    *
+   * @remarks
    * A finished run has nothing more to say, so forgetting it a minute later costs a late watcher
    * a backlog and nothing else. An unfinished one is still writing: `touched` only moves on
    * `emit`, so a live run that spends a minute inside one slow tool call looked exactly like an
@@ -52,12 +57,15 @@ export interface EventBusOptions {
   retainUnendedMs?: number;
 }
 
+/** How many minutes an unended run's events are kept, absent a `retainUnendedMs`. */
+const RETAIN_UNENDED_MINUTES = 30;
+
 /** The numbers a run of the shape this bus was written for wants. */
 const DEFAULTS: Required<EventBusOptions> = {
   maxEvents: 1000,
   trimSlack: 256,
-  retainMs: 60_000,
-  retainUnendedMs: 30 * 60_000,
+  retainMs: MS_PER_MINUTE,
+  retainUnendedMs: RETAIN_UNENDED_MINUTES * MS_PER_MINUTE,
 };
 
 /**
@@ -79,6 +87,11 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * Changes what the bus keeps, for a process whose runs are not shaped like the ones these
  * defaults were chosen for.
  *
+ * @param [options] - The bounds to change. A field left out — or given anything that is not a
+ * number above zero — keeps what it has, so a partial or a half-built config narrows nothing.
+ * @returns Everything in force afterwards, including what this call did not change.
+ *
+ * @remarks
  * The bus is one thing per runtime rather than an object a caller holds, so this is too: it is
  * a deployment's setting, said once at startup, and not something to move around under a run.
  * Called at the top level that is the process's bus; a runtime made by `createRuntime` has its
@@ -90,41 +103,41 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * Changes apply from the next event and the next sweep. Nothing already buffered is trimmed to
  * a cap that has just come down, because the trim happens on push; the backlog settles to the
  * new number as the run goes on.
- *
- * @param options The bounds to change. A field left out — or given anything that is not a
- * number above zero — keeps what it has, so a partial or a half-built config narrows nothing.
- * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
   return assignSettings(bus().limits, options);
 }
 
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
-export type RunEventKind =
+export const RunEventKind = {
   /** A step of a caller's own flow began. `name` is the step, `text` its kind. */
-  | "step"
+  Step: 'step',
   /** A decision step chose an arm. `text` is the arm it took. */
-  | "decision"
+  Decision: 'decision',
   /** A new turn of the agent loop began, inside whichever step is running. */
-  | "turn"
+  Turn: 'turn',
   /** Reasoning tokens, as they arrive. */
-  | "thinking"
+  Thinking: 'thinking',
   /** Reply tokens, as they arrive. */
-  | "output"
+  Output: 'output',
   /** The model asked for a tool, with the arguments it chose. `id` is the call's. */
-  | "tool-call"
+  ToolCall: 'tool-call',
   /** A tool came back, with what it said. `id` is the id of the call it answers. */
-  | "tool-result"
+  ToolResult: 'tool-result',
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
-  | "notice"
+  Notice: 'notice',
   /**
    * What the run has cost so far, at the end of every turn, and what that one turn did. Sent
    * whether or not the endpoint reported tokens, since the timings and the cache comparison are
    * measured either way.
    */
-  | "usage"
+  Usage: 'usage',
   /** The run ended. Always last, and always sent. */
-  | "done";
+  Done: 'done',
+} as const;
+
+/** Any one of the kinds in `RunEventKind`. */
+export type RunEventKind = (typeof RunEventKind)[keyof typeof RunEventKind];
 
 /**
  * What a run has spent, counted from the start of the run rather than for the turn that
@@ -163,6 +176,7 @@ export interface TurnReport extends TurnUsage {
 /**
  * One thing that happened in a run, as a watcher receives it.
  *
+ * @remarks
  * Every field but `id` is always present — the empty ones are `""` or `null` rather than
  * missing — so a client reads it without guarding each key.
  */
@@ -174,6 +188,7 @@ export interface RunEvent {
   /**
    * When it happened, as epoch milliseconds.
    *
+   * @remarks
    * A number rather than a `Date`: these events are read over a wire, where a `Date` is an ISO
    * string by the time anyone sees it, and `emit` runs once per streamed token — so the object
    * it does not allocate is one per token. It also spares the `getTime()` the sweep used to do
@@ -206,30 +221,32 @@ export interface RunEvent {
 /**
  * What `emit` is given: the run and the sequence are the bus's to assign.
  *
+ * @remarks
  * Named exclusions rather than a blanket `Partial`, which permitted both and let the spread in
  * `emit` overwrite them — a caller could file an event under another run and hand every watcher
  * a duplicate `seq`, which is the one thing the sequence is for.
  */
-export type RunEventInput = Pick<RunEvent, "kind"> &
-  Partial<Omit<RunEvent, "kind" | "runId" | "seq">>;
+export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kind' | 'runId' | 'seq'>>;
 
 /**
  * A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
  *
+ * @param input - What happened. An `at` it carries wins over the one given here.
+ * @param runId - The run it belongs to. Written after `input`, which gets no say in it.
+ * @param seq - Its place in that run, the same.
+ * @param at - When, for an input that does not say.
+ * @returns A new event; `input` is not written to.
+ *
+ * @remarks
  * The one place the defaults are written, so an event the bus stamps, one the loop keeps for its
  * own metrics and the notice a slow watcher is sent cannot come to disagree about what an unset
  * field reads as.
- *
- * @param input What happened. An `at` it carries wins over the one given here.
- * @param runId The run it belongs to. Written after `input`, which gets no say in it.
- * @param seq Its place in that run, the same.
- * @param at When, for an input that does not say.
  */
 export const stamp = (input: RunEventInput, runId: string, seq: number, at: number): RunEvent => ({
   at,
-  text: "",
-  name: "",
-  step: "",
+  text: '',
+  name: '',
+  step: '',
   ok: null,
   usage: null,
   ...input,
@@ -247,6 +264,13 @@ interface Stream {
   ended: boolean;
 }
 
+/**
+ * A run's stream on a bus, begun empty where the run has none.
+ *
+ * @param held - The bus to look on. Gains an entry on a miss.
+ * @param runId - The run whose stream is wanted.
+ * @returns The stream the bus holds, not a copy — writing to it is writing to the run.
+ */
 const streamFor = ({ streams }: Bus, runId: string): Stream =>
   getOrCreate(streams, runId, () => ({
     events: [],
@@ -259,6 +283,10 @@ const streamFor = ({ streams }: Bus, runId: string): Stream =>
 /**
  * Drops the streams nobody is reading and nothing is writing to.
  *
+ * @param held - The bus to sweep. Loses each unwatched stream untouched for its retention or
+ * longer, and has its timer cleared and — while any stream is left — set again.
+ *
+ * @remarks
  * Cleanup used to hang entirely off `done`, which assumed every run reaches it. A run killed by
  * an uncaught throw, a signal, or a caller that simply forgets pinned its backlog for the life
  * of the process — and in a long-lived server that map only ever grew. The `done` timer had the
@@ -273,15 +301,26 @@ function sweep(held: Bus) {
   held.sweeping = null;
   const now = Date.now();
   for (const [runId, stream] of streams) {
-    if (stream.listeners.size) continue;
-    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs))
+    if (stream.listeners.size) {
+      continue;
+    }
+    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs)) {
       streams.delete(runId);
+    }
   }
   scheduleSweep(held);
 }
 
+/**
+ * Arms a bus's one sweep timer, unless it is armed already or the bus holds no stream to expire.
+ *
+ * @param held - The bus. Its `sweeping` is set to a timer that fires after `retainMs` as it stands
+ * now, and that does not keep the process alive.
+ */
 function scheduleSweep(held: Bus) {
-  if (held.sweeping || held.streams.size === 0) return;
+  if (held.sweeping || held.streams.size === 0) {
+    return;
+  }
   held.sweeping = setTimeout(() => sweep(held), held.limits.retainMs);
   held.sweeping.unref?.();
 }
@@ -291,27 +330,31 @@ function scheduleSweep(held: Bus) {
  * loop threw where it could not be caught. The sweep gets there on its own; this is for a
  * caller that already knows.
  *
- * @param runId The run to forget. An id nothing was emitted under is ignored.
+ * @param runId - The run to forget. An id nothing was emitted under is ignored.
  */
 export function endRun(runId: string) {
   const { streams } = bus();
   const stream = streams.get(runId);
-  if (!stream) return;
+  if (!stream) {
+    return;
+  }
   // Watchers are parked on a promise that only an `emit` to *this* stream can resolve, and the
   // delete below puts it beyond the reach of every later one — the next `emit` builds a fresh
   // stream and wakes nobody. So they are told the run is over first: a watcher that is handed
   // `done` completes, runs its `finally` and lets its consumer go, where one left parked holds
   // an open subscription that can never say anything again. An SSE client on the other end of
   // that is a connection that never closes.
-  if (stream.listeners.size) emit(runId, { kind: "done", ok: false, text: "run ended" });
+  if (stream.listeners.size) {
+    emit(runId, { kind: RunEventKind.Done, ok: false, text: 'run ended' });
+  }
   streams.delete(runId);
 }
 
 /**
  * Records one event and hands it to everyone watching that run. Never throws at the caller.
  *
- * @param runId The run this belongs to. Created on first use.
- * @param input The event. `kind` is required; `runId` and `seq` are not a caller's to set.
+ * @param runId - The run this belongs to. Created on first use.
+ * @param input - The event. `kind` is required; `runId` and `seq` are not a caller's to set.
  * @returns The event as it was recorded: its `seq` in the run, its time, and every unset field
  * filled in.
  */
@@ -329,7 +372,9 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   }
   // Kept for a moment so a watcher that arrives just after the end still sees how it went,
   // then dropped: a finished run's record is the row, not this.
-  if (event.kind === "done") stream.ended = true;
+  if (event.kind === RunEventKind.Done) {
+    stream.ended = true;
+  }
   scheduleSweep(held);
 
   for (const listener of stream.listeners) {
@@ -345,16 +390,20 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
 /**
  * Everything that has happened on a run, then everything that happens next, until it ends.
  *
- * The backlog comes first so a watcher that joins halfway through — or after the run finished,
- * inside the retention window — reads the same story as one that was there from the start.
- *
- * @param runId The run to follow. One that has not started yet is waited on, not refused.
- * @param signal Stops following. The only other way out is the run's own `done`, and a watcher
+ * @param runId - The run to follow. One that has not started yet is waited on, not refused.
+ * @param [signal] - Stops following. The only other way out is the run's own `done`, and a watcher
  * with no way out is a leak rather than a lost backlog: the sweep below skips any stream a
  * listener is on, so a run that dies without `done` pins its backlog for the life of the process.
  * Returning the generator is not that way out — parked on the promise at the foot of this
  * function it is suspended at an `await` rather than at a `yield`, and a `return()` there is
  * queued behind a promise only the next event can settle. An abort resolves that promise itself.
+ * @returns The run's events in order, ending after its `done` or at the abort. A watcher that fell
+ * too far behind is given one notice in place of the events it missed. Nothing is subscribed until
+ * the first event is asked for.
+ *
+ * @remarks
+ * The backlog comes first so a watcher that joins halfway through — or after the run finished,
+ * inside the retention window — reads the same story as one that was there from the start.
  */
 export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
   // Read here, not in the generator: its body runs when the first event is asked for, and by
@@ -365,6 +414,13 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
 /**
  * The notice a watcher that fell behind is given in place of the events it missed.
  *
+ * @param runId - The run the watcher is following.
+ * @param gap - How many events were dropped, for the text.
+ * @param next - The event the notice goes ahead of, which gives it its step, its time and — less
+ * one — its seq.
+ * @returns A `notice` event made for that one watcher: it is in no backlog.
+ *
+ * @remarks
  * One short of the event it precedes, which is the last seq that went missing. Sharing a seq
  * with the event behind it made the notice indistinguishable from a duplicate, and de-duplicating
  * on `seq` is the one thing the sequence is documented for — so a client doing exactly that
@@ -374,7 +430,7 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
 const gapNotice = (runId: string, gap: number, next: RunEvent): RunEvent =>
   stamp(
     {
-      kind: "notice",
+      kind: RunEventKind.Notice,
       text: `${gap} event(s) dropped: this watcher fell too far behind`,
       step: next.step,
     },
@@ -383,6 +439,16 @@ const gapNotice = (runId: string, gap: number, next: RunEvent): RunEvent =>
     next.at,
   );
 
+/**
+ * The generator behind `watch`, on a bus already chosen.
+ *
+ * @param held - The bus the run is on, kept for the generator's life whichever runtime resumes it.
+ * @param runId - The run to follow. A stream is begun for one that has none, and dropped on the way
+ * out where this was its last watcher and the run has ended or never emitted.
+ * @param [signal] - Stops following. One already aborted yields nothing, the backlog included.
+ * @returns The backlog as it stood at the first `next()`, then each event as it is emitted, ending
+ * after `done` or at the abort.
+ */
 async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
   const { limits, streams } = held;
   const stream = streamFor(held, runId);
@@ -416,7 +482,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
   // The same wake the listener uses: an abort is another reason to stop waiting, and what the
   // loop does about it is decided in one place below rather than here.
   const onAbort = () => wake?.();
-  signal?.addEventListener("abort", onAbort, { once: true });
+  signal?.addEventListener(ABORT_EVENT, onAbort, { once: true });
   try {
     for (;;) {
       // Guarding the drain rather than sitting after it, so an already-aborted signal leaves
@@ -444,9 +510,13 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
         // than leaving the client holding an open stream that will never say anything again.
-        if (event.kind === "done") return;
+        if (event.kind === RunEventKind.Done) {
+          return;
+        }
       }
-      if (signal?.aborted) return;
+      if (signal?.aborted) {
+        return;
+      }
       await new Promise<void>((resolve) => {
         wake = resolve;
       });
@@ -456,7 +526,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // `once` covers the abort that fired; this is for the one that never did, which would
     // otherwise hold this generator and its queue alive for as long as the caller holds the
     // signal — a run's whole backlog kept by a watcher that finished on `done`.
-    signal?.removeEventListener("abort", onAbort);
+    signal?.removeEventListener(ABORT_EVENT, onAbort);
     stream.listeners.delete(listener);
     // A watcher can name a run that has not started, or will never start. Nothing was recorded
     // under it, so nothing is left behind either — and a run that has ended has nothing more to
@@ -476,18 +546,21 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
 /**
  * The backlog alone, for a caller that wants a snapshot rather than a subscription.
  *
+ * @param runId - The run to read. An unknown or already-swept run gives an empty array.
+ * @returns The events still held, oldest first, in an array of the caller's own.
+ *
+ * @remarks
  * The array is a copy; the events in it are not. They are the same objects the bus holds and
  * every watcher was handed, so writing to one rewrites the run for everybody — which is what
  * `fold` copies to avoid, and this is the other half of the same warning. Read them, or copy
  * what you mean to change.
- *
- * @param runId The run to read. An unknown or already-swept run gives an empty array.
  */
 export const history = (runId: string): RunEvent[] => [...(bus().streams.get(runId)?.events ?? [])];
 
 /**
  * Test seam: forget every run, so one test's events cannot be read by the next.
  *
+ * @remarks
  * Named for what it forgets rather than bare `reset`, which sat in a consumer's imports beside
  * `resetAll`, `resetClients`, `resetCapabilities` and `resetHints` saying nothing about which
  * of the five it was — `reset.ts` had to alias it on the way in to stay readable.
@@ -500,21 +573,28 @@ export const history = (runId: string): RunEvent[] => [...(bus().streams.get(run
 export const resetEvents = () => {
   const held = bus();
   held.streams.clear();
-  if (held.sweeping) clearTimeout(held.sweeping);
+  if (held.sweeping) {
+    clearTimeout(held.sweeping);
+  }
   held.sweeping = null;
   // In place, so a watcher still open reads the defaults too and not the caps it began under.
   Object.assign(held.limits, DEFAULTS);
 };
 
 /**
- * Consecutive tokens of one kind are one thing being said, not hundreds of things.
+ * A run's events with each stretch of `thinking` or of `output` joined into one block, for a
+ * reader that takes a run in snapshots.
  *
- * A client that reads a run in snapshots rather than token by token wants it that way: a
+ * @param events - Events in `seq` order, from `history` or collected from `watch`. Not written to.
+ * @returns One event per block, every one a copy. A run of `thinking` or of `output` within one
+ * step is a single block with the texts joined; anything else is a block to itself.
+ *
+ * @remarks
+ * Consecutive tokens of one kind are one thing being said, not hundreds of things. A client that
+ * reads a run in snapshots rather than token by token wants it that way: a
  * reasoning model spends ten thousand deltas on a paragraph, and a paragraph is what it meant.
  * Each block carries the `seq` of its last event, so asking for what came after one block
  * picks up exactly where it left off.
- *
- * @param events Events in `seq` order, from `history` or collected from `watch`.
  */
 export function fold(events: RunEvent[]): RunEvent[] {
   const blocks: RunEvent[] = [];
@@ -523,15 +603,19 @@ export function fold(events: RunEvent[]): RunEvent[] {
   // built ten thousand times to produce it once.
   let parts: string[] = [];
   const close = () => {
-    if (!parts.length) return;
+    if (!parts.length) {
+      return;
+    }
     const last = blocks[blocks.length - 1];
-    if (parts.length > 1) last.text = parts.join("");
+    if (parts.length > 1) {
+      last.text = parts.join('');
+    }
     parts = [];
   };
 
   for (const event of events) {
     const last = blocks[blocks.length - 1];
-    const mergeable = event.kind === "thinking" || event.kind === "output";
+    const mergeable = event.kind === RunEventKind.Thinking || event.kind === RunEventKind.Output;
     const continuesLast = last && last.kind === event.kind && last.step === event.step;
     if (mergeable && continuesLast) {
       last.seq = event.seq;
@@ -544,19 +628,19 @@ export function fold(events: RunEvent[]): RunEvent[] {
       // `fold(history(id))[0].text = ...` rewrite the bus, and every watcher after it read the
       // rewrite.
       blocks.push({ ...event });
-      if (mergeable) parts.push(event.text);
+      if (mergeable) {
+        parts.push(event.text);
+      }
     }
   }
   close();
   return blocks;
 }
 
-/** Why a turn's cache broke, as `TurnUsage.cacheBreakReason` names it. */
-type CacheBreakReason = NonNullable<TurnUsage["cacheBreakReason"]>;
-
 /**
  * A run summed and derived from its events: what it cost, where the time went, and why.
  *
+ * @remarks
  * The counts are always there, zero when nothing happened. Every other field is absent where no
  * turn reported what it is made of, and summed over the turns that did where only some did —
  * a mean of a number a server never sent would be a number nobody measured.
@@ -620,12 +704,47 @@ export interface RunMetrics {
   largestPrompt?: number;
   /** `largestPrompt` over the window `runMetrics` was told, for how close the run came. */
   largestPromptShare?: number;
+  /** How it ended, read off `done` and the last turn. */
+  outcome?: RunOutcome;
+}
+
+/** The fields of `RunMetrics` that are a number, which are the ones a report can be added to. */
+type CountedMetric = {
+  [K in keyof RunMetrics]-?: RunMetrics[K] extends number | undefined ? K : never;
+}[keyof RunMetrics];
+
+/** How a run ended, as `runMetrics` reads it. */
+export const RunOutcome = {
+  /** The run did not fail, and its last turn was not cut off. */
+  Answered: 'answered',
+  /** The run did not fail, and its last turn is an answer the reply ceiling cut off. */
+  Truncated: 'truncated',
   /**
-   * How it ended, read off `done` and the last turn: `truncated` is an answer the ceiling cut off.
-   * A failure does not say whether it was an error, a stop or the tool budget — that is in the
-   * host's own `done` text.
+   * `done` said the run was not ok. Whether that was an error, a stop or the tool budget is in
+   * the host's own `done` text and not here.
    */
-  outcome?: "answered" | "truncated" | "failed";
+  Failed: 'failed',
+} as const;
+
+/** Any one of the outcomes in `RunOutcome`. */
+export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
+
+/**
+ * How a run that reported `done` ended.
+ *
+ * @param ok - What the `done` event said. Only `false` is a failure; anything else is read off the turn.
+ * @param last - The last turn a `usage` event reported, if any did.
+ * @returns `failed` for a `done` that was not ok, `truncated` where the last turn ran into the
+ * reply ceiling, and `answered` otherwise.
+ */
+function outcomeOf(ok: boolean | null, last: TurnReport | undefined): RunOutcome {
+  if (ok === false) {
+    return RunOutcome.Failed;
+  }
+  if (last?.finishReason === FinishReason.Length) {
+    return RunOutcome.Truncated;
+  }
+  return RunOutcome.Answered;
 }
 
 /** What `runMetrics` takes besides the events. */
@@ -637,20 +756,20 @@ export interface RunMetricsOptions {
 /**
  * A run's totals, timings and cache findings, derived from the events it emitted.
  *
+ * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
+ * that has lost its oldest events to the cap sums what it still has.
+ * @param [options] - The served window, for how full the run came to it.
+ * @returns A summary of the caller's own. The counts are zero for an empty list, and `outcome` is
+ * absent for a run that has not reported `done`.
+ *
+ * @remarks
  * A sibling of `fold` rather than part of it. `fold` hands back events, and a client renders
  * what it returns as blocks; a summary is another shape, and folding one in would give every
  * consumer of `fold` a block it does not know how to draw. Derived from the `usage` reports' own
  * `turn` rather than the running totals, so a run with several loops in it — a question per loop —
  * adds up the same as one with a single loop.
- *
- * @param events A run's events in `seq` order, from `history` or collected from `watch`. A backlog
- * that has lost its oldest events to the cap sums what it still has.
- * @param options The served window, for how full the run came to it.
  */
-export function runMetrics(
-  events: RunEvent[],
-  { contextLength }: RunMetricsOptions = {},
-): RunMetrics {
+export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOptions = {}): RunMetrics {
   const metrics: RunMetrics = {
     steps: 0,
     turns: 0,
@@ -666,10 +785,11 @@ export function runMetrics(
     truncatedTurns: 0,
   };
   /** Adds to a field that is absent until something reports it. */
-  const add = (field: keyof RunMetrics, value: number | undefined) => {
-    if (value === undefined) return;
-    const known = metrics as unknown as Record<string, number | undefined>;
-    known[field] = (known[field] ?? 0) + value;
+  const add = (field: CountedMetric, value: number | undefined) => {
+    if (value === undefined) {
+      return;
+    }
+    metrics[field] = (metrics[field] ?? 0) + value;
   };
   let reportedPrompt = 0;
   let reportedCached = 0;
@@ -679,17 +799,23 @@ export function runMetrics(
   let last: TurnReport | undefined;
 
   for (const event of events) {
-    if (event.kind === "step") metrics.steps++;
-    else if (event.kind === "tool-call") {
-      if (event.name === LOAD_TOOLS) metrics.loadCalls++;
+    if (event.kind === RunEventKind.Step) {
+      metrics.steps++;
+    } else if (event.kind === RunEventKind.ToolCall) {
+      if (event.name === LOAD_TOOLS) {
+        metrics.loadCalls++;
+      }
       getOrCreate(pending, event.name, () => []).push(event.at);
-    } else if (event.kind === "tool-result") {
+    } else if (event.kind === RunEventKind.ToolResult) {
       metrics.toolCalls++;
-      if (event.ok === false)
+      if (event.ok === false) {
         metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
+      }
       const called = pending.get(event.name)?.shift();
-      if (called !== undefined) add("toolMs", event.at - called);
-    } else if (event.kind === "usage" && event.usage?.turn) {
+      if (called !== undefined) {
+        add('toolMs', event.at - called);
+      }
+    } else if (event.kind === RunEventKind.Usage && event.usage?.turn) {
       const turn = event.usage.turn;
       last = turn;
       metrics.turns++;
@@ -698,41 +824,52 @@ export function runMetrics(
       metrics.completionTokens += turn.completion;
       metrics.cachedTokens += turn.cached;
       if (turn.uncached !== undefined) {
-        add("uncachedTokens", turn.uncached);
+        add('uncachedTokens', turn.uncached);
         reportedPrompt += turn.prompt;
         reportedCached += turn.cached;
       }
-      add("reasoningTokens", turn.reasoningTokens);
-      add("promptMs", turn.promptMs);
-      add("predictedMs", turn.predictedMs);
-      add("draftTotal", turn.draftTotal);
-      add("draftAccepted", turn.draftAccepted);
+      add('reasoningTokens', turn.reasoningTokens);
+      add('promptMs', turn.promptMs);
+      add('predictedMs', turn.predictedMs);
+      add('draftTotal', turn.draftTotal);
+      add('draftAccepted', turn.draftAccepted);
       if (turn.cacheBroken) {
         metrics.cacheBreaks++;
-        const reason = turn.cacheBreakReason ?? "none-known";
+        const reason = turn.cacheBreakReason ?? CacheBreakReason.NoneKnown;
         metrics.cacheBreakReasons[reason] = (metrics.cacheBreakReasons[reason] ?? 0) + 1;
       }
-      if (turn.finishReason === "length") metrics.truncatedTurns++;
-      if (turn.wallMs !== undefined)
+      if (turn.finishReason === FinishReason.Length) {
+        metrics.truncatedTurns++;
+      }
+      if (turn.wallMs !== undefined) {
         metrics.slowestTurnMs = Math.max(metrics.slowestTurnMs ?? 0, turn.wallMs);
+      }
       if (turn.firstTokenMs !== undefined) {
-        add("firstTokenMs", turn.firstTokenMs);
+        add('firstTokenMs', turn.firstTokenMs);
         firstTokens++;
       }
-      if (turn.prompt > 0)
+      if (turn.prompt > 0) {
         metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
-    } else if (event.kind === "done") {
-      metrics.outcome =
-        event.ok === false ? "failed" : last?.finishReason === "length" ? "truncated" : "answered";
+      }
+    } else if (event.kind === RunEventKind.Done) {
+      metrics.outcome = outcomeOf(event.ok, last);
     }
   }
 
-  if (events.length > 1) metrics.wallMs = events[events.length - 1].at - events[0].at;
-  if (reportedPrompt > 0) metrics.cacheHitRatio = reportedCached / reportedPrompt;
-  if (metrics.firstTokenMs !== undefined) metrics.firstTokenMs /= firstTokens;
-  if (metrics.draftTotal && metrics.draftAccepted !== undefined)
+  if (events.length > 1) {
+    metrics.wallMs = events[events.length - 1].at - events[0].at;
+  }
+  if (reportedPrompt > 0) {
+    metrics.cacheHitRatio = reportedCached / reportedPrompt;
+  }
+  if (metrics.firstTokenMs !== undefined) {
+    metrics.firstTokenMs /= firstTokens;
+  }
+  if (metrics.draftTotal && metrics.draftAccepted !== undefined) {
     metrics.draftAcceptance = metrics.draftAccepted / metrics.draftTotal;
-  if (metrics.largestPrompt !== undefined && contextLength && contextLength > 0)
+  }
+  if (metrics.largestPrompt !== undefined && contextLength && contextLength > 0) {
     metrics.largestPromptShare = metrics.largestPrompt / contextLength;
+  }
   return metrics;
 }

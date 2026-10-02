@@ -22,6 +22,7 @@ export interface Endpoint {
    * How long an endpoint may go quiet. Zero, less, or absent means no limit — what a local model
    * answering slowly needs.
    *
+   * @remarks
    * Not the whole request, which may take as long as the model keeps talking. On a streamed turn
    * it is the silence allowed between chunks, the idle watchdog; the wait for the first chunk is
    * `firstTokenSeconds`. On a call that does not stream, a side task or a model listing, it is
@@ -34,9 +35,11 @@ export interface Endpoint {
    */
   requestTimeoutSeconds?: number;
   /**
-   * How long a streamed turn may wait for its first chunk. Absent is five times
-   * `requestTimeoutSeconds`; zero or less is no limit.
+   * How long a streamed turn may wait for its first chunk. Zero or less is no limit.
    *
+   * @defaultValue `FIRST_TOKEN_FACTOR` times `requestTimeoutSeconds`
+   *
+   * @remarks
    * Its own number because the first wait is prefill, and on a local server prefill of a long
    * prompt is tens of seconds on a GPU and minutes on a CPU, where the gap between tokens is a
    * fraction of a second. A server loading the model on demand, Ollama after `keep_alive` or LM
@@ -50,6 +53,7 @@ export interface Endpoint {
 /**
  * What makes an endpoint the one it is: where it lives and whose key reaches it.
  *
+ * @remarks
  * The narrow half of `Endpoint`, for everything that only has to tell two endpoints apart — the
  * client pool, the capability latches, a side task borrowing the agent's key. The timeouts are
  * not in it, since a different patience is not a different server.
@@ -64,10 +68,11 @@ export interface EndpointIdentity {
 /**
  * The request fields `extraBody` may not set, because the loop's request is built around them.
  *
+ * @remarks
  * Here beside `extraBody` rather than with `buildBody`, which is what enforces it, because `spec`
  * says so on import as well and has to stay loadable in a browser.
  */
-export const RESERVED_BODY_FIELDS: readonly string[] = ["model", "messages", "stream", "tools"];
+export const RESERVED_BODY_FIELDS: readonly string[] = ['model', 'messages', 'stream', 'tools'];
 
 /** What to ask the model for. */
 export interface ModelParams {
@@ -84,6 +89,7 @@ export interface ModelParams {
   /**
    * Request fields this interface cannot spell, merged into the body last by `buildBody`.
    *
+   * @remarks
    * What a model card asks for and nothing here names: `top_k`, `min_p`, `repeat_penalty` —
    * what actually stops a small model looping — and a server's own fields, such as llama.cpp's
    * `id_slot`, which pins a session to one slot of a `--parallel` server so its KV cache is
@@ -96,15 +102,26 @@ export interface ModelParams {
   extraBody?: Record<string, unknown>;
 }
 
+/** How tool definitions reach the model. See `tool-loading.ts`. */
+export const ToolDiscovery = {
+  /** Every tool definition, on every request. */
+  Eager: 'eager',
+  /** A name-only catalogue, from which the model pulls in the schemas it needs. */
+  OnDemand: 'ondemand',
+  /**
+   * The same catalogue behind a tool array that never changes — `load_tools` and `call_tool` —
+   * for a server whose prompt cache a growing tool array throws away.
+   */
+  Proxy: 'proxy',
+} as const;
+
+/** Any one of the modes in `ToolDiscovery`. */
+export type ToolDiscovery = (typeof ToolDiscovery)[keyof typeof ToolDiscovery];
+
 /** How tools reach the model, and how long it may keep calling them. */
 export interface ToolPolicy {
-  /**
-   * "eager" sends every tool definition on every request. "ondemand" sends a name-only
-   * catalogue and lets the model pull in the schemas it needs. "proxy" is the same catalogue
-   * behind a tool array that never changes — `load_tools` and `call_tool` — for a server whose
-   * prompt cache a growing tool array throws away. See `tool-loading.ts`.
-   */
-  toolDiscovery: "eager" | "ondemand" | "proxy";
+  /** How tool definitions reach the model. */
+  toolDiscovery: ToolDiscovery;
   /** The model that does the preselection pass. Empty means don't preselect. */
   toolSelectModel: string;
   /** Hard stop on runaway tool loops. */
@@ -125,6 +142,7 @@ export interface RetryPolicy {
 /**
  * A whole agent configuration — every part, plus the two fields that belong to no group.
  *
+ * @remarks
  * Provided for callers that want one name for the lot. No function in this package asks for it:
  * they take the parts, so a caller missing `contextLength` can still use all of them bar the
  * window guard. `ResolvedAgent` extends it, which is how a resolved spec satisfies every one.
