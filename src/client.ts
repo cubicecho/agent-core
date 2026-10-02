@@ -287,6 +287,9 @@ const misses = scoped(() => new Map<string, number>());
 export const endpointKey = (config: { baseUrl: string; apiKey?: string }) =>
   JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
 
+/** One model on one endpoint, as the caches below key it: stringified, so neither half runs into the other. */
+const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
+
 /**
  * `endpointKey` hashed, for the remembered facts that can leave the process.
  *
@@ -385,7 +388,7 @@ async function probe(
 export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
   const endpoint = endpointKey(config);
   if (unserved().has(endpoint)) return 0;
-  const key = JSON.stringify([endpoint, config.model]);
+  const key = modelKey(endpoint, config.model);
   const known = served().get(key);
   if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs))
     return known.window;
@@ -485,7 +488,7 @@ export async function contextLimitFor(
   // context meter and, in a consumer that compacts on it, compaction: the session then runs at
   // the window instead of under it and fails against the endpoint's own refusal.
   if (!listed()) {
-    const missKey = JSON.stringify([key, config.model]);
+    const missKey = modelKey(key, config.model);
     const asked = misses().get(missKey);
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the endpoint is asked, and a caller sizing a window per turn pays a round
