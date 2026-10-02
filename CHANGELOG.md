@@ -1,3 +1,10 @@
+# [2.23.0](https://github.com/cubicecho/agent-core/compare/v2.22.0...v2.23.0) (2026-10-02)
+
+
+### Features
+
+* createRuntime(), a set of the package's caches of its own ([d241220](https://github.com/cubicecho/agent-core/commit/d2412204e9111bab39436954d7f7ded6d733b721)), closes [#96](https://github.com/cubicecho/agent-core/issues/96)
+
 # [2.22.0](https://github.com/cubicecho/agent-core/compare/v2.21.1...v2.22.0) (2026-10-02)
 
 
