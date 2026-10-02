@@ -21,8 +21,8 @@ export interface ModelSnapshot {
   refusedFields: string[];
   structuredOutput: boolean;
   /**
-   * Continues a trailing assistant message. Absent in a snapshot taken before it was latched, which
-   * reads as not refused.
+   * Continues a trailing assistant message. Always written; a stored snapshot from before it was
+   * latched lacks it, which `importCapabilities` reads as not refused.
    */
   assistantPrefill: boolean;
   /** Takes the no-thinking hints `ask` sends. */

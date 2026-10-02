@@ -10,8 +10,8 @@
  *
  * Its own module because it is the one number several of these agree on, and the module that
  * owns it should not be one that also does something. It was extracted from `side-task` to
- * break a cycle with `retry`; `side-task` no longer reads it, but `retry` and any consumer
- * sizing its own prompt still do, and a leaf with no imports is the right home for it.
+ * break a cycle with `retry`; neither reads it now, but `hooks` does to cap a context block, as
+ * does any consumer sizing its own prompt, and a leaf with no imports is the right home for it.
  *
  * @param text Prose or serialised JSON — both counted the same way, which is why JSON reads low.
  */

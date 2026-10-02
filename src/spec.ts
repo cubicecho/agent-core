@@ -192,7 +192,6 @@ export interface AgentHook {
   enabled?: boolean;
 }
 
-/** One bundled MCP server, as far as this package reads it. */
 /** A bundled MCP server, validated only as far as a round trip needs and otherwise passed through. */
 export interface SpecServer {
   id?: string;
