@@ -425,7 +425,13 @@ function collectRefs(node: unknown, into: Set<string>) {
  * outside it still refers in.
  */
 function pruneDefs(schema: Schema): Schema {
-  const pools = POOL_KEYS.filter((key) => isRecord(schema[key]));
+  const pools: [string, Schema][] = [];
+  for (const key of POOL_KEYS) {
+    const pool = schema[key];
+    if (isRecord(pool)) {
+      pools.push([key, pool]);
+    }
+  }
   if (!pools.length) {
     return schema;
   }
@@ -457,20 +463,19 @@ function pruneDefs(schema: Schema): Schema {
   // The pools themselves are not roots: a definition is reached from the schema body, or by
   // another definition that was, or not at all.
   const body = { ...schema };
-  for (const key of pools) {
+  for (const [key] of pools) {
     delete body[key];
   }
   visit(body);
 
   let pruned = schema;
-  for (const key of pools) {
+  for (const [key, pool] of pools) {
     const names = live[key];
     if (!names?.size) {
       const { [key]: _unreached, ...rest } = pruned;
       pruned = rest;
       continue;
     }
-    const pool = schema[key] as Schema;
     if (names.size === Object.keys(pool).length) {
       continue;
     }
