@@ -1,5 +1,5 @@
 import { bench, describe } from 'vitest';
-import { emit, fold, resetEvents, watch } from '../src/events.ts';
+import { emit, fold, RunEventKind, resetEvents, watch } from '../src/events.ts';
 import { relaxTools, sanitizeTools } from '../src/schema-compat.ts';
 import { requestTokens } from '../src/tokens.ts';
 import { deltas, mcpTools, streamingBody, transcript } from './fixtures.ts';
@@ -47,7 +47,7 @@ describe('events', () => {
   bench('emit 10k deltas', () => {
     resetEvents();
     for (let i = 0; i < 10_000; i++) {
-      emit('bench', { kind: 'thinking', text: 'token ' });
+      emit('bench', { kind: RunEventKind.Thinking, text: 'token ' });
     }
   });
 
@@ -57,9 +57,9 @@ describe('events', () => {
   bench('emit and drain 10k deltas', async () => {
     resetEvents();
     for (let i = 0; i < 10_000; i++) {
-      emit('drain', { kind: 'thinking', text: 'token ' });
+      emit('drain', { kind: RunEventKind.Thinking, text: 'token ' });
     }
-    emit('drain', { kind: 'done', ok: true });
+    emit('drain', { kind: RunEventKind.Done, ok: true });
     for await (const _ of watch('drain')) {
     }
   });

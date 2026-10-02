@@ -101,15 +101,26 @@ export interface ModelParams {
   extraBody?: Record<string, unknown>;
 }
 
+/** How tool definitions reach the model. See `tool-loading.ts`. */
+export const ToolDiscovery = {
+  /** Every tool definition, on every request. */
+  Eager: 'eager',
+  /** A name-only catalogue, from which the model pulls in the schemas it needs. */
+  OnDemand: 'ondemand',
+  /**
+   * The same catalogue behind a tool array that never changes — `load_tools` and `call_tool` —
+   * for a server whose prompt cache a growing tool array throws away.
+   */
+  Proxy: 'proxy',
+} as const;
+
+/** Any one of the modes in `ToolDiscovery`. */
+export type ToolDiscovery = (typeof ToolDiscovery)[keyof typeof ToolDiscovery];
+
 /** How tools reach the model, and how long it may keep calling them. */
 export interface ToolPolicy {
-  /**
-   * "eager" sends every tool definition on every request. "ondemand" sends a name-only
-   * catalogue and lets the model pull in the schemas it needs. "proxy" is the same catalogue
-   * behind a tool array that never changes — `load_tools` and `call_tool` — for a server whose
-   * prompt cache a growing tool array throws away. See `tool-loading.ts`.
-   */
-  toolDiscovery: 'eager' | 'ondemand' | 'proxy';
+  /** How tool definitions reach the model. */
+  toolDiscovery: ToolDiscovery;
   /** The model that does the preselection pass. Empty means don't preselect. */
   toolSelectModel: string;
   /** Hard stop on runaway tool loops. */

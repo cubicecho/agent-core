@@ -52,9 +52,15 @@ const FRAMING: Readonly<Record<string, readonly string[]>> = {
   '<|channel|>analysis<|message|>': ['<|start|>assistant', '<|channel|>final<|message|>', '<|return|>'],
 };
 
+/** What a `Split` is called when it was inside a fence. */
+export const SPLIT_REASONING = 'reasoning' as const;
+
+/** What a `Split` is called when it was not. */
+export const SPLIT_OUTPUT = 'output' as const;
+
 /** A piece of `content`, said to be one or the other. */
 export interface Split {
-  kind: 'reasoning' | 'output';
+  kind: typeof SPLIT_REASONING | typeof SPLIT_OUTPUT;
   text: string;
 }
 
@@ -202,7 +208,7 @@ export class FenceSplitter {
     if (!text) {
       return;
     }
-    const kind = this.#inside ? 'reasoning' : 'output';
+    const kind = this.#inside ? SPLIT_REASONING : SPLIT_OUTPUT;
     this[kind] += text;
     const last = parts.at(-1);
     if (last?.kind === kind) {

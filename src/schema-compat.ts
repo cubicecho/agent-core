@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { getOrCreate, isRecord } from './guards.ts';
+import { FUNCTION_TOOL, SchemaType } from './wire.ts';
 
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.
@@ -24,8 +25,8 @@ type Schema = Record<string, unknown>;
 /** Lookahead and lookbehind: `(?=`, `(?!`, `(?<=`, `(?<!`. */
 const LOOKAROUND = /\(\?<?[=!]/;
 
-const PRIMITIVES = new Set(['object', 'string', 'number', 'integer', 'boolean', 'array', 'null']);
-const EMPTY_OBJECT = () => ({ type: 'object', properties: {} });
+const PRIMITIVES: ReadonlySet<string> = new Set(Object.values(SchemaType));
+const EMPTY_OBJECT = () => ({ type: SchemaType.Object, properties: {} });
 
 /** Keys whose value is a schema, or a list of them — several are spelled both ways. */
 const SCHEMA_KEYS = new Set([
@@ -73,7 +74,7 @@ const requiredOf = (node: Schema): string[] =>
  */
 function asSchema(node: unknown): unknown {
   if (typeof node === 'string') {
-    return PRIMITIVES.has(node) && node !== 'object' ? { type: node } : EMPTY_OBJECT();
+    return PRIMITIVES.has(node) && node !== SchemaType.Object ? { type: node } : EMPTY_OBJECT();
   }
   if (typeof node === 'boolean') {
     return node;
@@ -91,8 +92,8 @@ function normalize(node: Schema): Schema {
     // `type: ["string", "null"]` — the converter only accepts a single string type.
     if (key === 'type' && Array.isArray(value)) {
       const names = value.filter((item): item is string => typeof item === 'string');
-      const concrete = names.filter((name) => name !== 'null');
-      if (names.includes('null')) {
+      const concrete = names.filter((name) => name !== SchemaType.Null);
+      if (names.includes(SchemaType.Null)) {
         built.nullable = true;
       }
       if (concrete.length === 1) {
@@ -100,7 +101,7 @@ function normalize(node: Schema): Schema {
       } else if (concrete.length > 1) {
         built.anyOf = concrete.map((name) => ({ type: name }));
       } else {
-        built.type = 'null';
+        built.type = SchemaType.Null;
       }
     } else {
       built[key] = mapChildren(key, value, asSchema);
@@ -115,7 +116,7 @@ function normalize(node: Schema): Schema {
     delete out.pattern;
   }
   // `{"type": "object"}` with no properties produces invalid GBNF.
-  if (out.type === 'object' && !isRecord(out.properties)) {
+  if (out.type === SchemaType.Object && !isRecord(out.properties)) {
     out.properties = {};
   }
   // Strict validators reject any sibling of `$ref`, and draft-07 ignores them, so a reference
@@ -143,7 +144,7 @@ function collapseNullableUnion(node: Schema): Schema {
     if (!Array.isArray(variants)) {
       continue;
     }
-    const concrete = variants.filter((item) => !(isRecord(item) && item.type === 'null'));
+    const concrete = variants.filter((item) => !(isRecord(item) && item.type === SchemaType.Null));
     if (concrete.length !== 1 || concrete.length === variants.length) {
       continue;
     }
@@ -185,13 +186,13 @@ function resolveRef(node: unknown, defs: Schema): Schema | undefined {
   let current = node;
   while (isRecord(current) && typeof current.$ref === 'string') {
     const pointer = current.$ref;
-    const target = LOCAL_POINTER.exec(pointer);
-    if (!target || seen.has(pointer)) {
+    const [, poolKey, name] = LOCAL_POINTER.exec(pointer) ?? [];
+    if (!name || seen.has(pointer)) {
       return undefined;
     }
     seen.add(pointer);
-    const pool = defs[target[1]];
-    current = isRecord(pool) ? pool[target[2]] : undefined;
+    const pool = defs[poolKey];
+    current = isRecord(pool) ? pool[name] : undefined;
   }
   return isRecord(current) ? current : undefined;
 }
@@ -448,8 +449,8 @@ export function sanitizeSchema(schema: unknown): Record<string, unknown> {
   for (const key of TOP_LEVEL_COMBINATORS) {
     delete out[key];
   }
-  if (out.type !== 'object') {
-    out.type = 'object';
+  if (out.type !== SchemaType.Object) {
+    out.type = SchemaType.Object;
   }
   if (!isRecord(out.properties)) {
     out.properties = {};
@@ -459,7 +460,7 @@ export function sanitizeSchema(schema: unknown): Record<string, unknown> {
 
 /** Rewrites one tool's parameters, leaving a non-function tool alone. */
 const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => unknown): OpenAI.ChatCompletionTool =>
-  tool.type === 'function'
+  tool.type === FUNCTION_TOOL
     ? {
         ...tool,
         function: { ...tool.function, parameters: fn(tool.function.parameters) as Schema },

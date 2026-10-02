@@ -4,6 +4,7 @@ import type { Endpoint } from './config.ts';
 import { counted, isRecord } from './guards.ts';
 import { askJson, tryAsk } from './side-task.ts';
 import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
+import { SchemaType } from './wire.ts';
 
 /**
  * Choosing a run's tools before it starts, from the request and the catalogue's names.
@@ -54,8 +55,8 @@ export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
  * an object — OpenAI's strict mode and every tool-schema normaliser insist.
  */
 export const PRESELECT_SCHEMA = {
-  type: 'object',
-  properties: { tools: { type: 'array', items: { type: 'string' } } },
+  type: SchemaType.Object,
+  properties: { tools: { type: SchemaType.Array, items: { type: SchemaType.String } } },
   required: ['tools'],
   additionalProperties: false,
 };
@@ -105,6 +106,9 @@ export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoa
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 
+/** What BM25 adds to both counts in its inverse document frequency, so a term every document holds still scores. */
+const IDF_SMOOTHING = 0.5;
+
 /**
  * The least a best match may score and still be acted on without a model.
  *
@@ -129,6 +133,12 @@ export const KEYWORD_MIN_SCORE = 1;
  * model should be spent on.
  */
 export const KEYWORD_DROPOFF = 0.5;
+
+/** The longest word `terms` leaves its trailing `s` on: `bus` and `was` are not plurals. */
+const SHORTEST_PLURAL = 3;
+
+/** What the preselector's reply schema is called on the wire. */
+const PRESELECT_SCHEMA_NAME = 'preselection';
 
 /**
  * English function words, dropped before matching.
@@ -164,7 +174,9 @@ const terms = (text: string): string[] =>
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((word) => word.length > 1 && !NOISE.has(word))
-    .map((word) => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word));
+    .map((word) =>
+      word.length > SHORTEST_PLURAL && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word,
+    );
 
 /** One tool's score against a request. */
 export interface ToolMatch {
@@ -282,7 +294,7 @@ export function preselectByKeywords(
         continue;
       }
       const held = documents.get(term) ?? 0;
-      const idf = Math.log(1 + (docs.length - held + 0.5) / (held + 0.5));
+      const idf = Math.log(1 + (docs.length - held + IDF_SMOOTHING) / (held + IDF_SMOOTHING));
       const norm = BM25_K1 * (1 - BM25_B + (BM25_B * doc.terms.length) / length);
       score += (idf * found * (BM25_K1 + 1)) / (found + norm);
     }
@@ -388,7 +400,7 @@ export async function preselect(
     'preselect',
     () =>
       askJson<unknown>(config, model, preselectSystem(maxPerLoad), preselectInput(catalog, prompt), PRESELECT_SCHEMA, {
-        name: 'preselection',
+        name: PRESELECT_SCHEMA_NAME,
         maxTokens,
         temperature,
         reasoningEffort,

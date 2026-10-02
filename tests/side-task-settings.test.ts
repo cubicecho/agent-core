@@ -1,5 +1,8 @@
 import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ToolDiscovery } from '../src/config.ts';
+import { RunEventKind } from '../src/events.ts';
+import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
 
 const create = vi.fn();
 /** Every endpoint a client was asked for, in order, so a test can say where a request went. */
@@ -32,7 +35,7 @@ const answers = (content: string) => ({ choices: [{ message: { content } }] });
 const says = (content: string, prompt = 10) => ({
   async *[Symbol.asyncIterator]() {
     yield { choices: [{ delta: { content } }] };
-    yield { choices: [{ delta: {}, finish_reason: 'stop' }], usage: null };
+    yield { choices: [{ delta: {}, finish_reason: FinishReason.Stop }], usage: null };
     yield {
       choices: [],
       usage: { prompt_tokens: prompt, completion_tokens: 2, total_tokens: prompt + 2 },
@@ -46,7 +49,7 @@ const calls = (name: string) => ({
       choices: [
         {
           delta: { tool_calls: [{ index: 0, id: 'c0', function: { name, arguments: '{}' } }] },
-          finish_reason: 'tool_calls',
+          finish_reason: FinishReason.ToolCalls,
         },
       ],
     };
@@ -71,8 +74,8 @@ const agent = (tasks: Record<string, unknown>, extra: Record<string, unknown> = 
 
 const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
 const tool = (name: string): OpenAI.ChatCompletionTool => ({
-  type: 'function',
-  function: { name, description: name, parameters: { type: 'object', properties: {} } },
+  type: FUNCTION_TOOL,
+  function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
 });
 
 beforeEach(() => {
@@ -206,7 +209,7 @@ describe("a side task's own settings", () => {
 });
 
 describe("runAgentLoop with a resolved agent's tasks", () => {
-  const question: Message[] = [{ role: 'user', content: 'read it' }];
+  const question: Message[] = [{ role: Role.User, content: 'read it' }];
   const run = (config: Parameters<typeof runAgentLoop>[0]['config'], extra = {}) =>
     runAgentLoop({
       config,
@@ -217,7 +220,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       ...extra,
     });
   const onDemand = (tasks: Record<string, unknown>) => ({
-    ...agent(tasks, { tools: { discovery: 'ondemand' } }),
+    ...agent(tasks, { tools: { discovery: ToolDiscovery.OnDemand } }),
     apiKey: 'sk-main',
   });
   /** The names of the tools the nth request declared. */
@@ -271,7 +274,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       maxTokens: 100,
       temperature: 0.9,
       maxToolIterations: 4,
-      toolDiscovery: 'ondemand' as const,
+      toolDiscovery: ToolDiscovery.OnDemand,
       toolSelectModel: 'small',
     };
     create.mockResolvedValueOnce(answers('["s__read"]')).mockResolvedValueOnce(says('hello'));
@@ -286,7 +289,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     // An empty list is a decision too.
     await run(config, { preselect: true, preselected: [] });
     await run(onDemand({}), { preselect: true });
-    await run({ ...config, toolDiscovery: 'eager' }, { preselect: true });
+    await run({ ...config, toolDiscovery: ToolDiscovery.Eager }, { preselect: true });
     expect(create).toHaveBeenCalledTimes(3);
     for (const nth of [0, 1, 2]) {
       expect(body(nth)).toMatchObject({ model: 'big', stream: true });
@@ -301,16 +304,16 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       onEvent: (event: RunEventInput) => events.push(event),
     });
     expect(result.turn.content).toBe('hello');
-    expect(events.filter((event) => event.kind === 'notice').map((event) => event.text)).toEqual([
+    expect(events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text)).toEqual([
       expect.stringContaining('boom'),
     ]);
   });
 
   /** A transcript long enough to fill a 1000-token window, with a second question to cut at. */
   const long: Message[] = [
-    { role: 'user', content: 'first '.repeat(300) },
-    { role: 'assistant', content: 'answer '.repeat(300) },
-    { role: 'user', content: 'second '.repeat(40) },
+    { role: Role.User, content: 'first '.repeat(300) },
+    { role: Role.Assistant, content: 'answer '.repeat(300) },
+    { role: Role.User, content: 'second '.repeat(40) },
   ];
 
   it("folds by tasks.compaction on the task's own settings", async () => {
@@ -334,9 +337,9 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(reached).toContainEqual({ baseUrl: 'http://side/v1', apiKey: NO_KEY });
     // Then the turn, on the folded transcript.
     expect(body(1)).toMatchObject({ model: 'big', temperature: 1 });
-    expect(body(1).messages).toEqual([{ role: 'system', content: `${SUMMARY_LEAD}what was said` }, long[2]]);
+    expect(body(1).messages).toEqual([{ role: Role.System, content: `${SUMMARY_LEAD}what was said` }, long[2]]);
     expect(result.messages.slice(0, 2)).toEqual(body(1).messages);
-    expect(events).toContainEqual({ kind: 'notice', text: 'compacted 2 messages into a summary' });
+    expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'compacted 2 messages into a summary' });
   });
 
   it('does not fold without the task, however full the window', async () => {
@@ -356,9 +359,9 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     // Short by any estimate, but the server said 900 of 1000: tool schemas and a system prompt
     // are in the window too, and only the report counts them.
     const short: Message[] = [
-      { role: 'user', content: 'first' },
-      { role: 'assistant', content: 'answer' },
-      { role: 'user', content: 'second' },
+      { role: Role.User, content: 'first' },
+      { role: Role.Assistant, content: 'answer' },
+      { role: Role.User, content: 'second' },
     ];
     create
       .mockResolvedValueOnce(calls('s__read'))
@@ -374,7 +377,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(create).toHaveBeenCalledTimes(3);
     expect(body(1)).toMatchObject({ model: 'tiny', temperature: 0.3 });
     expect((body(2).messages as Message[])[0]).toEqual({
-      role: 'system',
+      role: Role.System,
       content: `${SUMMARY_LEAD}what was said`,
     });
   });
@@ -391,7 +394,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     });
     expect(result.turn.content).toBe('hello');
     expect((body(1).messages as Message[]).length).toBe(3);
-    expect(events.filter((event) => event.kind === 'notice').map((event) => event.text)).toEqual([
+    expect(events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text)).toEqual([
       expect.stringContaining('boom'),
     ]);
   });

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseToolArguments, recoverToolCalls, ToolArgumentsError } from '../src/tool-calls.ts';
+import {
+  ARGUMENTS_MALFORMED,
+  ARGUMENTS_TRUNCATED,
+  parseToolArguments,
+  recoverToolCalls,
+  ToolArgumentsError,
+} from '../src/tool-calls.ts';
+import { FinishReason, FUNCTION_TOOL } from '../src/wire.ts';
 
 describe('parseToolArguments', () => {
   it('reads an object, and reads empty as none', () => {
@@ -45,15 +52,15 @@ describe('parseToolArguments', () => {
         }
       })();
       expect(error).toBeInstanceOf(ToolArgumentsError);
-      expect((error as ToolArgumentsError).kind).toBe('malformed');
+      expect((error as ToolArgumentsError).kind).toBe(ARGUMENTS_MALFORMED);
     }
     expect(() => parseToolArguments('[1]')).toThrow('not an object');
     expect(() => parseToolArguments('{nope')).toThrow('invalid tool arguments');
   });
 
   it('calls a failure at the ceiling truncated', () => {
-    expect(() => parseToolArguments('{"a": "lo', { finishReason: 'length' })).toThrow(
-      expect.objectContaining({ kind: 'truncated', message: expect.stringContaining('maxTokens') }),
+    expect(() => parseToolArguments('{"a": "lo', { finishReason: FinishReason.Length })).toThrow(
+      expect.objectContaining({ kind: ARGUMENTS_TRUNCATED, message: expect.stringContaining('maxTokens') }),
     );
   });
 });
@@ -69,12 +76,12 @@ describe('recoverToolCalls', () => {
       toolCalls: [
         {
           id: 'call_recovered_0',
-          type: 'function',
+          type: FUNCTION_TOOL,
           function: { name: 'read', arguments: '{"path":"a"}' },
         },
         {
           id: 'call_recovered_1',
-          type: 'function',
+          type: FUNCTION_TOOL,
           function: { name: 'read', arguments: '{"path": "b"}' },
         },
       ],
@@ -94,7 +101,7 @@ describe('recoverToolCalls', () => {
       toolCalls: [
         {
           id: 'call_recovered_0',
-          type: 'function',
+          type: FUNCTION_TOOL,
           function: { name: 'write', arguments: '{"path":"notes.md","lines":3}' },
         },
       ],

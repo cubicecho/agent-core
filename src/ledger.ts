@@ -1,6 +1,8 @@
 import type OpenAI from 'openai';
 import type { TurnUsage } from './stream.ts';
+import { CacheBreakReason } from './stream.ts';
 import { messageChars, messageTokens, type TokenEstimateOptions } from './tokens.ts';
+import { Role } from './wire.ts';
 
 /**
  * What stretches of a transcript cost, read off the prompt counts the server already reported.
@@ -93,7 +95,7 @@ const appended = (previous: RequestShape, next: RequestShape) =>
 
 /** The system messages a request opens with, which a template renders ahead of the history. */
 const leadingSystem = (messages: Message[]) => {
-  const end = messages.findIndex((message) => message.role !== 'system');
+  const end = messages.findIndex((message) => message.role !== Role.System);
   return messages.slice(0, end === -1 ? messages.length : end);
 };
 
@@ -111,18 +113,18 @@ const leadingSystem = (messages: Message[]) => {
  */
 export function breakReason(previous: RequestShape, next: RequestShape): NonNullable<TurnUsage['cacheBreakReason']> {
   if (!sameTools(previous, next)) {
-    return 'tools-changed';
+    return CacheBreakReason.ToolsChanged;
   }
   const before = leadingSystem(previous.messages);
   const now = leadingSystem(next.messages);
   const systemKept = before.length === now.length && keptMessages(before, now);
   if (!systemKept) {
-    return 'system-changed';
+    return CacheBreakReason.SystemChanged;
   }
   if (!keptMessages(previous.messages, next.messages)) {
-    return 'history-rewritten';
+    return CacheBreakReason.HistoryRewritten;
   }
-  return 'none-known';
+  return CacheBreakReason.NoneKnown;
 }
 
 /**

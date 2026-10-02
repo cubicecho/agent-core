@@ -10,14 +10,16 @@ import {
   SUMMARY_LEAD,
   summaryInput,
 } from '../src/compaction.ts';
+import { HookEvent } from '../src/hook-events.ts';
 import { turnMessages } from '../src/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../src/tool-loading.ts';
+import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
 
 type Message = OpenAI.ChatCompletionMessageParam;
 
-const user = (content: string): Message => ({ role: 'user', content });
-const assistant = (content: string): Message => ({ role: 'assistant', content });
-const result = (content: string): Message => ({ role: 'tool', tool_call_id: 'c', content });
+const user = (content: string): Message => ({ role: Role.User, content });
+const assistant = (content: string): Message => ({ role: Role.Assistant, content });
+const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
 /** Every message costs ten, so the arithmetic below can be read off the counts. */
 const estimate = () => 10;
 
@@ -32,10 +34,10 @@ describe('pruneToolResults', () => {
 
   it('counts a result sent as parts by its text alone, with nothing added between them', () => {
     const parts = [
-      { type: 'text' as const, text: 'x'.repeat(200) },
-      { type: 'text' as const, text: 'y'.repeat(200) },
+      { type: PartType.Text, text: 'x'.repeat(200) },
+      { type: PartType.Text, text: 'y'.repeat(200) },
     ];
-    const split: Message = { role: 'tool', tool_call_id: 'c', content: parts };
+    const split: Message = { role: Role.Tool, tool_call_id: 'c', content: parts };
     const pruned = pruneToolResults([split, result('kept')], { keepLast: 1 });
     expect(pruned[0].content).toBe('[result cleared, 400 chars]');
   });
@@ -56,11 +58,11 @@ describe('pruneToolResults', () => {
     const resolved = expandNames(['s__read'], catalog);
     const proxied = proxyLoadResult(resolved, catalog, [
       {
-        type: 'function',
+        type: FUNCTION_TOOL,
         function: {
           name: 's__read',
           description: 'Reads a file.',
-          parameters: { type: 'object', properties: { path: { type: 'string' } } },
+          parameters: { type: SchemaType.Object, properties: { path: { type: SchemaType.String } } },
         },
       },
     ]);
@@ -81,7 +83,7 @@ describe('pruneToolResults', () => {
 
 describe('planCompaction', () => {
   const long = [
-    { role: 'system', content: 'prompt' } as Message,
+    { role: Role.System, content: 'prompt' } as Message,
     user('1'),
     assistant('a'),
     user('2'),
@@ -121,8 +123,8 @@ describe('planCompaction', () => {
 
   it('continues an earlier summary rather than summarising it', () => {
     const again = [
-      { role: 'system', content: 'prompt' } as Message,
-      { role: 'system', content: `${SUMMARY_LEAD}they like tea` } as Message,
+      { role: Role.System, content: 'prompt' } as Message,
+      { role: Role.System, content: `${SUMMARY_LEAD}they like tea` } as Message,
       ...long.slice(1),
     ];
     const plan = planCompaction(again, { limit: 100, estimate });
@@ -182,9 +184,9 @@ describe('summaryInput', () => {
       toSummarise: [
         user('y'.repeat(5000)),
         {
-          role: 'assistant',
+          role: Role.Assistant,
           content: null,
-          tool_calls: [{ id: 'c', type: 'function', function: { name: 'read', arguments: '{}' } }],
+          tool_calls: [{ id: 'c', type: FUNCTION_TOOL, function: { name: 'read', arguments: '{}' } }],
         },
       ],
     });
@@ -194,10 +196,10 @@ describe('summaryInput', () => {
 
 describe('a message whose content is a list of parts', () => {
   const split: Message = {
-    role: 'user',
+    role: Role.User,
     content: [
-      { type: 'text', text: 'the dead' },
-      { type: 'text', text: 'line is Friday' },
+      { type: PartType.Text, text: 'the dead' },
+      { type: PartType.Text, text: 'line is Friday' },
     ],
   };
 
@@ -213,10 +215,10 @@ describe('a message whose content is a list of parts', () => {
       cut: 1,
       toSummarise: [
         {
-          role: 'user',
+          role: Role.User,
           content: [
-            { type: 'text', text: 'look at this' },
-            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: PartType.Text, text: 'look at this' },
+            { type: PartType.ImageUrl, image_url: { url: 'data:image/png;base64,AAAA' } },
           ],
         },
       ],
@@ -227,8 +229,8 @@ describe('a message whose content is a list of parts', () => {
 
 describe('compactTranscript', () => {
   const messages: Message[] = [
-    { role: 'system', content: 'prompt' },
-    { role: 'system', content: `${SUMMARY_LEAD}old` },
+    { role: Role.System, content: 'prompt' },
+    { role: Role.System, content: `${SUMMARY_LEAD}old` },
     user('1'),
     assistant('a'),
     user('2'),
@@ -242,8 +244,8 @@ describe('compactTranscript', () => {
       hooks: { run: run as never, context: { session: { id: 's' } } },
     });
     expect(out).toEqual([
-      { role: 'system', content: 'prompt' },
-      { role: 'system', content: `${SUMMARY_LEAD}new notes` },
+      { role: Role.System, content: 'prompt' },
+      { role: Role.System, content: `${SUMMARY_LEAD}new notes` },
       user('2'),
     ]);
     expect(summarise.mock.calls[0][0]).toContain('Notes so far:\nold');
@@ -252,8 +254,8 @@ describe('compactTranscript', () => {
       expect.objectContaining({
         range: { from: 2, through: 4 },
         compacting: [
-          expect.objectContaining({ speaker: 'user', text: '1' }),
-          expect.objectContaining({ speaker: 'assistant', text: 'a' }),
+          expect.objectContaining({ speaker: Role.User, text: '1' }),
+          expect.objectContaining({ speaker: Role.Assistant, text: 'a' }),
         ],
       }),
       expect.anything(),
@@ -263,12 +265,12 @@ describe('compactTranscript', () => {
   describe('a veto', () => {
     const vetoing = () =>
       vi.fn(async () => [
-        { serverId: 'm', label: 'Memory', hookId: 'file', event: 'beforeCompact', ok: true },
+        { serverId: 'm', label: 'Memory', hookId: 'file', event: HookEvent.BeforeCompact, ok: true },
         {
           serverId: 'g',
           label: 'Guard',
           hookId: 'keep',
-          event: 'beforeCompact',
+          event: HookEvent.BeforeCompact,
           ok: true,
           veto: true,
         },
@@ -276,7 +278,7 @@ describe('compactTranscript', () => {
           serverId: 'b',
           label: 'Broken',
           hookId: 'x',
-          event: 'beforeCompact',
+          event: HookEvent.BeforeCompact,
           ok: false,
           veto: true,
           error: 'down',
@@ -293,7 +295,7 @@ describe('compactTranscript', () => {
             serverId: 'g',
             label: 'Guard',
             hookId: 'keep',
-            event: 'beforeCompact',
+            event: HookEvent.BeforeCompact,
             ok: true,
             veto: true,
           },
@@ -324,8 +326,8 @@ describe('compactTranscript', () => {
       expect(out).toBe(messages);
       expect(summarise).not.toHaveBeenCalled();
       expect(heard).toEqual([
-        { event: 'beforeCompact', source: 'Guard', hookId: 'keep', veto: true },
-        { event: 'beforeCompact', source: 'Broken', hookId: 'x', error: 'down' },
+        { event: HookEvent.BeforeCompact, source: 'Guard', hookId: 'keep', veto: true },
+        { event: HookEvent.BeforeCompact, source: 'Broken', hookId: 'x', error: 'down' },
       ]);
     });
 
@@ -333,7 +335,7 @@ describe('compactTranscript', () => {
       const order: string[] = [];
       const run = vi.fn(async () => {
         order.push('hooks');
-        return [{ serverId: 'm', label: 'Memory', hookId: 'file', event: 'beforeCompact', ok: true }];
+        return [{ serverId: 'm', label: 'Memory', hookId: 'file', event: HookEvent.BeforeCompact, ok: true }];
       });
       const summarise = vi.fn(async () => {
         order.push('summary');
@@ -343,7 +345,7 @@ describe('compactTranscript', () => {
         hooks: { run: run as never, context: { session: { id: 's' } }, honourVeto: true },
       });
       expect(order).toEqual(['hooks', 'summary']);
-      expect(out.at(1)).toEqual({ role: 'system', content: `${SUMMARY_LEAD}notes` });
+      expect(out.at(1)).toEqual({ role: Role.System, content: `${SUMMARY_LEAD}notes` });
     });
 
     it('does not stop a compaction forced by an overflow', async () => {
@@ -360,7 +362,7 @@ describe('compactTranscript', () => {
       });
       expect(out).not.toBe(messages);
       expect(summarise).toHaveBeenCalledOnce();
-      expect(heard).toEqual([{ event: 'beforeCompact', source: 'Broken', hookId: 'x', error: 'down' }]);
+      expect(heard).toEqual([{ event: HookEvent.BeforeCompact, source: 'Broken', hookId: 'x', error: 'down' }]);
     });
   });
 
@@ -388,8 +390,8 @@ describe('a stored fold', () => {
 
   it('plans the same cut the scan finds for the same transcript rebuilt', () => {
     const scanned = [
-      { role: 'system', content: 'prompt' } as Message,
-      { role: 'system', content: `${SUMMARY_LEAD}they like tea` } as Message,
+      { role: Role.System, content: 'prompt' } as Message,
+      { role: Role.System, content: `${SUMMARY_LEAD}they like tea` } as Message,
       ...stored,
     ];
     const byScan = planCompaction(scanned, window);
@@ -427,7 +429,7 @@ describe('a stored fold', () => {
         serverId: 'g',
         label: 'Guard',
         hookId: 'keep',
-        event: 'beforeCompact',
+        event: HookEvent.BeforeCompact,
         ok: true,
         veto: true,
       },
@@ -448,7 +450,7 @@ describe('a stored fold', () => {
     expect(record.through).toBe(6);
 
     const request = applyCompaction(stored, record);
-    expect(request).toEqual([{ role: 'system', content: `${SUMMARY_LEAD}first notes` }, ...stored.slice(6)]);
+    expect(request).toEqual([{ role: Role.System, content: `${SUMMARY_LEAD}first notes` }, ...stored.slice(6)]);
     expect(applyCompaction(stored, undefined)).toBe(stored);
 
     // The same second fold, planned over the request by scanning and over the transcript by hand.

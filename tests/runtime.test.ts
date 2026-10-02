@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RunEventKind } from '../src/events.ts';
+import { FinishReason, Role } from '../src/wire.ts';
 
 const list = vi.fn();
 const create = vi.fn();
@@ -34,14 +36,14 @@ const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[n
 const says = (content: string) => ({
   async *[Symbol.asyncIterator]() {
     yield { choices: [{ delta: { content } }] };
-    yield { choices: [{ delta: {}, finish_reason: 'stop' }], usage: null };
+    yield { choices: [{ delta: {}, finish_reason: FinishReason.Stop }], usage: null };
     yield { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } };
   },
 });
 const body = {
   model: 'm',
   stream: true as const,
-  messages: [{ role: 'user' as const, content: 'x'.repeat(2000) }],
+  messages: [{ role: Role.User, content: 'x'.repeat(2000) }],
 };
 
 beforeEach(() => {
@@ -95,7 +97,7 @@ describe('createRuntime', () => {
   it('keeps an event bus of its own', () => {
     const one = createRuntime();
     const two = createRuntime();
-    one.emit('run', { kind: 'output', text: "one's" });
+    one.emit('run', { kind: RunEventKind.Output, text: "one's" });
     expect(one.history('run').map((event) => event.text)).toEqual(["one's"]);
     expect(two.history('run')).toEqual([]);
     expect(history('run')).toEqual([]);
@@ -120,7 +122,7 @@ describe('createRuntime', () => {
 
   it('reads its own settings where a function takes its default from them', () => {
     const runtime = createRuntime({ hooks: { preface: 'Runtime notes:' } });
-    const messages = [{ role: 'user' as const, content: 'hi' }];
+    const messages = [{ role: Role.User, content: 'hi' }];
     const text = (built: typeof messages) => String(built[0].content);
     expect(text(runtime.withContext(messages, 0, 'a note') as typeof messages)).toContain('Runtime notes:');
     expect(text(withContext(messages, 0, 'a note') as typeof messages)).not.toContain('Runtime notes:');
@@ -130,8 +132,8 @@ describe('createRuntime', () => {
     const runtime = createRuntime({ clients: { maxClients: 7 } });
     const mine = runtime.getClient(endpoint);
     const shared = getClient(endpoint);
-    runtime.emit('run', { kind: 'output', text: 'kept' });
-    emit('run', { kind: 'output', text: 'shared' });
+    runtime.emit('run', { kind: RunEventKind.Output, text: 'kept' });
+    emit('run', { kind: RunEventKind.Output, text: 'shared' });
 
     resetAll();
     expect(getClient(endpoint)).not.toBe(shared);
@@ -141,7 +143,7 @@ describe('createRuntime', () => {
     expect(runtime.configureClients().maxClients).toBe(7);
 
     const again = getClient(endpoint);
-    emit('run', { kind: 'output', text: 'shared' });
+    emit('run', { kind: RunEventKind.Output, text: 'shared' });
     runtime.resetAll();
     expect(runtime.getClient(endpoint)).not.toBe(mine);
     expect(runtime.history('run')).toEqual([]);
@@ -155,12 +157,12 @@ describe("a runtime's context", () => {
   it('is what a top-level function uses inside `run`, after an await and in a timer', async () => {
     const runtime = createRuntime();
     await runtime.run(async () => {
-      emit('run', { kind: 'output', text: 'at once' });
+      emit('run', { kind: RunEventKind.Output, text: 'at once' });
       await Promise.resolve();
-      emit('run', { kind: 'output', text: 'after an await' });
+      emit('run', { kind: RunEventKind.Output, text: 'after an await' });
       await new Promise<void>((resolve) =>
         setTimeout(() => {
-          emit('run', { kind: 'output', text: 'in a timer' });
+          emit('run', { kind: RunEventKind.Output, text: 'in a timer' });
           resolve();
         }, 0),
       );
@@ -168,7 +170,7 @@ describe("a runtime's context", () => {
     expect(runtime.history('run').map((event) => event.text)).toEqual(['at once', 'after an await', 'in a timer']);
     expect(history('run')).toEqual([]);
     // And not once `run` has returned.
-    emit('run', { kind: 'output', text: 'outside' });
+    emit('run', { kind: RunEventKind.Output, text: 'outside' });
     expect(runtime.history('run')).toHaveLength(3);
   });
 
@@ -177,7 +179,7 @@ describe("a runtime's context", () => {
     create.mockReturnValueOnce(says('done'));
     const result = await runtime.runAgentLoop({
       config: { ...endpoint, model: 'm', maxTokens: 100, temperature: 0.2, maxToolIterations: 4 },
-      messages: [{ role: 'user', content: 'hi' }],
+      messages: [{ role: Role.User, content: 'hi' }],
       dispatch: async () => '',
       // The top-level function, as a host that knows nothing of the runtime would call it.
       onEvent: (event) => emit('run', event),
@@ -194,7 +196,7 @@ describe("a runtime's context", () => {
     const two = createRuntime();
     const talk = (name: string) => async () => {
       for (const text of ['a', 'b', 'c']) {
-        emit('run', { kind: 'output', text: `${name} ${text}` });
+        emit('run', { kind: RunEventKind.Output, text: `${name} ${text}` });
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
     };
@@ -215,9 +217,9 @@ describe("a runtime's context", () => {
       }
     })();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    emit('run', { kind: 'output', text: "the process's" });
-    runtime.emit('run', { kind: 'output', text: "the runtime's" });
-    runtime.emit('run', { kind: 'done', ok: true });
+    emit('run', { kind: RunEventKind.Output, text: "the process's" });
+    runtime.emit('run', { kind: RunEventKind.Output, text: "the runtime's" });
+    runtime.emit('run', { kind: RunEventKind.Done, ok: true });
     await reading;
     expect(seen).toEqual(["the runtime's", '']);
   });
@@ -237,7 +239,7 @@ describe("a runtime's context", () => {
   it("is left for the process's by `defaultRuntime`, even inside another", () => {
     const runtime = createRuntime();
     runtime.run(() => {
-      defaultRuntime.emit('run', { kind: 'output', text: 'shared' });
+      defaultRuntime.emit('run', { kind: RunEventKind.Output, text: 'shared' });
     });
     expect(history('run')).toHaveLength(1);
     expect(runtime.history('run')).toEqual([]);

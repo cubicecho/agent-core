@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RunEventKind } from '../src/events.ts';
+import { Role } from '../src/wire.ts';
 
 const list = vi.fn();
 const create = vi.fn();
@@ -34,7 +36,7 @@ const latchEverything = async () => {
   create.mockRejectedValueOnce(new OpenAI.APIError(400, { error: {} }, 'rejected', undefined)).mockResolvedValue(reply);
   await ask(endpoint, 'qwen', 'system', 'user');
   capabilitiesFor(endpoint.baseUrl).usageInStream = false;
-  emit('run-a', { kind: 'output', text: 'one' });
+  emit('run-a', { kind: RunEventKind.Output, text: 'one' });
   return getClient(endpoint);
 };
 
@@ -74,7 +76,7 @@ describe('resetAll', () => {
     const body = {
       model: 'm',
       stream: true as const,
-      messages: [{ role: 'user' as const, content: 'x'.repeat(2000) }],
+      messages: [{ role: Role.User, content: 'x'.repeat(2000) }],
     };
     calibrate(supports, body, 1000);
     expect(charsPerTokenFor(supports, 'm')).not.toBe(4);

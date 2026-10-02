@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FENCES, FenceSplitter, type Split, stripThinking } from '../src/thinking.ts';
+import {
+  ALL_FENCES,
+  FenceSplitter,
+  SPLIT_OUTPUT,
+  SPLIT_REASONING,
+  type Split,
+  stripThinking,
+} from '../src/thinking.ts';
 
 /** Every piece fed in one at a time, with what came out of each push and of the finish. */
 const split = (pieces: string[], splitter = new FenceSplitter()) => {
@@ -15,8 +22,8 @@ describe('FenceSplitter', () => {
   it('routes a fence to reasoning and the rest to output', () => {
     const { parts, output, reasoning } = split(['<think>hmm</think>answer']);
     expect(parts).toEqual([
-      { kind: 'reasoning', text: 'hmm' },
-      { kind: 'output', text: 'answer' },
+      { kind: SPLIT_REASONING, text: 'hmm' },
+      { kind: SPLIT_OUTPUT, text: 'answer' },
     ]);
     expect([output, reasoning]).toEqual(['answer', 'hmm']);
   });
@@ -34,7 +41,7 @@ describe('FenceSplitter', () => {
   it('releases a held tail that turned out not to be a tag', () => {
     const { parts, output } = split(['a <', 'b']);
     expect(output).toBe('a <b');
-    expect(parts.map((part) => part.kind)).toEqual(['output', 'output']);
+    expect(parts.map((part) => part.kind)).toEqual([SPLIT_OUTPUT, SPLIT_OUTPUT]);
     expect(split(['x <thi']).output).toBe('x <thi');
   });
 
@@ -56,8 +63,8 @@ describe('FenceSplitter', () => {
   it('starts inside the fence when told the template opened it', () => {
     const { parts } = split(['weighing</think>answer'], new FenceSplitter(undefined, { startInside: true }));
     expect(parts).toEqual([
-      { kind: 'reasoning', text: 'weighing' },
-      { kind: 'output', text: 'answer' },
+      { kind: SPLIT_REASONING, text: 'weighing' },
+      { kind: SPLIT_OUTPUT, text: 'answer' },
     ]);
   });
 

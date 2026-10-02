@@ -4,6 +4,7 @@ import { errorMessage } from './errors.ts';
 import { ContextOverflow, refusesRequest } from './retry.ts';
 import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from './run-turn.ts';
 import { addCounts, type Turn, type TurnUsage } from './stream.ts';
+import { FinishReason, Role } from './wire.ts';
 
 /**
  * Picking up an answer the token ceiling cut off, instead of keeping half of it.
@@ -38,7 +39,7 @@ export interface ContinueTurnOptions extends RunTurnOptions {
  * its arguments are what was cut, and `parseToolArguments` already reports that truncation.
  */
 export const isContinuable = (turn: Turn) =>
-  turn.finishReason === 'length' && turn.content.trim() !== '' && turn.toolCalls.length === 0;
+  turn.finishReason === FinishReason.Length && turn.content.trim() !== '' && turn.toolCalls.length === 0;
 
 /** How much of the answer's opening a reply has to repeat to have started over. */
 const RESTART_PROBE = 40;
@@ -161,7 +162,7 @@ export async function continueTurn(
           const body = request(capabilities, forModel);
           return {
             ...body,
-            messages: [...body.messages, { role: 'assistant', content: answer }],
+            messages: [...body.messages, { role: Role.Assistant, content: answer }],
           };
         },
         { ...options, startInReasoning: false },

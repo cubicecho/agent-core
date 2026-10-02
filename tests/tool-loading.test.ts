@@ -27,6 +27,7 @@ import {
   requestedNames,
   shownCall,
 } from '../src/tool-loading.ts';
+import { FUNCTION_TOOL, SchemaType } from '../src/wire.ts';
 
 const tool = (name: string) => ({ name, description: `does ${name}` });
 
@@ -114,8 +115,8 @@ test('loading a tool already loaded says so instead of loading it again', () => 
 
 test('loaded definitions are appended in load order, never moved', () => {
   const definition = (name: string) => ({
-    type: 'function' as const,
-    function: { name, parameters: { type: 'object' } },
+    type: FUNCTION_TOOL,
+    function: { name, parameters: { type: SchemaType.Object } },
   });
   const [a, b, c] = [definition('a'), definition('b'), definition('c')];
   const previous = [c, a];
@@ -126,8 +127,8 @@ test('loaded definitions are appended in load order, never moved', () => {
 
 test('orderTools sorts by name, keeps the definitions themselves, and obeys a comparator', () => {
   const definition = (name: string) => ({
-    type: 'function' as const,
-    function: { name, parameters: { type: 'object' } },
+    type: FUNCTION_TOOL,
+    function: { name, parameters: { type: SchemaType.Object } },
   });
   const [a, b, c] = [definition('a'), definition('b'), definition('c')];
   const names = (list: { type: string; function?: { name: string } }[]) => list.map((item) => item.function?.name);
@@ -484,25 +485,25 @@ test('the request is read only as far as the preselector reads it', () => {
 });
 
 const definition = (name: string) => ({
-  type: 'function' as const,
+  type: FUNCTION_TOOL,
   function: {
     name,
     description: `does ${name}`,
-    parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    parameters: { type: SchemaType.Object, properties: { id: { type: SchemaType.String } }, required: ['id'] },
   },
 });
 
 test('the proxied tool array is load_tools and call_tool, frozen, with open arguments', () => {
-  const names = PROXY_TOOLS.map((tool) => (tool.type === 'function' ? tool.function.name : ''));
+  const names = PROXY_TOOLS.map((tool) => (tool.type === FUNCTION_TOOL ? tool.function.name : ''));
   expect(names).toEqual([LOAD_TOOLS, CALL_TOOL]);
   expect(Object.isFrozen(PROXY_TOOLS)).toBe(true);
   const call = PROXY_TOOLS[1];
-  if (call.type !== 'function') {
+  if (call.type !== FUNCTION_TOOL) {
     throw new Error('unreachable');
   }
   expect(Object.isFrozen(call.function)).toBe(true);
   expect(call.function.parameters).toMatchObject({
-    properties: { arguments: { type: 'object', additionalProperties: true } },
+    properties: { arguments: { type: SchemaType.Object, additionalProperties: true } },
     required: ['name', 'arguments'],
   });
 });

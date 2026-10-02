@@ -10,6 +10,7 @@ import {
   requestTokens,
   toolsChars,
 } from '../src/tokens.ts';
+import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
 
 /** An `APIError` as the SDK raises it, with only the status this cares about set. */
 const apiError = (status: number) => new OpenAI.APIError(status, { error: { message: 'nope' } }, 'nope', undefined);
@@ -73,25 +74,25 @@ test('a rate limit is not read as an overflow, however it is worded', () => {
 });
 
 test('a request is sized from what is actually sent, tools included', () => {
-  const messages = [{ role: 'user' as const, content: 'x'.repeat(400) }];
+  const messages = [{ role: Role.User, content: 'x'.repeat(400) }];
   const bare = requestTokens({ model: 'm', stream: true, messages });
   const withTools = requestTokens({
     model: 'm',
     stream: true,
     messages,
-    tools: [{ type: 'function', function: { name: 't', parameters: { type: 'object' } } }],
+    tools: [{ type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } }],
   });
   expect(bare).toBeGreaterThan(100);
   expect(withTools).toBeGreaterThan(bare);
 });
 
 test('a request is sized at the characters per token it is given, and at four otherwise', () => {
-  const message = { role: 'user' as const, content: 'x'.repeat(1000) };
+  const message = { role: Role.User, content: 'x'.repeat(1000) };
   const body = {
     model: 'm',
     stream: true as const,
     messages: [message],
-    tools: [{ type: 'function' as const, function: { name: 't', parameters: { type: 'object' } } }],
+    tools: [{ type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } }],
   };
   const atFour = requestTokens(body);
   expect(requestTokens(body, { charsPerToken: 4 })).toBe(atFour);
@@ -105,19 +106,19 @@ test('a request is sized at the characters per token it is given, and at four ot
 
 test('a transcript costs more the longer it gets, and the walk sees every part of it', () => {
   const turn = (n: number) => [
-    { role: 'user' as const, content: `ask ${n} ${'x'.repeat(200)}` },
+    { role: Role.User, content: `ask ${n} ${'x'.repeat(200)}` },
     {
-      role: 'assistant' as const,
+      role: Role.Assistant,
       content: null,
       tool_calls: [
         {
           id: `call_${n}`,
-          type: 'function' as const,
+          type: FUNCTION_TOOL,
           function: { name: 'search', arguments: JSON.stringify({ q: 'y'.repeat(100) }) },
         },
       ],
     },
-    { role: 'tool' as const, tool_call_id: `call_${n}`, content: 'z'.repeat(300) },
+    { role: Role.Tool, tool_call_id: `call_${n}`, content: 'z'.repeat(300) },
   ];
   const sized = (turns: number) =>
     requestTokens({
@@ -150,25 +151,25 @@ test('the keys only some messages carry are counted, not only their values', () 
 
   // Each key, priced against the same message without it: the difference the walk sees has to
   // be the difference the serialisation sees.
-  const named = many({ role: 'user', name: 'bob', content: 'hi' });
-  const anonymous = many({ role: 'user', content: 'hi' });
+  const named = many({ role: Role.User, name: 'bob', content: 'hi' });
+  const anonymous = many({ role: Role.User, content: 'hi' });
   expect(sized(named) - sized(anonymous)).toBe(serialized(named) - serialized(anonymous));
 
-  const result = many({ role: 'tool', tool_call_id: 'call_1', content: 'hi' });
-  const bare = many({ role: 'user', content: 'hi' });
+  const result = many({ role: Role.Tool, tool_call_id: 'call_1', content: 'hi' });
+  const bare = many({ role: Role.User, content: 'hi' });
   expect(sized(result) - sized(bare)).toBe(serialized(result) - serialized(bare));
 
   // The scratchpad a caller passes back to gpt-oss or DeepSeek, in either spelling.
-  const thought = many({ role: 'assistant', content: 'hi', reasoning_content: 'because' } as never);
-  const plain = many({ role: 'assistant', content: 'hi' });
+  const thought = many({ role: Role.Assistant, content: 'hi', reasoning_content: 'because' } as never);
+  const plain = many({ role: Role.Assistant, content: 'hi' });
   expect(sized(thought) - sized(plain)).toBe(serialized(thought) - serialized(plain));
-  const routed = many({ role: 'assistant', content: 'hi', reasoning: 'because' } as never);
+  const routed = many({ role: Role.Assistant, content: 'hi', reasoning: 'because' } as never);
   expect(sized(routed) - sized(plain)).toBe(serialized(routed) - serialized(plain));
 
   // And the whole shape, end to end: twenty tool results is what a real run is mostly made of,
   // and the body the omission was worth ninety tokens on.
   const run = Array.from({ length: 20 }, (_, i) => ({
-    role: 'tool' as const,
+    role: Role.Tool,
     tool_call_id: `call_${i}`,
     content: 'x'.repeat(200),
   }));
@@ -177,52 +178,52 @@ test('the keys only some messages carry are counted, not only their values', () 
 
 test('a message whose content is parts is sized from the parts it has text in', () => {
   const sized = (content: OpenAI.ChatCompletionUserMessageParam['content']) =>
-    requestTokens({ model: 'm', stream: true, messages: [{ role: 'user', content }] });
+    requestTokens({ model: 'm', stream: true, messages: [{ role: Role.User, content }] });
   const serialized = (content: OpenAI.ChatCompletionUserMessageParam['content']) =>
-    estimateTokens(JSON.stringify([{ role: 'user', content }]));
+    estimateTokens(JSON.stringify([{ role: Role.User, content }]));
 
   // Each part is an object in the body, so splitting the same text across more of them makes
   // the request bigger — `{"type":"text","text":""},` is 26 characters that are really sent.
   // Charging only `part.text` read the split content as the unsplit content and was short by
   // 6.5 tokens a part, which grows with the part count rather than with what the parts say.
   const plain = sized('x'.repeat(400));
-  const one = sized([{ type: 'text', text: 'x'.repeat(400) }]);
-  const eight = sized(Array.from({ length: 8 }, () => ({ type: 'text' as const, text: 'x'.repeat(50) })));
+  const one = sized([{ type: PartType.Text, text: 'x'.repeat(400) }]);
+  const eight = sized(Array.from({ length: 8 }, () => ({ type: PartType.Text, text: 'x'.repeat(50) })));
   expect(one).toBeGreaterThan(plain);
   expect(eight).toBeGreaterThan(one);
 
   // And each of the three is what serialising that same body says, which is the point: the
   // string case was already exact and the parts cases now are too.
   expect(plain).toBe(serialized('x'.repeat(400)));
-  expect(one).toBe(serialized([{ type: 'text', text: 'x'.repeat(400) }]));
-  expect(eight).toBe(serialized(Array.from({ length: 8 }, () => ({ type: 'text' as const, text: 'x'.repeat(50) }))));
+  expect(one).toBe(serialized([{ type: PartType.Text, text: 'x'.repeat(400) }]));
+  expect(eight).toBe(serialized(Array.from({ length: 8 }, () => ({ type: PartType.Text, text: 'x'.repeat(50) }))));
 
   // An image part is a URL or a blob, and is not priced by the length of either — a vision
   // model does not charge a data URL by its base64 length, so this one stays uncounted on
   // purpose and the text part beside it is unaffected.
   const withImage = sized([
-    { type: 'text', text: 'x'.repeat(400) },
-    { type: 'image_url', image_url: { url: `data:image/png;base64,${'A'.repeat(5000)}` } },
+    { type: PartType.Text, text: 'x'.repeat(400) },
+    { type: PartType.ImageUrl, image_url: { url: `data:image/png;base64,${'A'.repeat(5000)}` } },
   ]);
   expect(withImage).toBe(one);
 });
 
 test('a refusal part is charged its own envelope too', () => {
   const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'assistant', content: [{ type: 'refusal', refusal: 'no'.repeat(100) }] },
+    { role: Role.Assistant, content: [{ type: PartType.Refusal, refusal: 'no'.repeat(100) }] },
   ];
   expect(requestTokens({ model: 'm', stream: true, messages })).toBe(estimateTokens(JSON.stringify(messages)));
 });
 
 test('the same tools array is only measured once', () => {
   const tools: OpenAI.ChatCompletionTool[] = [
-    { type: 'function', function: { name: 't', parameters: { type: 'object' } } },
+    { type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } },
   ];
-  const messages = [{ role: 'user' as const, content: 'hi' }];
+  const messages = [{ role: Role.User, content: 'hi' }];
   const first = requestTokens({ model: 'm', stream: true, messages, tools });
   // Mutated behind the cache: a second reading of the same array must be the memoised number,
   // not a fresh walk, or the identity key is not doing what the comment says it does.
-  tools.push({ type: 'function', function: { name: 'u'.repeat(500), parameters: {} } });
+  tools.push({ type: FUNCTION_TOOL, function: { name: 'u'.repeat(500), parameters: {} } });
   expect(requestTokens({ model: 'm', stream: true, messages, tools })).toBe(first);
 });
 
@@ -236,12 +237,12 @@ const fourParts = (): OpenAI.ChatCompletionCreateParamsStreaming => ({
   model: 'm',
   stream: true,
   messages: [
-    { role: 'system', content: 's'.repeat(800) },
-    { role: 'user', content: 'u'.repeat(1200) },
-    { role: 'assistant', content: 'a'.repeat(400) },
-    { role: 'tool', tool_call_id: 'c1', content: 't'.repeat(2000) },
+    { role: Role.System, content: 's'.repeat(800) },
+    { role: Role.User, content: 'u'.repeat(1200) },
+    { role: Role.Assistant, content: 'a'.repeat(400) },
+    { role: Role.Tool, tool_call_id: 'c1', content: 't'.repeat(2000) },
   ],
-  tools: [{ type: 'function', function: { name: 't', parameters: { type: 'object' } } }],
+  tools: [{ type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } }],
 });
 
 test('a request is cut along the levers an operator actually has', () => {
@@ -261,8 +262,8 @@ test('a developer message is charged to the system prompt, wherever it sits', ()
     model: 'm',
     stream: true,
     messages: [
-      { role: 'user', content: 'hi' },
-      { role: 'developer', content: 'd'.repeat(500) },
+      { role: Role.User, content: 'hi' },
+      { role: Role.Developer, content: 'd'.repeat(500) },
     ],
   };
   expect(contextChars(body).system).toBeGreaterThan(500);

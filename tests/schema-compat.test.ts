@@ -1,10 +1,11 @@
 import type OpenAI from 'openai';
 import { expect, test } from 'vitest';
 import { isGrammarError, relaxSchema, relaxTools, sanitizeSchema, sanitizeTools } from '../src/schema-compat.ts';
+import { FUNCTION_TOOL, SchemaType } from '../src/wire.ts';
 
 /** One function tool wrapping the parameters under test. */
 const tool = (parameters: unknown): OpenAI.ChatCompletionTool => ({
-  type: 'function',
+  type: FUNCTION_TOOL,
   function: { name: 'gmail__search', description: '', parameters: parameters as never },
 });
 
@@ -15,44 +16,48 @@ test('collapses a nullable union to its one real branch', () => {
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
-        properties: { after: { anyOf: [{ type: 'string' }, { type: 'null' }] } },
+        type: SchemaType.Object,
+        properties: { after: { anyOf: [{ type: SchemaType.String }, { type: SchemaType.Null }] } },
       }),
     ]),
   );
   const properties = out.properties as Record<string, Record<string, unknown>>;
-  expect(properties.after).toEqual({ nullable: true, type: 'string' });
+  expect(properties.after).toEqual({ nullable: true, type: SchemaType.String });
 });
 
 test('rewrites a list type and drops lookaround patterns', () => {
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         properties: {
-          label: { type: ['string', 'null'], pattern: '^(?!INBOX).+$' },
-          count: { type: ['string', 'number'] },
+          label: { type: [SchemaType.String, SchemaType.Null], pattern: '^(?!INBOX).+$' },
+          count: { type: [SchemaType.String, SchemaType.Number] },
         },
       }),
     ]),
   );
   const properties = out.properties as Record<string, Record<string, unknown>>;
-  expect(properties.label).toEqual({ nullable: true, type: 'string' });
-  expect(properties.count.anyOf).toEqual([{ type: 'string' }, { type: 'number' }]);
+  expect(properties.label).toEqual({ nullable: true, type: SchemaType.String });
+  expect(properties.count.anyOf).toEqual([{ type: SchemaType.String }, { type: SchemaType.Number }]);
 });
 
 test('repairs a bare type name where a schema belongs', () => {
-  const out = paramsOf(sanitizeTools([tool({ type: 'object', properties: { filter: 'object', flag: 'boolean' } })]));
+  const out = paramsOf(
+    sanitizeTools([
+      tool({ type: SchemaType.Object, properties: { filter: SchemaType.Object, flag: SchemaType.Boolean } }),
+    ]),
+  );
   const properties = out.properties as Record<string, Record<string, unknown>>;
-  expect(properties.filter).toEqual({ type: 'object', properties: {} });
-  expect(properties.flag).toEqual({ type: 'boolean' });
+  expect(properties.filter).toEqual({ type: SchemaType.Object, properties: {} });
+  expect(properties.flag).toEqual({ type: SchemaType.Boolean });
 });
 
 test('forces a usable object at the top level', () => {
-  expect(paramsOf(sanitizeTools([tool(undefined)]))).toEqual({ type: 'object', properties: {} });
+  expect(paramsOf(sanitizeTools([tool(undefined)]))).toEqual({ type: SchemaType.Object, properties: {} });
   // Combinators at the root are rejected outright by strict backends.
-  expect(paramsOf(sanitizeTools([tool({ allOf: [{ type: 'object' }], enum: ['a'] })]))).toEqual({
-    type: 'object',
+  expect(paramsOf(sanitizeTools([tool({ allOf: [{ type: SchemaType.Object }], enum: ['a'] })]))).toEqual({
+    type: SchemaType.Object,
     properties: {},
   });
 });
@@ -61,15 +66,15 @@ test('relaxing strips pattern and format at every depth', () => {
   const out = paramsOf(
     relaxTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         properties: {
-          to: { type: 'array', items: { type: 'string', format: 'email', pattern: '\\d+' } },
+          to: { type: SchemaType.Array, items: { type: SchemaType.String, format: 'email', pattern: '\\d+' } },
         },
       }),
     ]),
   );
   const items = (out.properties as Record<string, Record<string, unknown>>).to.items;
-  expect(items).toEqual({ type: 'string' });
+  expect(items).toEqual({ type: SchemaType.String });
 });
 
 test('recognises grammar failures but not a missing user turn', () => {
@@ -84,15 +89,15 @@ test('leaves a reference standing alone, whatever it was wrapped in', () => {
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         properties: {
           // What a schema-generated server emits for an optional object argument. Collapsing the
           // union used to leave `nullable` beside the `$ref` that survived — a sibling this file
           // exists to remove, reintroduced two lines above the code that removes it.
-          where: { anyOf: [{ $ref: '#/definitions/Filters' }, { type: 'null' }] },
+          where: { anyOf: [{ $ref: '#/definitions/Filters' }, { type: SchemaType.Null }] },
           note: { $ref: '#/definitions/Note', description: 'ignored under draft-07', default: {} },
         },
-        definitions: { Filters: { type: 'object', properties: {} }, Note: { type: 'string' } },
+        definitions: { Filters: { type: SchemaType.Object, properties: {} }, Note: { type: SchemaType.String } },
       }),
     ]),
   );
@@ -107,27 +112,27 @@ test('a nullable union keeps the constraints of the branch that survives', () =>
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
-        properties: { name: { anyOf: [{ type: 'string', maxLength: 3 }, { type: 'null' }] } },
+        type: SchemaType.Object,
+        properties: { name: { anyOf: [{ type: SchemaType.String, maxLength: 3 }, { type: SchemaType.Null }] } },
       }),
     ]),
   );
   const properties = out.properties as Record<string, Record<string, unknown>>;
-  expect(properties.name).toEqual({ nullable: true, type: 'string', maxLength: 3 });
+  expect(properties.name).toEqual({ nullable: true, type: SchemaType.String, maxLength: 3 });
 });
 
 test('a union of two real branches is left as it was', () => {
-  const anyOf = [{ type: 'string' }, { type: 'number' }];
-  const out = paramsOf(sanitizeTools([tool({ type: 'object', properties: { a: { anyOf } } })]));
+  const anyOf = [{ type: SchemaType.String }, { type: SchemaType.Number }];
+  const out = paramsOf(sanitizeTools([tool({ type: SchemaType.Object, properties: { a: { anyOf } } })]));
   expect((out.properties as Record<string, unknown>).a).toEqual({ anyOf });
 });
 
 test('a pattern a grammar can express is kept, and so are enums and descriptions', () => {
   const schema = {
-    type: 'object',
+    type: SchemaType.Object,
     properties: {
-      hex: { type: 'string', pattern: '^#[0-9a-f]{6}$' },
-      mode: { type: 'string', enum: ['a', 'b'], description: 'how' },
+      hex: { type: SchemaType.String, pattern: '^#[0-9a-f]{6}$' },
+      mode: { type: SchemaType.String, enum: ['a', 'b'], description: 'how' },
     },
     required: ['mode'],
   };
@@ -138,11 +143,11 @@ test('relaxing keeps an argument that happens to be called format or pattern', (
   const out = paramsOf(
     relaxTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         properties: {
-          format: { type: 'string', enum: ['json', 'csv'] },
-          pattern: { type: 'string' },
-          keep: { type: 'string', format: 'email', pattern: '\\d+' },
+          format: { type: SchemaType.String, enum: ['json', 'csv'] },
+          pattern: { type: SchemaType.String },
+          keep: { type: SchemaType.String, format: 'email', pattern: '\\d+' },
         },
         required: ['format', 'pattern'],
       }),
@@ -151,7 +156,7 @@ test('relaxing keeps an argument that happens to be called format or pattern', (
 
   // The arguments survive; only the keywords on `keep` are stripped.
   expect(Object.keys(out.properties as object).sort()).toEqual(['format', 'keep', 'pattern']);
-  expect((out.properties as Record<string, unknown>).keep).toEqual({ type: 'string' });
+  expect((out.properties as Record<string, unknown>).keep).toEqual({ type: SchemaType.String });
   expect(out.required).toEqual(['format', 'pattern']);
 });
 
@@ -159,15 +164,15 @@ test('relaxing does not reach into data that merely looks like schema', () => {
   const out = paramsOf(
     relaxTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         properties: {
-          a: { type: 'string', default: { format: 'kept' }, enum: [{ pattern: 'x' }] },
+          a: { type: SchemaType.String, default: { format: 'kept' }, enum: [{ pattern: 'x' }] },
         },
       }),
     ]),
   );
   expect((out.properties as Record<string, unknown>).a).toEqual({
-    type: 'string',
+    type: SchemaType.String,
     default: { format: 'kept' },
     enum: [{ pattern: 'x' }],
   });
@@ -179,14 +184,14 @@ test('a root-level $ref is resolved rather than left dangling over no arguments'
       tool({
         $ref: '#/definitions/Args',
         definitions: {
-          Args: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+          Args: { type: SchemaType.Object, properties: { query: { type: SchemaType.String } }, required: ['query'] },
         },
       }),
     ]),
   );
 
   expect(out.$ref).toBeUndefined();
-  expect(out.properties).toEqual({ query: { type: 'string' } });
+  expect(out.properties).toEqual({ query: { type: SchemaType.String } });
   expect(out.required).toEqual(['query']);
 });
 
@@ -196,7 +201,7 @@ test('a root $ref that resolves to nothing gives an honestly empty object', () =
     { $ref: 'https://example.com/schema.json' },
     { $ref: '#/definitions/Loop', definitions: { Loop: { $ref: '#/definitions/Loop' } } },
   ]) {
-    expect(paramsOf(sanitizeTools([tool(parameters)]))).toEqual({ type: 'object', properties: {} });
+    expect(paramsOf(sanitizeTools([tool(parameters)]))).toEqual({ type: SchemaType.Object, properties: {} });
   }
 });
 
@@ -204,22 +209,24 @@ test('a root allOf keeps its arguments instead of leaving required naming nothin
   const out = paramsOf(
     sanitizeTools([
       tool({
-        allOf: [{ type: 'object', properties: { a: { type: 'string' } }, required: ['a'] }],
-        properties: { b: { type: 'number' } },
+        allOf: [{ type: SchemaType.Object, properties: { a: { type: SchemaType.String } }, required: ['a'] }],
+        properties: { b: { type: SchemaType.Number } },
       }),
     ]),
   );
 
   expect(out.allOf).toBeUndefined();
-  expect(out.properties).toEqual({ a: { type: 'string' }, b: { type: 'number' } });
+  expect(out.properties).toEqual({ a: { type: SchemaType.String }, b: { type: SchemaType.Number } });
   expect(out.required).toEqual(['a']);
 });
 
 test('required never names an argument the rewrites removed', () => {
   // A union of non-objects has no properties to fold in, so the combinator still goes and
   // `required` is left naming nothing.
-  const out = paramsOf(sanitizeTools([tool({ type: 'object', oneOf: [{ type: 'string' }], required: ['z'] })]));
-  expect(out).toEqual({ type: 'object', properties: {} });
+  const out = paramsOf(
+    sanitizeTools([tool({ type: SchemaType.Object, oneOf: [{ type: SchemaType.String }], required: ['z'] })]),
+  );
+  expect(out).toEqual({ type: SchemaType.Object, properties: {} });
 });
 
 test('a root union keeps its arguments, requiring only what every branch asks for', () => {
@@ -228,13 +235,13 @@ test('a root union keeps its arguments, requiring only what every branch asks fo
       tool({
         anyOf: [
           {
-            type: 'object',
-            properties: { a: { type: 'string' }, id: { type: 'string' } },
+            type: SchemaType.Object,
+            properties: { a: { type: SchemaType.String }, id: { type: SchemaType.String } },
             required: ['a', 'id'],
           },
           {
-            type: 'object',
-            properties: { b: { type: 'number' }, id: { type: 'string' } },
+            type: SchemaType.Object,
+            properties: { b: { type: SchemaType.Number }, id: { type: SchemaType.String } },
             required: ['id'],
           },
         ],
@@ -244,9 +251,9 @@ test('a root union keeps its arguments, requiring only what every branch asks fo
 
   expect(out.anyOf).toBeUndefined();
   expect(out.properties).toEqual({
-    a: { type: 'string' },
-    b: { type: 'number' },
-    id: { type: 'string' },
+    a: { type: SchemaType.String },
+    b: { type: SchemaType.Number },
+    id: { type: SchemaType.String },
   });
   // `id` is asked for by both branches; `a` by only one, so the model must be free to omit it.
   expect(out.required).toEqual(['id']);
@@ -254,9 +261,11 @@ test('a root union keeps its arguments, requiring only what every branch asks fo
 
 test('a single-branch root union is the named argument type, required and all', () => {
   const out = paramsOf(
-    sanitizeTools([tool({ oneOf: [{ type: 'object', properties: { a: { type: 'string' } }, required: ['a'] }] })]),
+    sanitizeTools([
+      tool({ oneOf: [{ type: SchemaType.Object, properties: { a: { type: SchemaType.String } }, required: ['a'] }] }),
+    ]),
   );
-  expect(out).toEqual({ type: 'object', properties: { a: { type: 'string' } }, required: ['a'] });
+  expect(out).toEqual({ type: SchemaType.Object, properties: { a: { type: SchemaType.String } }, required: ['a'] });
 });
 
 test('a root union of references keeps the arguments its branches name', () => {
@@ -265,13 +274,13 @@ test('a root union of references keeps the arguments its branches name', () => {
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         oneOf: [{ $ref: '#/$defs/ByPath' }, { $ref: '#/$defs/ByQuery' }],
         $defs: {
-          ByPath: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          ByPath: { type: SchemaType.Object, properties: { path: { type: SchemaType.String } }, required: ['path'] },
           ByQuery: {
-            type: 'object',
-            properties: { query: { type: 'string' } },
+            type: SchemaType.Object,
+            properties: { query: { type: SchemaType.String } },
             required: ['query'],
           },
         },
@@ -279,7 +288,7 @@ test('a root union of references keeps the arguments its branches name', () => {
     ]),
   );
 
-  expect(out.properties).toEqual({ path: { type: 'string' }, query: { type: 'string' } });
+  expect(out.properties).toEqual({ path: { type: SchemaType.String }, query: { type: SchemaType.String } });
   // Neither name is asked for by both branches, so the model must be free to omit either.
   expect(out.required).toBeUndefined();
 });
@@ -289,17 +298,17 @@ test('a mixed root union reads the referenced half too', () => {
     sanitizeTools([
       tool({
         anyOf: [
-          { type: 'object', properties: { a: { type: 'string' } }, required: ['a', 'id'] },
+          { type: SchemaType.Object, properties: { a: { type: SchemaType.String } }, required: ['a', 'id'] },
           { $ref: '#/definitions/Other' },
         ],
         definitions: {
-          Other: { type: 'object', properties: { b: {} }, required: ['id'] },
+          Other: { type: SchemaType.Object, properties: { b: {} }, required: ['id'] },
         },
       }),
     ]),
   );
 
-  expect(out.properties).toEqual({ a: { type: 'string' }, b: {} });
+  expect(out.properties).toEqual({ a: { type: SchemaType.String }, b: {} });
   // `id` is asked for by both branches — but neither branch declares it as a property, so
   // `pruneRequired` takes it rather than leaving a name no caller can supply.
   expect(out.required).toBeUndefined();
@@ -313,13 +322,13 @@ test('a root allOf of references keeps the arguments its branches name', () => {
       tool({
         allOf: [{ $ref: '#/definitions/Args' }],
         definitions: {
-          Args: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] },
+          Args: { type: SchemaType.Object, properties: { q: { type: SchemaType.String } }, required: ['q'] },
         },
       }),
     ]),
   );
 
-  expect(out.properties).toEqual({ q: { type: 'string' } });
+  expect(out.properties).toEqual({ q: { type: SchemaType.String } });
   expect(out.required).toEqual(['q']);
 });
 
@@ -332,13 +341,13 @@ test('a root union branch that resolves nowhere never claims a required name', (
     const out = paramsOf(
       sanitizeTools([
         tool({
-          anyOf: [{ type: 'object', properties: { a: { type: 'string' } }, required: ['a'] }, branch],
+          anyOf: [{ type: SchemaType.Object, properties: { a: { type: SchemaType.String } }, required: ['a'] }, branch],
           definitions: { Loop: { $ref: '#/definitions/Loop' } },
         }),
       ]),
     );
 
-    expect(out.properties).toEqual({ a: { type: 'string' } });
+    expect(out.properties).toEqual({ a: { type: SchemaType.String } });
     expect(out.required).toBeUndefined();
   }
 });
@@ -349,11 +358,11 @@ test('definitions nothing points at any more do not go out', () => {
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         oneOf: [{ $ref: '#/$defs/ByPath' }, { $ref: '#/$defs/ByQuery' }],
         $defs: {
-          ByPath: { type: 'object', properties: { path: { type: 'string' } } },
-          ByQuery: { type: 'object', properties: { query: { type: 'string' } } },
+          ByPath: { type: SchemaType.Object, properties: { path: { type: SchemaType.String } } },
+          ByQuery: { type: SchemaType.Object, properties: { query: { type: SchemaType.String } } },
         },
       }),
     ]),
@@ -367,12 +376,12 @@ test('a definition a surviving reference reaches is kept, along with what it nam
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
+        type: SchemaType.Object,
         properties: { where: { $ref: '#/definitions/Filters' } },
         definitions: {
-          Filters: { type: 'object', properties: { by: { $ref: '#/definitions/Field' } } },
-          Field: { type: 'string' },
-          Unused: { type: 'object', properties: { x: { type: 'string' } } },
+          Filters: { type: SchemaType.Object, properties: { by: { $ref: '#/definitions/Field' } } },
+          Field: { type: SchemaType.String },
+          Unused: { type: SchemaType.Object, properties: { x: { type: SchemaType.String } } },
         },
       }),
     ]),
@@ -386,8 +395,8 @@ test('a definition that only refers to itself goes with the rest', () => {
   const out = paramsOf(
     sanitizeTools([
       tool({
-        type: 'object',
-        properties: { a: { type: 'string' } },
+        type: SchemaType.Object,
+        properties: { a: { type: SchemaType.String } },
         $defs: { Loop: { $ref: '#/$defs/Loop' } },
       }),
     ]),
@@ -399,8 +408,8 @@ test('a definition that only refers to itself goes with the rest', () => {
 test('the same tool object is walked once, however often it is sent', () => {
   const declared = [
     tool({
-      type: 'object',
-      properties: { q: { type: 'string', pattern: '^a', format: 'email' } },
+      type: SchemaType.Object,
+      properties: { q: { type: SchemaType.String, pattern: '^a', format: 'email' } },
     }),
   ];
   const sanitized = sanitizeTools(declared);
@@ -415,8 +424,8 @@ test('the same tool object is walked once, however often it is sent', () => {
 
 test('neither pass writes back into the tool it was given', () => {
   const parameters = {
-    type: 'object',
-    properties: { q: { type: 'string', pattern: '^a' } },
+    type: SchemaType.Object,
+    properties: { q: { type: SchemaType.String, pattern: '^a' } },
   };
   const declared = [tool(parameters)];
   const before = JSON.stringify(parameters);
@@ -426,10 +435,10 @@ test('neither pass writes back into the tool it was given', () => {
 
 test("a bare schema is sanitised and relaxed exactly as a tool's parameters are", () => {
   const schema = {
-    type: 'object',
+    type: SchemaType.Object,
     properties: {
-      when: { type: ['string', 'null'], format: 'date-time', pattern: '^\\d{4}' },
-      format: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      when: { type: [SchemaType.String, SchemaType.Null], format: 'date-time', pattern: '^\\d{4}' },
+      format: { anyOf: [{ type: SchemaType.String }, { type: SchemaType.Null }] },
     },
     required: ['when', 'gone'],
   };
@@ -437,10 +446,10 @@ test("a bare schema is sanitised and relaxed exactly as a tool's parameters are"
   const sanitized = sanitizeSchema(schema);
   expect(sanitized).toEqual(paramsOf(sanitizeTools([tool(schema)])));
   expect(sanitized).toEqual({
-    type: 'object',
+    type: SchemaType.Object,
     properties: {
-      when: { type: 'string', nullable: true, format: 'date-time', pattern: '^\\d{4}' },
-      format: { nullable: true, type: 'string' },
+      when: { type: SchemaType.String, nullable: true, format: 'date-time', pattern: '^\\d{4}' },
+      format: { nullable: true, type: SchemaType.String },
     },
     required: ['when'],
   });
@@ -449,19 +458,19 @@ test("a bare schema is sanitised and relaxed exactly as a tool's parameters are"
   expect(relaxed).toEqual(paramsOf(relaxTools(sanitizeTools([tool(schema)]))));
   // The keywords go; the argument that happens to be called `format` stays.
   expect(relaxed.properties).toEqual({
-    when: { type: 'string', nullable: true },
-    format: { nullable: true, type: 'string' },
+    when: { type: SchemaType.String, nullable: true },
+    format: { nullable: true, type: SchemaType.String },
   });
   expect(JSON.stringify(schema)).toBe(before);
 });
 
 test('what is not a schema at all comes back as an object taking nothing', () => {
-  expect(sanitizeSchema(undefined)).toEqual({ type: 'object', properties: {} });
-  expect(sanitizeSchema('object')).toEqual({ type: 'object', properties: {} });
-  expect(relaxSchema(null)).toEqual({ type: 'object', properties: {} });
+  expect(sanitizeSchema(undefined)).toEqual({ type: SchemaType.Object, properties: {} });
+  expect(sanitizeSchema(SchemaType.Object)).toEqual({ type: SchemaType.Object, properties: {} });
+  expect(relaxSchema(null)).toEqual({ type: SchemaType.Object, properties: {} });
 });
 
 test('a bare schema is not remembered, so two calls give two objects', () => {
-  const schema = { type: 'object', properties: { q: { type: 'string' } } };
+  const schema = { type: SchemaType.Object, properties: { q: { type: SchemaType.String } } };
   expect(sanitizeSchema(schema)).not.toBe(sanitizeSchema(schema));
 });

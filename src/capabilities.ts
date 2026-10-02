@@ -340,6 +340,12 @@ const REFUSED_VALUE = /unsupported value|invalid value|supported values/i;
  */
 const rejectsEffort = (detail: string) => /reasoning_effort/i.test(detail) && !REFUSED_VALUE.test(detail);
 
+/** The setting that asks for no `reasoning_effort` field at all. Ours, and never sent. */
+export const EFFORT_OFF = 'off' as const;
+
+/** The lowest effort the wire has a word for, which is what a side task asks for. */
+export const EFFORT_NONE = 'none' as const;
+
 /**
  * The efforts this package can place, cheapest first. A substitution only ever walks *up* it.
  *
@@ -351,7 +357,7 @@ const rejectsEffort = (detail: string) => /reasoning_effort/i.test(detail) && !R
  * refused `xhigh` to `high` would quietly answer a question with less deliberation than whoever
  * typed it asked for, where stepping up from `none` to `minimal` only costs tokens and says so.
  */
-export const EFFORT_LADDER = ['none', 'minimal', 'low', 'medium', 'high'] as const;
+export const EFFORT_LADDER = [EFFORT_NONE, 'minimal', 'low', 'medium', 'high'] as const;
 
 const rankOf = (effort: string): number => (EFFORT_LADDER as readonly string[]).indexOf(effort.toLowerCase());
 
@@ -438,7 +444,7 @@ function nextEffort(refused: ModelCapabilities, asked: string): string | undefin
  * builders' signal to send no field.
  */
 export function effortFor(refused: ModelCapabilities | undefined, asked: string | undefined) {
-  if (!asked || asked === 'off') {
+  if (!asked || asked === EFFORT_OFF) {
     return '';
   }
   if (!refused) {
@@ -583,8 +589,8 @@ const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(deta
  * answered at its top-level field, which is the only level a body builder leaves things out at.
  */
 function unknownFields(detail: string): string[] {
-  const listed = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i)?.[1];
-  const quoted = detail.match(/unknown parameter:\s*(['"`])([^'"`]+)\1/i)?.[2];
+  const [, listed] = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i) ?? [];
+  const [, , quoted] = detail.match(/unknown parameter:\s*(['"`])([^'"`]+)\1/i) ?? [];
   const names = listed ? listed.split(',') : quoted ? [quoted] : [];
   return names
     .map(

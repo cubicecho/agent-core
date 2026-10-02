@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HookEvent } from '../src/hook-events.ts';
 import {
   assembleContext,
   configureHooks,
@@ -17,6 +18,7 @@ import {
   untrusted,
   withContext,
 } from '../src/hooks.ts';
+import { FUNCTION_TOOL, PartType, Role } from '../src/wire.ts';
 
 /**
  * The host's side of hooks. Running them is a runner's job and is stubbed here; what is tested is
@@ -24,21 +26,21 @@ import {
  */
 
 const transcript = [
-  { role: 'user', content: 'what is in /tmp?' },
+  { role: Role.User, content: 'what is in /tmp?' },
   {
-    role: 'assistant',
+    role: Role.Assistant,
     content: '',
-    tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fs__ls', arguments: '{}' } }],
+    tool_calls: [{ id: 'c1', type: FUNCTION_TOOL, function: { name: 'fs__ls', arguments: '{}' } }],
   },
-  { role: 'tool', tool_call_id: 'c1', content: 'a.txt\nb.txt' },
-  { role: 'assistant', content: [{ type: 'text', text: 'Two files.' }] },
+  { role: Role.Tool, tool_call_id: 'c1', content: 'a.txt\nb.txt' },
+  { role: Role.Assistant, content: [{ type: PartType.Text, text: 'Two files.' }] },
 ];
 
 const outcome = (patch: Partial<HookOutcome>): HookOutcome => ({
   serverId: 'mem',
   label: 'Memory',
   hookId: 'recall',
-  event: 'beforeTurn',
+  event: HookEvent.BeforeTurn,
   ok: true,
   ms: 1,
   inject: false,
@@ -49,8 +51,8 @@ const outcome = (patch: Partial<HookOutcome>): HookOutcome => ({
 describe('turnMessages', () => {
   it('keeps what was said, from strings or parts, and leaves the tool traffic out', () => {
     expect(turnMessages('s1', transcript, 0).map(({ speaker, text }) => ({ speaker, text }))).toEqual([
-      { speaker: 'user', text: 'what is in /tmp?' },
-      { speaker: 'assistant', text: 'Two files.' },
+      { speaker: Role.User, text: 'what is in /tmp?' },
+      { speaker: Role.Assistant, text: 'Two files.' },
     ]);
   });
 
@@ -61,7 +63,7 @@ describe('turnMessages', () => {
 
     // The same message sent again is the same memory; an answer retried into its place is not.
     expect(turnMessages('s1', transcript, 0)[1].uuid).toBe(answer.uuid);
-    const retried = [...transcript.slice(0, 3), { role: 'assistant', content: 'Three.' }];
+    const retried = [...transcript.slice(0, 3), { role: Role.Assistant, content: 'Three.' }];
     expect(turnMessages('s1', retried, 3)[0].uuid).not.toBe(answer.uuid);
     expect(turnMessages('s2', transcript, 0)[0].uuid).not.toBe(question.uuid);
   });
@@ -96,10 +98,10 @@ describe('turnIndex', () => {
 
 describe('withContext', () => {
   const history: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'system', content: 'be brief' },
-    { role: 'user', content: 'earlier' },
-    { role: 'assistant', content: 'ok' },
-    { role: 'user', content: 'now' },
+    { role: Role.System, content: 'be brief' },
+    { role: Role.User, content: 'earlier' },
+    { role: Role.Assistant, content: 'ok' },
+    { role: Role.User, content: 'now' },
   ];
 
   it("puts the context ahead of this turn's question, and only on the request", () => {
@@ -126,7 +128,7 @@ describe('withContext', () => {
   it('adds a part to a question that is already a list of parts', () => {
     const parts = [
       ...history.slice(0, 3),
-      { role: 'user', content: [{ type: 'text', text: 'now' }] },
+      { role: Role.User, content: [{ type: PartType.Text, text: 'now' }] },
     ] as OpenAI.ChatCompletionMessageParam[];
     const content = withContext(parts, 3, 'ctx')[3].content as { text: string }[];
     expect(content).toHaveLength(2);
@@ -175,7 +177,7 @@ describe('assembleContext', () => {
     const { context, notes } = assembleContext([outcome({ label: 'A "b" <c>', inject: true, text: '  likes tea  ' })]);
     expect(context).toBe('<context source="A &quot;b&quot; &lt;c>">\nlikes tea\n</context>');
     expect(notes).toEqual([
-      { event: 'beforeTurn', source: 'A "b" <c>', hookId: 'recall', tokens: 3, text: 'likes tea' },
+      { event: HookEvent.BeforeTurn, source: 'A "b" <c>', hookId: 'recall', tokens: 3, text: 'likes tea' },
     ]);
   });
 
@@ -204,7 +206,7 @@ describe('assembleContext', () => {
       assembleContext([
         outcome({ text: 'stored' }),
         outcome({ inject: true, text: '   ' }),
-        outcome({ event: 'afterTurn', inject: true, text: 'too late' }),
+        outcome({ event: HookEvent.AfterTurn, inject: true, text: 'too late' }),
       ]),
     ).toEqual({ context: '', notes: [] });
   });
@@ -228,14 +230,14 @@ describe('the budget', () => {
     });
     expect(spent(assembleContext([hungry('a'), hungry('b')]))).toBe(500);
     const run: HookRunner = async () => [hungry('a')];
-    expect(spent(await gather(run, ['beforeTurn'], { session: { id: 's1' } }))).toBe(500);
+    expect(spent(await gather(run, [HookEvent.BeforeTurn], { session: { id: 's1' } }))).toBe(500);
   });
 
   it('gives way to a budget passed for one call', async () => {
     configureHooks({ contextTokens: 500 });
     expect(spent(assembleContext([hungry('a')], 3000))).toBe(3000);
     const run: HookRunner = async () => [hungry('a')];
-    const gathered = await gather(run, ['beforeTurn'], { session: { id: 's1' } }, { maxTokens: 50 });
+    const gathered = await gather(run, [HookEvent.BeforeTurn], { session: { id: 's1' } }, { maxTokens: 50 });
     expect(spent(gathered)).toBe(50);
   });
 
@@ -257,7 +259,7 @@ describe('the budget', () => {
 describe('the preface', () => {
   afterEach(resetHooks);
 
-  const history: OpenAI.ChatCompletionMessageParam[] = [{ role: 'user', content: 'now' }];
+  const history: OpenAI.ChatCompletionMessageParam[] = [{ role: Role.User, content: 'now' }];
 
   it('follows configureHooks for every call that does not give its own', () => {
     expect(configureHooks({ preface: 'From min-agent:' })).toEqual({
@@ -293,16 +295,16 @@ describe('the preface', () => {
 describe('gather', () => {
   it('runs every event, builds context in event order, and tells onNote', async () => {
     const run = vi.fn<HookRunner>(async (event) =>
-      event === 'beforeTurn'
+      event === HookEvent.BeforeTurn
         ? [outcome({ inject: true, text: 'likes tea' })]
-        : [outcome({ event: 'sessionStart', hookId: 'hello', ok: false, error: 'timed out' })],
+        : [outcome({ event: HookEvent.SessionStart, hookId: 'hello', ok: false, error: 'timed out' })],
     );
     const signal = new AbortController().signal;
     const heard: unknown[] = [];
 
     const gathered = await gather(
       run,
-      ['sessionStart', 'beforeTurn'],
+      [HookEvent.SessionStart, HookEvent.BeforeTurn],
       { session: { id: 's1' } },
       {
         signal,
@@ -318,14 +320,14 @@ describe('gather', () => {
 
   it("costs a rejecting runner its event's context and nothing else", async () => {
     const run: HookRunner = async (event) => {
-      if (event === 'sessionStart') {
+      if (event === HookEvent.SessionStart) {
         throw new Error('pool is down');
       }
       return [outcome({ inject: true, text: 'likes tea' })];
     };
-    const gathered = await gather(run, ['sessionStart', 'beforeTurn'], { session: { id: 's1' } });
+    const gathered = await gather(run, [HookEvent.SessionStart, HookEvent.BeforeTurn], { session: { id: 's1' } });
     expect(gathered.notes[0]).toEqual({
-      event: 'sessionStart',
+      event: HookEvent.SessionStart,
       source: '',
       hookId: '',
       error: 'pool is down',
@@ -335,7 +337,7 @@ describe('gather', () => {
 
   it('shares the budget it is given', async () => {
     const run: HookRunner = async () => [outcome({ inject: true, text: 'x'.repeat(400) })];
-    const { notes } = await gather(run, ['beforeTurn'], { session: { id: 's1' } }, { maxTokens: 10 });
+    const { notes } = await gather(run, [HookEvent.BeforeTurn], { session: { id: 's1' } }, { maxTokens: 10 });
     expect(notes[0].tokens).toBe(10);
   });
 });
@@ -343,15 +345,15 @@ describe('gather', () => {
 describe('notify', () => {
   it('notes only the failures, drops anything returned, and passes no signal', async () => {
     const run = vi.fn<HookRunner>(async () => [
-      outcome({ event: 'afterTurn', hookId: 'remember' }),
-      outcome({ event: 'afterTurn', hookId: 'audit', ok: false, error: 'boom' }),
-      outcome({ event: 'afterTurn', hookId: 'odd', inject: true, text: 'ignored' }),
+      outcome({ event: HookEvent.AfterTurn, hookId: 'remember' }),
+      outcome({ event: HookEvent.AfterTurn, hookId: 'audit', ok: false, error: 'boom' }),
+      outcome({ event: HookEvent.AfterTurn, hookId: 'odd', inject: true, text: 'ignored' }),
     ]);
     const heard: unknown[] = [];
 
-    const notes = await notify(run, 'afterTurn', { session: { id: 's1' } }, (note) => heard.push(note));
+    const notes = await notify(run, HookEvent.AfterTurn, { session: { id: 's1' } }, (note) => heard.push(note));
 
-    expect(notes).toEqual([{ event: 'afterTurn', source: 'Memory', hookId: 'audit', error: 'boom' }]);
+    expect(notes).toEqual([{ event: HookEvent.AfterTurn, source: 'Memory', hookId: 'audit', error: 'boom' }]);
     expect(heard).toEqual(notes);
     expect(run.mock.calls[0][2].signal).toBeUndefined();
   });
@@ -360,8 +362,8 @@ describe('notify', () => {
     const run: HookRunner = () => {
       throw new Error('sync');
     };
-    await expect(notify(run, 'sessionDelete', { session: { id: 's1' } })).resolves.toEqual([
-      { event: 'sessionDelete', source: '', hookId: '', error: 'sync' },
+    await expect(notify(run, HookEvent.SessionDelete, { session: { id: 's1' } })).resolves.toEqual([
+      { event: HookEvent.SessionDelete, source: '', hookId: '', error: 'sync' },
     ]);
   });
 });
@@ -369,38 +371,40 @@ describe('notify', () => {
 describe('consult', () => {
   it('notes failures and vetoes, and reads a veto only off a hook that ran', async () => {
     const run = vi.fn<HookRunner>(async () => [
-      outcome({ event: 'beforeCompact', hookId: 'file' }),
-      outcome({ event: 'beforeCompact', hookId: 'keep', label: 'Guard', veto: true }),
-      outcome({ event: 'beforeCompact', hookId: 'down', ok: false, veto: true, error: 'boom' }),
+      outcome({ event: HookEvent.BeforeCompact, hookId: 'file' }),
+      outcome({ event: HookEvent.BeforeCompact, hookId: 'keep', label: 'Guard', veto: true }),
+      outcome({ event: HookEvent.BeforeCompact, hookId: 'down', ok: false, veto: true, error: 'boom' }),
     ]);
     const heard: unknown[] = [];
 
-    const said = await consult(run, 'beforeCompact', { session: { id: 's1' } }, (note) => heard.push(note));
+    const said = await consult(run, HookEvent.BeforeCompact, { session: { id: 's1' } }, (note) => heard.push(note));
 
     expect(said).toEqual({
       vetoed: true,
       notes: [
-        { event: 'beforeCompact', source: 'Guard', hookId: 'keep', veto: true },
-        { event: 'beforeCompact', source: 'Memory', hookId: 'down', error: 'boom' },
+        { event: HookEvent.BeforeCompact, source: 'Guard', hookId: 'keep', veto: true },
+        { event: HookEvent.BeforeCompact, source: 'Memory', hookId: 'down', error: 'boom' },
       ],
     });
     expect(heard).toEqual(said.notes);
   });
 
   it('is no veto when every hook that carried one failed, or the runner threw', async () => {
-    const failed: HookRunner = async () => [outcome({ event: 'beforeCompact', ok: false, veto: true, error: 'boom' })];
-    expect((await consult(failed, 'beforeCompact', { session: { id: 's1' } })).vetoed).toBe(false);
+    const failed: HookRunner = async () => [
+      outcome({ event: HookEvent.BeforeCompact, ok: false, veto: true, error: 'boom' }),
+    ];
+    expect((await consult(failed, HookEvent.BeforeCompact, { session: { id: 's1' } })).vetoed).toBe(false);
     const threw: HookRunner = () => {
       throw new Error('sync');
     };
-    await expect(consult(threw, 'beforeCompact', { session: { id: 's1' } })).resolves.toEqual({
+    await expect(consult(threw, HookEvent.BeforeCompact, { session: { id: 's1' } })).resolves.toEqual({
       vetoed: false,
-      notes: [{ event: 'beforeCompact', source: '', hookId: '', error: 'sync' }],
+      notes: [{ event: HookEvent.BeforeCompact, source: '', hookId: '', error: 'sync' }],
     });
   });
 
   it('is ignored by notify', async () => {
-    const run: HookRunner = async () => [outcome({ event: 'beforeCompact', veto: true })];
-    expect(await notify(run, 'beforeCompact', { session: { id: 's1' } })).toEqual([]);
+    const run: HookRunner = async () => [outcome({ event: HookEvent.BeforeCompact, veto: true })];
+    expect(await notify(run, HookEvent.BeforeCompact, { session: { id: 's1' } })).toEqual([]);
   });
 });

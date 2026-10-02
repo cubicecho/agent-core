@@ -1,9 +1,11 @@
 import type OpenAI from 'openai';
 import type { Endpoint } from './config.ts';
+import { HookEvent } from './hook-events.ts';
 import { consult, type HookContext, type HookRunner, notify, type OnNote, textOf, turnMessages } from './hooks.ts';
 import { ask, type SideTaskOptions } from './side-task.ts';
 import { messageTokens } from './tokens.ts';
 import { holdsDefinitions } from './tool-loading.ts';
+import { FUNCTION_TOOL, Role } from './wire.ts';
 
 /**
  * Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded
@@ -30,6 +32,12 @@ const SUMMARY_TOKENS = 1024;
 /** How much of any one message the summariser is shown. A pasted file is not worth it whole. */
 const SUMMARY_SLICE = 4000;
 
+/** The fewest messages worth folding: a summary of one costs a round trip and saves nothing. */
+const FEWEST_FOLDED = 2;
+
+/** The locale a cleared result's length is written in, so the stub reads the same on every host. */
+const COUNT_LOCALE = 'en-US';
+
 /**
  * The summariser's instruction when the caller gives none.
  *
@@ -53,17 +61,18 @@ const messageText = (message: Message): string => {
   const calls =
     'tool_calls' in message && message.tool_calls
       ? message.tool_calls
-          .map((call) => (call.type === 'function' ? `${call.function.name}(${call.function.arguments})` : ''))
+          .map((call) => (call.type === FUNCTION_TOOL ? `${call.function.name}(${call.function.arguments})` : ''))
           .join(' ')
       : '';
   return `${textOf(message.content)} ${calls}`.trim();
 };
 
-const isSummary = (message: Message) => message.role === 'system' && textOf(message.content).startsWith(SUMMARY_LEAD);
+const isSummary = (message: Message) =>
+  message.role === Role.System && textOf(message.content).startsWith(SUMMARY_LEAD);
 
 /** The summary as it sits in a transcript, which is the one shape `isSummary` recognises again. */
 const summaryMessage = (summary: string): Message => ({
-  role: 'system',
+  role: Role.System,
   content: `${SUMMARY_LEAD}${summary.trim()}`,
 });
 
@@ -74,7 +83,7 @@ const summaryMessage = (summary: string): Message => ({
 const systemHead = (messages: Message[]): { from: number; previous?: string } => {
   let from = 0;
   let previous: string | undefined;
-  while (from < messages.length && messages[from].role === 'system') {
+  while (from < messages.length && messages[from].role === Role.System) {
     if (isSummary(messages[from])) {
       previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
     }
@@ -120,7 +129,7 @@ export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars =
   let out: Message[] | undefined;
   for (let at = messages.length - 1; at >= 0; at--) {
     const message = messages[at];
-    if (message.role !== 'tool') {
+    if (message.role !== Role.Tool) {
       continue;
     }
     if (kept++ < keepLast) {
@@ -138,7 +147,7 @@ export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars =
     out ??= [...messages];
     out[at] = {
       ...message,
-      content: `[result cleared, ${text.length.toLocaleString('en-US')} chars]`,
+      content: `[result cleared, ${text.length.toLocaleString(COUNT_LOCALE)} chars]`,
     };
   }
   return out ?? messages;
@@ -286,7 +295,7 @@ export function planCompaction(
     // Forward from the head, so the first cut that reaches the target is the one that folds least.
     let folded = 0;
     for (let at = from; at < messages.length; at++) {
-      if (messages[at].role === 'user') {
+      if (messages[at].role === Role.User) {
         cut = at;
         after = cost - folded + summaryTokens;
         if (after <= limit * target) {
@@ -305,12 +314,12 @@ export function planCompaction(
       }
       cut = at;
     }
-    while (cut < messages.length && messages[cut].role !== 'user') {
+    while (cut < messages.length && messages[cut].role !== Role.User) {
       cut++;
     }
   }
 
-  if (cut >= messages.length || cut - from < 2) {
+  if (cut >= messages.length || cut - from < FEWEST_FOLDED) {
     return undefined;
   }
   return {
@@ -425,7 +434,7 @@ export async function runCompaction(
   };
   let summary: string;
   if (hooks && context && hooks.honourVeto && !forced) {
-    const { vetoed } = await consult(hooks.run, 'beforeCompact', context, hooks.onNote);
+    const { vetoed } = await consult(hooks.run, HookEvent.BeforeCompact, context, hooks.onNote);
     if (vetoed) {
       return undefined;
     }
@@ -433,7 +442,7 @@ export async function runCompaction(
   } else {
     [summary] = await Promise.all([
       summarise(summaryInput(plan)),
-      hooks && context && notify(hooks.run, 'beforeCompact', context, hooks.onNote),
+      hooks && context && notify(hooks.run, HookEvent.BeforeCompact, context, hooks.onNote),
     ]);
   }
   if (!summary.trim()) {

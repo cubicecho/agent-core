@@ -15,6 +15,8 @@ export {
   type AgentLoopOptions,
   type AgentLoopRequest,
   type AgentLoopResult,
+  PRESELECT_APPEND,
+  PRESELECT_EXCLUSIVE,
   runAgentLoop,
   type StepWindow,
 } from './agent-loop.ts';
@@ -23,6 +25,8 @@ export {
   type Capabilities,
   capabilitiesFor,
   EFFORT_LADDER,
+  EFFORT_NONE,
+  EFFORT_OFF,
   effortFor,
   expireCapabilities,
   type ModelCapabilities,
@@ -68,12 +72,13 @@ export {
   summariser,
   summaryInput,
 } from './compaction.ts';
-export type {
-  AgentConfig,
-  Endpoint,
-  ModelParams,
-  RetryPolicy,
-  ToolPolicy,
+export {
+  type AgentConfig,
+  type Endpoint,
+  type ModelParams,
+  type RetryPolicy,
+  ToolDiscovery,
+  type ToolPolicy,
 } from './config.ts';
 export {
   type ContinueTurnOptions,
@@ -97,16 +102,17 @@ export {
   history,
   type RunEvent,
   type RunEventInput,
-  type RunEventKind,
+  RunEventKind,
   type RunMetrics,
   type RunMetricsOptions,
+  RunOutcome,
   type RunUsage,
   resetEvents,
   runMetrics,
   type TurnReport,
   watch,
 } from './events.ts';
-export { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from './hook-events.ts';
+export { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from './hook-events.ts';
 export {
   assembleContext,
   configureHooks,
@@ -213,6 +219,8 @@ export {
   type ParseSpecOptions,
   type PromptPart,
   parseSpec,
+  REF_FILE,
+  REF_URL,
   RESOLVED_DEFAULTS,
   type ResolvedAgent,
   type ResolvedTask,
@@ -225,6 +233,7 @@ export {
   type ToolsSpec,
 } from './spec.ts';
 export {
+  CacheBreakReason,
   type Produced,
   type StreamTurnOptions,
   streamTurn,
@@ -237,6 +246,8 @@ export {
   type Fence,
   FenceSplitter,
   type FenceSplitterOptions,
+  SPLIT_OUTPUT,
+  SPLIT_REASONING,
   type Split,
   stripThinking,
   THINK_FENCE,
@@ -256,6 +267,8 @@ export {
   toolsChars,
 } from './tokens.ts';
 export {
+  ARGUMENTS_MALFORMED,
+  ARGUMENTS_TRUNCATED,
   parseToolArguments,
   recoverToolCalls,
   ToolArgumentsError,
@@ -287,3 +300,4 @@ export {
   shownCall,
   type ToolOrder,
 } from './tool-loading.ts';
+export { FinishReason, FUNCTION_TOOL, JSON_SCHEMA_FORMAT, PartType, Role, SchemaType } from './wire.ts';

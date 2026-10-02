@@ -1,5 +1,7 @@
 import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ToolDiscovery } from '../src/config.ts';
+import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -28,7 +30,7 @@ const stream = (...list: unknown[]) => ({
 const says = (content: string) =>
   stream(
     { choices: [{ delta: { content } }] },
-    { choices: [{ delta: {}, finish_reason: 'stop' }], usage: null },
+    { choices: [{ delta: {}, finish_reason: FinishReason.Stop }], usage: null },
     { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
   );
 /** A turn that asks for these calls, thinking first where told to, and reports what it cost. */
@@ -45,7 +47,7 @@ const calls = (list: [name: string, args: string][], reasoning = '') =>
               function: { name, arguments: args },
             })),
           },
-          finish_reason: 'tool_calls',
+          finish_reason: FinishReason.ToolCalls,
         },
       ],
     },
@@ -53,8 +55,8 @@ const calls = (list: [name: string, args: string][], reasoning = '') =>
   );
 
 const tool = (name: string): OpenAI.ChatCompletionTool => ({
-  type: 'function',
-  function: { name, description: name, parameters: { type: 'object', properties: {} } },
+  type: FUNCTION_TOOL,
+  function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
 });
 
 const config = {
@@ -65,11 +67,11 @@ const config = {
   temperature: 0.2,
   maxToolIterations: 4,
 };
-const question: Message[] = [{ role: 'user', content: 'hi' }];
+const question: Message[] = [{ role: Role.User, content: 'hi' }];
 /** A transcript as role and content, with a tool result's call id in front. */
 const outline = (messages: Message[]) =>
   messages.map((message) =>
-    message.role === 'tool'
+    message.role === Role.Tool
       ? `tool ${message.tool_call_id}: ${String(message.content)}`
       : `${message.role}: ${String(message.content)}`,
   );
@@ -163,7 +165,7 @@ describe('onMessage', () => {
     );
     const full = new Error('disk full');
     const onMessage = vi.fn(async (message: Message) => {
-      if (message.role === 'tool') {
+      if (message.role === Role.Tool) {
         throw full;
       }
     });
@@ -225,7 +227,7 @@ describe('a run that throws', () => {
   });
 
   it('wraps what a request threw, keeping its message and the steps before it', async () => {
-    const refused = Object.assign(new Error('401 no such key'), { status: 401 });
+    const refused = Object.assign(new Error('401 no such key'), { status: HttpStatus.Unauthorized });
     create.mockReturnValueOnce(calls([['a', '{}']])).mockRejectedValueOnce(refused);
     const error = await thrown(
       runAgentLoop({
@@ -265,7 +267,7 @@ describe('a run that throws', () => {
     expect(overflow.cause).toBeInstanceOf(ContextOverflow);
     expect(overflow.message).toBe((overflow.cause as Error).message);
     expect(failedRun(error)).toBe(error);
-    expect(overflow.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(overflow.messages.map((message) => message.role)).toEqual([Role.User, Role.Assistant, Role.Tool]);
     expect(create).toHaveBeenCalledTimes(1);
   });
 
@@ -274,10 +276,10 @@ describe('a run that throws', () => {
     create
       .mockReturnValueOnce(calls([[LOAD_TOOLS, '{"names":["s__read"]}']]))
       .mockReturnValueOnce(calls([['s__read', '{}']]))
-      .mockRejectedValueOnce(Object.assign(new Error('401 no such key'), { status: 401 }));
+      .mockRejectedValueOnce(Object.assign(new Error('401 no such key'), { status: HttpStatus.Unauthorized }));
     const error = await thrown(
       runAgentLoop({
-        config: { ...config, toolDiscovery: 'ondemand' as const },
+        config: { ...config, toolDiscovery: ToolDiscovery.OnDemand },
         messages: question,
         tools: [tool('s__read')],
         catalog,
@@ -293,7 +295,7 @@ describe('a run that throws', () => {
   });
 
   it('hands back the transcript it was given when it fails before the first reply', async () => {
-    const down = Object.assign(new Error('401 no such key'), { status: 401 });
+    const down = Object.assign(new Error('401 no such key'), { status: HttpStatus.Unauthorized });
     create.mockRejectedValueOnce(down);
     const error = await thrown(runAgentLoop({ config, messages: question, dispatch: async () => '' }));
     const run = failedRun(error);
@@ -467,22 +469,22 @@ describe('a stop while the tools run', () => {
     const kept = failedRun(error)?.messages ?? [];
     await runAgentLoop({
       config,
-      messages: [...kept, { role: 'user', content: 'go on' }],
+      messages: [...kept, { role: Role.User, content: 'go on' }],
       tools: [tool('a'), tool('b')],
       dispatch: async () => '',
     });
     const replayed = (create.mock.calls[1][0] as Body).messages;
     const asked = replayed.flatMap((message) =>
-      message.role === 'assistant' ? (message.tool_calls ?? []).map((call) => call.id) : [],
+      message.role === Role.Assistant ? (message.tool_calls ?? []).map((call) => call.id) : [],
     );
-    const answered = replayed.flatMap((message) => (message.role === 'tool' ? [message.tool_call_id] : []));
+    const answered = replayed.flatMap((message) => (message.role === Role.Tool ? [message.tool_call_id] : []));
     expect(answered).toEqual(asked);
   });
 });
 
 describe('a proxied run', () => {
   const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
-  const proxied = { ...config, toolDiscovery: 'proxy' as const };
+  const proxied = { ...config, toolDiscovery: ToolDiscovery.Proxy };
 
   it('tells onMessage of the load it writes for a preselection, before any request', async () => {
     create.mockReturnValueOnce(says('done'));
@@ -499,7 +501,7 @@ describe('a proxied run', () => {
       },
     });
     expect(heard.map(({ message }) => message)).toEqual(result.messages.slice(1));
-    expect(heard.map(({ message }) => message.role)).toEqual(['assistant', 'tool', 'assistant']);
+    expect(heard.map(({ message }) => message.role)).toEqual([Role.Assistant, Role.Tool, Role.Assistant]);
     // The pair no model wrote: step zero's, with no turn, and heard before the request went out.
     expect(heard.slice(0, 2).map(({ step, turn, sent }) => ({ step, turn, sent }))).toEqual([
       { step: 0, turn: undefined, sent: 0 },
@@ -526,7 +528,7 @@ describe('a proxied run', () => {
     expect(error).toBeInstanceOf(AgentLoopError);
     const failure = error as InstanceType<typeof AgentLoopError>;
     expect(failure.cause).toBe(refused);
-    expect(failure.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(failure.messages.map((message) => message.role)).toEqual([Role.User, Role.Assistant, Role.Tool]);
     expect(failure.toolCalls).toEqual([{ id: 'preselect-1', name: LOAD_TOOLS, ok: true }]);
     // As a result says it: proxied, the definitions are in the history and nothing is carried.
     expect(failure.loaded).toEqual([]);

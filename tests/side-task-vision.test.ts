@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JSON_SCHEMA_FORMAT, PartType, Role, SchemaType } from '../src/wire.ts';
 
 const create = vi.fn();
 vi.mock('../src/client.ts', async (importOriginal) => ({
@@ -16,8 +17,8 @@ const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknow
 const userMessage = (nth: number) => (body(nth).messages as OpenAI.ChatCompletionMessageParam[])[1];
 
 const page: OpenAI.ChatCompletionContentPart[] = [
-  { type: 'text', text: 'Transcribe this page.' },
-  { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+  { type: PartType.Text, text: 'Transcribe this page.' },
+  { type: PartType.ImageUrl, image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
 ];
 
 afterEach(() => {
@@ -33,20 +34,20 @@ describe('a side task shown an image', () => {
     expect(reply).toBe('INVOICE 41');
     // Unchanged, not re-wrapped: nothing in side-task reads the parts, and a part it rebuilt
     // would be a part it could get wrong for a server whose spelling differs.
-    expect(userMessage(0)).toEqual({ role: 'user', content: page });
+    expect(userMessage(0)).toEqual({ role: Role.User, content: page });
   });
 
   it('still sends a string as a string', async () => {
     create.mockResolvedValue(answer('ok'));
     await ask(config, 'm', 's', 'plain text');
-    expect(userMessage(0)).toEqual({ role: 'user', content: 'plain text' });
+    expect(userMessage(0)).toEqual({ role: Role.User, content: 'plain text' });
   });
 
   it('carries the parts through askJson alongside the schema', async () => {
     create.mockResolvedValue(answer('{"text": "INVOICE 41"}'));
     const schema = {
-      type: 'object',
-      properties: { text: { type: 'string' } },
+      type: SchemaType.Object,
+      properties: { text: { type: SchemaType.String } },
       required: ['text'],
       additionalProperties: false,
     };
@@ -55,9 +56,9 @@ describe('a side task shown an image', () => {
     });
 
     expect(reply).toEqual({ text: 'INVOICE 41' });
-    expect(userMessage(0)).toEqual({ role: 'user', content: page });
+    expect(userMessage(0)).toEqual({ role: Role.User, content: page });
     // The schema still rides on the system prompt, which is where a refusal of `response_format`
     // leaves it — an image changes the user turn and nothing else about the request.
-    expect(body(0).response_format).toMatchObject({ type: 'json_schema' });
+    expect(body(0).response_format).toMatchObject({ type: JSON_SCHEMA_FORMAT });
   });
 });

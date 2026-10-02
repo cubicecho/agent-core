@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { ABORT_EVENT } from './platform.ts';
+import { HttpStatus } from './wire.ts';
 
 /**
  * Everything about a request failing that is not about what the request said.
@@ -82,6 +84,13 @@ export const isOverflow = (detail: string) =>
  */
 export const SMALLEST_LIKELY_WINDOW = 8192;
 
+/** The statuses below 500 that say "not now" rather than "not this": a timeout, a conflict, a rate limit. */
+const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([
+  HttpStatus.RequestTimeout,
+  HttpStatus.Conflict,
+  HttpStatus.TooManyRequests,
+]);
+
 /**
  * Whether a failed request is worth trying again.
  *
@@ -105,7 +114,7 @@ export function isTransient(error: unknown): boolean {
     return false;
   }
   const { status } = error;
-  return status === 408 || status === 409 || status === 429 || (status ?? 0) >= 500;
+  return status !== undefined && (TRANSIENT_STATUSES.has(status) || status >= HttpStatus.InternalServerError);
 }
 
 /**
@@ -122,7 +131,11 @@ export function isTransient(error: unknown): boolean {
  * latches off whatever the re-send left out.
  */
 export const refusesRequest = (error: unknown) =>
-  error instanceof OpenAI.APIError && (error.status === 400 || error.status === 422);
+  error instanceof OpenAI.APIError &&
+  (error.status === HttpStatus.BadRequest || error.status === HttpStatus.UnprocessableEntity);
+
+/** The error type llama.cpp gives a request it cannot serve yet. */
+const UNAVAILABLE_ERROR = 'unavailable_error';
 
 /**
  * Whether a failure is a local server still loading the model, rather than one failing to serve.
@@ -136,12 +149,12 @@ export const refusesRequest = (error: unknown) =>
  * inside fifteen: sized for a busy host, not for one reading a file. A plain 503 is not this.
  */
 export function isModelLoading(error: unknown): boolean {
-  if (!(error instanceof OpenAI.APIError) || error.status !== 503) {
+  if (!(error instanceof OpenAI.APIError) || error.status !== HttpStatus.ServiceUnavailable) {
     return false;
   }
   const body = error.error as { type?: unknown; message?: unknown } | undefined;
   return (
-    body?.type === 'unavailable_error' ||
+    body?.type === UNAVAILABLE_ERROR ||
     /loading model|model is loading|unavailable_error/i.test(`${error.message} ${body?.message ?? ''}`)
   );
 }
@@ -152,12 +165,22 @@ export const LOADING_POLL_MS = 3000;
 /** How long `runTurn` waits for a model to load unless told otherwise. */
 export const LOADING_TIMEOUT_MS = 120_000;
 
+/** The first backoff, before jitter, which each attempt after it doubles. */
+const BACKOFF_BASE_MS = 500;
+
+/** The longest a backoff grows to, before jitter. */
+const BACKOFF_CEILING_MS = 8000;
+
+/** The least of a backoff that jitter leaves: a wait is somewhere between this share of it and all of it. */
+const JITTER_FLOOR = 0.5;
+
 /**
  * Exponential, with jitter so several tasks failing at once do not return in lockstep.
  *
  * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
  */
-export const backoffMs = (attempt: number) => Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
+export const backoffMs = (attempt: number) =>
+  Math.min(BACKOFF_CEILING_MS, 2 ** attempt * BACKOFF_BASE_MS) * (JITTER_FLOOR + Math.random() * (1 - JITTER_FLOOR));
 
 /**
  * A delay an abort cuts short, rejecting rather than resolving early.
@@ -168,7 +191,7 @@ export const backoffMs = (attempt: number) => Math.min(8000, 2 ** attempt * 500)
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
+      signal?.removeEventListener(ABORT_EVENT, onAbort);
       resolve();
     }, ms);
     const onAbort = () => {
@@ -178,5 +201,5 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
     if (signal?.aborted) {
       return onAbort();
     }
-    signal?.addEventListener('abort', onAbort, { once: true });
+    signal?.addEventListener(ABORT_EVENT, onAbort, { once: true });
   });

@@ -1,5 +1,7 @@
 import type OpenAI from 'openai';
 import type { CatalogServer } from './catalog.ts';
+import { ARGUMENT_PREVIEW_CHARS } from './tool-calls.ts';
+import { FUNCTION_TOOL, SchemaType } from './wire.ts';
 
 /**
  * On-demand tool loading.
@@ -36,7 +38,7 @@ function deepFreeze<T>(value: T): T {
  * nobody would think to look for the change.
  */
 export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
-  type: 'function',
+  type: FUNCTION_TOOL,
   function: {
     name: LOAD_TOOLS,
     description:
@@ -45,11 +47,11 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
       'whole group. The tools become callable on your next step — load them, then call them. ' +
       'Load only what the task actually needs.',
     parameters: {
-      type: 'object',
+      type: SchemaType.Object,
       properties: {
         names: {
-          type: 'array',
-          items: { type: 'string' },
+          type: SchemaType.Array,
+          items: { type: SchemaType.String },
           description: 'Tool names from the catalogue. Wildcards may end with `*`.',
         },
       },
@@ -132,7 +134,7 @@ const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server
  * by name wants the tool left out.
  */
 export const toolName = (tool: OpenAI.ChatCompletionTool) =>
-  tool.type === 'function' ? tool.function.name : undefined;
+  tool.type === FUNCTION_TOOL ? tool.function.name : undefined;
 
 /**
  * A tool array with newly loaded definitions appended, in the order they were loaded.
@@ -452,7 +454,7 @@ export const CALL_TOOL = 'call_tool';
  */
 export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
   {
-    type: 'function',
+    type: FUNCTION_TOOL,
     function: {
       name: LOAD_TOOLS,
       description:
@@ -461,11 +463,11 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
         '`server__group__*` for a whole group. Then run them with `call_tool`. Load only what ' +
         'the task actually needs.',
       parameters: {
-        type: 'object',
+        type: SchemaType.Object,
         properties: {
           names: {
-            type: 'array',
-            items: { type: 'string' },
+            type: SchemaType.Array,
+            items: { type: SchemaType.String },
             description: 'Tool names from the catalogue. Wildcards may end with `*`.',
           },
         },
@@ -475,18 +477,18 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
     },
   },
   {
-    type: 'function',
+    type: FUNCTION_TOOL,
     function: {
       name: CALL_TOOL,
       description:
         'Run a tool from the catalogue. Load it with `load_tools` first to learn its arguments, ' +
         'then pass its exact name and an arguments object matching its parameters.',
       parameters: {
-        type: 'object',
+        type: SchemaType.Object,
         properties: {
-          name: { type: 'string', description: "The tool's exact name from the catalogue." },
+          name: { type: SchemaType.String, description: "The tool's exact name from the catalogue." },
           arguments: {
-            type: 'object',
+            type: SchemaType.Object,
             description: "The tool's arguments, as its definition describes them.",
             additionalProperties: true,
           },
@@ -568,7 +570,7 @@ export function proxyLoadResult(
   const blocks: string[][] = [];
   const again = resolved.matched.filter((name) => loaded?.has(name));
   const fresh = definitions.flatMap((tool) =>
-    tool.type === 'function' && !loaded?.has(tool.function.name) ? [tool.function] : [],
+    tool.type === FUNCTION_TOOL && !loaded?.has(tool.function.name) ? [tool.function] : [],
   );
   const defined = new Set(fresh.map((tool) => tool.name));
   const missing = resolved.matched.filter((name) => !loaded?.has(name) && !defined.has(name));
@@ -624,7 +626,9 @@ export function proxiedCall(
     try {
       input = text.trim() ? JSON.parse(text) : {};
     } catch {
-      throw new Error(`${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, 200)}`);
+      throw new Error(
+        `${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
+      );
     }
   }
   if (!input || typeof input !== 'object' || Array.isArray(input)) {

@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { FUNCTION_TOOL, PartType, Role } from './wire.ts';
 
 /**
  * The characters one token is taken to be, where nothing has measured it.
@@ -30,12 +31,15 @@ export const CHARS_PER_TOKEN = 4;
  */
 export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
 
+/** Where `compact` starts counting in thousands. */
+const THOUSAND = 1000;
+
 /**
  * 1234 → "1.2k". The numbers in an overflow message are large and nobody reads the units digit.
  *
  * @param tokens - The count to render.
  */
-export const compact = (tokens: number) => (tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens));
+export const compact = (tokens: number) => (tokens >= THOUSAND ? `${(tokens / THOUSAND).toFixed(1)}k` : String(tokens));
 
 /** What `{"role":"","content":""},` costs around a message's own text, in characters. */
 const ENVELOPE = 25;
@@ -113,9 +117,9 @@ export function messageChars(message: OpenAI.ChatCompletionMessageParam): number
       // or a blob, and neither is priced by its length anyway — a vision model does not charge
       // an image by its base64 length, so counting the data URL would overshoot by more than
       // leaving the part out undershoots.
-      if (part.type === 'text') {
+      if (part.type === PartType.Text) {
         chars += TEXT_PART + part.text.length;
-      } else if (part.type === 'refusal') {
+      } else if (part.type === PartType.Refusal) {
         chars += REFUSAL_PART + part.refusal.length;
       }
     }
@@ -141,7 +145,7 @@ export function messageChars(message: OpenAI.ChatCompletionMessageParam): number
     chars += TOOL_CALLS_KEY;
     for (const call of message.tool_calls) {
       chars += CALL_ENVELOPE + call.id.length;
-      if (call.type === 'function') {
+      if (call.type === FUNCTION_TOOL) {
         chars += call.function.name.length + call.function.arguments.length;
       }
     }
@@ -287,9 +291,9 @@ export function contextChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
     const chars = messageChars(message);
     // Every system message and not just the leading one: a host that appends guidance, or a
     // hook that injects a preface, has put more of the window there and wants to be told so.
-    if (message.role === 'system' || message.role === 'developer') {
+    if (message.role === Role.System || message.role === Role.Developer) {
       out.system += chars;
-    } else if (message.role === 'tool') {
+    } else if (message.role === Role.Tool) {
       out.toolResults += chars;
     } else {
       out.history += chars;

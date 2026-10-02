@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { HttpStatus } from '../src/wire.ts';
 
 const list = vi.fn();
 vi.mock('openai', () => ({
@@ -28,8 +29,8 @@ const routes = (answers: Record<string, unknown>) =>
   vi.fn(async (url: string) => {
     const path = new URL(url).pathname;
     return path in answers
-      ? new Response(JSON.stringify(answers[path]), { status: 200 })
-      : new Response('not found', { status: 404 });
+      ? new Response(JSON.stringify(answers[path]), { status: HttpStatus.Ok })
+      : new Response('not found', { status: HttpStatus.NotFound });
   });
 
 /**
@@ -183,7 +184,7 @@ describe('contextLimitFor', () => {
         ? new Response(JSON.stringify({ data: [{ id: 'qwen', loaded_context_length: 32768 }] }), {
             status,
           })
-        : new Response('not found', { status: 404 }),
+        : new Response('not found', { status: HttpStatus.NotFound }),
     );
     vi.stubGlobal('fetch', fetch);
     list.mockResolvedValue(listing({ id: 'qwen' }, { id: 'llama' }));

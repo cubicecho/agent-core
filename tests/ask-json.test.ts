@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JSON_SCHEMA_FORMAT, SchemaType } from '../src/wire.ts';
 
 const create = vi.fn();
 vi.mock('../src/client.ts', async (importOriginal) => ({
@@ -15,8 +16,8 @@ const config = { baseUrl: 'http://box/v1', apiKey: '', requestTimeoutSeconds: 60
 const answer = (content: string) => ({ choices: [{ message: { content } }] });
 const refusal = (message: string) => new OpenAI.APIError(400, { error: { message } }, message, undefined);
 const schema = {
-  type: 'object',
-  properties: { tools: { type: 'array', items: { type: 'string', pattern: '^\\w+$' } } },
+  type: SchemaType.Object,
+  properties: { tools: { type: SchemaType.Array, items: { type: SchemaType.String, pattern: '^\\w+$' } } },
   required: ['tools'],
   additionalProperties: false,
 };
@@ -35,7 +36,7 @@ describe('askJson', () => {
     });
     expect(reply).toEqual({ tools: ['read'] });
     expect(body(0).response_format).toEqual({
-      type: 'json_schema',
+      type: JSON_SCHEMA_FORMAT,
       json_schema: { name: 'pick', strict: true, schema },
     });
     const [system] = body(0).messages as { content: string }[];
@@ -89,6 +90,6 @@ describe('askJson', () => {
     const reply = await askJson(config, 'm', 's', 'u', { properties: {} });
     expect(reply).toBeUndefined();
     const sent = (body(0).response_format as { json_schema: { schema: unknown } }).json_schema;
-    expect(sent.schema).toMatchObject({ type: 'object', properties: {} });
+    expect(sent.schema).toMatchObject({ type: SchemaType.Object, properties: {} });
   });
 });

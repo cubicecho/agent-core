@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto';
 import type OpenAI from 'openai';
+import { digestOf } from './digest.ts';
 import { errorMessage } from './errors.ts';
 import { isPositive } from './guards.ts';
 import { type HookEvent, INJECT_EVENTS } from './hook-events.ts';
 import { assignSettings, scoped } from './scope.ts';
 import { CHARS_PER_TOKEN, estimateTokens } from './tokens.ts';
+import { PartType, Role } from './wire.ts';
 
 /**
  * Lifecycle hooks, from the host's side: what a session looks like to them, where their context
@@ -307,14 +308,14 @@ export function withContext(
   preface = hookSettings().preface,
 ): OpenAI.ChatCompletionMessageParam[] {
   const message = history[index];
-  if (!context || message?.role !== 'user') {
+  if (!context || message?.role !== Role.User) {
     return history;
   }
   const lead = preface ? `${preface}\n\n${context}\n\n` : `${context}\n\n`;
   const content: OpenAI.ChatCompletionUserMessageParam['content'] =
     typeof message.content === 'string'
       ? `${lead}${message.content}`
-      : [{ type: 'text', text: lead }, ...message.content];
+      : [{ type: PartType.Text, text: lead }, ...message.content];
   return history.map((item, at) => (at === index ? { ...message, content } : item));
 }
 
@@ -376,8 +377,13 @@ export const textOf = (content: unknown): string => {
   if (!Array.isArray(content)) {
     return '';
   }
-  return content.map((part) => (typeof part?.text === 'string' && part.type !== 'refusal' ? part.text : '')).join('');
+  return content
+    .map((part) => (typeof part?.text === 'string' && part.type !== PartType.Refusal ? part.text : ''))
+    .join('');
 };
+
+/** How much of a message's digest its uuid carries: enough to tell two texts at one position apart. */
+const UUID_DIGEST_CHARS = 12;
 
 /**
  * A stretch of a transcript as a hook reads it: what the user and the assistant said, and nothing
@@ -421,18 +427,18 @@ export function turnMessages(
   const out: HookMessage[] = [];
   for (let at = Math.max(0, from); at < end; at++) {
     const message = messages[at];
-    if (message.role !== 'user' && message.role !== 'assistant') {
+    if (message.role !== Role.User && message.role !== Role.Assistant) {
       continue;
     }
     const text = textOf(message.content).trim();
     if (!text) {
       continue;
     }
-    const digest = createHash('sha256').update(`${message.role}\0${text}`).digest('hex');
+    const digest = digestOf(`${message.role}\0${text}`);
     out.push({
       speaker: message.role,
       text,
-      uuid: `${sessionId}:${at + offset}:${digest.slice(0, 12)}`,
+      uuid: `${sessionId}:${at + offset}:${digest.slice(0, UUID_DIGEST_CHARS)}`,
     });
   }
   return out;
@@ -452,7 +458,7 @@ export function turnMessages(
  * transcript, or add what the fold took as `offset`.
  */
 export const turnIndex = (messages: readonly { role: string }[], before = messages.length, offset = 0) =>
-  offset + messages.slice(0, before).filter((message) => message.role === 'user').length;
+  offset + messages.slice(0, before).filter((message) => message.role === Role.User).length;
 
 /** A runner that rejected, as the one outcome its event can still be noted by. */
 const rejected = (event: HookEvent, error: unknown): HookOutcome => ({

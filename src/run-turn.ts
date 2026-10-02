@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import { calibrate, charsPerTokenFor } from './calibration.ts';
 import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from './capabilities.ts';
 import { errorMessage } from './errors.ts';
+import { MS_PER_SECOND } from './platform.ts';
 import {
   backoffMs,
   ContextOverflow,
@@ -154,7 +155,7 @@ function refuseOversized(
  * A backoff in whatever unit reads as a number: the first is under a second, and "retrying in
  * 0s" is what rounding it to seconds says.
  */
-const shownDelay = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`);
+const shownDelay = (ms: number) => (ms < MS_PER_SECOND ? `${Math.round(ms)}ms` : `${Math.round(ms / MS_PER_SECOND)}s`);
 
 /**
  * `request` is a callback rather than a body because the body has to be rebuilt from whatever
@@ -246,7 +247,9 @@ export async function runTurn(
         const now = Date.now();
         if (loadingSince === undefined) {
           loadingSince = now;
-          onNotice?.(`${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`);
+          onNotice?.(
+            `${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / MS_PER_SECOND)}s`,
+          );
         }
         if (now - loadingSince < loadingTimeoutMs) {
           // Not an attempt: the request was never looked at, and a two-minute load would

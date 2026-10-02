@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { isRecord } from './guards.ts';
 import { THINK_FENCE } from './thinking.ts';
+import { FinishReason, FUNCTION_TOOL } from './wire.ts';
 
 /**
  * Reading what a model meant by a tool call when it did not write one cleanly.
@@ -11,6 +12,15 @@ import { THINK_FENCE } from './thinking.ts';
  * but as text, in the model's own template, because the server's tool-call parser was written for
  * a different one. Both were being handled in every consumer, differently, or not at all.
  */
+
+/** How much of a call's unreadable arguments an error quotes back. */
+export const ARGUMENT_PREVIEW_CHARS = 200;
+
+/** The `ToolArgumentsError` kind for a call cut off at the reply ceiling. */
+export const ARGUMENTS_TRUNCATED = 'truncated' as const;
+
+/** The `ToolArgumentsError` kind for a call the model wrote wrongly. */
+export const ARGUMENTS_MALFORMED = 'malformed' as const;
 
 /** A tool call as the loop handles it, recovered or streamed. */
 export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
@@ -26,13 +36,13 @@ export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
 export class ToolArgumentsError extends Error {
   override readonly name = 'ToolArgumentsError';
   /** Whether the model ran out of room or wrote something unreadable. */
-  readonly kind: 'truncated' | 'malformed';
+  readonly kind: typeof ARGUMENTS_TRUNCATED | typeof ARGUMENTS_MALFORMED;
 
   /**
    * @param kind - Why the arguments could not be read.
    * @param message - What the model is handed back as the tool's result.
    */
-  constructor(kind: 'truncated' | 'malformed', message: string) {
+  constructor(kind: typeof ARGUMENTS_TRUNCATED | typeof ARGUMENTS_MALFORMED, message: string) {
     super(message);
     this.kind = kind;
   }
@@ -151,17 +161,17 @@ export function parseToolArguments(
   if (isRecord(parsed)) {
     return parsed;
   }
-  if (finishReason === 'length') {
+  if (finishReason === FinishReason.Length) {
     throw new ToolArgumentsError(
-      'truncated',
-      `the tool call was cut off at the reply ceiling before its arguments were complete; raise maxTokens: ${text.slice(0, 200)}`,
+      ARGUMENTS_TRUNCATED,
+      `the tool call was cut off at the reply ceiling before its arguments were complete; raise maxTokens: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
     );
   }
   throw new ToolArgumentsError(
-    'malformed',
+    ARGUMENTS_MALFORMED,
     parsed === undefined
-      ? `model produced invalid tool arguments: ${text.slice(0, 200)}`
-      : `model produced tool arguments that are not an object: ${text.slice(0, 200)}`,
+      ? `model produced invalid tool arguments: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`
+      : `model produced tool arguments that are not an object: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
   );
 }
 
@@ -257,15 +267,16 @@ function taggedCalls(text: string): Found[] {
     const xml = text.slice(at).match(/^\s*<function=([^>\s]+)>([\s\S]*?)<\/function>/);
     if (xml) {
       const args: Record<string, unknown> = {};
-      for (const param of xml[2].matchAll(/<parameter=([^>\s]+)>\n?([\s\S]*?)\n?<\/parameter>/g)) {
-        args[param[1]] = scalar(param[2]);
+      const [block, name, body] = xml;
+      for (const [, key, value] of body.matchAll(/<parameter=([^>\s]+)>\n?([\s\S]*?)\n?<\/parameter>/g)) {
+        args[key] = scalar(value);
       }
-      closing.lastIndex = at + xml[0].length;
-      const end = closing.test(text) ? closing.lastIndex : at + xml[0].length;
+      closing.lastIndex = at + block.length;
+      const end = closing.test(text) ? closing.lastIndex : at + block.length;
       found.push({
         start: match.index,
         end,
-        calls: [{ name: xml[1], arguments: JSON.stringify(args) }],
+        calls: [{ name, arguments: JSON.stringify(args) }],
       });
       continue;
     }
@@ -416,7 +427,7 @@ export function recoverToolCalls(
     for (const call of span.calls) {
       toolCalls.push({
         id: `call_recovered_${toolCalls.length}`,
-        type: 'function',
+        type: FUNCTION_TOOL,
         function: call,
       });
     }

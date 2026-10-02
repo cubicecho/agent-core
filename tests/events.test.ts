@@ -1,8 +1,21 @@
 import { setFlagsFromString } from 'node:v8';
 import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { configureEvents, emit, endRun, fold, history, resetEvents, runMetrics, watch } from '../src/events.ts';
+import {
+  configureEvents,
+  emit,
+  endRun,
+  fold,
+  history,
+  RunEventKind,
+  RunOutcome,
+  resetEvents,
+  runMetrics,
+  watch,
+} from '../src/events.ts';
+import { CacheBreakReason } from '../src/stream.ts';
 import { LOAD_TOOLS } from '../src/tool-loading.ts';
+import { FinishReason } from '../src/wire.ts';
 
 beforeEach(() => resetEvents());
 afterEach(() => {
@@ -12,17 +25,17 @@ afterEach(() => {
 
 describe('emit', () => {
   it("numbers a run's events from one, in order", () => {
-    emit('r', { kind: 'step', name: 'plan' });
-    emit('r', { kind: 'output', text: 'a' });
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.Step, name: 'plan' });
+    emit('r', { kind: RunEventKind.Output, text: 'a' });
+    emit('r', { kind: RunEventKind.Done, ok: true });
     expect(history('r').map((event) => event.seq)).toEqual([1, 2, 3]);
     expect(history('r').every((event) => event.runId === 'r')).toBe(true);
   });
 
   it('does not let a caller file an event under another run or reuse a sequence', () => {
-    emit('a', { kind: 'output', text: 'one' });
+    emit('a', { kind: RunEventKind.Output, text: 'one' });
     // The type forbids this; a JavaScript caller, or a widened object, does not.
-    emit('a', { kind: 'output', text: 'two', runId: 'b', seq: 1 } as never);
+    emit('a', { kind: RunEventKind.Output, text: 'two', runId: 'b', seq: 1 } as never);
 
     expect(history('a').map((event) => [event.runId, event.seq])).toEqual([
       ['a', 1],
@@ -32,10 +45,10 @@ describe('emit', () => {
   });
 
   it('carries a call id where the emitter gave one, and adds none where it did not', () => {
-    emit('r', { kind: 'tool-call', id: 'c1', name: 'read' });
-    emit('r', { kind: 'tool-result', id: 'c1', name: 'read', ok: true });
-    emit('r', { kind: 'tool-call', name: 'read' });
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.ToolCall, id: 'c1', name: 'read' });
+    emit('r', { kind: RunEventKind.ToolResult, id: 'c1', name: 'read', ok: true });
+    emit('r', { kind: RunEventKind.ToolCall, name: 'read' });
+    emit('r', { kind: RunEventKind.Done, ok: true });
 
     expect(history('r').map((event) => event.id)).toEqual(['c1', 'c1', undefined, undefined]);
     // Absent rather than empty: an event from before the field existed reads the same as it did.
@@ -43,8 +56,8 @@ describe('emit', () => {
   });
 
   it("keeps separate runs' sequences to themselves", () => {
-    emit('a', { kind: 'output', text: 'x' });
-    emit('b', { kind: 'output', text: 'y' });
+    emit('a', { kind: RunEventKind.Output, text: 'x' });
+    emit('b', { kind: RunEventKind.Output, text: 'y' });
     expect(history('a')[0].seq).toBe(1);
     expect(history('b')[0].seq).toBe(1);
   });
@@ -52,11 +65,11 @@ describe('emit', () => {
   it('trims the backlog in batches, back to the cap', () => {
     // 1000 kept, 256 of slack: the 1257th push is the one that trims.
     for (let i = 0; i < 1256; i++) {
-      emit('chatty', { kind: 'output', text: 'x' });
+      emit('chatty', { kind: RunEventKind.Output, text: 'x' });
     }
     expect(history('chatty')).toHaveLength(1256);
 
-    emit('chatty', { kind: 'output', text: 'x' });
+    emit('chatty', { kind: RunEventKind.Output, text: 'x' });
     const kept = history('chatty');
     expect(kept).toHaveLength(1000);
     // The oldest went, and the sequence numbers do not restart.
@@ -70,13 +83,13 @@ describe('watch', () => {
     // Bigger than `MAX_EVENTS + TRIM_SLACK`, so the bus has already trimmed by the time this
     // subscribes: what a watcher joining a long reasoning run actually finds waiting for it.
     for (let i = 0; i < 4000; i++) {
-      emit('r', { kind: 'thinking', text: `${i}` });
+      emit('r', { kind: RunEventKind.Thinking, text: `${i}` });
     }
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.Done, ok: true });
 
     const seen: number[] = [];
     for await (const event of watch('r')) {
-      if (event.kind === 'thinking') {
+      if (event.kind === RunEventKind.Thinking) {
         seen.push(event.seq);
       }
     }
@@ -91,9 +104,9 @@ describe('watch', () => {
     // Nothing is read until this point, so everything below queues behind the generator.
     const first = stream.next();
     for (let i = 0; i < 3000; i++) {
-      emit('r', { kind: 'thinking', text: `${i}` });
+      emit('r', { kind: RunEventKind.Thinking, text: `${i}` });
     }
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.Done, ok: true });
 
     const seen = [await first];
     for (;;) {
@@ -103,7 +116,7 @@ describe('watch', () => {
       }
       seen.push(next);
     }
-    const notices = seen.filter((step) => step.value?.kind === 'notice');
+    const notices = seen.filter((step) => step.value?.kind === RunEventKind.Notice);
     expect(notices).toHaveLength(1);
     expect(notices[0].value?.text).toMatch(/event\(s\) dropped/);
     // Inside the gap it reports, not on top of the event behind it. `seq` is what a client
@@ -128,18 +141,18 @@ describe('watch', () => {
     const collect = runInNewContext('gc') as () => void;
 
     const stream = watch('r');
-    emit('r', { kind: 'notice', text: 'start' });
+    emit('r', { kind: RunEventKind.Notice, text: 'start' });
     // Subscribes, delivers that one, and parks on the yield. Everything below piles up behind a
     // consumer that has stopped pulling — which is the only case the cap exists for.
     await stream.next();
 
     // Made in a frame that has returned by the time anything is collected. Written inline, the
     // event stays live in this function's own registers and the assertion fails on correct code.
-    const track = () => new WeakRef(emit('r', { kind: 'thinking', text: 'first' }));
+    const track = () => new WeakRef(emit('r', { kind: RunEventKind.Thinking, text: 'first' }));
     const dropped = track();
     // Past both caps, so neither the bus's backlog nor the watcher's queue may still name it.
     for (let i = 0; i < 3000; i++) {
-      emit('r', { kind: 'thinking', text: `${i}` });
+      emit('r', { kind: RunEventKind.Thinking, text: `${i}` });
     }
 
     // A `WeakRef` holds its target alive for the rest of the job it was made in, so the two
@@ -149,7 +162,7 @@ describe('watch', () => {
     collect();
     expect(dropped.deref()).toBeUndefined();
 
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.Done, ok: true });
     for (;;) {
       if ((await stream.next()).done) {
         break;
@@ -158,8 +171,8 @@ describe('watch', () => {
   });
 
   it('reads the backlog first, then what happens next, and stops at done', async () => {
-    emit('r', { kind: 'step', name: 'plan' });
-    emit('r', { kind: 'output', text: 'before' });
+    emit('r', { kind: RunEventKind.Step, name: 'plan' });
+    emit('r', { kind: RunEventKind.Output, text: 'before' });
 
     const seen: string[] = [];
     const reading = (async () => {
@@ -170,15 +183,15 @@ describe('watch', () => {
 
     // Let the generator drain the backlog and park on the wait.
     await Promise.resolve();
-    emit('r', { kind: 'output', text: 'after' });
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.Output, text: 'after' });
+    emit('r', { kind: RunEventKind.Done, ok: true });
     await reading;
 
     expect(seen).toEqual(['step:', 'output:before', 'output:after', 'done:']);
   });
 
   it("leaves a live run's backlog behind when a watcher goes away", async () => {
-    emit('live', { kind: 'output', text: 'a' });
+    emit('live', { kind: RunEventKind.Output, text: 'a' });
     const watcher = watch('live');
     await watcher.next();
     await watcher.return(undefined);
@@ -189,7 +202,7 @@ describe('watch', () => {
 
 describe('watch, cancelled', () => {
   it('lets a watcher out of a run that never says done', async () => {
-    emit('live', { kind: 'output', text: 'a' });
+    emit('live', { kind: RunEventKind.Output, text: 'a' });
     const stop = new AbortController();
     const watcher = watch('live', stop.signal);
 
@@ -204,7 +217,7 @@ describe('watch, cancelled', () => {
 
   it('stops pinning the stream, so the sweep can reach an abandoned run', async () => {
     vi.useFakeTimers();
-    emit('abandoned', { kind: 'output', text: 'half a thought' });
+    emit('abandoned', { kind: RunEventKind.Output, text: 'half a thought' });
     const stop = new AbortController();
     const watcher = watch('abandoned', stop.signal);
     await watcher.next();
@@ -222,13 +235,13 @@ describe('watch, cancelled', () => {
   });
 
   it('leaves without replaying the backlog when the signal is already aborted', async () => {
-    emit('r', { kind: 'output', text: 'a' });
+    emit('r', { kind: RunEventKind.Output, text: 'a' });
     expect(await watch('r', AbortSignal.abort()).next()).toEqual({ value: undefined, done: true });
   });
 
   it('stops mid-backlog rather than finishing the queue it already holds', async () => {
     for (let i = 0; i < 5; i++) {
-      emit('r', { kind: 'output', text: `${i}` });
+      emit('r', { kind: RunEventKind.Output, text: `${i}` });
     }
     const stop = new AbortController();
     const seen: string[] = [];
@@ -242,22 +255,22 @@ describe('watch, cancelled', () => {
   });
 
   it('ends on done as it always did, with a signal that never fires', async () => {
-    emit('r', { kind: 'output', text: 'a' });
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.Output, text: 'a' });
+    emit('r', { kind: RunEventKind.Done, ok: true });
     const stop = new AbortController();
     const seen: string[] = [];
     for await (const event of watch('r', stop.signal)) {
       seen.push(event.kind);
     }
-    expect(seen).toEqual(['output', 'done']);
+    expect(seen).toEqual([RunEventKind.Output, RunEventKind.Done]);
   });
 });
 
 describe('cleanup', () => {
   it('forgets a finished run whose watcher was still reading when retention lapsed', async () => {
     vi.useFakeTimers();
-    emit('late', { kind: 'output', text: 'a' });
-    emit('late', { kind: 'done', ok: true });
+    emit('late', { kind: RunEventKind.Output, text: 'a' });
+    emit('late', { kind: RunEventKind.Done, ok: true });
     vi.advanceTimersByTime(30_000);
 
     // A slow client: attached inside the retention window, still attached when it closes. The
@@ -270,19 +283,19 @@ describe('cleanup', () => {
     seen.push((await watcher.next()).value?.kind as string);
     await watcher.next();
 
-    expect(seen).toEqual(['output', 'done']);
+    expect(seen).toEqual([RunEventKind.Output, RunEventKind.Done]);
     expect(history('late')).toEqual([]);
   });
 
   it('forgets a run on request', () => {
-    emit('doomed', { kind: 'output', text: 'a' });
+    emit('doomed', { kind: RunEventKind.Output, text: 'a' });
     endRun('doomed');
     expect(history('doomed')).toEqual([]);
   });
 
   it('forgets a run that dies without ever saying done', () => {
     vi.useFakeTimers();
-    emit('abandoned', { kind: 'output', text: 'half a thought' });
+    emit('abandoned', { kind: RunEventKind.Output, text: 'half a thought' });
     expect(history('abandoned')).toHaveLength(1);
 
     // On the unfinished run's much longer clock: a minute of quiet is a slow tool call, not a
@@ -293,7 +306,7 @@ describe('cleanup', () => {
 
   it('keeps a live run that has simply gone quiet, and its sequence with it', () => {
     vi.useFakeTimers();
-    emit('slow', { kind: 'output', text: 'before the tool call' });
+    emit('slow', { kind: RunEventKind.Output, text: 'before the tool call' });
 
     // Nobody watching, nothing emitted: one long MCP call, well past a finished run's retention.
     vi.advanceTimersByTime(5 * 60_000);
@@ -301,7 +314,7 @@ describe('cleanup', () => {
     expect(history('slow')).toHaveLength(1);
     // The backlog surviving is the smaller half. A fresh stream would restart `seq` at 1, and
     // `seq` is what a reconnecting client de-duplicates on — it would drop this as one it had.
-    expect(emit('slow', { kind: 'output', text: 'after' }).seq).toBe(2);
+    expect(emit('slow', { kind: RunEventKind.Output, text: 'after' }).seq).toBe(2);
   });
 
   it('completes a watcher it is ending the run under', async () => {
@@ -314,8 +327,8 @@ describe('cleanup', () => {
       finished = true;
     })();
 
-    emit('cut', { kind: 'output', text: 'a' });
-    await vi.waitFor(() => expect(seen).toEqual(['output']));
+    emit('cut', { kind: RunEventKind.Output, text: 'a' });
+    await vi.waitFor(() => expect(seen).toEqual([RunEventKind.Output]));
 
     // The loop threw where it could not be caught. A watcher parked on the next event has no
     // emit coming to wake it, so ending the run has to be the thing that does.
@@ -323,14 +336,14 @@ describe('cleanup', () => {
     await drained;
 
     expect(finished).toBe(true);
-    expect(seen).toEqual(['output', 'done']);
+    expect(seen).toEqual([RunEventKind.Output, RunEventKind.Done]);
   });
 
   it('does not forget a run that is still being watched', async () => {
     vi.useFakeTimers();
     const watcher = watch('live');
     const first = watcher.next();
-    emit('live', { kind: 'output', text: 'a' });
+    emit('live', { kind: RunEventKind.Output, text: 'a' });
     await first;
 
     vi.advanceTimersByTime(10 * 60_000);
@@ -344,7 +357,7 @@ describe('configureEvents', () => {
   it("caps a run's backlog at the number it was given", () => {
     configureEvents({ maxEvents: 4, trimSlack: 1 });
     for (let n = 0; n < 20; n++) {
-      emit('chatty', { kind: 'output', text: `${n}` });
+      emit('chatty', { kind: RunEventKind.Output, text: `${n}` });
     }
     // Trimmed in batches, as at the default: the backlog runs to the cap plus the slack and is
     // cut back to the cap, so what is left is the four most recent rather than five.
@@ -356,7 +369,7 @@ describe('configureEvents', () => {
     // A consumer whose tool calls are minutes rather than hours wants its abandoned runs back
     // sooner than the half-hour assumed here.
     configureEvents({ retainUnendedMs: 60_000 });
-    emit('abandoned', { kind: 'output', text: 'half a thought' });
+    emit('abandoned', { kind: RunEventKind.Output, text: 'half a thought' });
     vi.advanceTimersByTime(60_000);
     expect(history('abandoned')).toEqual([]);
   });
@@ -388,14 +401,14 @@ describe('configureEvents', () => {
 
 describe('fold', () => {
   it('merges consecutive tokens of one kind into one block', () => {
-    emit('r', { kind: 'output', text: 'he', step: 's' });
-    emit('r', { kind: 'output', text: 'llo', step: 's' });
-    emit('r', { kind: 'done', ok: true, step: 's' });
+    emit('r', { kind: RunEventKind.Output, text: 'he', step: 's' });
+    emit('r', { kind: RunEventKind.Output, text: 'llo', step: 's' });
+    emit('r', { kind: RunEventKind.Done, ok: true, step: 's' });
 
     const blocks = fold(history('r'));
     expect(blocks.map((block) => [block.kind, block.text])).toEqual([
-      ['output', 'hello'],
-      ['done', ''],
+      [RunEventKind.Output, 'hello'],
+      [RunEventKind.Done, ''],
     ]);
     // The block carries the seq of its last event, so a caller can ask for what came after.
     expect(blocks[0].seq).toBe(2);
@@ -403,21 +416,21 @@ describe('fold', () => {
 
   it('does not merge two blocks that belong to different steps', () => {
     // The fix merged in from task_server: same kind, same run, different step is two things.
-    emit('r', { kind: 'output', text: 'first', step: 'one' });
-    emit('r', { kind: 'output', text: 'second', step: 'two' });
+    emit('r', { kind: RunEventKind.Output, text: 'first', step: 'one' });
+    emit('r', { kind: RunEventKind.Output, text: 'second', step: 'two' });
     expect(fold(history('r')).map((block) => block.text)).toEqual(['first', 'second']);
   });
 
   it('does not merge across a different kind', () => {
-    emit('r', { kind: 'output', text: 'a' });
-    emit('r', { kind: 'thinking', text: 'b' });
-    emit('r', { kind: 'output', text: 'c' });
+    emit('r', { kind: RunEventKind.Output, text: 'a' });
+    emit('r', { kind: RunEventKind.Thinking, text: 'b' });
+    emit('r', { kind: RunEventKind.Output, text: 'c' });
     expect(fold(history('r')).map((block) => block.text)).toEqual(['a', 'b', 'c']);
   });
 
   it("hands back its own blocks rather than the bus's events", () => {
-    emit('r', { kind: 'output', text: 'a' });
-    emit('r', { kind: 'thinking', text: 'b' });
+    emit('r', { kind: RunEventKind.Output, text: 'a' });
+    emit('r', { kind: RunEventKind.Thinking, text: 'b' });
 
     const blocks = fold(history('r'));
     blocks[0].text = 'REDACTED';
@@ -425,19 +438,19 @@ describe('fold', () => {
   });
 
   it('keeps the call id on the tool blocks it passes through', () => {
-    emit('r', { kind: 'output', text: 'a' });
-    emit('r', { kind: 'output', text: 'b' });
-    emit('r', { kind: 'tool-call', id: 'c1', name: 'read', text: '{}' });
-    emit('r', { kind: 'tool-call', id: 'c2', name: 'read', text: '{}' });
-    emit('r', { kind: 'tool-result', id: 'c2', name: 'read', ok: true, text: 'two' });
-    emit('r', { kind: 'tool-result', id: 'c1', name: 'read', ok: true, text: 'one' });
+    emit('r', { kind: RunEventKind.Output, text: 'a' });
+    emit('r', { kind: RunEventKind.Output, text: 'b' });
+    emit('r', { kind: RunEventKind.ToolCall, id: 'c1', name: 'read', text: '{}' });
+    emit('r', { kind: RunEventKind.ToolCall, id: 'c2', name: 'read', text: '{}' });
+    emit('r', { kind: RunEventKind.ToolResult, id: 'c2', name: 'read', ok: true, text: 'two' });
+    emit('r', { kind: RunEventKind.ToolResult, id: 'c1', name: 'read', ok: true, text: 'one' });
 
     expect(fold(history('r')).map((block) => [block.kind, block.id, block.text])).toEqual([
-      ['output', undefined, 'ab'],
-      ['tool-call', 'c1', '{}'],
-      ['tool-call', 'c2', '{}'],
-      ['tool-result', 'c2', 'two'],
-      ['tool-result', 'c1', 'one'],
+      [RunEventKind.Output, undefined, 'ab'],
+      [RunEventKind.ToolCall, 'c1', '{}'],
+      [RunEventKind.ToolCall, 'c2', '{}'],
+      [RunEventKind.ToolResult, 'c2', 'two'],
+      [RunEventKind.ToolResult, 'c1', 'one'],
     ]);
   });
 });
@@ -464,9 +477,9 @@ describe('runMetrics', () => {
   it("sums a run's turns, times its tools and weighs what only some turns reported", () => {
     vi.useFakeTimers({ now: 1000 });
     const at = (ms: number) => vi.setSystemTime(1000 + ms);
-    emit('r', { kind: 'step', name: 'plan' });
+    emit('r', { kind: RunEventKind.Step, name: 'plan' });
     emit('r', {
-      kind: 'usage',
+      kind: RunEventKind.Usage,
       usage: {
         promptTokens: 100,
         completionTokens: 10,
@@ -482,19 +495,19 @@ describe('runMetrics', () => {
           promptMs: 200,
           draftTotal: 10,
           draftAccepted: 5,
-          finishReason: 'tool_calls',
+          finishReason: FinishReason.ToolCalls,
         },
       },
     });
     at(100);
-    emit('r', { kind: 'tool-call', name: LOAD_TOOLS });
-    emit('r', { kind: 'tool-call', name: 'read' });
+    emit('r', { kind: RunEventKind.ToolCall, name: LOAD_TOOLS });
+    emit('r', { kind: RunEventKind.ToolCall, name: 'read' });
     at(150);
-    emit('r', { kind: 'tool-result', name: LOAD_TOOLS, ok: true });
+    emit('r', { kind: RunEventKind.ToolResult, name: LOAD_TOOLS, ok: true });
     at(400);
-    emit('r', { kind: 'tool-result', name: 'read', ok: false });
+    emit('r', { kind: RunEventKind.ToolResult, name: 'read', ok: false });
     emit('r', {
-      kind: 'usage',
+      kind: RunEventKind.Usage,
       usage: {
         promptTokens: 400,
         completionTokens: 30,
@@ -509,23 +522,23 @@ describe('runMetrics', () => {
           firstTokenMs: 500,
           continuations: 1,
           cacheBroken: true,
-          cacheBreakReason: 'tools-changed',
-          finishReason: 'length',
+          cacheBreakReason: CacheBreakReason.ToolsChanged,
+          finishReason: FinishReason.Length,
         },
       },
     });
     // A turn from a server that says nothing of its cache or its timings.
     emit('r', {
-      kind: 'usage',
+      kind: RunEventKind.Usage,
       usage: {
         promptTokens: 400,
         completionTokens: 30,
         totalTokens: 430,
-        turn: { prompt: 500, completion: 5, total: 505, cached: 0, finishReason: 'stop' },
+        turn: { prompt: 500, completion: 5, total: 505, cached: 0, finishReason: FinishReason.Stop },
       },
     });
     at(2000);
-    emit('r', { kind: 'done', ok: true });
+    emit('r', { kind: RunEventKind.Done, ok: true });
 
     const metrics = runMetrics(history('r'), { contextLength: 1000 });
     expect(metrics).toMatchObject({
@@ -552,7 +565,7 @@ describe('runMetrics', () => {
       draftAcceptance: 0.5,
       largestPrompt: 500,
       largestPromptShare: 0.5,
-      outcome: 'answered',
+      outcome: RunOutcome.Answered,
     });
     // Over the 400 prompt tokens whose cache was reported, not the 900 of all of them.
     expect(metrics.cacheHitRatio).toBeCloseTo(30 / 400);
@@ -563,7 +576,7 @@ describe('runMetrics', () => {
 
   it("reads the outcome off the last turn and the run's end", () => {
     const turn = (finishReason: string) => ({
-      kind: 'usage' as const,
+      kind: RunEventKind.Usage,
       usage: {
         promptTokens: 0,
         completionTokens: 0,
@@ -571,18 +584,18 @@ describe('runMetrics', () => {
         turn: { prompt: 0, completion: 0, total: 0, cached: 0, finishReason },
       },
     });
-    emit('cut', turn('length'));
-    emit('cut', { kind: 'done', ok: true });
-    expect(runMetrics(history('cut')).outcome).toBe('truncated');
-    emit('broke', turn('stop'));
-    emit('broke', { kind: 'done', ok: false });
-    expect(runMetrics(history('broke')).outcome).toBe('failed');
-    emit('running', turn('stop'));
+    emit('cut', turn(FinishReason.Length));
+    emit('cut', { kind: RunEventKind.Done, ok: true });
+    expect(runMetrics(history('cut')).outcome).toBe(RunOutcome.Truncated);
+    emit('broke', turn(FinishReason.Stop));
+    emit('broke', { kind: RunEventKind.Done, ok: false });
+    expect(runMetrics(history('broke')).outcome).toBe(RunOutcome.Failed);
+    emit('running', turn(FinishReason.Stop));
     expect(runMetrics(history('running'))).not.toHaveProperty('outcome');
   });
 
   it('ignores usage a caller emitted without a turn report', () => {
-    emit('r', { kind: 'usage', usage: { promptTokens: 10, completionTokens: 1, totalTokens: 11 } });
+    emit('r', { kind: RunEventKind.Usage, usage: { promptTokens: 10, completionTokens: 1, totalTokens: 11 } });
     expect(runMetrics(history('r'))).toMatchObject({ turns: 0, promptTokens: 0 });
   });
 });

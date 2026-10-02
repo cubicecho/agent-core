@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
 import { continueTurn, isContinuable } from '../src/continuation.ts';
 import type { Turn } from '../src/stream.ts';
+import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire.ts';
 
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
@@ -12,7 +13,7 @@ const chunks = (...list: unknown[]) => ({
   },
 });
 /** A reply that says this, stops for this reason, and reports these counts and timings. */
-const reply = (content: string, finish = 'stop', timings?: Record<string, number>) =>
+const reply = (content: string, finish: FinishReason = FinishReason.Stop, timings?: Record<string, number>) =>
   chunks(
     { choices: [{ delta: { content }, finish_reason: finish }] },
     {
@@ -25,7 +26,7 @@ const clientOf = (create: (body: Body) => unknown) => ({ chat: { completions: { 
 const apiError = (status: number, message: string) =>
   new OpenAI.APIError(status, { error: { message } }, undefined, undefined);
 
-const question: Body = { model: 'm', stream: true, messages: [{ role: 'user', content: 'why' }] };
+const question: Body = { model: 'm', stream: true, messages: [{ role: Role.User, content: 'why' }] };
 const request = () => question;
 
 /** A turn the ceiling cut off, with an answer begun. */
@@ -33,7 +34,7 @@ const cut = (content = 'The sky is blue because', extra: Partial<Turn> = {}): Tu
   content,
   reasoning: 'thought',
   toolCalls: [],
-  finishReason: 'length',
+  finishReason: FinishReason.Length,
   usage: { prompt: 40, completion: 100, total: 140, cached: 30 },
   ...extra,
 });
@@ -45,11 +46,11 @@ afterEach(() => resetCapabilities());
 describe('isContinuable', () => {
   it('takes only an answer begun and cut off, with no call in it', () => {
     expect(isContinuable(cut())).toBe(true);
-    expect(isContinuable(cut('done', { finishReason: 'stop' }))).toBe(false);
+    expect(isContinuable(cut('done', { finishReason: FinishReason.Stop }))).toBe(false);
     expect(isContinuable(cut('  '))).toBe(false);
     const call = {
       id: 'c',
-      type: 'function' as const,
+      type: FUNCTION_TOOL,
       function: { name: 't', arguments: '{"a":' },
     };
     expect(isContinuable(cut('calling', { toolCalls: [call] }))).toBe(false);
@@ -58,7 +59,7 @@ describe('isContinuable', () => {
 
 describe('continueTurn', () => {
   it('sends the answer so far as a prefill and joins what comes back onto it', async () => {
-    const create = vi.fn().mockReturnValue(reply(' of the way light scatters.', 'stop'));
+    const create = vi.fn().mockReturnValue(reply(' of the way light scatters.', FinishReason.Stop));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
       startInReasoning: true,
@@ -66,12 +67,12 @@ describe('continueTurn', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect((create.mock.calls[0][0] as Body).messages).toEqual([
       ...question.messages,
-      { role: 'assistant', content: 'The sky is blue because' },
+      { role: Role.Assistant, content: 'The sky is blue because' },
     ]);
     // Read as answer even though the fresh reply started in a scratchpad.
     expect(turn.content).toBe('The sky is blue because of the way light scatters.');
     expect(turn.reasoning).toBe('thought');
-    expect(turn.finishReason).toBe('stop');
+    expect(turn.finishReason).toBe(FinishReason.Stop);
     expect(turn.usage).toMatchObject({
       prompt: 90,
       completion: 110,
@@ -82,7 +83,9 @@ describe('continueTurn', () => {
   });
 
   it('drops a field only one request reported, and weights the rates by the time they held', async () => {
-    const create = vi.fn().mockReturnValue(reply(' more', 'stop', { predicted_ms: 3000, predicted_per_second: 40 }));
+    const create = vi
+      .fn()
+      .mockReturnValue(reply(' more', FinishReason.Stop, { predicted_ms: 3000, predicted_per_second: 40 }));
     const first = cut();
     first.usage = { ...first.usage, predictedMs: 1000, tokensPerSecond: 80, wallMs: 5 };
     const turn = await continueTurn(clientOf(create), supports(), request, first, { model: 'm' });
@@ -95,21 +98,21 @@ describe('continueTurn', () => {
 
   it('leaves a turn it cannot continue as it was, without a request', async () => {
     const create = vi.fn();
-    const finished = cut('done', { finishReason: 'stop' });
+    const finished = cut('done', { finishReason: FinishReason.Stop });
     expect(await continueTurn(clientOf(create), supports(), request, finished)).toBe(finished);
     const empty = cut('');
     expect(await continueTurn(clientOf(create), supports(), request, empty)).toBe(empty);
     expect(await continueTurn(clientOf(create), supports(), request, cut(), { maxContinuations: 0 })).toMatchObject({
-      finishReason: 'length',
+      finishReason: FinishReason.Length,
     });
     expect(create).not.toHaveBeenCalled();
   });
 
   it('stops at the cap on a model that never reaches a stop', async () => {
-    const create = vi.fn(() => reply(' and on', 'length'));
+    const create = vi.fn(() => reply(' and on', FinishReason.Length));
     const once = await continueTurn(clientOf(create), supports(), request, cut());
     expect(create).toHaveBeenCalledTimes(1);
-    expect(once.finishReason).toBe('length');
+    expect(once.finishReason).toBe(FinishReason.Length);
     create.mockClear();
     const thrice = await continueTurn(clientOf(create), supports(), request, cut(), {
       maxContinuations: 3,
@@ -129,7 +132,7 @@ describe('continueTurn', () => {
       onNotice: (n) => notices.push(n),
     });
     expect(turn.content).toBe('The sky is blue because');
-    expect(turn.finishReason).toBe('length');
+    expect(turn.finishReason).toBe(FinishReason.Length);
     expect(modelCapabilitiesFor(supports(), 'm').assistantPrefill).toBe(false);
     expect(notices.at(-1)).toContain('refused a trailing assistant message');
     create.mockClear();

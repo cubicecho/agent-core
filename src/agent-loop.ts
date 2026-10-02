@@ -11,6 +11,7 @@ import type { CatalogServer } from './catalog.ts';
 import { firstTokenMs, getClient, loadingMs, timeoutMs } from './client.ts';
 import { type CompactionOptions, compactTranscript, planCompaction, summariser } from './compaction.ts';
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from './config.ts';
+import { ToolDiscovery } from './config.ts';
 import { continueTurn } from './continuation.ts';
 import {
   AgentLoopError,
@@ -19,9 +20,17 @@ import {
   errorMessage,
   ToolIterationLimit,
 } from './errors.ts';
-import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics, stamp } from './events.ts';
+import {
+  type RunEvent,
+  type RunEventInput,
+  RunEventKind,
+  type RunMetrics,
+  RunOutcome,
+  runMetrics,
+  stamp,
+} from './events.ts';
 import { counted } from './guards.ts';
-import type { HookEvent } from './hook-events.ts';
+import { HookEvent } from './hook-events.ts';
 import {
   configureHooks,
   type Gathered,
@@ -79,6 +88,7 @@ import {
   type ToolOrder,
   toolName,
 } from './tool-loading.ts';
+import { FinishReason, PartType, Role } from './wire.ts';
 
 /**
  * The loop above a turn: send, run the tools the model asked for, send again, until it stops
@@ -123,7 +133,7 @@ export interface AgentLoopHooks {
   /**
    * Run before the first request.
    *
-   * @defaultValue `['beforeTurn']`
+   * @defaultValue `[HookEvent.BeforeTurn]`
    */
   events?: readonly HookEvent[];
   /** The shared context budget. Absent is `configureHooks`'s. */
@@ -148,6 +158,12 @@ export interface StepWindow {
   /** The run's ledger so far, indexed into the transcript `beforeStep` is handed beside it. */
   ledger: TokenLedger;
 }
+
+/** The `preselectRouting` that sends the first step the shortlist alone. */
+export const PRESELECT_EXCLUSIVE = 'exclusive' as const;
+
+/** The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other. */
+export const PRESELECT_APPEND = 'append' as const;
 
 /** What `runAgentLoop` takes. */
 export interface AgentLoopOptions {
@@ -218,7 +234,7 @@ export interface AgentLoopOptions {
    * back in front of the model. Which costs more has not been measured, which is why the default
    * has not moved.
    *
-   * @defaultValue `'exclusive'`
+   * @defaultValue `PRESELECT_EXCLUSIVE`
    *
    * @remarks
    * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
@@ -227,7 +243,7 @@ export interface AgentLoopOptions {
    * tool array until something else is loaded. Nothing to do without a preselection, in eager
    * mode, or proxied, where no step is routed either way.
    */
-  preselectRouting?: 'exclusive' | 'append';
+  preselectRouting?: typeof PRESELECT_EXCLUSIVE | typeof PRESELECT_APPEND;
   /**
    * Has the loop make the preselection itself, before its first request, with the preselector
    * the config names. Opt-in, so that a host that passes a resolved agent and calls `preselect`
@@ -577,7 +593,7 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
   if (!Array.isArray(content)) {
     return '';
   }
-  return content.flatMap((part) => (part.type === 'text' ? part.text : [])).join('\n');
+  return content.flatMap((part) => (part.type === PartType.Text ? part.text : [])).join('\n');
 };
 
 /**
@@ -587,7 +603,7 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
  */
 async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise<string[]> {
   const { config, catalog = [], signal } = options;
-  const prompt = userText(options.messages.findLast((message) => message.role === 'user'));
+  const prompt = userText(options.messages.findLast((message) => message.role === Role.User));
   if (!prompt.trim()) {
     return [];
   }
@@ -663,7 +679,7 @@ const tellAfterTurn = (
 ): Promise<HookNote[]> =>
   notify(
     hooks.run,
-    'afterTurn',
+    HookEvent.AfterTurn,
     {
       ...hooks.context,
       reply,
@@ -686,7 +702,7 @@ const tellAfterTurn = (
 function recorder(heard: AgentLoopOptions['onEvent']) {
   const recorded: RunEvent[] = [];
   const onEvent = (input: RunEventInput) => {
-    if (input.kind !== 'thinking' && input.kind !== 'output') {
+    if (input.kind !== RunEventKind.Thinking && input.kind !== RunEventKind.Output) {
       recorded.push(stamp(input, '', recorded.length + 1, Date.now()));
     }
     heard?.(input);
@@ -703,8 +719,8 @@ async function discovery(options: AgentLoopOptions, notice: OnNotice) {
   const { config, catalog = [] } = options;
   // On demand, but with a tool array that never changes: definitions come back as `load_tools`
   // results and run through `call_tool`. `onDemand` is true of both.
-  const proxied = config.toolDiscovery === 'proxy' && catalog.length > 0;
-  const onDemand = proxied || (config.toolDiscovery === 'ondemand' && catalog.length > 0);
+  const proxied = config.toolDiscovery === ToolDiscovery.Proxy && catalog.length > 0;
+  const onDemand = proxied || (config.toolDiscovery === ToolDiscovery.OnDemand && catalog.length > 0);
   // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
   const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
   const chooses = options.preselect && options.preselected === undefined;
@@ -751,7 +767,7 @@ function announcer(onMessage: AgentLoopOptions['onMessage']) {
 
 /** The `usage` event a turn ends in: the run's totals so far, and the turn's own report. */
 const usageEvent = (usage: TurnUsage, turn: Turn, ledger: TokenLedger): RunEventInput => ({
-  kind: 'usage',
+  kind: RunEventKind.Usage,
   usage: {
     promptTokens: usage.prompt,
     completionTokens: usage.completion,
@@ -802,7 +818,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     maxContinuations = 0,
     toolOrder = true,
     dedupeToolCalls = true,
-    preselectRouting = 'exclusive',
+    preselectRouting = PRESELECT_EXCLUSIVE,
   } = options;
   const dedupable = typeof dedupeToolCalls === 'function' ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
@@ -810,7 +826,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
   const client = getClient(config);
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
-  const notice = (text: string) => onEvent({ kind: 'notice', text });
+  const notice = (text: string) => onEvent({ kind: RunEventKind.Notice, text });
 
   const { proxied, onDemand, loaded, preselected } = await discovery(options, notice);
   const summarise = ownSummariser(options, notice);
@@ -842,10 +858,10 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
   // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
   // moves the question without losing it — and one that summarises the question away takes the
   // hooks' context with it, which is right.
-  const question = messages.findLast((message) => message.role === 'user');
+  const question = messages.findLast((message) => message.role === Role.User);
   const questionAt = () => (question ? messages.indexOf(question) : -1);
   const gathered: Gathered = hooks
-    ? await gather(hooks.run, hooks.events ?? ['beforeTurn'], hooks.context, {
+    ? await gather(hooks.run, hooks.events ?? [HookEvent.BeforeTurn], hooks.context, {
         signal,
         onNote: hooks.onNote,
         maxTokens: hooks.maxTokens,
@@ -920,11 +936,11 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     }
     messages = next;
     ledger = rebaseLedger(ledger, before, messages);
-    onEvent({ kind: 'turn', text: `turn ${step + 1}` });
+    onEvent({ kind: RunEventKind.Turn, text: `turn ${step + 1}` });
 
     // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
     // first step needs nothing of its own. Proxied, it is in the history.
-    const routed = !proxied && preselectRouting !== 'append' && preselected.length > 0 && step === 0;
+    const routed = !proxied && preselectRouting !== PRESELECT_APPEND && preselected.length > 0 && step === 0;
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
@@ -945,7 +961,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
     const prompt = onDemand && !routed ? `${system}\n\n${catalogue}`.trim() : system;
     const request: OpenAI.ChatCompletionMessageParam[] = [
-      ...(prompt ? [{ role: 'system' as const, content: prompt }] : []),
+      ...(prompt ? [{ role: Role.System, content: prompt }] : []),
       ...withContext(messages, questionAt(), gathered.context, preface),
     ];
 
@@ -961,8 +977,8 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
       idleMs: timeoutMs(config),
       firstChunkMs: firstTokenMs(config) ?? 0,
       onNotice: notice,
-      onThinking: (text: string) => onEvent({ kind: 'thinking', text }),
-      onOutput: (text: string) => onEvent({ kind: 'output', text }),
+      onThinking: (text: string) => onEvent({ kind: RunEventKind.Thinking, text }),
+      onOutput: (text: string) => onEvent({ kind: RunEventKind.Output, text }),
     };
     // Built the way `negotiate` is about to build the first attempt — the same flags, the same
     // model's refusals — so what the host is told is what is sent unless something is refused.
@@ -1011,7 +1027,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     };
     usage = addCounts(usage, turn.usage);
     onEvent(usageEvent(usage, turn, ledger));
-    if (turn.finishReason === 'length') {
+    if (turn.finishReason === FinishReason.Length) {
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
     const canRecover = recover && (tools.length > 0 || onDemand);
@@ -1046,7 +1062,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
-          outcome: turn.finishReason === 'length' ? 'truncated' : 'answered',
+          outcome: turn.finishReason === FinishReason.Length ? RunOutcome.Truncated : RunOutcome.Answered,
         },
         ledger,
       };

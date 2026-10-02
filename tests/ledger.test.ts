@@ -10,12 +10,13 @@ import {
   tokensBetween,
 } from '../src/ledger.ts';
 import { messageChars } from '../src/tokens.ts';
+import { Role } from '../src/wire.ts';
 
 type Message = OpenAI.ChatCompletionMessageParam;
 
-const user = (content: string): Message => ({ role: 'user', content });
-const assistant = (content: string): Message => ({ role: 'assistant', content });
-const result = (content: string): Message => ({ role: 'tool', tool_call_id: 'c', content });
+const user = (content: string): Message => ({ role: Role.User, content });
+const assistant = (content: string): Message => ({ role: Role.Assistant, content });
+const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
 /** Every unmeasured message costs seven, so an estimate is easy to tell from a measurement. */
 const estimate = () => 7;
 
@@ -63,7 +64,7 @@ describe('recordRequest', () => {
     const one = recordRequest([], undefined, first);
     const epochOf = (next: LedgerRequest) => recordRequest(one, first, next).at(-1)?.epoch;
     expect(epochOf({ ...second, messages: [user('shorter'), ...second.messages.slice(1)] })).toBe(1);
-    expect(epochOf({ ...second, messages: [{ role: 'system', content: 's' }, ...second.messages] })).toBe(1);
+    expect(epochOf({ ...second, messages: [{ role: Role.System, content: 's' }, ...second.messages] })).toBe(1);
     expect(epochOf({ ...second, tools: ['a', 'b'] })).toBe(1);
     // And where the request before is not known, which is every run's first.
     expect(recordRequest(one, undefined, second).at(-1)?.epoch).toBe(1);
@@ -210,7 +211,7 @@ describe('rebaseLedger', () => {
   });
 
   it("moves the kept tail's boundaries with it when the head is folded", () => {
-    const after = [{ role: 'system', content: 'summary' } as Message, ...before.slice(2)];
+    const after = [{ role: Role.System, content: 'summary' } as Message, ...before.slice(2)];
     const moved = rebaseLedger(kept, before, after);
     expect(moved).toEqual([
       { through: 1, prompt: 100, epoch: 1 },

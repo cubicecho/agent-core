@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentLoopOptions } from '../src/agent-loop.ts';
-import { HOOK_EVENTS } from '../src/hook-events.ts';
+import { ToolDiscovery } from '../src/config.ts';
+import { HOOK_EVENTS, HookEvent } from '../src/hook-events.ts';
 import {
   AGENT_SPEC,
   type AgentSpec,
@@ -10,6 +11,7 @@ import {
   resolveAgentSpec,
   SPEC_EVENTS,
 } from '../src/spec.ts';
+import { PartType } from '../src/wire.ts';
 
 /** A document that parses cleanly, which each test then bends in one direction. */
 const doc = (extra: Record<string, unknown> = {}) => ({ spec: AGENT_SPEC, ...extra });
@@ -49,7 +51,7 @@ describe('parseSpec', () => {
   });
 
   it('takes each way tools can reach the model, and drops one it has not heard of', () => {
-    for (const discovery of ['eager', 'ondemand', 'proxy'] as const) {
+    for (const discovery of Object.values(ToolDiscovery)) {
       expect(parsed(doc({ tools: { discovery } })).tools).toEqual({ discovery });
     }
     const result = parseSpec(doc({ tools: { discovery: 'lazy', maxIterations: 3 } }));
@@ -137,7 +139,7 @@ describe('parseSpec', () => {
 describe('parseSpec tools.servers', () => {
   // The single most likely bug: two consumers spell an empty scope in opposite directions today.
   it('keeps absent, empty and a list as three different answers', () => {
-    expect(parsed(doc({ tools: { discovery: 'eager' } })).tools?.servers).toBeUndefined();
+    expect(parsed(doc({ tools: { discovery: ToolDiscovery.Eager } })).tools?.servers).toBeUndefined();
     expect(parsed(doc({ tools: { servers: [] } })).tools?.servers).toEqual([]);
     expect(parsed(doc({ tools: { servers: ['git', 'fs'] } })).tools?.servers).toEqual(['git', 'fs']);
   });
@@ -163,11 +165,13 @@ describe('parseSpec hooks', () => {
   });
 
   it('reads a hook whole', () => {
-    const spec = parsed(doc({ hooks: [hook({ on: 'sessionStart', inject: true, args: { path: '{{cwd}}' } })] }));
+    const spec = parsed(
+      doc({ hooks: [hook({ on: HookEvent.SessionStart, inject: true, args: { path: '{{cwd}}' } })] }),
+    );
     expect(spec.hooks).toEqual([
       {
         id: 'h1',
-        on: 'sessionStart',
+        on: HookEvent.SessionStart,
         server: 'git',
         tool: 'status',
         inject: true,
@@ -177,7 +181,7 @@ describe('parseSpec hooks', () => {
   });
 
   it('drops an inject on an event that runs after the model answered', () => {
-    const result = parseSpec(doc({ hooks: [hook({ on: 'afterTurn', inject: true })] }));
+    const result = parseSpec(doc({ hooks: [hook({ on: HookEvent.AfterTurn, inject: true })] }));
     expect(result.spec?.hooks?.[0]?.inject).toBeUndefined();
     expect(result.warnings).toEqual([
       'hooks[0].inject: "afterTurn" runs after the model has already answered, and was dropped',
@@ -185,15 +189,15 @@ describe('parseSpec hooks', () => {
   });
 
   it('drops a veto anywhere but beforeCompact', () => {
-    expect(parsed(doc({ hooks: [hook({ on: 'beforeCompact', veto: true })] })).hooks?.[0]?.veto).toBe(true);
-    expect(parsed(doc({ hooks: [hook({ on: 'beforeTurn', veto: true })] })).hooks?.[0]?.veto).toBeUndefined();
+    expect(parsed(doc({ hooks: [hook({ on: HookEvent.BeforeCompact, veto: true })] })).hooks?.[0]?.veto).toBe(true);
+    expect(parsed(doc({ hooks: [hook({ on: HookEvent.BeforeTurn, veto: true })] })).hooks?.[0]?.veto).toBeUndefined();
   });
 
   it('notes an event this host never fires rather than refusing the agent', () => {
     // task_server rejects a beforeCompact hook at save time today, which makes a good agent
     // unimportable. The hook is kept; the operator is told.
-    const result = parseSpec(doc({ hooks: [hook({ on: 'beforeCompact' })] }), {
-      events: ['sessionStart', 'beforeTurn'],
+    const result = parseSpec(doc({ hooks: [hook({ on: HookEvent.BeforeCompact })] }), {
+      events: [HookEvent.SessionStart, HookEvent.BeforeTurn],
     });
     expect(result.errors).toEqual([]);
     expect(result.spec?.hooks).toHaveLength(1);
@@ -299,7 +303,7 @@ describe('resolveAgentSpec', () => {
       doc({
         endpoint: { baseUrl: 'https://api.openai.com/v1', requestTimeoutSeconds: 120 },
         model: { model: 'gpt-4o', maxTokens: 8192, temperature: 0.7, contextLength: 128000 },
-        tools: { discovery: 'eager', maxIterations: 20 },
+        tools: { discovery: ToolDiscovery.Eager, maxIterations: 20 },
         tasks: { toolSelect: { model: 'gpt-4o-mini' } },
         retry: { maxRetries: 3 },
       }),
@@ -327,7 +331,7 @@ describe('resolveAgentSpec', () => {
       maxTokens: 8192,
       temperature: 0,
       contextLength: 128000,
-      toolDiscovery: 'eager',
+      toolDiscovery: ToolDiscovery.Eager,
       toolSelectModel: 'gpt-4o-mini',
       maxToolIterations: 20,
       maxRetries: 3,
@@ -362,9 +366,9 @@ describe('resolveAgentSpec', () => {
   });
 
   it('validates a prompt reference without ever resolving it', () => {
-    const spec = parsed(doc({ prompt: [{ id: 'identity', ref: { type: 'file', value: './p.md' } }] }));
+    const spec = parsed(doc({ prompt: [{ id: 'identity', ref: { type: PartType.File, value: './p.md' } }] }));
     const resolved = resolveAgentSpec([spec]);
-    expect(resolved.prompt[0]?.ref).toEqual({ type: 'file', value: './p.md' });
+    expect(resolved.prompt[0]?.ref).toEqual({ type: PartType.File, value: './p.md' });
     // Nothing was read, so it contributes no text — the host resolves it and re-resolves.
     expect(resolved.systemPrompt).toBe('');
     expect(parseSpec(doc({ prompt: [{ id: 'i', ref: { type: 'http', value: 'x' } }] })).warnings).toEqual([
@@ -455,18 +459,20 @@ describe('resolveAgentSpec', () => {
   it('merges hooks by id and carries bundled servers through', () => {
     const base = parsed(
       doc({
-        hooks: [{ id: 'h1', on: 'sessionStart', server: 'git', tool: 'status' }],
+        hooks: [{ id: 'h1', on: HookEvent.SessionStart, server: 'git', tool: 'status' }],
         bundle: { mcpServers: [{ slug: 'fs', command: 'npx' }] },
       }),
       { bundle: true },
     );
     const over = parsed(
       doc({
-        hooks: [{ id: 'h1', on: 'sessionStart', server: 'git', tool: 'log', enabled: false }],
+        hooks: [{ id: 'h1', on: HookEvent.SessionStart, server: 'git', tool: 'log', enabled: false }],
       }),
     );
     const resolved = resolveAgentSpec([base, over]);
-    expect(resolved.hooks).toEqual([{ id: 'h1', on: 'sessionStart', server: 'git', tool: 'log', enabled: false }]);
+    expect(resolved.hooks).toEqual([
+      { id: 'h1', on: HookEvent.SessionStart, server: 'git', tool: 'log', enabled: false },
+    ]);
     expect(resolved.mcpServers).toEqual([{ slug: 'fs', command: 'npx' }]);
   });
 
@@ -479,7 +485,7 @@ describe('resolveAgentSpec', () => {
       maxTokens: 0,
       temperature: 0.7,
       contextLength: 0,
-      toolDiscovery: 'eager',
+      toolDiscovery: ToolDiscovery.Eager,
       maxToolIterations: 20,
       maxRetries: 0,
       systemPrompt: '',

@@ -1,8 +1,10 @@
-import { createHash } from 'node:crypto';
 import OpenAI from 'openai';
 import type { Endpoint, EndpointIdentity, RetryPolicy } from './config.ts';
+import { digestOf } from './digest.ts';
 import { isPositive } from './guards.ts';
+import { MS_PER_SECOND } from './platform.ts';
 import { assignSettings, scoped } from './scope.ts';
+import { HttpStatus } from './wire.ts';
 
 /**
  * The SDK insists on a non-empty key even where the server will not look at it. This is what it
@@ -12,7 +14,7 @@ import { assignSettings, scoped } from './scope.ts';
 export const NO_KEY = 'agent-core';
 
 /** A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit. */
-const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
+const limitMs = (seconds: number) => (seconds > 0 ? seconds * MS_PER_SECOND : undefined);
 
 /**
  * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
@@ -327,7 +329,7 @@ export const modelKey = (endpoint: string, model: string) => JSON.stringify([end
  * A digest identifies the same endpoint on the next boot without saying what the key was, and it
  * is how a host finds its own endpoint's entry in a `CapabilitySnapshot`.
  */
-export const endpointId = (config: EndpointIdentity) => createHash('sha256').update(endpointKey(config)).digest('hex');
+export const endpointId = (config: EndpointIdentity) => digestOf(endpointKey(config));
 
 /**
  * Served windows found by asking a server's own API, keyed on endpoint and model together.
@@ -368,7 +370,11 @@ const PROBE_TIMEOUT_MS = 10_000;
 const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
 
 /** A route this server does not have, rather than one that failed to answer. */
-const NOT_THERE = new Set([404, 405, 501]);
+const NOT_THERE: ReadonlySet<number> = new Set([
+  HttpStatus.NotFound,
+  HttpStatus.MethodNotAllowed,
+  HttpStatus.NotImplemented,
+]);
 
 /**
  * Asks one native endpoint. `failed` is any answer that was not a 2xx and `missing` the ones among

@@ -1,5 +1,7 @@
 import type OpenAI from 'openai';
 import type { RunEvent } from '../src/events.ts';
+import { RunEventKind } from '../src/events.ts';
+import { FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
 
 /**
  * Shapes big enough for the costs to show.
@@ -12,28 +14,28 @@ import type { RunEvent } from '../src/events.ts';
 
 /** One MCP-shaped tool: nested objects, a nullable union, a pattern, a format. */
 export const mcpTool = (index: number): OpenAI.ChatCompletionTool => ({
-  type: 'function',
+  type: FUNCTION_TOOL,
   function: {
     name: `server_${index % 4}__group__tool_${index}`,
     description: `Does the ${index}th thing, at some length, the way an MCP server describes it.`,
     parameters: {
-      type: 'object',
+      type: SchemaType.Object,
       properties: {
-        path: { type: 'string', pattern: '^[\\w/.-]+$', description: 'Where to look.' },
-        mode: { type: ['string', 'null'], enum: ['read', 'write'] },
-        when: { type: 'string', format: 'date-time' },
+        path: { type: SchemaType.String, pattern: '^[\\w/.-]+$', description: 'Where to look.' },
+        mode: { type: [SchemaType.String, SchemaType.Null], enum: ['read', 'write'] },
+        when: { type: SchemaType.String, format: 'date-time' },
         filter: {
-          type: 'object',
+          type: SchemaType.Object,
           properties: {
-            match: { anyOf: [{ type: 'string', pattern: '\\d+' }, { type: 'null' }] },
-            limit: { type: 'integer' },
+            match: { anyOf: [{ type: SchemaType.String, pattern: '\\d+' }, { type: SchemaType.Null }] },
+            limit: { type: SchemaType.Integer },
             nested: {
-              type: 'object',
-              properties: { deep: { type: 'string', format: 'uri' } },
+              type: SchemaType.Object,
+              properties: { deep: { type: SchemaType.String, format: 'uri' } },
             },
           },
         },
-        tags: { type: 'array', items: { type: 'string', pattern: '^[a-z]+$' } },
+        tags: { type: SchemaType.Array, items: { type: SchemaType.String, pattern: '^[a-z]+$' } },
       },
       required: ['path'],
     },
@@ -44,21 +46,23 @@ export const mcpTools = (count = 25) => Array.from({ length: count }, (_, i) => 
 
 /** A transcript after a dozen tool iterations — a few hundred kilobytes of messages. */
 export function transcript(turns = 40): OpenAI.ChatCompletionMessageParam[] {
-  const messages: OpenAI.ChatCompletionMessageParam[] = [{ role: 'system', content: 'You are an agent. '.repeat(60) }];
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: Role.System, content: 'You are an agent. '.repeat(60) },
+  ];
   for (let i = 0; i < turns; i++) {
-    messages.push({ role: 'user', content: `Request ${i}. ${'context '.repeat(120)}` });
+    messages.push({ role: Role.User, content: `Request ${i}. ${'context '.repeat(120)}` });
     messages.push({
-      role: 'assistant',
+      role: Role.Assistant,
       content: null,
       tool_calls: [
         {
           id: `call_${i}`,
-          type: 'function',
+          type: FUNCTION_TOOL,
           function: { name: 'read_file', arguments: JSON.stringify({ path: `/f/${i}`, n: i }) },
         },
       ],
     });
-    messages.push({ role: 'tool', tool_call_id: `call_${i}`, content: 'result '.repeat(200) });
+    messages.push({ role: Role.Tool, tool_call_id: `call_${i}`, content: 'result '.repeat(200) });
   }
   return messages;
 }
@@ -74,7 +78,7 @@ export const deltas = (count = 20_000): RunEvent[] =>
     runId: 'bench',
     seq: i + 1,
     at: Date.now(),
-    kind: i % 2000 === 1999 ? ('output' as const) : ('thinking' as const),
+    kind: i % 2000 === 1999 ? RunEventKind.Output : RunEventKind.Thinking,
     text: 'token ',
     name: '',
     step: i < count / 2 ? 'plan' : 'act',

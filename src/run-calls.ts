@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import type { CatalogServer } from './catalog.ts';
 import { errorMessage } from './errors.ts';
 import type { RunEventInput } from './events.ts';
+import { RunEventKind } from './events.ts';
 import type { Turn } from './stream.ts';
 import {
   parseToolArguments,
@@ -22,6 +23,7 @@ import {
   shownCall,
   toolName,
 } from './tool-loading.ts';
+import { FUNCTION_TOOL, Role } from './wire.ts';
 
 /**
  * The tools between two turns: a step's calls read, run and written into the transcript.
@@ -78,7 +80,7 @@ export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason'])
 
 /** The assistant message a turn is written into the transcript as, its calls' arguments repaired. */
 export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.ChatCompletionAssistantMessageParam => ({
-  role: 'assistant',
+  role: Role.Assistant,
   content: content || null,
   ...(parsed.length
     ? {
@@ -205,7 +207,7 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
   // Built for every call rather than only the dispatched ones, so a host hears of the calls
   // the loop answers itself in the same shape. Arguments that could not be read are none.
   const request: ToolCallRequest = { id: call.id, name, args: inner, raw };
-  run.onEvent({ kind: 'tool-call', id: call.id, name, text: preview(raw) });
+  run.onEvent({ kind: RunEventKind.ToolCall, id: call.id, name, text: preview(raw) });
   run.onToolCall?.(request);
   let content: string;
   let ok = true;
@@ -241,7 +243,7 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
     content = errorMessage(error);
     ok = false;
   }
-  run.onEvent({ kind: 'tool-result', id: call.id, name, ok, text: preview(content) });
+  run.onEvent({ kind: RunEventKind.ToolResult, id: call.id, name, ok, text: preview(content) });
   const result = { id: call.id, name, ok, content };
   run.onToolResult?.(result);
   return result;
@@ -278,7 +280,7 @@ export async function runCalls(
   let kept = 0;
   const keep = async (id: string, content: string) => {
     const result: OpenAI.ChatCompletionToolMessageParam = {
-      role: 'tool',
+      role: Role.Tool,
       tool_call_id: id,
       content,
     };
@@ -351,9 +353,9 @@ export async function loadShortlist(
   // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and a
   // host that shortlisted more has already chosen.
   const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
-  run.onEvent({ kind: 'tool-call', id, name: LOAD_TOOLS, text: preview(args) });
+  run.onEvent({ kind: RunEventKind.ToolCall, id, name: LOAD_TOOLS, text: preview(args) });
   run.onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
-  run.onEvent({ kind: 'tool-result', id, name: LOAD_TOOLS, ok: true, text: preview(content) });
+  run.onEvent({ kind: RunEventKind.ToolResult, id, name: LOAD_TOOLS, ok: true, text: preview(content) });
   run.onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
   run.toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
   run.loads.toolsLoaded += names.length;
@@ -362,11 +364,11 @@ export async function loadShortlist(
   }
   const exchange: OpenAI.ChatCompletionMessageParam[] = [
     {
-      role: 'assistant',
+      role: Role.Assistant,
       content: null,
-      tool_calls: [{ id, type: 'function', function: { name: LOAD_TOOLS, arguments: args } }],
+      tool_calls: [{ id, type: FUNCTION_TOOL, function: { name: LOAD_TOOLS, arguments: args } }],
     },
-    { role: 'tool', tool_call_id: id, content },
+    { role: Role.Tool, tool_call_id: id, content },
   ];
   // Both written before either is announced, so a host that throws on the first leaves a call
   // with its result. Told as step zero's, with no turn: no request was made for them.

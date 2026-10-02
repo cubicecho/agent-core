@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EndpointSilent } from '../src/retry.ts';
 import { streamTurn } from '../src/stream.ts';
+import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire.ts';
 
 type Chunk = OpenAI.ChatCompletionChunk;
 /** Hand-written chunks carry only the fields under test; the SDK's Choice wants more. */
@@ -94,14 +95,14 @@ describe('streamTurn', () => {
   it('keeps a scratchpad cut off at the ceiling out of the answer', async () => {
     const turn = await streamTurn(
       clientOf(() =>
-        chunks(text('<think>still weighing'), chunk({ choices: [{ delta: {}, finish_reason: 'length' }] })),
+        chunks(text('<think>still weighing'), chunk({ choices: [{ delta: {}, finish_reason: FinishReason.Length }] })),
       ),
       body,
     );
     expect(turn).toMatchObject({
       content: '',
       reasoning: 'still weighing',
-      finishReason: 'length',
+      finishReason: FinishReason.Length,
     });
   });
 
@@ -146,8 +147,8 @@ describe('streamTurn', () => {
       body,
     );
     expect(turn.toolCalls).toEqual([
-      { id: 'a', type: 'function', function: { name: 'first', arguments: '{"x":1}' } },
-      { id: 'b', type: 'function', function: { name: 'second', arguments: '{}' } },
+      { id: 'a', type: FUNCTION_TOOL, function: { name: 'first', arguments: '{"x":1}' } },
+      { id: 'b', type: FUNCTION_TOOL, function: { name: 'second', arguments: '{}' } },
     ]);
   });
 
@@ -330,7 +331,7 @@ describe('streamTurn', () => {
     vi.useFakeTimers();
     const later = {
       async *[Symbol.asyncIterator]() {
-        yield chunk({ choices: [{ delta: { role: 'assistant' } }] });
+        yield chunk({ choices: [{ delta: { role: Role.Assistant } }] });
         await new Promise((resolve) => setTimeout(resolve, 250));
         yield text('hi');
       },
@@ -367,7 +368,7 @@ describe('streamTurn', () => {
     // first token. It shows nobody anything, and latching `produced` on its arrival made an
     // endpoint that primes and then wedges unretryable — which is the case the watchdog raises
     // `EndpointSilent` for, and which `retry.ts` calls transient precisely so it is sent again.
-    const priming = chunk({ choices: [{ delta: { role: 'assistant' } }] });
+    const priming = chunk({ choices: [{ delta: { role: Role.Assistant } }] });
     const shown: string[] = [];
     const produced = { any: false };
 
@@ -402,7 +403,7 @@ describe('streamTurn', () => {
     expect(await latched({ reasoning: 'hmm' })).toBe(true);
     expect(await latched({ tool_calls: [{ index: 0, function: { name: 't' } }] })).toBe(true);
     // An empty tool-call list is the same nothing as an empty delta.
-    expect(await latched({ role: 'assistant', content: '', tool_calls: [] })).toBe(false);
+    expect(await latched({ role: Role.Assistant, content: '', tool_calls: [] })).toBe(false);
   });
 
   it('gives up on an endpoint that goes quiet mid-turn', async () => {
@@ -446,7 +447,7 @@ describe('streamTurn', () => {
         options.push(requestOptions as { timeout?: number });
         return {
           async *[Symbol.asyncIterator]() {
-            yield chunk({ choices: [{ delta: { role: 'assistant' } }] });
+            yield chunk({ choices: [{ delta: { role: Role.Assistant } }] });
             await new Promise((resolve) => setTimeout(resolve, 100_000));
             yield* stalls(requestOptions.signal, text('after prefill'));
           },
@@ -555,10 +556,10 @@ describe('streamTurn', () => {
 
   it('reports the reason the model stopped', async () => {
     const turn = await streamTurn(
-      clientOf(() => chunks(text('done'), chunk({ choices: [{ delta: {}, finish_reason: 'stop' }] }))),
+      clientOf(() => chunks(text('done'), chunk({ choices: [{ delta: {}, finish_reason: FinishReason.Stop }] }))),
       body,
     );
-    expect(turn.finishReason).toBe('stop');
+    expect(turn.finishReason).toBe(FinishReason.Stop);
   });
 
   it('says a turn was cut off at the ceiling, which it otherwise comes back whole from', async () => {
@@ -577,12 +578,12 @@ describe('streamTurn', () => {
               },
             ],
           }),
-          chunk({ choices: [{ delta: {}, finish_reason: 'length' }] }),
+          chunk({ choices: [{ delta: {}, finish_reason: FinishReason.Length }] }),
         ),
       ),
       body,
     );
-    expect(turn.finishReason).toBe('length');
+    expect(turn.finishReason).toBe(FinishReason.Length);
     expect(() => JSON.parse(turn.toolCalls[0].function.arguments)).toThrow();
   });
 
@@ -590,11 +591,11 @@ describe('streamTurn', () => {
     // Some servers send the reason on its own, which the delta guard skips — so it is read off
     // the choice before that guard rather than beside the content.
     const turn = await streamTurn(
-      clientOf(() => chunks(text('hi'), chunk({ choices: [{ finish_reason: 'tool_calls' }] }))),
+      clientOf(() => chunks(text('hi'), chunk({ choices: [{ finish_reason: FinishReason.ToolCalls }] }))),
       body,
     );
     expect(turn.content).toBe('hi');
-    expect(turn.finishReason).toBe('tool_calls');
+    expect(turn.finishReason).toBe(FinishReason.ToolCalls);
   });
 
   it('says nothing about the reason where the endpoint said nothing', async () => {

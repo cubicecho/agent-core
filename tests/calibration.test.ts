@@ -5,13 +5,14 @@ import { capabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
 import { ContextOverflow } from '../src/retry.ts';
 import { runTurn } from '../src/run-turn.ts';
 import { CHARS_PER_TOKEN, requestChars, requestTokens, toolsChars } from '../src/tokens.ts';
+import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
 
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
 const says = (content: string, model = 'm'): Body => ({
   model,
   stream: true,
-  messages: [{ role: 'user', content }],
+  messages: [{ role: Role.User, content }],
 });
 /** The prompt count that puts a body at this many characters per token. */
 const promptAt = (body: Body, ratio: number) => (requestChars(body) + toolsChars(body.tools ?? [])) / ratio;
@@ -25,7 +26,7 @@ const chunks = (...list: unknown[]) => ({
 /** A turn that answers and reports this prompt count. */
 const reports = (prompt: number) =>
   chunks(
-    { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] },
+    { choices: [{ delta: { content: 'ok' }, finish_reason: FinishReason.Stop }] },
     {
       choices: [],
       usage: { prompt_tokens: prompt, completion_tokens: 1, total_tokens: prompt + 1 },
@@ -64,7 +65,7 @@ describe('calibration', () => {
   it('counts the tools the request declared', () => {
     const body: Body = {
       ...says('x'.repeat(1000)),
-      tools: [{ type: 'function', function: { name: 't', parameters: { type: 'object' } } }],
+      tools: [{ type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } }],
     };
     expect(calibrate(supports(), body, promptAt(body, 3))).toBeCloseTo(3);
   });
@@ -83,10 +84,10 @@ describe('calibration', () => {
       stream: true,
       messages: [
         {
-          role: 'user',
+          role: Role.User,
           content: [
-            { type: 'text', text: 'what is this' },
-            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: PartType.Text, text: 'what is this' },
+            { type: PartType.ImageUrl, image_url: { url: 'data:image/png;base64,AAAA' } },
           ],
         },
       ],

@@ -3,6 +3,7 @@ import {
   type Capabilities,
   capabilitiesFor,
   ceilingAndTemperature,
+  EFFORT_NONE,
   effortFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
@@ -17,6 +18,7 @@ import { relaxSchema, sanitizeSchema } from './schema-compat.ts';
 import { scoped } from './scope.ts';
 import { stripThinking } from './thinking.ts';
 import { looseJson } from './tool-calls.ts';
+import { JSON_SCHEMA_FORMAT, Role } from './wire.ts';
 
 /**
  * One-shot calls that support a run without being one: picking tools, naming a session,
@@ -186,7 +188,7 @@ async function complete(
     // models refuse it by value and list `minimal` as their floor. `effortFor` answers with the
     // cheapest rung this one takes, which `negotiate` has been stepping up as it was refused.
     // A level the caller chose goes through the same ladder, which only ever steps up from it.
-    const asked = effort ? effortFor(refused, level || 'none') : '';
+    const asked = effort ? effortFor(refused, level || EFFORT_NONE) : '';
     sentEffort = asked !== '';
     return getClient(config).chat.completions.create(
       {
@@ -197,8 +199,8 @@ async function complete(
         // model is as close as it gets.
         ...ceilingAndTemperature(refused, maxTokens, temperature),
         messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
+          { role: Role.System, content: system },
+          { role: Role.User, content: user },
         ],
         ...(hints ? NO_THINKING : {}),
         // Not gated on `hints`: a model that refuses `chat_template_kwargs` may still read the
@@ -328,7 +330,7 @@ export async function askJson<T>(
     refused.structuredOutput
       ? {
           response_format: {
-            type: 'json_schema',
+            type: JSON_SCHEMA_FORMAT,
             json_schema: {
               name,
               strict,

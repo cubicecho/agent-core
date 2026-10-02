@@ -1,6 +1,6 @@
-import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS } from './config.ts';
+import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS, ToolDiscovery } from './config.ts';
 import { isRecord } from './guards.ts';
-import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from './hook-events.ts';
+import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from './hook-events.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
@@ -108,6 +108,12 @@ export interface ModelSpec {
   extraBody?: Record<string, unknown>;
 }
 
+/** The `ref.type` of a prompt part whose text is in a file. */
+export const REF_FILE = 'file' as const;
+
+/** The `ref.type` of a prompt part whose text is behind a URL. */
+export const REF_URL = 'url' as const;
+
 /** One layer of system prompt, named so a layer above can stack beside it or replace it. */
 export interface PromptPart {
   /** Names this layer: `project`, `identity`, `role`, `lane`. Merging happens on it. */
@@ -115,7 +121,7 @@ export interface PromptPart {
   /** The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given. */
   text?: string;
   /** Where the text lives instead. The shape is validated; the reference is never resolved. */
-  ref?: { type: 'file' | 'url'; value: string };
+  ref?: { type: typeof REF_FILE | typeof REF_URL; value: string };
 }
 
 /** How tools reach the model, and which servers this agent may reach at all. */
@@ -265,7 +271,7 @@ export const RESOLVED_DEFAULTS = {
   temperature: 0.7,
   maxTokens: 0,
   contextLength: 0,
-  toolDiscovery: 'eager',
+  toolDiscovery: ToolDiscovery.Eager,
   maxToolIterations: 20,
   maxRetries: 0,
 } as const;
@@ -404,10 +410,13 @@ function parseEndpoint(report: Report, path: string, value: unknown): EndpointSp
   return said(endpoint) ? endpoint : undefined;
 }
 
+/** The highest temperature the wire takes. */
+const MAX_TEMPERATURE = 2;
+
 /** The three fields a model and a side task both carry, held to the same bounds in each. */
 const parseSampling = (report: Report, path: string, value: Record<string, unknown>) => ({
   maxTokens: report.number(`${path}.maxTokens`, value.maxTokens, 0),
-  temperature: report.number(`${path}.temperature`, value.temperature, 0, 2),
+  temperature: report.number(`${path}.temperature`, value.temperature, 0, MAX_TEMPERATURE),
   reasoningEffort: report.string(`${path}.reasoningEffort`, value.reasoningEffort),
 });
 
@@ -461,7 +470,7 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
       const raw = held.ref;
       const type = isRecord(raw) ? raw.type : undefined;
       const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
-      if ((type === 'file' || type === 'url') && value) {
+      if ((type === REF_FILE || type === REF_URL) && value) {
         ref = { type, value };
       } else {
         report.drop(`${path}.ref`, 'must be { type: "file" | "url", value }');
@@ -486,7 +495,11 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
   }
   let discovery: ToolsSpec['discovery'];
   if (!absent(value.discovery)) {
-    if (value.discovery === 'eager' || value.discovery === 'ondemand' || value.discovery === 'proxy') {
+    if (
+      value.discovery === ToolDiscovery.Eager ||
+      value.discovery === ToolDiscovery.OnDemand ||
+      value.discovery === ToolDiscovery.Proxy
+    ) {
       discovery = value.discovery;
     } else {
       report.drop('tools.discovery', 'must be "eager", "ondemand" or "proxy"');
@@ -584,7 +597,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
       inject = undefined;
     }
     let veto = report.boolean(`${path}.veto`, held.veto);
-    if (veto && on !== 'beforeCompact') {
+    if (veto && on !== HookEvent.BeforeCompact) {
       report.drop(`${path}.veto`, `"${on}" announces nothing a hook can decline`);
       veto = undefined;
     }

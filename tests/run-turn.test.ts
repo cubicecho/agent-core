@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
 import { ContextOverflow, EndpointSilent } from '../src/retry.ts';
 import { runTurn } from '../src/run-turn.ts';
+import { Role } from '../src/wire.ts';
 
 type Chunk = OpenAI.ChatCompletionChunk;
 /** Hand-written chunks carry only the fields under test; the SDK's Choice wants more. */
@@ -178,7 +179,7 @@ describe('runTurn', () => {
     // was shown to anybody either way, which is what makes it the same case as no chunks at all.
     vi.useFakeTimers();
     const seen: string[] = [];
-    const priming = chunk({ choices: [{ delta: { role: 'assistant' } }] });
+    const priming = chunk({ choices: [{ delta: { role: Role.Assistant } }] });
     const create = vi
       .fn()
       .mockImplementationOnce(() => ({
@@ -309,7 +310,7 @@ describe('contextLimit', () => {
   const big = () =>
     ({
       model: 'm',
-      messages: [{ role: 'user', content: 'x'.repeat(200_000) }],
+      messages: [{ role: Role.User, content: 'x'.repeat(200_000) }],
       stream: true,
     }) as OpenAI.ChatCompletionCreateParamsStreaming;
 
@@ -337,7 +338,7 @@ describe('contextLimit', () => {
 
   it('counts the reply ceiling against the window, under either spelling', async () => {
     // About 2.5k tokens of prompt: fits 8192 alone, not with 6000 reserved for the reply.
-    const prompt = { role: 'user' as const, content: 'x'.repeat(10_000) };
+    const prompt = { role: Role.User, content: 'x'.repeat(10_000) };
     for (const ceiling of [{ max_tokens: 6000 }, { max_completion_tokens: 6000 }]) {
       const create = vi.fn();
       const request = () => ({ model: 'm', messages: [prompt], stream: true as const, ...ceiling });

@@ -1,8 +1,10 @@
 import type OpenAI from 'openai';
+import { MS_PER_SECOND } from './platform.ts';
 import { EndpointSilent } from './retry.ts';
-import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from './thinking.ts';
+import { DEFAULT_FENCES, type Fence, FenceSplitter, SPLIT_REASONING, type Split } from './thinking.ts';
 import type { ContextBreakdown } from './tokens.ts';
 import type { ToolCall } from './tool-calls.ts';
+import { FUNCTION_TOOL } from './wire.ts';
 
 /**
  * Reading one streamed turn back into a message.
@@ -14,6 +16,30 @@ import type { ToolCall } from './tool-calls.ts';
  * hangs the turn until somebody presses stop. `EndpointSilent` and `timeoutMs` were exported for
  * this loop long before the loop itself was.
  */
+
+/**
+ * What the loop changed that would explain a prompt cache that did not hold.
+ *
+ * @remarks
+ * In the order `breakReason` looks, the earliest in the prompt first, since a change there is the
+ * one that costs the rest.
+ */
+export const CacheBreakReason = {
+  /** The tool array is not the one the request before declared. */
+  ToolsChanged: 'tools-changed',
+  /** The system messages the prompt opens with are not the ones it opened with before. */
+  SystemChanged: 'system-changed',
+  /** A message the request before sent is gone or different. */
+  HistoryRewritten: 'history-rewritten',
+  /**
+   * Nothing the loop can see: the server's doing — an eviction, another client on the slot — or
+   * a change made where the loop does not look.
+   */
+  NoneKnown: 'none-known',
+} as const;
+
+/** Any one of the reasons in `CacheBreakReason`. */
+export type CacheBreakReason = (typeof CacheBreakReason)[keyof typeof CacheBreakReason];
 
 /**
  * What a turn cost, and how it went. Zero throughout the four counts means the server did not say.
@@ -89,12 +115,8 @@ export interface TurnUsage {
    * reported, so a server that says nothing about its cache is never accused of losing it.
    */
   cacheBroken?: boolean;
-  /**
-   * What the loop changed that would explain `cacheBroken`, the earliest in the prompt first,
-   * since a change there is the one that costs the rest. `none-known` is the server's doing — an
-   * eviction, another client on the slot — or a change the loop cannot see. Only on a broken turn.
-   */
-  cacheBreakReason?: 'tools-changed' | 'system-changed' | 'history-rewritten' | 'none-known';
+  /** What the loop changed that would explain `cacheBroken`. Only on a broken turn. */
+  cacheBreakReason?: CacheBreakReason;
   /** How many tools the request declared, filled by `runAgentLoop`. */
   toolsDeclared?: number;
   /**
@@ -328,7 +350,7 @@ function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
     minted.add(id);
     assembled.push({
       id,
-      type: 'function',
+      type: FUNCTION_TOOL,
       function: { name: call.name, arguments: call.arguments },
     });
   }
@@ -336,7 +358,7 @@ function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
 }
 
 /** The largest delay a timer takes, which is as close to none as the SDK's timeout option goes. */
-const NO_SDK_TIMEOUT = 2 ** 31 - 1;
+const NO_SDK_TIMEOUT = 2_147_483_647;
 
 /**
  * Whether the model has said anything a second attempt would say twice.
@@ -467,7 +489,7 @@ export async function streamTurn(
     if (watchdog.signal.aborted && !signal?.aborted) {
       const waited = talking ? idleMs : first;
       const before = talking || first === idleMs ? '' : ' before its first token';
-      throw new EndpointSilent(`the model endpoint sent nothing for ${(waited ?? 0) / 1000}s${before}`);
+      throw new EndpointSilent(`the model endpoint sent nothing for ${(waited ?? 0) / MS_PER_SECOND}s${before}`);
     }
     throw error;
   } finally {
@@ -489,7 +511,7 @@ export async function streamTurn(
     const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
     const report = (parts: Split[]) => {
       for (const part of parts) {
-        (part.kind === 'reasoning' ? onThinking : onOutput)?.(part.text);
+        (part.kind === SPLIT_REASONING ? onThinking : onOutput)?.(part.text);
       }
     };
     // In arrival order, sorted by index at the end; a call from a server that sent none keeps
