@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
-import type { Endpoint } from "./config.ts";
+import type { Endpoint, RetryPolicy } from "./config.ts";
 import { isPositive } from "./guards.ts";
 import { scoped } from "./scope.ts";
 
@@ -21,6 +21,22 @@ const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
  */
 export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
+
+/**
+ * How long to wait out a model that is still loading, in milliseconds — `undefined` where the
+ * config has no opinion, and zero where it says not to wait at all.
+ *
+ * Zero rather than the SDK's `undefined` for "no wait", because here absent already means
+ * something else: `runTurn`'s own default.
+ *
+ * @param config Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
+ */
+export const loadingMs = (
+  config: Pick<RetryPolicy, "loadingTimeoutSeconds">,
+): number | undefined =>
+  config.loadingTimeoutSeconds === undefined
+    ? undefined
+    : (limitMs(config.loadingTimeoutSeconds) ?? 0);
 
 /**
  * A client per endpoint, made once and kept.

@@ -9,7 +9,7 @@ import {
   modelCapabilitiesFor,
 } from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
-import { firstTokenMs, getClient, NO_KEY, timeoutMs } from "./client.ts";
+import { firstTokenMs, getClient, loadingMs, NO_KEY, timeoutMs } from "./client.ts";
 import {
   type CompactionOptions,
   compactTranscript,
@@ -1474,9 +1474,7 @@ async function runSteps(
       model: config.model,
       droppable: Object.keys(config.extraBody ?? {}),
       maxRetries,
-      ...(config.loadingTimeoutSeconds === undefined
-        ? {}
-        : { loadingTimeoutMs: Math.max(0, config.loadingTimeoutSeconds) * 1000 }),
+      loadingTimeoutMs: loadingMs(config),
       contextLimit: config.contextLength ?? 0,
       signal,
       idleMs: timeoutMs(config),
