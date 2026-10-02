@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
-import type { CatalogServer } from '../src/catalog.ts';
-import { HookEvent } from '../src/hook-events.ts';
-import type { HookOutcome } from '../src/hooks.ts';
-import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
+import { HookEvent } from '../src/hooks/hook-events.ts';
+import type { HookOutcome } from '../src/hooks/hooks.ts';
+import type { CatalogServer } from '../src/tools/catalog.ts';
+import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire/wire.ts';
 
 /**
  * What more than one test file builds the same way: the fake client, the errors the SDK raises,

@@ -128,11 +128,18 @@ function summarize(body) {
   return end;
 }
 
-/** Every `export ... from "./module.ts"` in index order, with the names each one re-exports. */
+/**
+ * Every `export ... from "./folder/module.ts"` in index order, with the names each one re-exports.
+ *
+ * @remarks
+ * `path` is where the module is, under `src/` and without its extension; `module` is its own name,
+ * which is what the index is headed with. The folder is where a module is kept, not part of what
+ * it is called.
+ */
 function reexports(indexSource) {
   const found = [];
-  const pattern = /export\s+(type\s+)?\{([^}]*)\}\s*from\s*["']\.\/([\w-]+)\.ts["'];/g;
-  for (const [, blanketType, inner, module] of indexSource.matchAll(pattern)) {
+  const pattern = /export\s+(type\s+)?\{([^}]*)\}\s*from\s*["']\.\/((?:[\w-]+\/)*([\w-]+))\.ts["'];/g;
+  for (const [, blanketType, inner, path, module] of indexSource.matchAll(pattern)) {
     const names = inner
       .split(',')
       .map((entry) => entry.trim())
@@ -144,7 +151,7 @@ function reexports(indexSource) {
     if (names.length === 0) {
       throw new Error(`no names re-exported from ${module}`);
     }
-    found.push({ module, names });
+    found.push({ path, module, names });
   }
   if (found.length === 0) {
     throw new Error('no re-exports found in src/index.ts — parser is stale');
@@ -179,8 +186,8 @@ let total = 0;
 let described = 0;
 const undocumented = [];
 
-for (const { module, names } of reexports(index)) {
-  const source = read(`src/${module}.ts`);
+for (const { path, module, names } of reexports(index)) {
+  const source = read(`src/${path}.ts`);
   const blocks = docBlocks(source);
 
   const docs = new Map();

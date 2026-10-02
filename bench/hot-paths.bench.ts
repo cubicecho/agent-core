@@ -1,7 +1,7 @@
 import { bench, describe } from 'vitest';
-import { emit, fold, RunEventKind, resetEvents, watch } from '../src/events.ts';
-import { relaxTools, sanitizeTools } from '../src/schema-compat.ts';
-import { requestTokens } from '../src/tokens.ts';
+import { relaxTools, sanitizeTools } from '../src/endpoint/schema-compat.ts';
+import { emit, fold, RunEventKind, resetEvents, watch } from '../src/run/events.ts';
+import { requestTokens } from '../src/wire/tokens.ts';
 import { deltas, mcpTools, streamingBody, transcript } from './fixtures.ts';
 
 /**

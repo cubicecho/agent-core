@@ -11,48 +11,6 @@
  */
 
 export {
-  type AgentLoopHooks,
-  type AgentLoopOptions,
-  type AgentLoopRequest,
-  type AgentLoopResult,
-  PRESELECT_APPEND,
-  PRESELECT_EXCLUSIVE,
-  runAgentLoop,
-  type StepWindow,
-} from './agent-loop.ts';
-export { calibrate, charsPerTokenFor, resetCalibration } from './calibration.ts';
-export {
-  type Capabilities,
-  capabilitiesFor,
-  EFFORT_LADDER,
-  EFFORT_NONE,
-  EFFORT_OFF,
-  effortFor,
-  expireCapabilities,
-  type ModelCapabilities,
-  modelCapabilitiesFor,
-  type NegotiateOptions,
-  negotiate,
-  resetCapabilities,
-} from './capabilities.ts';
-export type { CatalogServer } from './catalog.ts';
-export {
-  type ClientPoolOptions,
-  configureClients,
-  contextLimitFor,
-  endpointId,
-  endpointKey,
-  firstTokenMs,
-  getClient,
-  listModels,
-  type ModelInfo,
-  NO_KEY,
-  resetClients,
-  resolveApiKey,
-  servedWindow,
-  timeoutMs,
-} from './client.ts';
-export {
   applyCompaction,
   COMPACT_AT,
   type CompactionOptions,
@@ -69,7 +27,17 @@ export {
   SUMMARY_LEAD,
   SUMMARY_PROMPT,
   summariser,
-} from './compaction.ts';
+} from './context/compaction.ts';
+export {
+  estimateFrom,
+  type LedgerEntry,
+  type LedgerEstimateOptions,
+  type LedgerRequest,
+  rebaseLedger,
+  recordRequest,
+  type TokenLedger,
+  tokensBetween,
+} from './context/ledger.ts';
 export {
   type AgentConfig,
   type Endpoint,
@@ -77,39 +45,46 @@ export {
   type RetryPolicy,
   ToolDiscovery,
   type ToolPolicy,
-} from './config.ts';
+} from './core/config.ts';
+export { calibrate, charsPerTokenFor, resetCalibration } from './endpoint/calibration.ts';
 export {
-  type ContinueTurnOptions,
-  continueTurn,
-} from './continuation.ts';
+  type Capabilities,
+  capabilitiesFor,
+  EFFORT_LADDER,
+  EFFORT_NONE,
+  EFFORT_OFF,
+  effortFor,
+  expireCapabilities,
+  type ModelCapabilities,
+  modelCapabilitiesFor,
+  type NegotiateOptions,
+  negotiate,
+  resetCapabilities,
+} from './endpoint/capabilities.ts';
 export {
-  AgentLoopError,
-  type AgentLoopFailure,
-  AgentLoopOverflow,
-  errorMessage,
-  failedRun,
-  ToolIterationLimit,
-} from './errors.ts';
+  type ClientPoolOptions,
+  configureClients,
+  contextLimitFor,
+  endpointId,
+  endpointKey,
+  firstTokenMs,
+  getClient,
+  listModels,
+  type ModelInfo,
+  NO_KEY,
+  resetClients,
+  resolveApiKey,
+  servedWindow,
+  timeoutMs,
+} from './endpoint/client.ts';
 export {
-  configureEvents,
-  type EventBusOptions,
-  emit,
-  endRun,
-  fold,
-  history,
-  type RunEvent,
-  type RunEventInput,
-  RunEventKind,
-  type RunMetrics,
-  type RunMetricsOptions,
-  RunOutcome,
-  type RunUsage,
-  resetEvents,
-  runMetrics,
-  type TurnReport,
-  watch,
-} from './events.ts';
-export { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from './hook-events.ts';
+  isGrammarError,
+  relaxSchema,
+  relaxTools,
+  sanitizeSchema,
+  sanitizeTools,
+} from './endpoint/schema-compat.ts';
+export { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from './hooks/hook-events.ts';
 export {
   assembleContext,
   configureHooks,
@@ -131,64 +106,40 @@ export {
   UNTRUSTED_PREFACE,
   untrusted,
   withContext,
-} from './hooks.ts';
+} from './hooks/hooks.ts';
 export {
-  estimateFrom,
-  type LedgerEntry,
-  type LedgerEstimateOptions,
-  type LedgerRequest,
-  rebaseLedger,
-  recordRequest,
-  type TokenLedger,
-  tokensBetween,
-} from './ledger.ts';
+  type AgentLoopHooks,
+  type AgentLoopOptions,
+  type AgentLoopRequest,
+  type AgentLoopResult,
+  PRESELECT_APPEND,
+  PRESELECT_EXCLUSIVE,
+  runAgentLoop,
+  type StepWindow,
+} from './run/agent-loop.ts';
 export {
-  type KeywordPreselection,
-  type KeywordPreselectOptions,
-  PRESELECT_SCHEMA,
-  PRESELECT_SYSTEM,
-  preselect,
-  preselectByKeywords,
-  preselectInput,
-  preselection,
-  preselectSystem,
-  type ToolMatch,
-} from './preselect.ts';
-export { buildBody } from './request-body.ts';
-export { resetAll } from './reset.ts';
-export {
-  backoffMs,
-  ContextOverflow,
-  EndpointSilent,
-  isModelLoading,
-  isOverflow,
-  isTransient,
-  SMALLEST_LIKELY_WINDOW,
-} from './retry.ts';
-export { preview } from './run-calls.ts';
-export { type RunTurnOptions, runTurn } from './run-turn.ts';
-export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from './runtime.ts';
-export {
-  isGrammarError,
-  relaxSchema,
-  relaxTools,
-  sanitizeSchema,
-  sanitizeTools,
-} from './schema-compat.ts';
-export {
-  type AskJsonOptions,
-  ask,
-  askJson,
-  clean,
-  listLines,
-  parseJson,
-  resetHints,
-  type SideTask,
-  type SideTaskInput,
-  type SideTaskOptions,
-  taskCall,
-  tryAsk,
-} from './side-task.ts';
+  configureEvents,
+  type EventBusOptions,
+  emit,
+  endRun,
+  fold,
+  history,
+  type RunEvent,
+  type RunEventInput,
+  RunEventKind,
+  type RunMetrics,
+  type RunMetricsOptions,
+  RunOutcome,
+  type RunUsage,
+  resetEvents,
+  runMetrics,
+  type TurnReport,
+  watch,
+} from './run/events.ts';
+export { buildBody } from './run/request-body.ts';
+export { preview } from './run/run-calls.ts';
+export { resetAll } from './runtime/reset.ts';
+export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from './runtime/runtime.ts';
 export {
   CAPABILITY_SNAPSHOT_VERSION,
   type CapabilitySnapshot,
@@ -196,7 +147,7 @@ export {
   exportCapabilities,
   importCapabilities,
   type ModelSnapshot,
-} from './snapshot.ts';
+} from './runtime/snapshot.ts';
 export {
   AGENT_SPEC,
   AGENT_SPEC_VERSION,
@@ -223,50 +174,20 @@ export {
   type SpecServer,
   type TaskSpec,
   type ToolsSpec,
-} from './spec.ts';
+} from './spec/spec.ts';
+export type { CatalogServer } from './tools/catalog.ts';
 export {
-  CacheBreakReason,
-  type Produced,
-  type StreamTurnOptions,
-  streamTurn,
-  type Turn,
-  type TurnUsage,
-} from './stream.ts';
-export {
-  ALL_FENCES,
-  DEFAULT_FENCES,
-  type Fence,
-  FenceSplitter,
-  type FenceSplitterOptions,
-  SPLIT_OUTPUT,
-  SPLIT_REASONING,
-  type Split,
-  stripThinking,
-  THINK_FENCE,
-} from './thinking.ts';
-export {
-  type ContextBreakdown,
-  type ContextBreakdownOptions,
-  compact,
-  contextChars,
-  contextTokens,
-  estimateTokens,
-  messageTokens,
-  requestChars,
-  requestTokens,
-  type TokenEstimateOptions,
-} from './tokens.ts';
-export {
-  ARGUMENTS_MALFORMED,
-  ARGUMENTS_TRUNCATED,
-  parseToolArguments,
-  recoverToolCalls,
-  ToolArgumentsError,
-  type ToolCall,
-  type ToolCallOutcome,
-  type ToolCallRequest,
-  type ToolCallResult,
-} from './tool-calls.ts';
+  type KeywordPreselection,
+  type KeywordPreselectOptions,
+  PRESELECT_SCHEMA,
+  PRESELECT_SYSTEM,
+  preselect,
+  preselectByKeywords,
+  preselectInput,
+  preselection,
+  preselectSystem,
+  type ToolMatch,
+} from './tools/preselect.ts';
 export {
   CALL_TOOL,
   carryOver,
@@ -287,5 +208,84 @@ export {
   requestedNames,
   shownCall,
   type ToolOrder,
-} from './tool-loading.ts';
-export { FinishReason, FUNCTION_TOOL, JSON_SCHEMA_FORMAT, PartType, Role, SchemaType } from './wire.ts';
+} from './tools/tool-loading.ts';
+export {
+  type ContinueTurnOptions,
+  continueTurn,
+} from './turn/continuation.ts';
+export { type RunTurnOptions, runTurn } from './turn/run-turn.ts';
+export {
+  type AskJsonOptions,
+  ask,
+  askJson,
+  clean,
+  listLines,
+  parseJson,
+  resetHints,
+  type SideTask,
+  type SideTaskInput,
+  type SideTaskOptions,
+  taskCall,
+  tryAsk,
+} from './turn/side-task.ts';
+export {
+  AgentLoopError,
+  type AgentLoopFailure,
+  AgentLoopOverflow,
+  errorMessage,
+  failedRun,
+  ToolIterationLimit,
+} from './wire/errors.ts';
+export {
+  backoffMs,
+  ContextOverflow,
+  EndpointSilent,
+  isModelLoading,
+  isOverflow,
+  isTransient,
+  SMALLEST_LIKELY_WINDOW,
+} from './wire/retry.ts';
+export {
+  CacheBreakReason,
+  type Produced,
+  type StreamTurnOptions,
+  streamTurn,
+  type Turn,
+  type TurnUsage,
+} from './wire/stream.ts';
+export {
+  ALL_FENCES,
+  DEFAULT_FENCES,
+  type Fence,
+  FenceSplitter,
+  type FenceSplitterOptions,
+  SPLIT_OUTPUT,
+  SPLIT_REASONING,
+  type Split,
+  stripThinking,
+  THINK_FENCE,
+} from './wire/thinking.ts';
+export {
+  type ContextBreakdown,
+  type ContextBreakdownOptions,
+  compact,
+  contextChars,
+  contextTokens,
+  estimateTokens,
+  messageTokens,
+  requestChars,
+  requestTokens,
+  type TokenEstimateOptions,
+} from './wire/tokens.ts';
+export {
+  ARGUMENTS_MALFORMED,
+  ARGUMENTS_TRUNCATED,
+  parseToolArguments,
+  recoverToolCalls,
+  ToolArgumentsError,
+  type ToolCall,
+  type ToolCallOutcome,
+  type ToolCallRequest,
+  type ToolCallResult,
+} from './wire/tool-calls.ts';
+export { FinishReason, FUNCTION_TOOL, JSON_SCHEMA_FORMAT, PartType, Role, SchemaType } from './wire/wire.ts';

@@ -1,0 +1,288 @@
+import type OpenAI from 'openai';
+import { MS_PER_SECOND } from '../core/platform.ts';
+import { calibrate, charsPerTokenFor } from '../endpoint/calibration.ts';
+import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from '../endpoint/capabilities.ts';
+import { errorMessage } from '../wire/errors.ts';
+import {
+  backoffMs,
+  ContextOverflow,
+  EndpointSilent,
+  isModelLoading,
+  isOverflow,
+  isTransient,
+  LOADING_POLL_MS,
+  LOADING_TIMEOUT_MS,
+  SMALLEST_LIKELY_WINDOW,
+  sleep,
+} from '../wire/retry.ts';
+import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from '../wire/stream.ts';
+import { compact, requestTokens } from '../wire/tokens.ts';
+
+/**
+ * One turn, given as many attempts as the caller allows.
+ *
+ * Two different things are being recovered from here, and they nest. The inner one is a
+ * capability the endpoint turns out not to have — `stream_options`, a grammar keyword — or that
+ * the model does not, given `model` below. Either is a refusal: it is answered by sending a
+ * lesser request, and it latches for the life of the process against the endpoint or against
+ * that one model on it, so it costs one failed call rather than one a run.
+ * The outer one is the endpoint being unreachable, busy or silent, which is not about this
+ * request at all and is worth simply waiting out.
+ *
+ * A request too big for the window is neither, and comes out of here as `ContextOverflow`
+ * however it was found out about — by the `contextLimit` guard below before a round trip was
+ * spent, or by the endpoint's own refusal after one. The option decides how early the caller
+ * hears, not what it hears.
+ *
+ * Both are bounded by the same rule: nothing is sent again once the model has started
+ * answering. The tokens are already out and on their way to whoever is watching, and a second
+ * attempt would say everything twice. That is what `produced` is, one box per attempt — set by
+ * a chunk that carried something rather than by a chunk arriving, so the empty opening chunk
+ * most servers send does not cost the retry.
+ *
+ * What the turn cost in attempts comes back on its usage — `wallMs`, `retries`, `timeouts` — and
+ * what its prompt was reported at calibrates the ratio the next request to that model is sized
+ * with. See `calibrate`.
+ */
+
+/** A retry is not the same event as a downgrade, but a watcher wants to be told about both. */
+export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
+  /**
+   * How many times a lost request is worth sending again. Zero is one attempt, which is the
+   * default because a caller with no retry budget in its settings should not inherit one.
+   * A downgrade does not spend an attempt: it is a different request, not the same one again.
+   */
+  maxRetries?: number;
+  /**
+   * Told what was given up on and what is being waited out, for a watcher who would otherwise
+   * see an unexplained pause. Carries both the capability notices and the retry notices.
+   */
+  onNotice?: OnNotice;
+  /**
+   * What the model will read, in tokens. Zero sends whatever it is given.
+   *
+   * @defaultValue `0`
+   *
+   * @remarks
+   * With a limit, the request is sized before it is sent — the prompt plus the reply ceiling
+   * the body carries, since that is what the endpoint weighs — and a `ContextOverflow` is raised
+   * here rather than by the endpoint one round trip later. It is opt-in because the number is the
+   * caller's to find: `contextLimitFor` asks the endpoint, an operator's own setting overrides
+   * it, and neither is something a turn should be doing network I/O to discover. A limit below
+   * `SMALLEST_LIKELY_WINDOW` is not believed — a model with a window that small is rare enough
+   * that the number is far more likely a caller threading a placeholder through, and refusing a
+   * run over one would be the guard failing exactly the callers it was meant to help.
+   */
+  contextLimit?: number;
+  /**
+   * Which model the body names, so the refusals that are about the model rather than the server
+   * are negotiated too — a reasoning effort it does not take, a token ceiling it spells the
+   * other way, a temperature that is not ours to pick. Left out, only the endpoint's own are.
+   *
+   * @remarks
+   * It is given here rather than read off the body because the body is built from the answer:
+   * `request` has to know what this model refused before it can build one that avoids it.
+   */
+  model?: string;
+  /**
+   * The body fields a refusal may take away when the endpoint has never heard of them — the keys
+   * of `extraBody`, ordinarily. See `NegotiateOptions.droppable`; it needs `model` too.
+   */
+  droppable?: Iterable<string>;
+  /**
+   * How long to wait on a server answering that the model is still loading; zero gives up on the
+   * first such answer like any other 503.
+   *
+   * @defaultValue `120000`
+   *
+   * @remarks
+   * Polled every three seconds without spending `maxRetries`, and announced once rather than
+   * per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
+   * has to swap in, meets this on its first request every time.
+   */
+  loadingTimeoutMs?: number;
+}
+
+/**
+ * What a notice calls the model, where the caller did not say which one it is.
+ *
+ * @param model - The model's name. Absent reads as "the model", which is all there is to say.
+ * @returns The name as given, an empty one included, or the stand-in.
+ */
+export const modelLabel = (model: string | undefined) => model ?? 'the model';
+
+/**
+ * Builds a turn's request body from what the endpoint and the model have refused so far.
+ *
+ * @remarks
+ * A function rather than a body because a downgrade changes what is sent, so it is called again
+ * per attempt. Its second argument is absent where no model was named.
+ */
+export type RequestBuilder = (
+  supports: Capabilities,
+  model: ModelCapabilities | undefined,
+) => OpenAI.ChatCompletionCreateParamsStreaming;
+
+/**
+ * Throws `ContextOverflow` for a request that will not fit its window, before it is sent.
+ *
+ * @param body - The request about to go out. Its prompt is estimated, and its reply ceiling read
+ * from `max_completion_tokens`, or failing that `max_tokens`.
+ * @param contextLimit - The model's window, in tokens. A request of exactly that many is let
+ * through.
+ * @param charsPerToken - The ratio the prompt is estimated at.
+ *
+ * @remarks
+ * The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with `n_predict`
+ * in, OpenAI with the ceiling — so a prompt that fits the window but not the window less the
+ * ceiling was let through here to be refused one round trip later, which is the trip this guard
+ * exists to save. The reserve is read off the body under whichever spelling was chosen, and no
+ * ceiling reserves nothing: the server then gives the reply what is left.
+ */
+function refuseOversized(
+  body: OpenAI.ChatCompletionCreateParamsStreaming,
+  contextLimit: number,
+  charsPerToken: number,
+): void {
+  const needed = requestTokens(body, { charsPerToken });
+  const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
+  if (needed + reserve <= contextLimit) {
+    return;
+  }
+  // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
+  // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
+  // loops on the first attempt instead of being sent again to be refused again.
+  const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : '';
+  throw new ContextOverflow(
+    `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
+  );
+}
+
+/**
+ * A backoff in whatever unit reads as a number: the first is under a second, and "retrying in
+ * 0s" is what rounding it to seconds says.
+ *
+ * @param ms - The wait, in milliseconds.
+ * @returns Whole milliseconds, as `250ms`, under a second, and whole seconds, as `4s`, from there.
+ */
+const shownDelay = (ms: number) => (ms < MS_PER_SECOND ? `${Math.round(ms)}ms` : `${Math.round(ms / MS_PER_SECOND)}s`);
+
+/**
+ * One turn seen through to an answer: negotiated with the endpoint, retried where the failure is
+ * transient, and waited for where the model is still loading.
+ *
+ * @param client - The pooled client for this endpoint.
+ * @param supports - What the endpoint has already refused, threaded through the negotiation.
+ * @param request - Builds the body. Called again per attempt, since a downgrade changes it. Its
+ * second argument is what the model named in `options.model` has refused, absent when none was.
+ * @param [options] - Retry budget, context limit, the model to negotiate for, notices, and the
+ * stream's own callbacks.
+ * @returns The turn the attempt that got through produced, its usage carrying what every attempt
+ * together cost: `wallMs`, `retries` and `timeouts`.
+ *
+ * @remarks
+ * `request` is a callback rather than a body because the body has to be rebuilt from whatever
+ * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
+ * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
+ * object throughout, and a caller that reads those from its own closure can ignore the argument.
+ */
+export async function runTurn(
+  client: OpenAI,
+  supports: Capabilities,
+  request: RequestBuilder,
+  {
+    maxRetries = 0,
+    onNotice,
+    contextLimit = 0,
+    model,
+    droppable,
+    loadingTimeoutMs = LOADING_TIMEOUT_MS,
+    ...stream
+  }: RunTurnOptions = {},
+): Promise<Turn> {
+  // Sized once rather than per build. `request` is called again for every downgrade and every
+  // retry, but a downgraded body is strictly smaller than the one before it and the transcript
+  // does not change between attempts — so the first body is the one worth measuring, and
+  // measuring the rest would only spend the walk again to reach the same answer.
+  let sized = false;
+  // The body the answer was given to, for the calibration once it is in hand.
+  let sent: OpenAI.ChatCompletionCreateParamsStreaming | undefined;
+  const measured = (capabilities: Capabilities, forModel: ModelCapabilities | undefined) => {
+    const body = request(capabilities, forModel);
+    sent = body;
+    if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
+      sized = true;
+      refuseOversized(body, contextLimit, charsPerTokenFor(supports, body.model));
+    }
+    return body;
+  };
+
+  // When the server first said it was loading. Unset until then, and never reset: a model that
+  // loads, fails and loads again has had its allowance.
+  let loadingSince: number | undefined;
+  const started = Date.now();
+  let retries = 0;
+  let timeouts = 0;
+  for (let attempt = 0; ; attempt++) {
+    const produced: Produced = { any: false };
+    try {
+      const turn = await negotiate(
+        supports,
+        (capabilities, box, forModel) =>
+          streamTurn(client, measured(capabilities, forModel), { ...stream, produced: box }),
+        { produced, onNotice, model, droppable },
+      );
+      if (sent) {
+        calibrate(supports, sent, turn.usage.prompt);
+      }
+      Object.assign(turn.usage, { wallMs: Date.now() - started, retries, timeouts });
+      return turn;
+    } catch (error) {
+      // The abort is read before the classification, not after. A run stopped by its operator
+      // can trip the idle watchdog on the way out, and `EndpointSilent` is transient by the
+      // rules in `retry.ts` — so classifying first brings a cancelled run back from the dead.
+      if (produced.any || stream.signal?.aborted) {
+        throw error;
+      }
+      // The endpoint's own refusal, classified here rather than left to the caller. One failure
+      // had two error types depending on an option about something else: a caller that gave a
+      // `contextLimit` got `ContextOverflow` from the guard above, and one that did not — the
+      // default — got a raw SDK error and had to know to run `isOverflow` over its message
+      // itself. `runTurn` is offered as the whole loop, so the classification this package
+      // already knows how to do belongs inside it.
+      //
+      // The original is kept as `cause`, because the endpoint's wording is the half that names
+      // the number. A rate limit borrows the same words and is not one of these — `isOverflow`
+      // rules it out, and it goes on to be retried below as the 429 it is.
+      if (!(error instanceof ContextOverflow) && isOverflow(errorMessage(error))) {
+        throw new ContextOverflow(errorMessage(error), { cause: error });
+      }
+      if (isModelLoading(error) && loadingTimeoutMs > 0) {
+        const now = Date.now();
+        if (loadingSince === undefined) {
+          loadingSince = now;
+          onNotice?.(
+            `${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / MS_PER_SECOND)}s`,
+          );
+        }
+        if (now - loadingSince < loadingTimeoutMs) {
+          // Not an attempt: the request was never looked at, and a two-minute load would
+          // otherwise have to be bought with a retry budget meant for dropped connections.
+          attempt--;
+          await sleep(LOADING_POLL_MS, stream.signal);
+          continue;
+        }
+      }
+      if (attempt >= maxRetries || !isTransient(error)) {
+        throw error;
+      }
+      retries++;
+      if (error instanceof EndpointSilent) {
+        timeouts++;
+      }
+      const wait = backoffMs(attempt);
+      onNotice?.(`${errorMessage(error)} — retrying in ${shownDelay(wait)} (${attempt + 1}/${maxRetries})`);
+      await sleep(wait, stream.signal);
+    }
+  }
+}

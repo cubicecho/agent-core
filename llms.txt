@@ -9,18 +9,50 @@ Full prose, worked examples and the reasoning behind each seam are in README.md;
 
 ## Exports
 
-### agent-loop
+### compaction
 
-The loop above a turn: send, run the tools the model asked for, send again, until it stops asking.
+Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded into a summary the model writes itself.
 
-- `AgentLoopHooks` (type) — The hooks a loop runs around one question.
-- `AgentLoopOptions` (type) — What `runAgentLoop` takes.
-- `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
-- `AgentLoopResult` (type) — What a finished loop hands back.
-- `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
-- `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
-- `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
-- `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
+- `applyCompaction` — The transcript as the server should see it: the folded head replaced by its summary.
+- `COMPACT_AT` — The fraction of the window in use before a summary is worth its own round trip.
+- `CompactionOptions` (type) — What `planCompaction` takes.
+- `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
+- `CompactionRecord` (type) — One fold, as a host that keeps its transcript append-only stores it.
+- `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
+- `compactTranscript` — The transcript with the plan's stretch replaced by one system message holding its summary.
+- `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
+- `PruneOptions` (type) — What `pruneToolResults` takes.
+- `planCompaction` — Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
+- `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
+- `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted everything after it.
+- `runCompaction` — The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
+- `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
+- `SUMMARY_PROMPT` — The summariser's instruction when the caller gives none.
+- `summariser` — A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
+
+### ledger
+
+What stretches of a transcript cost, read off the prompt counts the server already reported.
+
+- `estimateFrom` — A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers the message, the calibrated estimate where it does not.
+- `LedgerEntry` (type) — One request's reported prompt, and how far into the transcript that request reached.
+- `LedgerEstimateOptions` (type) — What `tokensBetween` and `estimateFrom` take besides the ledger and the transcript.
+- `LedgerRequest` (type) — What `recordRequest` needs to know of one request.
+- `rebaseLedger` — The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left standing.
+- `recordRequest` — The ledger with one more request on it, in the epoch the request before it says it belongs to.
+- `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
+- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
+
+### config
+
+What this package needs to know about a caller's configuration.
+
+- `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
+- `Endpoint` (type) — Where to send a request and how long to wait.
+- `ModelParams` (type) — What to ask the model for.
+- `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
+- `ToolDiscovery` — Any one of the modes in `ToolDiscovery`.
+- `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
 
 ### calibration
 
@@ -47,12 +79,6 @@ What an endpoint turned out not to support, and answering it when it says so.
 - `negotiate` — Sends a request, re-sending it each time the answer is this endpoint refusing something the request can do without.
 - `resetCapabilities` — Forgets what one endpoint refused, or every endpoint's when told none.
 
-### catalog
-
-The contract between whatever holds the tools and the loop that offers them to a model.
-
-- `CatalogServer` (type) — One server's tools, without their JSON schemas — the cheap half of a tool definition.
-
 ### client
 
 - `ClientPoolOptions` (type) — What the client pool is held to across a process.
@@ -70,75 +96,15 @@ The contract between whatever holds the tools and the loop that offers them to a
 - `servedWindow` — The window a local server's own API says it is serving a model in, for the servers whose listing does not say.
 - `timeoutMs` — An endpoint's request timeout in the SDK's spelling: milliseconds, and `undefined` for no limit.
 
-### compaction
+### schema-compat
 
-Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded into a summary the model writes itself.
+JSON Schema compatibility for llama.cpp-backed servers.
 
-- `applyCompaction` — The transcript as the server should see it: the folded head replaced by its summary.
-- `COMPACT_AT` — The fraction of the window in use before a summary is worth its own round trip.
-- `CompactionOptions` (type) — What `planCompaction` takes.
-- `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
-- `CompactionRecord` (type) — One fold, as a host that keeps its transcript append-only stores it.
-- `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
-- `compactTranscript` — The transcript with the plan's stretch replaced by one system message holding its summary.
-- `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
-- `PruneOptions` (type) — What `pruneToolResults` takes.
-- `planCompaction` — Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
-- `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
-- `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted everything after it.
-- `runCompaction` — The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
-- `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
-- `SUMMARY_PROMPT` — The summariser's instruction when the caller gives none.
-- `summariser` — A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
-
-### config
-
-What this package needs to know about a caller's configuration.
-
-- `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
-- `Endpoint` (type) — Where to send a request and how long to wait.
-- `ModelParams` (type) — What to ask the model for.
-- `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
-- `ToolDiscovery` — Any one of the modes in `ToolDiscovery`.
-- `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
-
-### continuation
-
-Picking up an answer the token ceiling cut off, instead of keeping half of it.
-
-- `ContinueTurnOptions` (type) — What `continueTurn` takes besides what `runTurn` does.
-- `continueTurn` — Carries on an answer the token ceiling cut off, by sending the transcript again with the answer so far as a trailing assistant message, and joins the pieces into one turn.
-
-### errors
-
-- `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
-- `AgentLoopFailure` (type) — A run as it stood when `runAgentLoop` gave up on it.
-- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the run as it stood.
-- `errorMessage` — What went wrong, as a string.
-- `failedRun` — The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
-- `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
-
-### events
-
-What a run is doing, while it is doing it.
-
-- `configureEvents` — Changes what the bus keeps, for a process whose runs are not shaped like the ones these defaults were chosen for.
-- `EventBusOptions` (type) — What the bus keeps and for how long.
-- `emit` — Records one event and hands it to everyone watching that run.
-- `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
-- `fold` — A run's events with each stretch of `thinking` or of `output` joined into one block, for a reader that takes a run in snapshots.
-- `history` — The backlog alone, for a caller that wants a snapshot rather than a subscription.
-- `RunEvent` (type) — One thing that happened in a run, as a watcher receives it.
-- `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
-- `RunEventKind` — Any one of the kinds in `RunEventKind`.
-- `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
-- `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
-- `RunOutcome` — Any one of the outcomes in `RunOutcome`.
-- `RunUsage` (type) — What a run has spent, counted from the start of the run rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
-- `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
-- `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
-- `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
-- `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
+- `isGrammarError` — Whether a failure looks like the server could not build a grammar from our tool schemas.
+- `relaxSchema` — One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
+- `relaxTools` — The tool array with every schema's `pattern` and `format` keywords gone — the shape a turn is retried with.
+- `sanitizeSchema` — One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
+- `sanitizeTools` — Tool definitions a strict server will accept, remembered per definition object.
 
 ### hook-events
 
@@ -173,53 +139,44 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 - `withContext` — The request, with the hooks' context added to this turn's question.
 
-### ledger
+### agent-loop
 
-What stretches of a transcript cost, read off the prompt counts the server already reported.
+The loop above a turn: send, run the tools the model asked for, send again, until it stops asking.
 
-- `estimateFrom` — A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers the message, the calibrated estimate where it does not.
-- `LedgerEntry` (type) — One request's reported prompt, and how far into the transcript that request reached.
-- `LedgerEstimateOptions` (type) — What `tokensBetween` and `estimateFrom` take besides the ledger and the transcript.
-- `LedgerRequest` (type) — What `recordRequest` needs to know of one request.
-- `rebaseLedger` — The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left standing.
-- `recordRequest` — The ledger with one more request on it, in the epoch the request before it says it belongs to.
-- `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
-- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
+- `AgentLoopHooks` (type) — The hooks a loop runs around one question.
+- `AgentLoopOptions` (type) — What `runAgentLoop` takes.
+- `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
+- `AgentLoopResult` (type) — What a finished loop hands back.
+- `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
+- `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
+- `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
+- `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 
-### preselect
+### events
 
-Choosing a run's tools before it starts, from the request and the catalogue's names.
+What a run is doing, while it is doing it.
 
-- `KeywordPreselection` (type) — What `preselectByKeywords` found.
-- `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
-- `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
-- `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
-- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
-- `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
-- `preselectInput` — The user message for a preselection call: the catalogue, then the request.
-- `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
-- `preselectSystem` — The system prompt a preselector is given, holding it to the cap its answer will be held to.
-- `ToolMatch` (type) — One tool's score against a request.
+- `configureEvents` — Changes what the bus keeps, for a process whose runs are not shaped like the ones these defaults were chosen for.
+- `EventBusOptions` (type) — What the bus keeps and for how long.
+- `emit` — Records one event and hands it to everyone watching that run.
+- `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
+- `fold` — A run's events with each stretch of `thinking` or of `output` joined into one block, for a reader that takes a run in snapshots.
+- `history` — The backlog alone, for a caller that wants a snapshot rather than a subscription.
+- `RunEvent` (type) — One thing that happened in a run, as a watcher receives it.
+- `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
+- `RunEventKind` — Any one of the kinds in `RunEventKind`.
+- `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
+- `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
+- `RunOutcome` — Any one of the outcomes in `RunOutcome`.
+- `RunUsage` (type) — What a run has spent, counted from the start of the run rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
+- `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
+- `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
+- `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
+- `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
 
 ### request-body
 
 - `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
-
-### reset
-
-- `resetAll` — Forgets everything this package remembers between calls.
-
-### retry
-
-Everything about a request failing that is not about what the request said.
-
-- `backoffMs` — How long to wait before a retry: exponential, with jitter so several tasks failing at once do not return in lockstep.
-- `ContextOverflow` — The request was bigger than the model will read.
-- `EndpointSilent` — The endpoint stopped answering mid-request.
-- `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
-- `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
-- `isTransient` — Whether a failed request is worth trying again.
-- `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 
 ### run-calls
 
@@ -227,12 +184,9 @@ The tools between two turns: a step's calls read, run and written into the trans
 
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 
-### run-turn
+### reset
 
-One turn, given as many attempts as the caller allows.
-
-- `RunTurnOptions` (type) — A retry is not the same event as a downgrade, but a watcher wants to be told about both.
-- `runTurn` — One turn seen through to an answer: negotiated with the endpoint, retried where the failure is transient, and waited for where the model is still loading.
+- `resetAll` — Forgets everything this package remembers between calls.
 
 ### runtime
 
@@ -240,33 +194,6 @@ One turn, given as many attempts as the caller allows.
 - `defaultRuntime` — The runtime the top-level functions use when no other is running.
 - `Runtime` (type) — One set of the package's caches, with the functions that use them as methods.
 - `RuntimeOptions` (type) — What a runtime starts out configured with.
-
-### schema-compat
-
-JSON Schema compatibility for llama.cpp-backed servers.
-
-- `isGrammarError` — Whether a failure looks like the server could not build a grammar from our tool schemas.
-- `relaxSchema` — One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
-- `relaxTools` — The tool array with every schema's `pattern` and `format` keywords gone — the shape a turn is retried with.
-- `sanitizeSchema` — One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
-- `sanitizeTools` — Tool definitions a strict server will accept, remembered per definition object.
-
-### side-task
-
-One-shot calls that support a run without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
-
-- `AskJsonOptions` (type) — What `askJson` takes besides a side task's options.
-- `ask` — Runs a side task and returns the reply text, thinking stripped.
-- `askJson` — A side task whose answer is JSON matching a schema, parsed.
-- `clean` — Strips the quoting and list punctuation models decorate short answers with.
-- `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
-- `parseJson` — The first array or object in a model's reply, parsed, whatever prose or fence surrounds it.
-- `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
-- `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
-- `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
-- `SideTaskOptions` (type) — What a side task may be given.
-- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
-- `tryAsk` — Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
 
 ### snapshot
 
@@ -308,6 +235,101 @@ A JSON document that defines an agent, and the rules for reading one.
 - `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
 - `TaskSpec` (type) — One side task, which may run on a different model — and a different machine — than the agent.
 - `ToolsSpec` (type) — How tools reach the model, and which servers this agent may reach at all.
+
+### catalog
+
+The contract between whatever holds the tools and the loop that offers them to a model.
+
+- `CatalogServer` (type) — One server's tools, without their JSON schemas — the cheap half of a tool definition.
+
+### preselect
+
+Choosing a run's tools before it starts, from the request and the catalogue's names.
+
+- `KeywordPreselection` (type) — What `preselectByKeywords` found.
+- `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
+- `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
+- `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
+- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
+- `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
+- `preselectInput` — The user message for a preselection call: the catalogue, then the request.
+- `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
+- `preselectSystem` — The system prompt a preselector is given, holding it to the cap its answer will be held to.
+- `ToolMatch` (type) — One tool's score against a request.
+
+### tool-loading
+
+- `CALL_TOOL` — The one tool a proxied run reaches every catalogued tool through.
+- `carryOver` — The tools to start the next turn with: last turn's where they were, then what this turn used.
+- `catalogList` — The catalogue as a plain grouped listing of names, loaded ones marked if asked.
+- `catalogPrompt` — The catalogue block appended to the system prompt.
+- `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
+- `holdsDefinitions` — Whether a tool result is a proxied load carrying definitions, which is the only copy of them the model has.
+- `inCatalog` — Whether the catalogue holds a tool by this name.
+- `LOAD_TOOLS` — On-demand tool loading.
+- `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
+- `loadedTools` — A tool array with newly loaded definitions appended, in the order they were loaded.
+- `loadResult` — What `load_tools` reports back: the descriptions, now that they are worth their tokens.
+- `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
+- `PROXY_TOOLS` — The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is shared.
+- `proxiedCall` — The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
+- `proxyCatalogPrompt` — The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a tool list.
+- `proxyLoadResult` — What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since the result is the only place the model will ever see it.
+- `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
+- `shownCall` — A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it is.
+- `ToolOrder` (type) — How a tool array is ordered before it is sent: `true` by name, `false` as the caller built it, or a comparator over the two names.
+
+### continuation
+
+Picking up an answer the token ceiling cut off, instead of keeping half of it.
+
+- `ContinueTurnOptions` (type) — What `continueTurn` takes besides what `runTurn` does.
+- `continueTurn` — Carries on an answer the token ceiling cut off, by sending the transcript again with the answer so far as a trailing assistant message, and joins the pieces into one turn.
+
+### run-turn
+
+One turn, given as many attempts as the caller allows.
+
+- `RunTurnOptions` (type) — A retry is not the same event as a downgrade, but a watcher wants to be told about both.
+- `runTurn` — One turn seen through to an answer: negotiated with the endpoint, retried where the failure is transient, and waited for where the model is still loading.
+
+### side-task
+
+One-shot calls that support a run without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
+
+- `AskJsonOptions` (type) — What `askJson` takes besides a side task's options.
+- `ask` — Runs a side task and returns the reply text, thinking stripped.
+- `askJson` — A side task whose answer is JSON matching a schema, parsed.
+- `clean` — Strips the quoting and list punctuation models decorate short answers with.
+- `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
+- `parseJson` — The first array or object in a model's reply, parsed, whatever prose or fence surrounds it.
+- `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
+- `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
+- `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
+- `SideTaskOptions` (type) — What a side task may be given.
+- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
+- `tryAsk` — Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
+
+### errors
+
+- `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
+- `AgentLoopFailure` (type) — A run as it stood when `runAgentLoop` gave up on it.
+- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the run as it stood.
+- `errorMessage` — What went wrong, as a string.
+- `failedRun` — The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
+- `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
+
+### retry
+
+Everything about a request failing that is not about what the request said.
+
+- `backoffMs` — How long to wait before a retry: exponential, with jitter so several tasks failing at once do not return in lockstep.
+- `ContextOverflow` — The request was bigger than the model will read.
+- `EndpointSilent` — The endpoint stopped answering mid-request.
+- `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
+- `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
+- `isTransient` — Whether a failed request is worth trying again.
+- `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 
 ### stream
 
@@ -361,28 +383,6 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
 - `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
 - `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
-
-### tool-loading
-
-- `CALL_TOOL` — The one tool a proxied run reaches every catalogued tool through.
-- `carryOver` — The tools to start the next turn with: last turn's where they were, then what this turn used.
-- `catalogList` — The catalogue as a plain grouped listing of names, loaded ones marked if asked.
-- `catalogPrompt` — The catalogue block appended to the system prompt.
-- `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
-- `holdsDefinitions` — Whether a tool result is a proxied load carrying definitions, which is the only copy of them the model has.
-- `inCatalog` — Whether the catalogue holds a tool by this name.
-- `LOAD_TOOLS` — On-demand tool loading.
-- `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
-- `loadedTools` — A tool array with newly loaded definitions appended, in the order they were loaded.
-- `loadResult` — What `load_tools` reports back: the descriptions, now that they are worth their tokens.
-- `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
-- `PROXY_TOOLS` — The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is shared.
-- `proxiedCall` — The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
-- `proxyCatalogPrompt` — The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a tool list.
-- `proxyLoadResult` — What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since the result is the only place the model will ever see it.
-- `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
-- `shownCall` — A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it is.
-- `ToolOrder` (type) — How a tool array is ordered before it is sent: `true` by name, `false` as the caller built it, or a comparator over the two names.
 
 ### wire
 

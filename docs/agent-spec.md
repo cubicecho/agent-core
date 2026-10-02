@@ -260,7 +260,7 @@ A document with every field set, as an operator would read it:
 
 ## What resolution produces
 
-A document nests because that is how a person reads it, and how `src/config.ts` already groups the
+A document nests because that is how a person reads it, and how `src/core/config.ts` already groups the
 fields. Resolution flattens, because that is what the loop takes.
 
 ```ts
@@ -286,8 +286,8 @@ export interface ResolvedTask {
 }
 ```
 
-`ResolvedAgent extends AgentConfig` (`src/config.ts:108`), so it already satisfies
-`AgentLoopOptions["config"]` (`src/agent-loop.ts`) structurally. `getClient(resolved)` and
+`ResolvedAgent extends AgentConfig` (`src/core/config.ts:108`), so it already satisfies
+`AgentLoopOptions["config"]` (`src/run/agent-loop.ts`) structurally. `getClient(resolved)` and
 `runAgentLoop({ config: resolved })` take it unchanged and no adapter export is needed. The config
 seam survives on one rule: the spec module imports from `config.ts`, and nothing else in `src/`
 imports from the spec module.
@@ -367,15 +367,15 @@ process has, which is why the tools that support it need a credential denylist b
 without interpolation needs no denylist. The attack this closes is a confused deputy — a document
 naming `https://attacker.example/v1` that causes the host's own provider key to be sent there.
 
-Resolution therefore yields `apiKey: ""`, which `getClient` turns into `NO_KEY` (`src/client.ts:10`).
-A host that wants inheritance applies `resolveApiKey` (`src/client.ts`) afterwards — the
+Resolution therefore yields `apiKey: ""`, which `getClient` turns into `NO_KEY` (`src/endpoint/client.ts:10`).
+A host that wants inheritance applies `resolveApiKey` (`src/endpoint/client.ts`) afterwards — the
 existing seam, deliberately not applied by the loop, unchanged. `exportSpec(spec, { secrets })`
 mirrors `state({ secrets })` in the pool and strips every bundled server's `env` and `headers`,
 with the property that **a redacted spec is still a valid spec**.
 
 ## Validation
 
-Hand-rolled guards in the house style of `src/snapshot.ts`, reporting every problem at once in the
+Hand-rolled guards in the house style of `src/runtime/snapshot.ts`, reporting every problem at once in the
 message shape `validateHooks` already uses (`temperature: must be between 0 and 2`), and
 importable in a browser.
 
@@ -390,7 +390,7 @@ write, while dropping falls back to one somebody did. That is also the strongest
 no-sentinel rule: with sentinels, an invalid field degrades to a default nobody chose; without
 them, it degrades to the layer below.
 
-Version handling is the deliberate opposite of `importCapabilities` (`src/snapshot.ts:128`), which
+Version handling is the deliberate opposite of `importCapabilities` (`src/runtime/snapshot.ts:128`), which
 shrugs at a foreign version and returns `false`. *Degrade where the loss is performance; refuse
 where the loss is identity.* A snapshot of the wrong version costs a few refused requests; an agent
 of the wrong version is not the agent the author described. Additive optional fields need no bump,
@@ -413,8 +413,8 @@ otherwise good agent unimportable. The validator takes the host's fired-event se
 ## Side tasks
 
 `tasks` generalises `min-agent`'s `taskModels`, and each entry may carry **its own endpoint** —
-because every side task in this package already takes one: `summariser` (`src/compaction.ts:232`),
-`preselect` (`src/preselect.ts`) and `ask` (`src/side-task.ts`). A 1.5B titler on a local
+because every side task in this package already takes one: `summariser` (`src/context/compaction.ts:232`),
+`preselect` (`src/tools/preselect.ts`) and `ask` (`src/turn/side-task.ts`). A 1.5B titler on a local
 llama.cpp beside a frontier main model is expressible here, and no published format serves it. An
 unknown task key is carried through untouched and not warned about, since a host may run tasks this
 package has never heard of. `toolSelectModel` flattens from `tasks.toolSelect?.model ?? ""`, where
@@ -428,7 +428,7 @@ field by field before an entry without a model is dropped, so a profile can set
 `tasks.title.temperature` alone over a base that names the model; with no model beneath it, the
 setting configures nothing and the task is absent.
 
-`taskCall(task, options, agent)` in `src/side-task.ts` is what carries them the rest of the way.
+`taskCall(task, options, agent)` in `src/turn/side-task.ts` is what carries them the rest of the way.
 It turns a `ResolvedTask` into the endpoint, model and options that `ask`, `askJson`, `summariser`
 and `preselect` take, with what the task states winning over the host's options. Given the agent's
 endpoint it also keys a task on that endpoint as the agent is keyed, so the two share one
