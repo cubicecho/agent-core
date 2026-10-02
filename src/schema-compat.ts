@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import { isRecord } from "./guards.ts";
 
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.
@@ -19,9 +20,6 @@ import type OpenAI from "openai";
  */
 
 type Schema = Record<string, unknown>;
-
-const isObject = (value: unknown): value is Schema =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Lookahead and lookbehind: `(?=`, `(?!`, `(?<=`, `(?<!`. */
 const LOOKAROUND = /\(\?<?[=!]/;
@@ -55,7 +53,7 @@ function asSchema(node: unknown): unknown {
   if (typeof node === "string")
     return PRIMITIVES.has(node) && node !== "object" ? { type: node } : EMPTY_OBJECT();
   if (typeof node === "boolean") return node;
-  if (!isObject(node)) return EMPTY_OBJECT();
+  if (!isRecord(node)) return EMPTY_OBJECT();
   return normalize(node);
 }
 
@@ -73,7 +71,7 @@ function normalize(node: Schema): Schema {
       else out.type = "null";
     } else if (SCHEMA_KEYS.has(key)) {
       out[key] = Array.isArray(value) ? value.map(asSchema) : asSchema(value);
-    } else if (SCHEMA_MAPS.has(key) && isObject(value)) {
+    } else if (SCHEMA_MAPS.has(key) && isRecord(value)) {
       out[key] = Object.fromEntries(
         Object.entries(value).map(([name, sub]) => [name, asSchema(sub)]),
       );
@@ -88,7 +86,7 @@ function normalize(node: Schema): Schema {
   // can accept it. Dropping it costs one advisory constraint on one string field.
   if (typeof out.pattern === "string" && LOOKAROUND.test(out.pattern)) delete out.pattern;
   // `{"type": "object"}` with no properties produces invalid GBNF.
-  if (out.type === "object" && !isObject(out.properties)) out.properties = {};
+  if (out.type === "object" && !isRecord(out.properties)) out.properties = {};
   // Strict validators reject any sibling of `$ref`, and draft-07 ignores them, so a reference
   // stands alone or not at all. This is not hypothetical tidying: collapsing `anyOf: [{$ref},
   // {type: "null"}]` — the shape a schema-generated server emits at every optional argument —
@@ -109,11 +107,11 @@ function collapseNullableUnion(node: Schema) {
   for (const key of ["anyOf", "oneOf"] as const) {
     const variants = node[key];
     if (!Array.isArray(variants)) continue;
-    const concrete = variants.filter((item) => !(isObject(item) && item.type === "null"));
+    const concrete = variants.filter((item) => !(isRecord(item) && item.type === "null"));
     if (concrete.length !== 1 || concrete.length === variants.length) continue;
 
     delete node[key];
-    Object.assign(node, { nullable: true, ...(isObject(concrete[0]) ? concrete[0] : {}) });
+    Object.assign(node, { nullable: true, ...(isRecord(concrete[0]) ? concrete[0] : {}) });
   }
 }
 
@@ -127,7 +125,7 @@ const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
 function poolsOf(parameters: Schema): Schema {
   const defs: Schema = {};
   for (const key of ["definitions", "$defs"] as const)
-    if (isObject(parameters[key])) defs[key] = parameters[key];
+    if (isRecord(parameters[key])) defs[key] = parameters[key];
   return defs;
 }
 
@@ -143,15 +141,15 @@ function poolsOf(parameters: Schema): Schema {
 function resolveRef(node: unknown, defs: Schema): Schema | undefined {
   const seen = new Set<string>();
   let current = node;
-  while (isObject(current) && typeof current.$ref === "string") {
+  while (isRecord(current) && typeof current.$ref === "string") {
     const pointer = current.$ref;
     const target = LOCAL_POINTER.exec(pointer);
     if (!target || seen.has(pointer)) return undefined;
     seen.add(pointer);
     const pool = defs[target[1]];
-    current = isObject(pool) ? pool[target[2]] : undefined;
+    current = isRecord(pool) ? pool[target[2]] : undefined;
   }
-  return isObject(current) ? current : undefined;
+  return isRecord(current) ? current : undefined;
 }
 
 /**
@@ -188,14 +186,14 @@ function mergeRootAllOf(out: Schema) {
   if (!Array.isArray(branches)) return;
 
   const defs = poolsOf(out);
-  const properties: Schema = isObject(out.properties) ? { ...out.properties } : {};
+  const properties: Schema = isRecord(out.properties) ? { ...out.properties } : {};
   const required = new Set<string>(
     Array.isArray(out.required) ? out.required.filter((name) => typeof name === "string") : [],
   );
   for (const raw of branches) {
     const branch = resolveRef(raw, defs);
     if (!branch) continue;
-    if (isObject(branch.properties)) Object.assign(properties, branch.properties);
+    if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
     if (Array.isArray(branch.required))
       for (const name of branch.required) if (typeof name === "string") required.add(name);
   }
@@ -236,7 +234,7 @@ function mergeRootUnion(out: Schema) {
         shared = new Set<string>();
         continue;
       }
-      if (isObject(branch.properties)) Object.assign(properties, branch.properties);
+      if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
       const names = Array.isArray(branch.required)
         ? branch.required.filter((name): name is string => typeof name === "string")
         : [];
@@ -244,7 +242,7 @@ function mergeRootUnion(out: Schema) {
     }
 
     if (!Object.keys(properties).length) continue;
-    out.properties = { ...(isObject(out.properties) ? out.properties : {}), ...properties };
+    out.properties = { ...(isRecord(out.properties) ? out.properties : {}), ...properties };
     if (shared?.size) {
       const already = Array.isArray(out.required)
         ? out.required.filter((name): name is string => typeof name === "string")
@@ -267,7 +265,7 @@ function collectRefs(node: unknown, into: Set<string>) {
     for (const item of node) collectRefs(item, into);
     return;
   }
-  if (!isObject(node)) return;
+  if (!isRecord(node)) return;
   for (const [key, value] of Object.entries(node)) {
     if (key === "$ref" && typeof value === "string") into.add(value);
     else collectRefs(value, into);
@@ -288,7 +286,7 @@ function collectRefs(node: unknown, into: Set<string>) {
  * outside it still refers in.
  */
 function pruneDefs(out: Schema) {
-  const pools = (["definitions", "$defs"] as const).filter((key) => isObject(out[key]));
+  const pools = (["definitions", "$defs"] as const).filter((key) => isRecord(out[key]));
   if (!pools.length) return;
 
   const live: Record<string, Set<string>> = {};
@@ -300,7 +298,7 @@ function pruneDefs(out: Schema) {
       if (!target) continue;
       const [, poolKey, name] = target;
       const pool = out[poolKey];
-      if (!isObject(pool) || !(name in pool)) continue;
+      if (!isRecord(pool) || !(name in pool)) continue;
       live[poolKey] ??= new Set<string>();
       const names = live[poolKey];
       if (names.has(name)) continue;
@@ -333,21 +331,21 @@ function pruneDefs(out: Schema) {
  */
 function pruneRequired(out: Schema) {
   if (!Array.isArray(out.required)) return;
-  const properties = isObject(out.properties) ? out.properties : {};
+  const properties = isRecord(out.properties) ? out.properties : {};
   const kept = out.required.filter((name) => typeof name === "string" && name in properties);
   if (kept.length) out.required = kept;
   else delete out.required;
 }
 
 function sanitizeParameters(parameters: unknown): Schema {
-  if (!isObject(parameters)) return EMPTY_OBJECT();
+  if (!isRecord(parameters)) return EMPTY_OBJECT();
   const out = normalize(inlineRootRef(parameters));
 
   mergeRootAllOf(out);
   mergeRootUnion(out);
   for (const key of TOP_LEVEL_COMBINATORS) delete out[key];
   if (out.type !== "object") out.type = "object";
-  if (!isObject(out.properties)) out.properties = {};
+  if (!isRecord(out.properties)) out.properties = {};
   pruneRequired(out);
   pruneDefs(out);
   return out;
@@ -426,12 +424,12 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
  */
 const strip = (node: unknown): unknown => {
   if (Array.isArray(node)) return node.map(strip);
-  if (!isObject(node)) return node;
+  if (!isRecord(node)) return node;
   const out: Schema = {};
   for (const [key, value] of Object.entries(node)) {
     if (key === "pattern" || key === "format") continue;
     if (SCHEMA_KEYS.has(key)) out[key] = Array.isArray(value) ? value.map(strip) : strip(value);
-    else if (SCHEMA_MAPS.has(key) && isObject(value))
+    else if (SCHEMA_MAPS.has(key) && isRecord(value))
       // The keys here are argument names; only the values are schemas.
       out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, strip(sub)]));
     else out[key] = value;
@@ -449,7 +447,7 @@ const strip = (node: unknown): unknown => {
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) =>
   through(relaxed, tools, (parameters) => {
     const stripped = strip(parameters);
-    return isObject(stripped) ? stripped : EMPTY_OBJECT();
+    return isRecord(stripped) ? stripped : EMPTY_OBJECT();
   });
 
 /**

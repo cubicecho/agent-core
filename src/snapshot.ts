@@ -1,4 +1,5 @@
 import { capabilitiesById, knownCapabilities, modelCapabilitiesFor } from "./capabilities.ts";
+import { isRecord } from "./guards.ts";
 import { hintKey, refusedHints } from "./side-task.ts";
 
 /**
@@ -135,9 +136,6 @@ export function exportCapabilities(): CapabilitySnapshot {
   }
   return { version: CAPABILITY_SNAPSHOT_VERSION, savedAt: new Date().toISOString(), endpoints };
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * Latches what a stored snapshot says was refused, on top of whatever this process has learned.

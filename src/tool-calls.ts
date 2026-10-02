@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import { isRecord } from "./guards.ts";
 
 /**
  * Reading what a model meant by a tool call when it did not write one cleanly.
@@ -34,9 +35,6 @@ export class ToolArgumentsError extends Error {
     this.kind = kind;
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * Rewrites the almost-JSON local models write into JSON, in one pass that knows where strings are.

@@ -1,4 +1,5 @@
 import type { AgentConfig, Endpoint } from "./config.ts";
+import { isRecord } from "./guards.ts";
 import type { HookEvent } from "./hooks.ts";
 
 /**
@@ -11,7 +12,8 @@ import type { HookEvent } from "./hooks.ts";
  * real ceiling of zero* in the third. This is the shape they can all write and all read, argued
  * out in `docs/agent-spec.md` before any of it was code.
  *
- * Nothing else in `src/` imports this module, and this module imports nothing but types. That is
+ * Nothing else in `src/` imports this module, and this module imports nothing that needs Node —
+ * types, and a leaf with no imports of its own. That is
  * the same seam `config.ts` draws — the loop takes the parts it reads, not a config object — and
  * it is what lets the document travel between hosts without the loop growing an opinion about
  * where an agent comes from. It is also why this is importable in a browser, where `client.ts`
@@ -300,9 +302,6 @@ export interface ParseSpecOptions {
   /** The `extensions` keys this host understands. A `requires` entry outside it refuses the load. */
   understands?: readonly string[];
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Absent and null are the same thing: a nullable column round-trips through JSON as `null`. */
 const absent = (value: unknown) => value === undefined || value === null;

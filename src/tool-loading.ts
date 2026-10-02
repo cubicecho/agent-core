@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import type { CatalogServer } from "./catalog.ts";
+import { isRecord } from "./guards.ts";
 
 /**
  * On-demand tool loading.
@@ -692,10 +693,7 @@ export function preselection(
   catalog: CatalogServer[],
   maxPerLoad = MAX_PER_LOAD,
 ): string[] {
-  const list =
-    names && typeof names === "object" && !Array.isArray(names)
-      ? (names as { tools?: unknown }).tools
-      : names;
+  const list = isRecord(names) ? names.tools : names;
   if (!Array.isArray(list)) return [];
   const wanted = list.filter((name): name is string => typeof name === "string");
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
