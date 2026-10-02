@@ -298,22 +298,25 @@ function ownerOf(
  * server sent none, each under an id of its own.
  */
 function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
-  const minted = new Set<string>();
-  return calls
+  const ordered = calls
     .map((call, order) => ({ call, order }))
-    .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order)
-    .map(({ call }, position) => {
-      // A server that streams a call without an id still needs one for the result to answer,
-      // and two calls it put under one index must not be answered as one.
-      let id = call.id || `call_${call.index ?? position}`;
-      if (minted.has(id)) id = `call_${position}_${minted.size}`;
-      minted.add(id);
-      return {
-        id,
-        type: "function" as const,
-        function: { name: call.name, arguments: call.arguments },
-      };
+    .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order);
+
+  const minted = new Set<string>();
+  const assembled: ToolCall[] = [];
+  for (const [position, { call }] of ordered.entries()) {
+    // A server that streams a call without an id still needs one for the result to answer,
+    // and two calls it put under one index must not be answered as one.
+    let id = call.id || `call_${call.index ?? position}`;
+    if (minted.has(id)) id = `call_${position}_${minted.size}`;
+    minted.add(id);
+    assembled.push({
+      id,
+      type: "function",
+      function: { name: call.name, arguments: call.arguments },
     });
+  }
+  return assembled;
 }
 
 /** The largest delay a timer takes, which is as close to none as the SDK's timeout option goes. */

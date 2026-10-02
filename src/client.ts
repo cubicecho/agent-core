@@ -454,13 +454,13 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
 export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
   const { data } = await getClient(config).models.list();
   const trained = new Set<string>();
-  const models = data
-    .map((model) => {
-      const window = contextLengthOf(model);
-      if (window.trained) trained.add(model.id);
-      return { id: model.id, contextLength: window.contextLength };
-    })
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const models: ModelInfo[] = [];
+  for (const model of data) {
+    const window = contextLengthOf(model);
+    if (window.trained) trained.add(model.id);
+    models.push({ id: model.id, contextLength: window.contextLength });
+  }
+  models.sort((a, b) => a.id.localeCompare(b.id));
   const key = endpointKey(config);
   listings().set(key, models);
   trainedOnly().set(key, trained);

@@ -247,25 +247,24 @@ export function preselectByKeywords(
   for (const doc of docs)
     for (const term of new Set(doc.terms)) documents.set(term, (documents.get(term) ?? 0) + 1);
 
-  const ranked = docs
-    .map((doc) => {
-      const counts = new Map<string, number>();
-      for (const term of doc.terms) counts.set(term, (counts.get(term) ?? 0) + 1);
-      let score = 0;
-      for (const term of query) {
-        const found = counts.get(term);
-        if (!found) continue;
-        const held = documents.get(term) ?? 0;
-        const idf = Math.log(1 + (docs.length - held + 0.5) / (held + 0.5));
-        const norm = BM25_K1 * (1 - BM25_B + (BM25_B * doc.terms.length) / length);
-        score += (idf * found * (BM25_K1 + 1)) / (found + norm);
-      }
-      return { name: doc.name, score };
-    })
-    .filter((hit) => hit.score > 0)
-    // Ties break on the name, not on where the tool sat in the catalogue, so reconnecting a
-    // server in a different order does not change what a run opens with.
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  const ranked: ToolMatch[] = [];
+  for (const doc of docs) {
+    const counts = new Map<string, number>();
+    for (const term of doc.terms) counts.set(term, (counts.get(term) ?? 0) + 1);
+    let score = 0;
+    for (const term of query) {
+      const found = counts.get(term);
+      if (!found) continue;
+      const held = documents.get(term) ?? 0;
+      const idf = Math.log(1 + (docs.length - held + 0.5) / (held + 0.5));
+      const norm = BM25_K1 * (1 - BM25_B + (BM25_B * doc.terms.length) / length);
+      score += (idf * found * (BM25_K1 + 1)) / (found + norm);
+    }
+    if (score > 0) ranked.push({ name: doc.name, score });
+  }
+  // Ties break on the name, not on where the tool sat in the catalogue, so reconnecting a
+  // server in a different order does not change what a run opens with.
+  ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   if (!ranked.length) return empty;
 
   const names = ranked.slice(0, maxPerLoad).map((hit) => hit.name);

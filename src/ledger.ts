@@ -186,13 +186,13 @@ export function rebaseLedger(
   // no tail kept there is nothing left for it to be the start of.
   const start = tail > 0 ? before.length - tail - 1 : before.length;
   const shift = after.length - before.length;
-  return ledger.flatMap((entry) =>
-    entry.through < head
-      ? [entry]
-      : entry.through >= start
-        ? [{ ...entry, through: entry.through + shift, epoch: entry.epoch + 1 }]
-        : [],
-  );
+  const rebased: LedgerEntry[] = [];
+  for (const entry of ledger) {
+    if (entry.through < head) rebased.push(entry);
+    else if (entry.through >= start)
+      rebased.push({ ...entry, through: entry.through + shift, epoch: entry.epoch + 1 });
+  }
+  return rebased;
 }
 
 /**
