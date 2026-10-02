@@ -19,8 +19,9 @@ The canonical way this codebase does things. New code and refactors follow these
   (sizing), `scope.ts` (per-scope stores)
 - Test helpers live in: each test file today; `bench/fixtures.ts` is the only shared one
 - Generated files and the command that rebuilds them: `llms.txt` → `npm run build`
-- Docs: AGENTS.md — terse prose that explains why, `@param` on every exported function,
-  first sentence stands alone
+- Docs: `docs-comments.md` in the `cubicecho_typescript` skill; AGENTS.md adds only that the
+  first sentence stands alone, because `llms.txt` takes it verbatim
+- Code style: the `cubicecho_typescript` skill and the `refactor` skill's preferences P1–P17
 - `CHANGELOG.md` and the `package.json` version belong to semantic-release
 
 ## Refactoring
@@ -63,6 +64,88 @@ Approved 2026-10-01: M1–M6, R1–R10, D1, and the sweeps R11–R14. All done; 
 - **R14** — everything else on the public surface leads with a noun phrase that is the return
   value, which AGENTS.md says not to restate.
 
+### Preferences pass, 2026-10-02
+
+Surveyed against the skills as they stand after P13 was rewritten and P15–P17 were added.
+Baseline on `refactor/preferences-pass`: lint clean, typecheck clean, 654 tests pass.
+Not approved. Counts are for `src` unless they say otherwise.
+
+#### R15 [sweep] — P15: every conditional and loop body is a braced block
+
+**File:** 463 hits of Biome's `style/useBlockStatements`: 395 in `src`, 68 in `tests`, `bench`
+and `scripts`.
+**Change:** add `"useBlockStatements": "error"` to `biome.json`, then one run of
+`biome check --write --unsafe` (the fix is one Biome calls unsafe; the formatter in the same
+run breaks the lines). A commit of its own with nothing else in it.
+
+#### R16 [sweep] — P4: `@param name - text`, and no default in a description
+
+**File:** 290 `@param` tags, all written `@param name text`; 0 use the hyphen. 14 descriptions
+state a default (`client.ts:577`, `hooks.ts:428`, `preselect.ts:37,69,87`, `request-body.ts:32`,
+`run-calls.ts:41`, `scope.ts:72`, `side-task.ts:414`, `spec.ts:910`, `thinking.ts:100,215`,
+`tool-loading.ts:231,260`).
+**Change:** hyphen form throughout, `[name]` for an optional parameter, and the 14 reworded to
+say what the parameter is. AGENTS.md no longer shows the old form.
+
+#### R17 [sweep] — P16: magic values
+
+**File:** 31 hits of Biome's `style/noMagicNumbers` in 10 files, and the strings it does not
+look at.
+- HTTP statuses: `retry.ts:99` (408, 409, 429, 500), `retry.ts:115` (400, 422),
+  `retry.ts:128` (503), `client.ts:366` (404, 405, 501)
+- seconds and milliseconds: `1000` in `client.ts:15`, `run-turn.ts:152,241`, `stream.ts:445`
+  (R3 put the conversion in one place; these four still spell it)
+- the length of a preview in an error message: `200`, four copies in `tool-calls.ts:140,146,147`
+  and `tool-loading.ts:588` (one constant, P6)
+- backoff: `8000`, `500`, `0.5` in `retry.ts:150`, which its `@param` also spells out
+- `tokens.ts:37` (`1000`), `preselect.ts:166` (`3`), `preselect.ts:259` (`0.5` twice),
+  `hooks.ts:411` (`12`), `events.ts:60` (`30 * 60_000`)
+- strings: `"length"` compared 6 times, `"done"` 3, `"proxy"` and `"ondemand"` 2 each,
+  `"beforeCompact"`, `"unavailable_error"`, `"refusal"`
+**Open:** whether a string the compiler checks as a member of a union (`finishReason ===
+"length"`, `role === "user"`) counts, and `typeof x === "string"`.
+
+#### R18 [sweep] — P17: type assertions
+
+**File:** about 40 in `src`: `spec.ts` 11, `client.ts` 5, `stream.ts` 4, `side-task.ts` 4,
+`tool-loading.ts` 2, `schema-compat.ts` 2, `scope.ts` 2, `runtime.ts` 2, `capabilities.ts` 2,
+one each in `events.ts` (`as unknown as`), `guards.ts`, `request-body.ts`, `retry.ts`,
+`snapshot.ts`, `tokens.ts`, `tool-calls.ts`. Tests: 23 `as never` / `as any` / `as unknown`
+(T3).
+**Kinds:** reading an untyped reply (`as { data?: unknown }`, `as Record<string, unknown>`,
+`as CacheUsage`): a guard that narrows; a string already checked against a list
+(`on as HookEvent`, three times in `spec.ts:525–545`): a guard on the list; a generic that
+returns `as T` (`scope.ts:54`, `spec.ts:352`, `side-task.ts:364`, `guards.ts:46`): the
+signature, or one helper that holds it; building from `{} as T` (`spec.ts:352`).
+**Note:** a guard where there was an assertion can add a runtime check. Each of those is a
+`B` question, not part of the sweep.
+
+#### R19 — P13: chains and loops by the size of the lambda
+
+**File:** block-body callbacks to compare against a loop: `agent-loop.ts:838`,
+`compaction.ts:301`, `run-calls.ts:69`, `run-calls.ts:285`, `tool-loading.ts:70`. Loops that
+only push, to compare against a chain: `client.ts:459`, `hooks.ts:250,535`, `ledger.ts:190`,
+`run-calls.ts:289`, `spec.ts:461`, `tool-calls.ts:361`, `tool-loading.ts:351,359,544`.
+**Stays:** the loops R12 wrote (a side effect or a long body each), and `stream.ts:479`, which
+runs per streamed chunk.
+
+#### R20 — nested ternaries become `if` blocks
+
+**File:** 9: `agent-loop.ts:689,902,904`, `capabilities.ts:449,549`, `events.ts:726`,
+`stream.ts:286,288`, `tool-loading.ts:189`.
+
+#### R21 [consistency] — `biome.json` against the skill's baseline
+
+**File:** `biome.json` Double quotes and width 100 against single and 120 (a reformat-only
+commit touching every file); `vcs` off; `noUnused*`, `useImportType`, `noCommonJs`, `noEnum`,
+`noNamespace`, `noParameterProperties`, `useFilenamingConvention` not switched on (all have
+zero hits today).
+
+#### R22 [consistency] — script names
+
+**File:** `package.json`, the CI workflow, AGENTS.md. `lint` / `format` / `typecheck` against
+the skill's `check` / `check:biome` / `check:types`.
+
 ---
 
 ## Tests
@@ -99,6 +182,24 @@ D1 is done (above).
 `backoffMs`, `isGrammarError` Each opens with the reason rather than what the export is, and
 `llms.txt` takes that sentence verbatim. Surveyed, not approved.
 
+### D3 [sweep] — doc blocks that are paragraphs of prose
+
+**File:** 264 of 887 doc blocks carry prose after the summary line. The skill asks for a
+summary line and tags, and AGENTS.md no longer asks for the prose. Most of it is the reason
+the code exists (a server's quirk, a failure it came from), which is written nowhere else.
+Surveyed, not approved: keep, trim, or move under `@remarks`.
+
+### D4 — functions with no doc block, and blocks with no `@returns`
+
+**File:** 51 functions have no doc block: closures inside a function (`agent-loop.ts:664`,
+`events.ts:397`, `stream.ts:425`), private methods (`thinking.ts:180,201`, `spec.ts:303–343`),
+and the `parse*` family in `spec.ts:361–560`. 216 documented functions have no `@returns`.
+Surveyed, not approved.
+
+### D5 — `CLAUDE.md` as a symlink to `AGENTS.md`
+
+**File:** repo root. The skill's `git.md` asks for it; this repo has none.
+
 ---
 
 ## Bugs
@@ -124,3 +225,11 @@ Open questions, not approved.
 ### A1 — exports with no user inside the package or its tests (unverified)
 
 To be listed per export before the next breaking release.
+
+### A2 — `prepare` or `prepack`, and the tsconfig layout
+
+**File:** `package.json`, `tsconfig*.json`. The skill builds on `prepack` and keeps emit
+options out of the base tsconfig (`module: ESNext`, `moduleResolution: bundler`, `noEmit`).
+This repo builds on `prepare`, which also runs on `npm ci` and when it is installed from git,
+and its base tsconfig is `NodeNext` and emits. Moving to `prepack` would stop a git install
+from getting a `dist/`.
