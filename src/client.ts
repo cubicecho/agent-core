@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import type { Endpoint } from "./config.ts";
+import { isPositive } from "./guards.ts";
 import { scoped } from "./scope.ts";
 
 /**
@@ -113,9 +114,7 @@ const evict = () => {
  */
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
   for (const [name, value] of Object.entries(options)) {
-    if (typeof value === "number" && value > 0) {
-      poolLimits()[name as keyof ClientPoolOptions] = value;
-    }
+    if (isPositive(value)) poolLimits()[name as keyof ClientPoolOptions] = value;
   }
   evict();
   return { ...poolLimits() };
@@ -191,7 +190,7 @@ const CONTEXT_KEYS = [
   "n_ctx",
 ];
 
-const positive = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
+const positive = (value: unknown) => (isPositive(value) ? value : 0);
 
 /**
  * A listing entry's window, and whether it is only the one the model was trained with.

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type OpenAI from "openai";
 import { errorMessage } from "./errors.ts";
+import { isPositive } from "./guards.ts";
 import { type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 import { scoped } from "./scope.ts";
 import { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
@@ -183,9 +184,7 @@ const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }))
  */
 export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
   const { contextTokens, preface } = options;
-  if (typeof contextTokens === "number" && contextTokens > 0) {
-    hookSettings().contextTokens = contextTokens;
-  }
+  if (isPositive(contextTokens)) hookSettings().contextTokens = contextTokens;
   if (typeof preface === "string") hookSettings().preface = preface;
   return { ...hookSettings() };
 }
@@ -204,8 +203,7 @@ export const resetHooks = () => {
  * same rule `configureHooks` applies, so a `0` threaded through for "no opinion" does not quietly
  * turn every hook's context off.
  */
-const budget = (given?: number) =>
-  typeof given === "number" && given > 0 ? given : hookSettings().contextTokens;
+const budget = (given?: number) => (isPositive(given) ? given : hookSettings().contextTokens);
 
 const attribute = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");

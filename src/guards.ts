@@ -13,3 +13,14 @@
  */
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Whether a value is a number above zero, which is what a limit has to be to be one.
+ *
+ * `Infinity` passes and `NaN` does not, so a caller lifting a bound and one handing over a
+ * half-built config are told apart without either being asked.
+ *
+ * @param value Anything, usually a setting that may be absent, zero or mistyped.
+ */
+export const isPositive = (value: unknown): value is number =>
+  typeof value === "number" && value > 0;

@@ -1,3 +1,4 @@
+import { isPositive } from "./guards.ts";
 import type { TokenLedger } from "./ledger.ts";
 import { scoped } from "./scope.ts";
 import type { TurnUsage } from "./stream.ts";
@@ -97,7 +98,7 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
 export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
   const { limits } = bus();
   for (const [name, value] of Object.entries(options)) {
-    if (typeof value === "number" && value > 0) limits[name as keyof EventBusOptions] = value;
+    if (isPositive(value)) limits[name as keyof EventBusOptions] = value;
   }
   return { ...limits };
 }
