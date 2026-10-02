@@ -7,6 +7,7 @@ import {
   effortFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
+  type OnNotice,
 } from "./capabilities.ts";
 import type { CatalogServer } from "./catalog.ts";
 import { firstTokenMs, getClient, loadingMs, NO_KEY, timeoutMs } from "./client.ts";
@@ -41,6 +42,7 @@ import {
   type HookNote,
   type HookRunner,
   notify,
+  type OnNote,
   turnIndex,
   turnMessages,
   withContext,
@@ -235,6 +237,28 @@ export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   };
 }
 
+/** What `preselect` may be told beyond the question: how to stop it, and how to ask. */
+export interface PreselectOptions {
+  /** Abandons the side task. */
+  signal?: AbortSignal;
+  /** Hears how the choice was made, and what was given up on along the way. */
+  onNotice?: OnNotice;
+  /** The reply's ceiling, 256 when absent. */
+  maxTokens?: number;
+  /** As `SideTaskOptions.temperature`: absent is 0.3. */
+  temperature?: number;
+  /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
+  reasoningEffort?: string;
+  /** The most tools the choice may name, `MAX_PER_LOAD` when absent. */
+  maxPerLoad?: number;
+  /**
+   * Try `preselectByKeywords` first and spend the model only on what it cannot settle. `true`
+   * takes its defaults; an object tunes the thresholds. An empty `model` still means no
+   * preselection at all, words included — that is what `toolSelectModel: ""` asks for.
+   */
+  keywords?: boolean | KeywordPreselectOptions;
+}
+
 /**
  * The tools a request is likely to need, picked by a small model before the run starts, or none.
  *
@@ -271,22 +295,7 @@ export async function preselect(
     reasoningEffort,
     maxPerLoad = MAX_PER_LOAD,
     keywords,
-  }: {
-    signal?: AbortSignal;
-    onNotice?: (message: string) => void;
-    maxTokens?: number;
-    /** As `SideTaskOptions.temperature`: absent is 0.3. */
-    temperature?: number;
-    /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
-    reasoningEffort?: string;
-    maxPerLoad?: number;
-    /**
-     * Try `preselectByKeywords` first and spend the model only on what it cannot settle. `true`
-     * takes its defaults; an object tunes the thresholds. An empty `model` still means no
-     * preselection at all, words included — that is what `toolSelectModel: ""` asks for.
-     */
-    keywords?: boolean | KeywordPreselectOptions;
-  } = {},
+  }: PreselectOptions = {},
 ): Promise<string[]> {
   if (!model || !catalog.some((server) => server.tools.length > 0)) return [];
   if (keywords) {
@@ -400,7 +409,7 @@ export interface AgentLoopHooks {
   /** Said above the context blocks. Absent is `configureHooks`'s; empty is none. */
   preface?: string;
   /** Hears each note, from before the request and from `afterTurn`. */
-  onNote?: (note: HookNote) => void;
+  onNote?: OnNote;
 }
 
 /** How full the window is as a step is about to be sent, as `beforeStep` is told it. */
@@ -879,10 +888,7 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
  * name on its own endpoint where it does not. `preselect` answers an empty model with nothing, so
  * a config that names neither asks nothing.
  */
-async function chooseTools(
-  options: AgentLoopOptions,
-  notice: (text: string) => void,
-): Promise<string[]> {
+async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise<string[]> {
   const { config, catalog = [], signal } = options;
   const prompt = userText(options.messages.findLast((message) => message.role === "user"));
   if (!prompt.trim()) return [];
@@ -903,7 +909,7 @@ async function chooseTools(
  * The loop's own summariser, which is the compaction task's or nothing: a summary the main model
  * writes is a second full-price request the operator did not ask for.
  */
-function ownSummariser(options: AgentLoopOptions, notice: (text: string) => void) {
+function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
   const { config, signal } = options;
   const compactor = options.compact ? config.tasks?.compaction : undefined;
   if (!compactor?.model) return undefined;
@@ -926,7 +932,7 @@ async function foldBeforeStep(
     options,
     charsPerToken,
     notice,
-  }: { options: AgentLoopOptions; charsPerToken: number; notice: (text: string) => void },
+  }: { options: AgentLoopOptions; charsPerToken: number; notice: OnNotice },
 ): Promise<OpenAI.ChatCompletionMessageParam[]> {
   const { config, hooks } = options;
   const compactor = config.tasks?.compaction;

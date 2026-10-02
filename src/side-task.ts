@@ -7,6 +7,7 @@ import {
   type ModelCapabilities,
   modelCapabilitiesFor,
   negotiate,
+  type OnNotice,
 } from "./capabilities.ts";
 import { endpointId, getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
@@ -109,7 +110,7 @@ export interface SideTaskOptions {
    * console decides for its consumer where operator text goes — which a server embedding this
    * cannot then route to its own logger, attach to the run it belongs to, or silence in tests.
    */
-  onNotice?: (message: string) => void;
+  onNotice?: OnNotice;
 }
 
 /**

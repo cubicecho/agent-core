@@ -3,9 +3,9 @@ import type { Endpoint } from "./config.ts";
 import {
   consult,
   type HookContext,
-  type HookNote,
   type HookRunner,
   notify,
+  type OnNote,
   textOf,
   turnMessages,
 } from "./hooks.ts";
@@ -357,7 +357,7 @@ export interface CompactionRunOptions {
   hooks?: {
     run: HookRunner;
     context: HookContext;
-    onNote?: (note: HookNote) => void;
+    onNote?: OnNote;
     honourVeto?: boolean;
   };
   /**

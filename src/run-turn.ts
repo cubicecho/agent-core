@@ -1,6 +1,11 @@
 import type OpenAI from "openai";
 import { calibrate, charsPerTokenFor } from "./calibration.ts";
-import { type Capabilities, type ModelCapabilities, negotiate } from "./capabilities.ts";
+import {
+  type Capabilities,
+  type ModelCapabilities,
+  negotiate,
+  type OnNotice,
+} from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
 import {
   backoffMs,
@@ -57,7 +62,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
    * Told what was given up on and what is being waited out, for a watcher who would otherwise
    * see an unexplained pause. Carries both the capability notices and the retry notices.
    */
-  onNotice?: (message: string) => void;
+  onNotice?: OnNotice;
   /**
    * What the model will read, in tokens. Zero — the default — sends whatever it is given.
    *

@@ -168,6 +168,14 @@ export const MODEL_FLAGS = Object.keys(OPTIMISTIC_MODEL) as ModelFlag[];
  * behind it, including the `models` map underneath, which is the level where two keys through
  * one host are most likely to differ at all.
  */
+/**
+ * Hears one line of operator text: what was given up on, what is being waited out, what was chosen.
+ *
+ * One name for it because the same listener is handed down from the loop through a turn to
+ * `negotiate` and across to every side task, and each had spelled the signature out.
+ */
+export type OnNotice = (message: string) => void;
+
 const capabilities = scoped(() => new Map<string, Capabilities>());
 
 /**
@@ -570,7 +578,7 @@ export interface NegotiateOptions {
    * line for every model on the endpoint, and the operator who later asks why the setting still
    * reads `high` has no way to tell which one it was about.
    */
-  onNotice?: (message: string) => void;
+  onNotice?: OnNotice;
   /**
    * Which model this request is for, by the name the endpoint knows it as.
    *

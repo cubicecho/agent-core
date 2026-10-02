@@ -88,6 +88,9 @@ export interface HookOutcome {
   veto?: boolean;
 }
 
+/** Hears each `HookNote` as it is made, the one signature every function that raises them takes. */
+export type OnNote = (note: HookNote) => void;
+
 /**
  * One hook's line for whoever is watching: the context it added, or why it added none. A hook
  * that worked and added nothing gets no note — a remember that succeeded is not news.
@@ -470,11 +473,7 @@ export async function gather(
   run: HookRunner,
   events: readonly HookEvent[],
   context: HookContext,
-  {
-    signal,
-    onNote,
-    maxTokens,
-  }: { signal?: AbortSignal; onNote?: (note: HookNote) => void; maxTokens?: number } = {},
+  { signal, onNote, maxTokens }: { signal?: AbortSignal; onNote?: OnNote; maxTokens?: number } = {},
 ): Promise<Gathered> {
   const outcomes = await Promise.all(events.map((event) => runSafely(run, event, context, signal)));
   const gathered = assembleContext(outcomes.flat(), maxTokens);
@@ -501,7 +500,7 @@ export async function notify(
   run: HookRunner,
   event: HookEvent,
   context: HookContext,
-  onNote?: (note: HookNote) => void,
+  onNote?: OnNote,
 ): Promise<HookNote[]> {
   const outcomes = await runSafely(run, event, context);
   const notes = outcomes.filter((outcome) => !outcome.ok).map(failureNote);
@@ -528,7 +527,7 @@ export async function consult(
   run: HookRunner,
   event: HookEvent,
   context: HookContext,
-  onNote?: (note: HookNote) => void,
+  onNote?: OnNote,
 ): Promise<{ notes: HookNote[]; vetoed: boolean }> {
   const outcomes = await runSafely(run, event, context);
   const notes: HookNote[] = [];
