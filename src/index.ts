@@ -149,25 +149,15 @@ export {
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,
-  type ContextBreakdown,
-  type ContextBreakdownOptions,
   ContextOverflow,
-  compact,
-  contextChars,
-  contextTokens,
   EndpointSilent,
   isModelLoading,
   isOverflow,
   isTransient,
   LOADING_POLL_MS,
   LOADING_TIMEOUT_MS,
-  messageTokens,
-  requestChars,
-  requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
-  type TokenEstimateOptions,
-  toolsChars,
 } from "./retry.ts";
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from "./runtime.ts";
@@ -241,7 +231,20 @@ export {
   stripThinking,
   THINK_FENCE,
 } from "./thinking.ts";
-export { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
+export {
+  CHARS_PER_TOKEN,
+  type ContextBreakdown,
+  type ContextBreakdownOptions,
+  compact,
+  contextChars,
+  contextTokens,
+  estimateTokens,
+  messageTokens,
+  requestChars,
+  requestTokens,
+  type TokenEstimateOptions,
+  toolsChars,
+} from "./tokens.ts";
 export {
   parseToolArguments,
   recoverToolCalls,

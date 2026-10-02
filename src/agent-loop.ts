@@ -56,11 +56,12 @@ import {
   recordRequest,
   type TokenLedger,
 } from "./ledger.ts";
-import { ContextOverflow, contextTokens, toolsChars } from "./retry.ts";
+import { ContextOverflow } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { askJson, type SideTask, type SideTaskOptions, tryAsk } from "./side-task.ts";
 import { addCounts, noUsage, type Turn, type TurnUsage } from "./stream.ts";
+import { contextTokens, toolsChars } from "./tokens.ts";
 import { parseToolArguments, recoverToolCalls, type ToolCall } from "./tool-calls.ts";
 import {
   CALL_TOOL,

@@ -9,7 +9,7 @@ import {
   type TokenLedger,
   tokensBetween,
 } from "../src/ledger.ts";
-import { messageChars } from "../src/retry.ts";
+import { messageChars } from "../src/tokens.ts";
 
 type Message = OpenAI.ChatCompletionMessageParam;
 

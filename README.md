@@ -31,7 +31,7 @@ only, Node >=22.
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. |
-| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`, `contextTokens`. |
+| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its endpoint reports: `charsPerTokenFor`, `calibrate`. |
 | `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
 | `config` | The structural interfaces every function here asks for. |
@@ -44,7 +44,7 @@ only, Node >=22.
 | `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `runtime` | `createRuntime`: a second set of those caches, with the functions that use them as methods — for a host whose tenants must not share a client pool, a latch or an event bus. `defaultRuntime` is the one the top-level functions use. |
-| `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
+| `tokens` | How big a request is, estimated: `estimateTokens` — characters over four, deliberately low — and what is built on it for everything here that has to guess at a window: `messageTokens`, `requestTokens`, `contextTokens`. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. And what `runAgentLoop` throws, with the run as it stood: `AgentLoopError`, `ToolIterationLimit`, `AgentLoopOverflow`, and `failedRun` to read it off any of them. |
 | `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
 

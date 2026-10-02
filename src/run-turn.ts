@@ -10,18 +10,17 @@ import { errorMessage } from "./errors.ts";
 import {
   backoffMs,
   ContextOverflow,
-  compact,
   EndpointSilent,
   isModelLoading,
   isOverflow,
   isTransient,
   LOADING_POLL_MS,
   LOADING_TIMEOUT_MS,
-  requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
 } from "./retry.ts";
 import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./stream.ts";
+import { compact, requestTokens } from "./tokens.ts";
 
 /**
  * One turn, given as many attempts as the caller allows.

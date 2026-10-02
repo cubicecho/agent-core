@@ -9,8 +9,8 @@ import {
   textOf,
   turnMessages,
 } from "./hooks.ts";
-import { messageTokens } from "./retry.ts";
 import { ask, type SideTaskOptions } from "./side-task.ts";
+import { messageTokens } from "./tokens.ts";
 import { holdsDefinitions } from "./tool-loading.ts";
 
 /**

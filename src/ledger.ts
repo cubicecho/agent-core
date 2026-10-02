@@ -1,6 +1,6 @@
 import type OpenAI from "openai";
-import { messageChars, messageTokens, type TokenEstimateOptions } from "./retry.ts";
 import type { TurnUsage } from "./stream.ts";
+import { messageChars, messageTokens, type TokenEstimateOptions } from "./tokens.ts";
 
 /**
  * What stretches of a transcript cost, read off the prompt counts the server already reported.

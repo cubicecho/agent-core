@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
-import { type ContextBreakdown, EndpointSilent } from "./retry.ts";
+import { EndpointSilent } from "./retry.ts";
 import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from "./thinking.ts";
+import type { ContextBreakdown } from "./tokens.ts";
 import type { ToolCall } from "./tool-calls.ts";
 
 /**
