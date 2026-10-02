@@ -1005,6 +1005,7 @@ async function runSteps(
   // moves the question without losing it — and one that summarises the question away takes the
   // hooks' context with it, which is right.
   const question = messages.findLast((message) => message.role === "user");
+  const questionAt = () => (question ? messages.indexOf(question) : -1);
   const gathered: Gathered = hooks
     ? await gather(hooks.run, hooks.events ?? ["beforeTurn"], hooks.context, {
         signal,
@@ -1123,12 +1124,7 @@ async function runSteps(
     const prompt = onDemand && !routed ? `${system}\n\n${catalogue}`.trim() : system;
     const request: OpenAI.ChatCompletionMessageParam[] = [
       ...(prompt ? [{ role: "system" as const, content: prompt }] : []),
-      ...withContext(
-        messages,
-        question ? messages.indexOf(question) : -1,
-        gathered.context,
-        preface,
-      ),
+      ...withContext(messages, questionAt(), gathered.context, preface),
     ];
 
     const build = (supported: Capabilities, refused: ModelCapabilities | undefined) =>
@@ -1258,7 +1254,7 @@ async function runSteps(
     if (!calls.length) {
       let afterTurn: Promise<HookNote[]> = Promise.resolve([]);
       if (hooks) {
-        const at = question ? messages.indexOf(question) : -1;
+        const at = questionAt();
         // Not awaited: the answer is ready, and remembering it is not something to hold it for.
         // Handed back instead, for a host that wants its notes.
         afterTurn = notify(
