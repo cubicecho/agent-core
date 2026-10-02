@@ -97,6 +97,17 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
 }
 
 /**
+ * Builds a turn's request body from what the endpoint and the model have refused so far.
+ *
+ * A function rather than a body because a downgrade changes what is sent, so it is called again
+ * per attempt. Its second argument is absent where no model was named.
+ */
+export type RequestBuilder = (
+  supports: Capabilities,
+  model: ModelCapabilities | undefined,
+) => OpenAI.ChatCompletionCreateParamsStreaming;
+
+/**
  * `request` is a callback rather than a body because the body has to be rebuilt from whatever
  * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
  * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
@@ -112,10 +123,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
 export async function runTurn(
   client: OpenAI,
   supports: Capabilities,
-  request: (
-    supports: Capabilities,
-    model: ModelCapabilities | undefined,
-  ) => OpenAI.ChatCompletionCreateParamsStreaming,
+  request: RequestBuilder,
   {
     maxRetries = 0,
     onNotice,
