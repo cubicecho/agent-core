@@ -158,8 +158,9 @@ export class FenceSplitter {
     for (const marker of this.#candidates()) {
       const at = text.indexOf(marker);
       if (at === -1) continue;
-      if (!best || at < best.at || (at === best.at && marker.length > best.marker.length))
-        best = { at, marker };
+      const earlier = !best || at < best.at;
+      const longerAtTheSamePlace = best && at === best.at && marker.length > best.marker.length;
+      if (earlier || longerAtTheSamePlace) best = { at, marker };
     }
     return best;
   }

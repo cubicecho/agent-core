@@ -462,11 +462,10 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // Against `stream` rather than the id: this generator may have outlived its own entry — a
     // sweep or an `endRun` drops it and a later `emit` files the same run under a new one — and
     // the last watcher of the old stream has no business deleting the new one.
-    if (
-      streams.get(runId) === stream &&
-      stream.listeners.size === 0 &&
-      (stream.ended || stream.events.length === 0)
-    ) {
+    const stillFiled = streams.get(runId) === stream;
+    const unwatched = stream.listeners.size === 0;
+    const nothingMoreToSay = stream.ended || stream.events.length === 0;
+    if (stillFiled && unwatched && nothingMoreToSay) {
       streams.delete(runId);
     }
   }
@@ -531,7 +530,8 @@ export function fold(events: RunEvent[]): RunEvent[] {
   for (const event of events) {
     const last = blocks[blocks.length - 1];
     const mergeable = event.kind === "thinking" || event.kind === "output";
-    if (last && mergeable && last.kind === event.kind && last.step === event.step) {
+    const continuesLast = last && last.kind === event.kind && last.step === event.step;
+    if (mergeable && continuesLast) {
       last.seq = event.seq;
       last.at = event.at;
       parts.push(event.text);

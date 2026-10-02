@@ -94,8 +94,8 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
     const aMs = first[over];
     const bMs = next[over];
     // Tokens over time for both together, which is each rate weighted by the time it held.
-    if (a !== undefined && b !== undefined && aMs !== undefined && bMs !== undefined && aMs + bMs)
-      joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
+    const bothTimed = a !== undefined && b !== undefined && aMs !== undefined && bMs !== undefined;
+    if (bothTimed && aMs + bMs) joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
     else delete joined[rate];
   }
   return joined;
