@@ -17,11 +17,14 @@ The canonical way this codebase does things. New code and refactors follow these
   `runtime.ts` `STATEFUL` and cleared through `reset.ts` `resetAll`
 - Shared helpers live in: `guards.ts` (predicates and small value helpers), `tokens.ts`
   (sizing), `scope.ts` (per-scope stores)
-- Test helpers live in: each test file today; `bench/fixtures.ts` is the only shared one
+- Test helpers live in: `tests/helpers.ts` once a second file needs one; `bench/fixtures.ts` for
+  the bench
+- Test layout: `describe` named for the export, `it` for each case; a test lives in the file of
+  the module that owns the code
 - Generated files and the command that rebuilds them: `llms.txt` → `npm run build`
 - Docs: `docs-comments.md` in the `cubicecho_typescript` skill; AGENTS.md adds only that the
   first sentence stands alone, because `llms.txt` takes it verbatim
-- Code style: the `cubicecho_typescript` skill and the `refactor` skill's preferences P1–P18
+- Code style: the `cubicecho_typescript` skill and the `coding-standards` skill's preferences P1–P18
 - `CHANGELOG.md` and the `package.json` version belong to semantic-release
 
 ## Refactoring
@@ -122,41 +125,42 @@ Answers given at the gate, which the items follow (all recorded in the skills):
 
 ## Tests
 
-Surveyed, not approved.
+Approved 2026-10-02: T1–T4. Done, except the half of T3 that is a question. 654 tests before
+and after each, and the same titles.
 
-### T1 [reuse] — shared builders for the fake client, API errors and stream chunks
+| ID | What | Commit |
+| --- | --- | --- |
+| T4 | a test lives in the file of the module that owns the code: `tokens`, `request-body`, `run-calls`, `preselect` test files; `resolveApiKey` in `client.test.ts` | `2422b39` |
+| T1 | what more than one file builds lives in `tests/helpers.ts` | `ee84a0a` |
+| T3 | `schema-compat`'s tool helper takes typed parameters instead of a cast | `eb9c239` |
+| T2 | every file groups its tests under `describe`, and says `it` | `840ba0e` |
 
-**File:** `tests/*` `clientOf` in 5 files, `apiError` in 4, `chunk` in 3.
+### Left as they are, and why
 
-### T2 [consistency] — one layout
-
-**File:** three files use flat `test()`, 25 use `describe`.
-
-### T3 [readability] — `as never` casts
-
-**File:** 19 in 8 files.
-
-### T4 [consistency] — tests that stayed behind when their code moved
-
-**File:** `tests/retry.test.ts` (sizing, moved by M1), `tests/agent-loop.test.ts` (`buildBody`,
-`preview`, `resolveApiKey`, moved by M3), `tests/tool-loading.test.ts` (preselection, moved by
-M4). Only their import paths changed, so that no commit moved a test and the code it pins.
+- **T1** — a helper that closes over the file's own mock stays in the file (`body`, `sentHints`,
+  `create`, `list`), since `vi.mock` is hoisted per file. `calls` has three signatures in three
+  files. The `config` of `ask-json`, `side-task-vision` and `snapshot` names a different
+  endpoint on purpose, as does `endpoint(baseUrl)` in `side-task-hints`. `refusal` in `runtime`
+  is built on a mocked SDK. Renamed so one name means one thing: `says` → `asking`
+  (calibration), `reply` → `replies` (continuation), `stream` → `chunks` (agent-loop), `tool` →
+  `catalogTool` (tool-loading), `answers` → `answer` (side-task-settings).
+- **T1, open** — `NO_GRAMMAR` is identical in `capabilities` and `turn` and not yet shared.
+  `NO_EFFORT`, `OWN_TEMPERATURE` and `WANTS_COMPLETION_LIMIT` are a plain `Error` in
+  `capabilities` and an `APIError` in `side-task-hints`: a parameter, a mistake, or intended?
+- **T2** — titles were not reworded. Some start with a noun and read oddly after `it`.
+- **T3** — a cast that is the test stays: a wrong type handed in to see it refused (`'900' as
+  never`, `'8' as never`, `[...] as never[]`, `emit(... as never)`, `reasoning_content`).
+- **T3, open** — ten `as never` on a fake hook runner (`compaction.test.ts`, `agent-loop.test.ts`)
+  and one tuple cast on its recorded calls. Typing the fake as `HookRunner` does not compile,
+  because the hand-written outcomes leave out `ms`, `inject` and `maxTokens`. Keep the cast,
+  build outcomes through a typed helper that fills those in, or cast once in a helper?
 
 ---
 
 ## Docs
 
-D1, D3 and D4 are done (above).
-
-### D2 — lead sentences that do not stand alone as an index entry
-
-**File:** `runTurn`, `relaxTools`, `fold`, `timeoutMs`, `tryAsk`, `parseJson`, `compact`,
-`backoffMs`, `isGrammarError` Each opens with the reason rather than what the export is, and
-`llms.txt` takes that sentence verbatim. Surveyed, not approved.
-
-### D5 — `CLAUDE.md` as a symlink to `AGENTS.md`
-
-**File:** repo root. The skill's `git.md` asks for it; this repo has none.
+D1–D5 are done. D2: nine lead sentences say what the export is before why it is (`725a6a8`).
+D5: `CLAUDE.md` is a symlink to `AGENTS.md` (`835b7e3`).
 
 ---
 

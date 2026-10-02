@@ -5,7 +5,7 @@ everywhere: client pooling, capability negotiation, retry, streaming, tool loadi
 Node >= 22, `openai` as a peer dependency.
 
 The generic rules — TypeScript, Biome, doc comments, commits and releases — are in the
-`cubicecho_typescript` skill, and how a refactor is run is in the `refactor` skill. This file
+`cubicecho_typescript` skill, and how a refactor is run is in the `coding-standards` skill. This file
 holds only what is true of this repo.
 
 ## Commands
