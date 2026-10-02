@@ -7,14 +7,6 @@ import { orderTools, type ToolOrder } from './tool-loading.ts';
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and
  * the model have refused.
- *
- * Every field that negotiates lives here: the ceiling's two spellings, a temperature only a
- * model that takes ours is sent, a reasoning effort only one that takes it is, `stream_options`
- * only where the server has heard of it, relaxed schemas only where it could not build a grammar,
- * and `extraBody` last, less whatever the model refused by name. The ceiling is tested
- * `=== false` — `modelCapabilitiesFor` starts a model at `legacyTokenLimit: true` and an absent
- * one has to read the same — which is the test one of the three copies had inverted.
- *
  * @param config - What to ask for. `maxTokens` of zero or less sends no ceiling; `reasoningEffort`
  * absent or `"off"` sends no effort, and one the model has refused by value is stepped up to the
  * cheapest it takes by `effortFor`.
@@ -27,6 +19,14 @@ import { orderTools, type ToolOrder } from './tool-loading.ts';
  * @param [order] - How to order them before sending. `true` is by name, which keeps the cache
  * when the caller's array is assembled differently from one request to the next. See
  * `orderTools`.
+ *
+ * @remarks
+ * Every field that negotiates lives here: the ceiling's two spellings, a temperature only a
+ * model that takes ours is sent, a reasoning effort only one that takes it is, `stream_options`
+ * only where the server has heard of it, relaxed schemas only where it could not build a grammar,
+ * and `extraBody` last, less whatever the model refused by name. The ceiling is tested
+ * `=== false` — `modelCapabilitiesFor` starts a model at `legacyTokenLimit: true` and an absent
+ * one has to read the same — which is the test one of the three copies had inverted.
  */
 export function buildBody(
   config: ModelParams,

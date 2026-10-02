@@ -20,6 +20,7 @@ export const THINK_FENCE: Fence = { open: '<think>', close: '</think>' };
 /**
  * The fences nobody writes by accident, and so the ones `streamTurn` reads by default.
  *
+ * @remarks
  * `<think>` opening a reply is never meant as output, and the other two are made of tokens that
  * only a model's template produces: gpt-oss's harmony analysis channel, served raw, and Kimi's.
  */
@@ -43,6 +44,7 @@ export const ALL_FENCES: readonly Fence[] = [
 /**
  * Framing that is neither scratchpad nor answer, dropped wherever it turns up outside a fence.
  *
+ * @remarks
  * Only harmony has any: after the analysis channel closes, raw gpt-oss output announces the final
  * channel before the answer and ends with a return token.
  */
@@ -61,6 +63,7 @@ export interface FenceSplitterOptions {
   /**
    * The template already opened the first fence in the prompt, so the reply starts inside it.
    *
+   * @remarks
    * Several chat templates end the prompt with `<think>` rather than leaving the model to write
    * it. Without this the splitter still catches it once `</think>` arrives, and moves what came
    * before into `reasoning`, but a watcher will have been shown it as output by then.
@@ -71,6 +74,7 @@ export interface FenceSplitterOptions {
 /**
  * A state machine over a stream of `content` that routes fenced text to reasoning.
  *
+ * @remarks
  * The reference shape is Vercel's `extractReasoningMiddleware`. A tag can be split across chunks,
  * so the tail of each push that could be the start of one is held until the next push settles
  * it; `finish` releases it. A reply cut off mid-scratchpad ends with the fence still open and its
@@ -105,7 +109,6 @@ export class FenceSplitter {
 
   /**
    * Reads one more piece of content, returning what it settled, in order.
-   *
    * @param text - The next delta.
    */
   push(text: string): Split[] {
@@ -211,7 +214,6 @@ export class FenceSplitter {
 
 /**
  * What is left of a complete reply once every scratchpad is taken out of it.
- *
  * @param text - The whole reply.
  * @param [fences] - The fences to read.
  */

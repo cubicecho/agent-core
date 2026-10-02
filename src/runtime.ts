@@ -90,6 +90,7 @@ export interface RuntimeOptions {
 /**
  * One set of the package's caches, with the functions that use them as methods.
  *
+ * @remarks
  * Each method is the top-level function of the same name, with the same signature and doc
  * comment, run against this runtime's state instead of the process's: its pooled clients and
  * model listings, latched capabilities, measured characters per token, no-thinking hints, event
@@ -100,11 +101,11 @@ export type Runtime = typeof STATEFUL & {
    * Runs `fn` with this runtime current, so every top-level function it calls — directly, after
    * an `await`, or from a timer it sets — uses this runtime's state. What the methods do, for
    * code that calls the top-level functions itself.
+   * @param fn - What to run. Its return value, or what it throws, is handed straight back.
    *
+   * @remarks
    * It does not reach a callback that outlives `fn` and is called from elsewhere — a generator
    * resumed later, a function handed back and called by someone else. Call a method there.
-   *
-   * @param fn - What to run. Its return value, or what it throws, is handed straight back.
    */
   run<T>(fn: () => T): T;
 };
@@ -129,7 +130,10 @@ function bind(scope: Scope): Runtime {
 /**
  * A runtime of its own: separate clients, listings, capability latches, hints, event bus and hook
  * settings from the process's and from every other runtime's.
+ * @param [options] - What to configure it with before first use. A part left out keeps the
+ * defaults — not the default runtime's settings, which a new runtime does not inherit.
  *
+ * @remarks
  * For a host that must not share them — one that mints a key per tenant, where a shared pool has
  * tenants evicting each other's clients and a shared bus has one tenant's run id readable by
  * another — and for tests, where a runtime per case needs no `resetAll` between them and can run
@@ -144,9 +148,6 @@ function bind(scope: Scope): Runtime {
  *
  * Nothing needs closing. A runtime is garbage once nothing holds it; its one timer, the event
  * bus's sweep, is unreferenced and stops rescheduling when its last run has been swept.
- *
- * @param [options] - What to configure it with before first use. A part left out keeps the
- * defaults — not the default runtime's settings, which a new runtime does not inherit.
  */
 export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const runtime = bind(new Map());
@@ -165,6 +166,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
 /**
  * The runtime the top-level functions use when no other is running.
  *
+ * @remarks
  * `defaultRuntime.getClient(endpoint)` and `getClient(endpoint)` are the same call outside any
  * runtime. Inside one they differ: the top-level function follows the runtime that is running,
  * and this always reaches the process-wide state.

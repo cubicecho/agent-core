@@ -22,6 +22,7 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 /**
  * Every doc comment in a file, with the line that follows it.
  *
+ * @remarks
  * Both spellings are read: the one-line `/** text *\/` these files use for a short note, and the
  * block form. What follows the closing delimiter is what says who the comment belongs to — a
  * declaration means the comment documents it, a blank line means it documents the file.
@@ -63,11 +64,20 @@ function docBlocks(source) {
   return blocks;
 }
 
-/** The paragraphs of a doc comment body, each collapsed to a single line. */
+/**
+ * The paragraphs of a doc comment body ahead of its first tag, each collapsed to a single line.
+ *
+ * @remarks
+ * The tags follow the summary with no blank line between, so a summary would otherwise run on
+ * into its `@param` lines — and a summary with no full stop would take them all.
+ */
 function paragraphs(body) {
   const out = [];
   let current = [];
   for (const line of body) {
+    if (line.trim().startsWith('@')) {
+      break;
+    }
     if (line.trim() === '') {
       if (current.length > 0) {
         out.push(current.join(' ').trim());

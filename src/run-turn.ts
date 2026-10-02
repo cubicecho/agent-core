@@ -60,6 +60,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
   /**
    * What the model will read, in tokens. Zero — the default — sends whatever it is given.
    *
+   * @remarks
    * With a limit, the request is sized before it is sent — the prompt plus the reply ceiling
    * the body carries, since that is what the endpoint weighs — and a `ContextOverflow` is raised
    * here rather than by the endpoint one round trip later. It is opt-in because the number is the
@@ -75,6 +76,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * are negotiated too — a reasoning effort it does not take, a token ceiling it spells the
    * other way, a temperature that is not ours to pick. Left out, only the endpoint's own are.
    *
+   * @remarks
    * It is given here rather than read off the body because the body is built from the answer:
    * `request` has to know what this model refused before it can build one that avoids it.
    */
@@ -88,6 +90,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * How long to wait on a server answering that the model is still loading, `LOADING_TIMEOUT_MS`
    * unless given; zero gives up on the first such answer like any other 503.
    *
+   * @remarks
    * Polled every `LOADING_POLL_MS` without spending `maxRetries`, and announced once rather than
    * per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
    * has to swap in, meets this on its first request every time.
@@ -97,7 +100,6 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
 
 /**
  * What a notice calls the model, where the caller did not say which one it is.
- *
  * @param model - The model's name. Absent reads as "the model", which is all there is to say.
  */
 export const modelLabel = (model: string | undefined) => model ?? 'the model';
@@ -105,6 +107,7 @@ export const modelLabel = (model: string | undefined) => model ?? 'the model';
 /**
  * Builds a turn's request body from what the endpoint and the model have refused so far.
  *
+ * @remarks
  * A function rather than a body because a downgrade changes what is sent, so it is called again
  * per attempt. Its second argument is absent where no model was named.
  */
@@ -116,6 +119,7 @@ export type RequestBuilder = (
 /**
  * Throws `ContextOverflow` for a request that will not fit its window, before it is sent.
  *
+ * @remarks
  * The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with `n_predict`
  * in, OpenAI with the ceiling — so a prompt that fits the window but not the window less the
  * ceiling was let through here to be refused one round trip later, which is the trip this guard
@@ -152,7 +156,6 @@ const shownDelay = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${Math.
  * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
  * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
  * object throughout, and a caller that reads those from its own closure can ignore the argument.
- *
  * @param client - The pooled client for this endpoint.
  * @param supports - What the endpoint has already refused, threaded through the negotiation.
  * @param request - Builds the body. Called again per attempt, since a downgrade changes it. Its

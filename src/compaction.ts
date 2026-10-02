@@ -33,6 +33,7 @@ const SUMMARY_SLICE = 4000;
 /**
  * The summariser's instruction when the caller gives none.
  *
+ * @remarks
  * Asks for notes rather than a retelling, because what the summary replaces is the model's only
  * record of what was decided, and a narrative spends its words on the order things happened in.
  */
@@ -92,7 +93,10 @@ export interface PruneOptions {
 
 /**
  * The transcript with every tool result but the latest few replaced by a one-line stub.
+ * @param messages - The transcript. Not written to.
+ * @param [options] - How many results to keep and how long one must be to clear.
  *
+ * @remarks
  * The cheap half of compaction. A `read_file` of a 40k-character file is 10k tokens on every turn
  * after it, and by then the model has usually taken what it wanted from it; the stub keeps the
  * call answered — a call with no result is a malformed transcript — and says how much was there,
@@ -101,9 +105,6 @@ export interface PruneOptions {
  * only copy of them the model has (`holdsDefinitions`); either still counts as one of the latest
  * few. Returns the same array when there was nothing to clear. Rewrites the prefix;
  * see the module comment on when to run it.
- *
- * @param messages - The transcript. Not written to.
- * @param [options] - How many results to keep and how long one must be to clear.
  */
 export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars = 256 }: PruneOptions = {}): Message[] {
   let kept = 0;
@@ -201,7 +202,11 @@ const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most
 
 /**
  * Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
+ * @param messages - The transcript, system prompts included if the caller keeps them in it.
+ * @param options - The window, what is in use, the ratios, and where the last fold ended. See
+ * `CompactionOptions`.
  *
+ * @remarks
  * The kept tail is walked back from the end until it fills `keepRatio` of the window, then moved
  * forward onto a user message: a transcript resuming mid-exchange — a tool result with no call
  * before it, a reply with no question — is malformed and servers refuse it. The system prompts at
@@ -222,10 +227,6 @@ const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most
  * comes, and `after` says how far short it fell. An earlier summary the new one replaces is not
  * credited, so `after` errs high by at most that much. It is only as good as `estimate` — see
  * `estimateFrom` for one that is measured.
- *
- * @param messages - The transcript, system prompts included if the caller keeps them in it.
- * @param options - The window, what is in use, the ratios, and where the last fold ended. See
- * `CompactionOptions`.
  */
 export function planCompaction(
   messages: Message[],
@@ -299,7 +300,6 @@ export function planCompaction(
 /**
  * What the summariser is handed for a plan: the earlier summary if there was one, then each
  * message as its role and at most 4000 characters of its text.
- *
  * @param plan - What `planCompaction` returned.
  */
 export function summaryInput(plan: CompactionPlan): string {
@@ -317,7 +317,6 @@ export function summaryInput(plan: CompactionPlan): string {
 
 /**
  * A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
- *
  * @param config - The endpoint the summary is written through.
  * @param model - The model to write it, which may be a smaller one than the run's.
  * @param [options] - Cancellation and notices; the ceiling is 1024 and the instruction
@@ -335,6 +334,7 @@ export const summariser =
 /**
  * One fold, as a host that keeps its transcript append-only stores it.
  *
+ * @remarks
  * The other half of `compactTranscript`: the same work, recorded rather than applied. A host that
  * persists this beside an untouched transcript still shows the user every message, can undo a fold
  * by dropping one row, and rebuilds the request with `applyCompaction` — where a host that keeps
@@ -371,11 +371,6 @@ export interface CompactionRunOptions {
 
 /**
  * The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
- *
- * What `compactTranscript` does before it rewrites anything, which is all a host needs when the
- * fold lives on the session row and the messages stay where they are. Nothing here is persisted or
- * logged — that is the host's, and so is deciding what to do with a fold that did not happen.
- *
  * @param messages - The transcript the plan was made for. Read only, and only for the hooks.
  * @param plan - What `planCompaction` returned for it.
  * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
@@ -383,6 +378,11 @@ export interface CompactionRunOptions {
  * @param [options] - Hooks to tell and whether the window is already past. See `CompactionRunOptions`.
  * @returns `undefined` when nothing was folded — a hook vetoed, or the summary came back empty —
  * so the caller stores nothing and the transcript is still whole.
+ *
+ * @remarks
+ * What `compactTranscript` does before it rewrites anything, which is all a host needs when the
+ * fold lives on the session row and the messages stay where they are. Nothing here is persisted or
+ * logged — that is the host's, and so is deciding what to do with a fold that did not happen.
  */
 export async function runCompaction(
   messages: Message[],
@@ -416,12 +416,6 @@ export async function runCompaction(
 
 /**
  * The transcript as the server should see it: the folded head replaced by its summary.
- *
- * The inverse of storing a `CompactionRecord`, and the shape `planCompaction` expects to meet
- * again — the same `SUMMARY_LEAD`, in a `system` message at the same place — so the next fold
- * continues these notes rather than summarising them a second time. Any earlier summary message in
- * the kept head is dropped, since the record's already contains it.
- *
  * @param messages - The stored transcript, whole. Not written to.
  * @param [record] - The fold, or `undefined` for a session that has not been compacted, which hands
  * back `messages` itself.
@@ -429,6 +423,12 @@ export async function runCompaction(
  * that keeps its system prompts in the array; everything before it is kept ahead of the summary.
  * Absent, the leading `system` messages are found by scanning, and zero of them is the ordinary
  * case for a host whose system prompt is a separate argument.
+ *
+ * @remarks
+ * The inverse of storing a `CompactionRecord`, and the shape `planCompaction` expects to meet
+ * again — the same `SUMMARY_LEAD`, in a `system` message at the same place — so the next fold
+ * continues these notes rather than summarising them a second time. Any earlier summary message in
+ * the kept head is dropped, since the record's already contains it.
  */
 export function applyCompaction(
   messages: Message[],
@@ -449,18 +449,18 @@ export function applyCompaction(
 /**
  * Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted
  * everything after it.
- *
- * A transcript that stays append-only and a request that does not are two numberings of the same
- * conversation, and anything that names a position — `withContext`'s index, a range handed to a
- * hook — has to say which it is in. An index inside the folded stretch answers with the summary
- * message that now stands for it.
- *
  * @param index - The position in the stored transcript.
  * @param [record] - The fold in force, or `undefined` for a session that has none, which hands the
  * index straight back.
  * @param [head] - How many messages the request keeps ahead of the summary — the leading system
  * prompts, when the host keeps them in the array. Zero, the default, is the stored-fold case,
  * where the summary is the request's first message.
+ *
+ * @remarks
+ * A transcript that stays append-only and a request that does not are two numberings of the same
+ * conversation, and anything that names a position — `withContext`'s index, a range handed to a
+ * hook — has to say which it is in. An index inside the folded stretch answers with the summary
+ * message that now stands for it.
  */
 export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'through'>, head = 0): number => {
   if (!record) {
@@ -471,7 +471,16 @@ export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'thr
 
 /**
  * The transcript with the plan's stretch replaced by one system message holding its summary.
+ * @param messages - The transcript the plan was made for. Not written to.
+ * @param plan - What `planCompaction` returned for it.
+ * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
+ * when a hook vetoes.
+ * @param [options] - Hooks to tell and whether the window is already past. See
+ * `CompactionRunOptions`.
+ * @returns `messages` itself when nothing was folded — a veto or an empty summary — otherwise a
+ * new array.
  *
+ * @remarks
  * `beforeCompact` is told what is being folded while the summary is written, beside it rather
  * than ahead of it — a memory server filing it is not a rescue worth making the run wait for, and
  * `notify` never rejects. A host that wants its hooks able to stop a compaction sets
@@ -485,15 +494,6 @@ export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'thr
  * `runCompaction` and `applyCompaction` are its two halves, and it is nothing but the two in
  * order, so a host that stores the fold instead of the array gets the same summary at the same
  * cut rather than a second implementation that drifts from this one.
- *
- * @param messages - The transcript the plan was made for. Not written to.
- * @param plan - What `planCompaction` returned for it.
- * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
- * when a hook vetoes.
- * @param [options] - Hooks to tell and whether the window is already past. See
- * `CompactionRunOptions`.
- * @returns `messages` itself when nothing was folded — a veto or an empty summary — otherwise a
- * new array.
  */
 export async function compactTranscript(
   messages: Message[],

@@ -30,6 +30,7 @@ export const AGENT_SPEC_VERSION = 1;
  * The side tasks this package has code for: documentation and a sensible UI order, not a
  * validator.
  *
+ * @remarks
  * `tasks` is an open record on purpose — a host may run tasks this package has never heard of,
  * and an unknown key is carried through untouched rather than warned about.
  */
@@ -38,6 +39,7 @@ export const AGENT_TASKS = ['compaction', 'toolSelect', 'title', 'followups'] as
 /**
  * Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
  *
+ * @remarks
  * The same array, not a copy. It comes from `hook-events.ts` rather than `hooks.ts` because that
  * module's `createHash` would otherwise come with it, into a file whose whole point is that a
  * browser can load it.
@@ -193,6 +195,7 @@ export interface SpecBundle {
    * Full MCP server definitions. Validated only as far as a round trip needs — an object, a
    * non-empty `id` or `slug`, no duplicate slugs — with every other key passed through untouched.
    *
+   * @remarks
    * This package deliberately does not restate the pool's `McpServerConfig`. Restating a union it
    * never reads is a version-skew generator: the pool carries `coerceArguments`, `maxResultChars`
    * and three separate timeouts, and a strict parse here would silently delete a server's
@@ -205,6 +208,7 @@ export interface SpecBundle {
 /**
  * One side task, resolved: a model, and the endpoint it is reached through.
  *
+ * @remarks
  * The three settings are present only where a layer stated them, and nothing is filled in from
  * the agent's own model — `taskCall` turns one into a call, and what is absent there is left to
  * the side task's default.
@@ -222,6 +226,7 @@ export interface ResolvedTask {
  * What layered documents resolve to: the flat shape the loop already takes, plus the parts of an
  * agent that are the host's to act on.
  *
+ * @remarks
  * `extends AgentConfig` is the whole point — `getClient(resolved)` and
  * `runAgentLoop({ config: resolved })` take this unchanged, and no adapter is needed.
  */
@@ -250,6 +255,7 @@ export interface ResolvedAgent extends AgentConfig {
 /**
  * What a field falls back to when no layer said anything at all.
  *
+ * @remarks
  * Not sentinels, and not invented: `toolDiscovery`, `maxRetries` and `contextLength` are the
  * "absent everywhere" column of the document's own table, and `temperature` and `maxToolIterations`
  * are what all three consumers store as their defaults today. A field left out here is left out of
@@ -654,7 +660,12 @@ const KNOWN = new Set([
 
 /**
  * Reads a document, dropping what it cannot use and refusing only what it cannot identify.
+ * @param document - Anything at all — this is the front door, and it is given parsed JSON from a
+ * form, a file or another host.
+ * @param [options] - Whether to parse a bundle, which events this host fires, and which extension
+ * keys it understands.
  *
+ * @remarks
  * Every problem is reported at once, in the `path: what is wrong` shape `validateHooks` already
  * uses, because a host showing an operator one error at a time makes them fix a document one
  * round trip at a time.
@@ -670,11 +681,6 @@ const KNOWN = new Set([
  * version and returns false: degrade where the loss is performance, refuse where the loss is
  * identity. A snapshot of the wrong version costs a few refused requests; an agent of the wrong
  * version is not the agent its author described.
- *
- * @param document - Anything at all — this is the front door, and it is given parsed JSON from a
- * form, a file or another host.
- * @param [options] - Whether to parse a bundle, which events this host fires, and which extension
- * keys it understands.
  */
 export function parseSpec(document: unknown, options: ParseSpecOptions = {}): ParsedSpec {
   const report = new Report();
@@ -863,7 +869,9 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
 
 /**
  * Layers documents into the flat object the loop takes, weakest first.
+ * @param layers - The documents, weakest first: settings, then the agent, then a task, then a step.
  *
+ * @remarks
  * Absent inherits, and nothing else does: `0`, `-1`, `""` and `[]` are values that mean what they
  * say, which is the whole reason the format exists — `maxTokens: 0` means three different things
  * across the three applications this was extracted from, and `temperature: 0` is unsayable in one
@@ -878,8 +886,6 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * empty for the same reason: a document naming somebody else's endpoint must not be able to make
  * this host send its own provider key there. A host that wants inheritance applies `resolveApiKey`
  * afterwards.
- *
- * @param layers - The documents, weakest first: settings, then the agent, then a task, then a step.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
@@ -974,15 +980,15 @@ export interface ExportSpecOptions {
 
 /**
  * A document fit to leave the host: the same agent, with the secrets of its bundled servers gone.
+ * @param spec - A document, ordinarily one `parseSpec` returned.
+ * @param [options] - Whether to keep the secrets.
  *
+ * @remarks
  * The property worth keeping is that **a redacted spec is still a valid spec** — it parses, it
  * resolves, and what comes back is the same agent pointed at the same servers, needing only the
  * credentials the importing host supplies itself. So this removes values rather than keys, and
  * nothing outside `bundle` is touched: the format has no credential field at any depth, which is
  * the reason there is nothing else to strip.
- *
- * @param spec - A document, ordinarily one `parseSpec` returned.
- * @param [options] - Whether to keep the secrets.
  */
 export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptions = {}): AgentSpec {
   if (secrets || !spec.bundle?.mcpServers) {

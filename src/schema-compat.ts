@@ -176,7 +176,6 @@ function poolsOf(parameters: Schema): Schema {
  * arrives at none — a pointer into another document, one that comes back around to itself, or a
  * name the pools do not hold. A node that is not a reference resolves to itself, so a caller can
  * hand this a branch without first asking which spelling it is.
- *
  * @param node - The schema position to resolve, reference or not.
  * @param defs - The pools to resolve against, as `poolsOf` collects them from the root.
  */
@@ -199,6 +198,7 @@ function resolveRef(node: unknown, defs: Schema): Schema | undefined {
 /**
  * Replaces a root-level `$ref` with what it points at.
  *
+ * @remarks
  * Dropping the siblings of a `$ref` is right at a nested position and wrong at this one: the
  * siblings here are the `definitions` the pointer needs, so the reference is left dangling and
  * `properties` is then backfilled empty below. The tool goes out advertising no arguments at
@@ -220,6 +220,7 @@ function inlineRootRef(parameters: Schema): Schema {
 /**
  * Folds a root `allOf` into the root itself.
  *
+ * @remarks
  * It is the other way a generated schema spells "the arguments are this named type", and
  * deleting it outright below threw the arguments away while leaving the `required` that named
  * them. A branch is far more often a reference than an inline object — a named type is exactly
@@ -258,6 +259,7 @@ function mergeRootAllOf(schema: Schema): Schema {
 /**
  * Folds a root `anyOf` or `oneOf` into the root itself.
  *
+ * @remarks
  * The third spelling of "the arguments are this named type", after `$ref` and `allOf`, and the
  * one still going out empty: a union of real object shapes has no `null` branch for
  * `collapseNullableUnion` to take apart, so it reached the delete below intact and every
@@ -311,6 +313,7 @@ function mergeRootUnion(schema: Schema): Schema {
 /**
  * Every `$ref` string anywhere under a node, walked as arbitrary JSON rather than as a schema.
  *
+ * @remarks
  * The keyword-aware walk `strip` does is the wrong way round for this one. Missing a pointer
  * here means deleting a definition that something still refers to, which breaks the schema;
  * finding one that was really a string sitting in a `default` or an `enum` costs a definition
@@ -338,6 +341,7 @@ function collectRefs(node: unknown, into: Set<string>) {
 /**
  * Drops the `definitions` and `$defs` entries that nothing points at any more.
  *
+ * @remarks
  * The rewrites above delete whole subtrees — a root combinator once its branches are folded in,
  * every sibling of a `$ref`, the branch of a union that was only ever `null` — and the pointers
  * go with them while the pools they named stay behind. On a real Gmail or filesystem schema
@@ -423,15 +427,15 @@ function pruneRequired(schema: Schema): Schema {
 
 /**
  * One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
+ * @param schema - The schema as written. Never mutated. Its root is held to an object, as a tool's
+ * parameters are, and anything that is not a schema at all comes back as an object with no
+ * properties.
  *
+ * @remarks
  * What `sanitizeTools` does to each tool, without the tool: a `response_format` schema goes through
  * the same grammar converter a tool's parameters do, and a caller holding only the schema had to
  * wrap it in a definition to get here. Nothing is remembered — the cache is keyed on a tool
  * definition's identity, and a bare schema has no object that stands for it across requests.
- *
- * @param schema - The schema as written. Never mutated. Its root is held to an object, as a tool's
- * parameters are, and anything that is not a schema at all comes back as an object with no
- * properties.
  */
 export function sanitizeSchema(schema: unknown): Record<string, unknown> {
   if (!isRecord(schema)) {
@@ -463,6 +467,7 @@ const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => u
 /**
  * Both rewrites are cached against the tool object rather than recomputed.
  *
+ * @remarks
  * The agent loop rebuilds its tool array on every iteration of every step, and normalising a
  * couple of dozen MCP schemas is the only walk in a run that is neither a request nor a query.
  * The pool hands out the same definition objects for the life of a connection, so identity is
@@ -491,12 +496,12 @@ const through = (
 
 /**
  * Tool definitions a strict server will accept, remembered per definition object.
- *
- * The first call on a connection's tools does the work and every later one is a lookup, so
- * calling this per request costs nothing.
- *
  * @param tools - The definitions as the pool hands them over. Never mutated — where a schema
  * changed, a new definition is returned in its place.
+ *
+ * @remarks
+ * The first call on a connection's tools does the work and every later one is a lookup, so
+ * calling this per request costs nothing.
  */
 export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) => through(sanitized, tools, sanitizeSchema);
 
@@ -527,12 +532,12 @@ const strip = (node: unknown): unknown => {
 
 /**
  * One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
- *
- * The retry `relaxTools` makes, on a bare schema. Only the keywords go: a property that happens to
- * be called `format` is an argument name and stays.
- *
  * @param schema - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeSchema`.
  * Never mutated; anything that is not a schema comes back as an object with no properties.
+ *
+ * @remarks
+ * The retry `relaxTools` makes, on a bare schema. Only the keywords go: a property that happens to
+ * be called `format` is an argument name and stays.
  */
 export function relaxSchema(schema: unknown): Record<string, unknown> {
   const stripped = strip(schema);
@@ -543,7 +548,6 @@ export function relaxSchema(schema: unknown): Record<string, unknown> {
  * The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in
  * `pattern` and most `format` values, both of which only ever narrowed a string the tool
  * re-validates anyway.
- *
  * @param tools - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) => through(relaxed, tools, relaxSchema);
@@ -557,13 +561,13 @@ const NO_USER_QUERY = 'no user query found';
 
 /**
  * Does this failure look like the server could not build a grammar from our tool schemas?
+ * @param message - The server's error text. Matched case-insensitively.
  *
+ * @remarks
  * Every server words this differently — llama-server says "error parsing grammar", Lemonade
  * says "Failed to initialize samplers: failed to parse grammar", others surface the converter
  * by name. Since a grammar is only ever involved in constrained decoding, treat any mention of
  * one as ours; the retry is cheap and latches after a single request.
- *
- * @param message - The server's error text. Matched case-insensitively.
  */
 export function isGrammarError(message: string): boolean {
   const text = message.toLowerCase();

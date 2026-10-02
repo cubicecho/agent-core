@@ -31,6 +31,7 @@ import { looseJson } from './tool-calls.ts';
  * disagree about which they take, so send both. One that rejects the unknown fields gets a
  * single retry without them, and is not offered them again.
  *
+ * @remarks
  * Only the second half is latched here. `reasoning_effort` is a field `negotiate` already knows
  * how to be refused, so it is sent under `ModelCapabilities.reasoningEffort` instead — which
  * both narrows the fallback below to the field it is really about, and shares the answer with
@@ -41,6 +42,7 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
 /**
  * The models that turned out not to take the hints, by endpoint and model.
  *
+ * @remarks
  * Keyed rather than global for the reason the client cache is keyed, and on the same
  * endpoint it is, by `endpointId`: a refusal is a fact about what is on the other end, not about this
  * process. A llama.cpp box and a cloud API are both reachable from one consumer over its
@@ -67,6 +69,7 @@ export const resetHints = () => noHints().clear();
  * The input a side task applies its instruction to: text, or the content parts a vision model
  * reads.
  *
+ * @remarks
  * A string is the ordinary case and stays the cheapest thing to write. The array is what an
  * image needs, because a page, a screenshot or a photo reaches an OpenAI-compatible server only
  * as an `image_url` part alongside the text — there is no other spelling for it, and a caller
@@ -89,6 +92,7 @@ export interface SideTaskOptions {
    * A reasoning effort to ask for in place of the no-thinking hints, for a side task an operator
    * has pointed at a model that should deliberate — a compaction summary is the usual one.
    *
+   * @remarks
    * Absent, `""` and `"off"` all keep the hints, because off is what they already ask for. Any
    * other value is sent as `reasoning_effort`, stepped up by `effortFor` where the model has
    * refused it by value, and `chat_template_kwargs` is left out of the request altogether.
@@ -99,6 +103,7 @@ export interface SideTaskOptions {
   /**
    * Told what was given up on, the same way `runTurn` and `negotiate` tell a caller.
    *
+   * @remarks
    * The one notice `ask` raises itself opens with the model's name, as `negotiate`'s do for the
    * refusals that are the model's: what it announces is latched on the (endpoint, model) pair,
    * so on a consumer reaching several models through one base URL the name is the only thing
@@ -114,6 +119,7 @@ export interface SideTaskOptions {
 /**
  * One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
  *
+ * @remarks
  * Declared here rather than imported from `spec.ts`, whose `ResolvedTask` it matches field for
  * field: the spec module is one nothing else in `src/` imports, and a host that is not on the spec
  * can write one of these by hand. An absent setting is the side task's own default — 0.3, the
@@ -135,7 +141,6 @@ export interface SideTask {
 
 /**
  * Runs a side task and returns the reply text, thinking stripped. Throws like any request.
- *
  * @param config - Where to send it and how long to wait.
  * @param model - The model to ask, usually smaller than the one running the work.
  * @param system - The instruction.
@@ -249,6 +254,7 @@ async function complete(
 /**
  * A reply's answer, thinking stripped, or its scratchpad where the answer is nothing else.
  *
+ * @remarks
  * Reasoning models that ignore the hints still fence their scratchpad. A side task answers under
  * a small ceiling, so the fence often never closes, and a template that opened it in the prompt
  * leaves only the close; either way the deliberation used to come back as the answer.
@@ -279,20 +285,20 @@ export interface AskJsonOptions extends SideTaskOptions {
 /**
  * A side task whose answer is JSON matching a schema, parsed. Undefined when no JSON came back.
  * Throws like any request.
- *
- * Sends `response_format` with the schema, which a llama.cpp server compiles into a grammar and
- * vLLM, LM Studio, Ollama and OpenAI each hold the reply to, so a small model that wraps JSON in
- * prose cannot. The schema is normalised as a tool's parameters are, and relaxed where the endpoint
- * could not build a grammar, since the same converter reads both. A model that refuses the field
- * latches it off and is asked in words: the schema rides on the system prompt either way, and
- * the reply goes through `parseJson`, which finds the JSON in whatever came back.
- *
  * @param config - Where to send it and how long to wait.
  * @param model - The model to ask.
  * @param system - The instruction. The schema is appended to it.
  * @param user - The input it applies to. Content parts where the model is being shown an image.
  * @param schema - The JSON Schema of the answer. Its root is held to an object, as a tool's is.
  * @param [options] - A side task's options, plus the schema's `name` and whether it is `strict`.
+ *
+ * @remarks
+ * Sends `response_format` with the schema, which a llama.cpp server compiles into a grammar and
+ * vLLM, LM Studio, Ollama and OpenAI each hold the reply to, so a small model that wraps JSON in
+ * prose cannot. The schema is normalised as a tool's parameters are, and relaxed where the endpoint
+ * could not build a grammar, since the same converter reads both. A model that refuses the field
+ * latches it off and is asked in words: the schema rides on the system prompt either way, and
+ * the reply goes through `parseJson`, which finds the JSON in whatever came back.
  */
 export async function askJson<T>(
   config: Endpoint,
@@ -324,7 +330,6 @@ export async function askJson<T>(
 /**
  * A side task is never worth failing the work it supports. Callers that can carry on without
  * an answer use this and get `undefined` instead of an exception.
- *
  * @param label - Names the task in the notice when it fails.
  * @param run - The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
  * @param [options] - `onNotice`, told what was given up on.
@@ -350,13 +355,13 @@ export async function tryAsk<T>(
 /**
  * Models are asked for JSON and often answer with prose around it, or a fenced block. Pull out
  * the first array or object rather than failing the task over a wrapper.
+ * @param text - The reply, fences and prose included. Nothing parseable gives `undefined`.
  *
+ * @remarks
  * What is pulled out is read the way a tool call's arguments are: as written where that parses,
  * and otherwise with the almost-JSON a local model writes repaired — single quotes, `True` and
  * `None`, bare keys, a trailing comma. A small model asked for a list gets these wrong as often in
  * a reply as in a call, and a side task that fails over one costs the run a second request.
- *
- * @param text - The reply, fences and prose included. Nothing parseable gives `undefined`.
  */
 export function parseJson<T>(text: string): T | undefined {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -374,7 +379,6 @@ export function parseJson<T>(text: string): T | undefined {
 
 /**
  * Strips the quoting and list punctuation models decorate short answers with.
- *
  * @param line - One line of a reply.
  */
 export const clean = (line: string) =>
@@ -388,7 +392,6 @@ export const clean = (line: string) =>
  * A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate
  * them with. Overlong items are dropped rather than truncated — a suggestion that has to be
  * squinted at is worse than one fewer suggestion.
- *
  * @param text - The reply, one item per line.
  * @param max - How many items to keep.
  * @param maxChars - Longest item kept. Longer ones are dropped, not truncated.
@@ -403,7 +406,13 @@ export const listLines = (text: string, max: number, maxChars: number) =>
 /**
  * A side task's settings as the call that honours them: its endpoint, its model, and the options
  * `ask`, `askJson`, `summariser` and `preselect` take last.
+ * @param task - The task, ordinarily `resolved.tasks.<key>`.
+ * @param [options] - What the host adds — cancellation, notices, `keywords` — and its own defaults
+ * for the settings a task may leave out.
+ * @param [agent] - The endpoint the main turn uses, key included. Absent sends the task's endpoint
+ * as it stands.
  *
+ * @remarks
  * A helper rather than a second signature on each of the four, so a setting added to a task later
  * arrives through `options` without a host's call changing. What the task states wins over the
  * same field in `options`: the host's code is written once and the task is what an operator
@@ -417,12 +426,6 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * the agent's key, so `capabilitiesFor` answers both with one object; a task on another endpoint
  * is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
  * agent's key is whatever the main turn is sent.
- *
- * @param task - The task, ordinarily `resolved.tasks.<key>`.
- * @param [options] - What the host adds — cancellation, notices, `keywords` — and its own defaults
- * for the settings a task may leave out.
- * @param [agent] - The endpoint the main turn uses, key included. Absent sends the task's endpoint
- * as it stands.
  */
 export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   task: SideTask,

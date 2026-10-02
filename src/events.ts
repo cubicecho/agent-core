@@ -23,6 +23,7 @@ export interface EventBusOptions {
   /**
    * How far past the cap the backlog is allowed to run before it is trimmed.
    *
+   * @remarks
    * Dropping the oldest event on every push means shifting a thousand-element array tens of
    * thousands of times over a reasoning run — the one thing in here that would ever show up in a
    * profile. Trimming in batches makes it a few dozen splices instead, at the cost of the backlog
@@ -36,6 +37,7 @@ export interface EventBusOptions {
   /**
    * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
    *
+   * @remarks
    * A finished run has nothing more to say, so forgetting it a minute later costs a late watcher
    * a backlog and nothing else. An unfinished one is still writing: `touched` only moves on
    * `emit`, so a live run that spends a minute inside one slow tool call looked exactly like an
@@ -78,7 +80,11 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
 /**
  * Changes what the bus keeps, for a process whose runs are not shaped like the ones these
  * defaults were chosen for.
+ * @param [options] - The bounds to change. A field left out — or given anything that is not a
+ * number above zero — keeps what it has, so a partial or a half-built config narrows nothing.
+ * @returns Everything in force afterwards, including what this call did not change.
  *
+ * @remarks
  * The bus is one thing per runtime rather than an object a caller holds, so this is too: it is
  * a deployment's setting, said once at startup, and not something to move around under a run.
  * Called at the top level that is the process's bus; a runtime made by `createRuntime` has its
@@ -90,10 +96,6 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * Changes apply from the next event and the next sweep. Nothing already buffered is trimmed to
  * a cap that has just come down, because the trim happens on push; the backlog settles to the
  * new number as the run goes on.
- *
- * @param [options] - The bounds to change. A field left out — or given anything that is not a
- * number above zero — keeps what it has, so a partial or a half-built config narrows nothing.
- * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
   return assignSettings(bus().limits, options);
@@ -163,6 +165,7 @@ export interface TurnReport extends TurnUsage {
 /**
  * One thing that happened in a run, as a watcher receives it.
  *
+ * @remarks
  * Every field but `id` is always present — the empty ones are `""` or `null` rather than
  * missing — so a client reads it without guarding each key.
  */
@@ -174,6 +177,7 @@ export interface RunEvent {
   /**
    * When it happened, as epoch milliseconds.
    *
+   * @remarks
    * A number rather than a `Date`: these events are read over a wire, where a `Date` is an ISO
    * string by the time anyone sees it, and `emit` runs once per streamed token — so the object
    * it does not allocate is one per token. It also spares the `getTime()` the sweep used to do
@@ -206,6 +210,7 @@ export interface RunEvent {
 /**
  * What `emit` is given: the run and the sequence are the bus's to assign.
  *
+ * @remarks
  * Named exclusions rather than a blanket `Partial`, which permitted both and let the spread in
  * `emit` overwrite them — a caller could file an event under another run and hand every watcher
  * a duplicate `seq`, which is the one thing the sequence is for.
@@ -214,15 +219,15 @@ export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kin
 
 /**
  * A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
- *
- * The one place the defaults are written, so an event the bus stamps, one the loop keeps for its
- * own metrics and the notice a slow watcher is sent cannot come to disagree about what an unset
- * field reads as.
- *
  * @param input - What happened. An `at` it carries wins over the one given here.
  * @param runId - The run it belongs to. Written after `input`, which gets no say in it.
  * @param seq - Its place in that run, the same.
  * @param at - When, for an input that does not say.
+ *
+ * @remarks
+ * The one place the defaults are written, so an event the bus stamps, one the loop keeps for its
+ * own metrics and the notice a slow watcher is sent cannot come to disagree about what an unset
+ * field reads as.
  */
 export const stamp = (input: RunEventInput, runId: string, seq: number, at: number): RunEvent => ({
   at,
@@ -258,6 +263,7 @@ const streamFor = ({ streams }: Bus, runId: string): Stream =>
 /**
  * Drops the streams nobody is reading and nothing is writing to.
  *
+ * @remarks
  * Cleanup used to hang entirely off `done`, which assumed every run reaches it. A run killed by
  * an uncaught throw, a signal, or a caller that simply forgets pinned its backlog for the life
  * of the process — and in a long-lived server that map only ever grew. The `done` timer had the
@@ -294,7 +300,6 @@ function scheduleSweep(held: Bus) {
  * Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose
  * loop threw where it could not be caught. The sweep gets there on its own; this is for a
  * caller that already knows.
- *
  * @param runId - The run to forget. An id nothing was emitted under is ignored.
  */
 export function endRun(runId: string) {
@@ -317,7 +322,6 @@ export function endRun(runId: string) {
 
 /**
  * Records one event and hands it to everyone watching that run. Never throws at the caller.
- *
  * @param runId - The run this belongs to. Created on first use.
  * @param input - The event. `kind` is required; `runId` and `seq` are not a caller's to set.
  * @returns The event as it was recorded: its `seq` in the run, its time, and every unset field
@@ -354,10 +358,6 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
 
 /**
  * Everything that has happened on a run, then everything that happens next, until it ends.
- *
- * The backlog comes first so a watcher that joins halfway through — or after the run finished,
- * inside the retention window — reads the same story as one that was there from the start.
- *
  * @param runId - The run to follow. One that has not started yet is waited on, not refused.
  * @param [signal] - Stops following. The only other way out is the run's own `done`, and a watcher
  * with no way out is a leak rather than a lost backlog: the sweep below skips any stream a
@@ -365,6 +365,10 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
  * Returning the generator is not that way out — parked on the promise at the foot of this
  * function it is suspended at an `await` rather than at a `yield`, and a `return()` there is
  * queued behind a promise only the next event can settle. An abort resolves that promise itself.
+ *
+ * @remarks
+ * The backlog comes first so a watcher that joins halfway through — or after the run finished,
+ * inside the retention window — reads the same story as one that was there from the start.
  */
 export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
   // Read here, not in the generator: its body runs when the first event is asked for, and by
@@ -375,6 +379,7 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
 /**
  * The notice a watcher that fell behind is given in place of the events it missed.
  *
+ * @remarks
  * One short of the event it precedes, which is the last seq that went missing. Sharing a seq
  * with the event behind it made the notice indistinguishable from a duplicate, and de-duplicating
  * on `seq` is the one thing the sequence is documented for — so a client doing exactly that
@@ -489,19 +494,20 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
 
 /**
  * The backlog alone, for a caller that wants a snapshot rather than a subscription.
+ * @param runId - The run to read. An unknown or already-swept run gives an empty array.
  *
+ * @remarks
  * The array is a copy; the events in it are not. They are the same objects the bus holds and
  * every watcher was handed, so writing to one rewrites the run for everybody — which is what
  * `fold` copies to avoid, and this is the other half of the same warning. Read them, or copy
  * what you mean to change.
- *
- * @param runId - The run to read. An unknown or already-swept run gives an empty array.
  */
 export const history = (runId: string): RunEvent[] => [...(bus().streams.get(runId)?.events ?? [])];
 
 /**
  * Test seam: forget every run, so one test's events cannot be read by the next.
  *
+ * @remarks
  * Named for what it forgets rather than bare `reset`, which sat in a consumer's imports beside
  * `resetAll`, `resetClients`, `resetCapabilities` and `resetHints` saying nothing about which
  * of the five it was — `reset.ts` had to alias it on the way in to stay readable.
@@ -524,13 +530,13 @@ export const resetEvents = () => {
 
 /**
  * Consecutive tokens of one kind are one thing being said, not hundreds of things.
+ * @param events - Events in `seq` order, from `history` or collected from `watch`.
  *
+ * @remarks
  * A client that reads a run in snapshots rather than token by token wants it that way: a
  * reasoning model spends ten thousand deltas on a paragraph, and a paragraph is what it meant.
  * Each block carries the `seq` of its last event, so asking for what came after one block
  * picks up exactly where it left off.
- *
- * @param events - Events in `seq` order, from `history` or collected from `watch`.
  */
 export function fold(events: RunEvent[]): RunEvent[] {
   const blocks: RunEvent[] = [];
@@ -579,6 +585,7 @@ type CacheBreakReason = NonNullable<TurnUsage['cacheBreakReason']>;
 /**
  * A run summed and derived from its events: what it cost, where the time went, and why.
  *
+ * @remarks
  * The counts are always there, zero when nothing happened. Every other field is absent where no
  * turn reported what it is made of, and summed over the turns that did where only some did —
  * a mean of a number a server never sent would be a number nobody measured.
@@ -658,16 +665,16 @@ export interface RunMetricsOptions {
 
 /**
  * A run's totals, timings and cache findings, derived from the events it emitted.
+ * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
+ * that has lost its oldest events to the cap sums what it still has.
+ * @param [options] - The served window, for how full the run came to it.
  *
+ * @remarks
  * A sibling of `fold` rather than part of it. `fold` hands back events, and a client renders
  * what it returns as blocks; a summary is another shape, and folding one in would give every
  * consumer of `fold` a block it does not know how to draw. Derived from the `usage` reports' own
  * `turn` rather than the running totals, so a run with several loops in it — a question per loop —
  * adds up the same as one with a single loop.
- *
- * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
- * that has lost its oldest events to the cap sums what it still has.
- * @param [options] - The served window, for how full the run came to it.
  */
 export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOptions = {}): RunMetrics {
   const metrics: RunMetrics = {

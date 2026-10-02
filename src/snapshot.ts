@@ -96,6 +96,7 @@ const latchInto = (held: Set<string>, stored: unknown) => {
 /**
  * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
  *
+ * @remarks
  * Covers what `negotiate` latches on endpoints and models and the models `ask` found refusing the
  * no-thinking hints. Only what was actually refused is in it, so a snapshot of a process that met
  * no refusals has no endpoints. Endpoints are named by digest rather than URL and key, since the
@@ -154,17 +155,17 @@ export function exportCapabilities(): CapabilitySnapshot {
 
 /**
  * Latches what a stored snapshot says was refused, on top of whatever this process has learned.
+ * @param snapshot - What `exportCapabilities` returned, as stored. Read defensively: a field of the
+ * wrong type is skipped rather than trusted.
+ * @returns Whether the snapshot was of this version and applied.
  *
+ * @remarks
  * Refusals only ever latch off, so importing merges rather than replaces: a flag already off stays
  * off whatever the snapshot says, and one the snapshot has off is turned off. A snapshot of another
  * version, or anything that is not one, is ignored — a stale shape costs the refused requests it
  * would have saved, which is what a restart cost before. How old is too old is the consumer's call,
  * made on `savedAt` before importing, or afterwards per endpoint with `expireCapabilities`, since a
  * server behind a URL can be upgraded between boots.
- *
- * @param snapshot - What `exportCapabilities` returned, as stored. Read defensively: a field of the
- * wrong type is skipped rather than trusted.
- * @returns Whether the snapshot was of this version and applied.
  */
 export function importCapabilities(snapshot: unknown): boolean {
   if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) {

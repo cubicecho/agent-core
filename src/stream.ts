@@ -18,6 +18,7 @@ import type { ToolCall } from './tool-calls.ts';
 /**
  * What a turn cost, and how it went. Zero throughout the four counts means the server did not say.
  *
+ * @remarks
  * The four counts are always there, as they always were. Everything after them is absent rather
  * than zero when nothing reported or measured it, because a zero cache hit and a server that says
  * nothing about its cache are different findings, and a consumer drawing one as the other is
@@ -32,6 +33,7 @@ export interface TurnUsage {
   /**
    * How much of `prompt` came from the endpoint's prompt cache — a part of it, not in addition.
    *
+   * @remarks
    * The only way a caller can tell whether the prefix it is careful to keep still is actually
    * being reused: a prefix that stops hitting the cache otherwise shows up as a bill and nothing
    * else. Zero is also what a server that does not report it sends; `uncached` is the field whose
@@ -104,6 +106,7 @@ export interface TurnUsage {
    * What the request was made of, as `contextTokens` cuts it, filled by `runAgentLoop`. Shares of
    * the prompt the turn's first request reported, summing to it, or an estimate where none was.
    *
+   * @remarks
    * Measured on the request as first built, with the tools as `toolSchemaTokens` measures them. A
    * continued turn's `prompt` is every request's summed, so it is larger than this `total`; and
    * where a refusal was answered with a lesser body, the prompt is that body's and the proportions
@@ -115,6 +118,7 @@ export interface TurnUsage {
 /**
  * A usage with nothing counted yet, a fresh object each call since every caller adds into it.
  *
+ * @remarks
  * Only the four counts every turn has: the optional fields stay absent, which is what says
  * nothing reported them.
  */
@@ -123,7 +127,6 @@ export const noUsage = (): TurnUsage => ({ prompt: 0, completion: 0, total: 0, c
 /**
  * The four token counts of two usages, added. Only those: the rest are measurements a sum of
  * would mean nothing, or would mean something only `runMetrics` knows how to weigh.
- *
  * @param a - One usage. Neither is changed.
  * @param b - The other.
  */
@@ -163,6 +166,7 @@ const isCount = (value: unknown): value is number => typeof value === 'number' &
 /**
  * The usage fields a cache report arrives in, none of them in every server's reply.
  *
+ * @remarks
  * `prompt_tokens_details.cached_tokens` is OpenAI's, and what OpenRouter, vLLM and recent
  * llama.cpp copy; `prompt_cache_hit_tokens` is DeepSeek's.
  */
@@ -186,6 +190,7 @@ export interface Turn {
    * Why the model stopped, in the endpoint's own words — `stop`, `length`, `tool_calls`, or `""`
    * where it never said.
    *
+   * @remarks
    * Reported because `length` is otherwise invisible. A turn cut off at the token ceiling comes
    * back as a well-formed `Turn` with truncated `content`, or with a tool call whose `arguments`
    * stop mid-JSON — so the caller meets a parse failure with nothing to attribute it to. Being
@@ -198,6 +203,7 @@ export interface Turn {
    * The model's scratchpad, as `onThinking` was told it, `""` where it deliberated in silence or
    * not at all.
    *
+   * @remarks
    * Kept because some models want it back. gpt-oss and DeepSeek in thinking mode read the
    * analysis behind a tool call off the assistant message on the next request, so a caller
    * talking to one stores it as `reasoning_content` on that message for as long as the message
@@ -274,6 +280,7 @@ const fragmentIndex = (part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall) =
 /**
  * The call a fragment belongs to, of those begun so far, or none where it opens a new one.
  *
+ * @remarks
  * By `index` where the server sent a number, which the SDK types as required and servers have
  * nonetheless left out: keyed on `undefined`, every call joined into one whose name and
  * arguments were all of theirs run together. Without one, by `id`; failing that, a fragment
@@ -333,6 +340,7 @@ const NO_SDK_TIMEOUT = 2 ** 31 - 1;
 /**
  * Whether the model has said anything a second attempt would say twice.
  *
+ * @remarks
  * A box rather than a return value because it has to be readable *while* the request is in
  * flight: the rules in `retry.ts` are built on the premise that a stream which has already
  * emitted tokens must never be replayed, and by the time a rejected promise is in hand the turn
@@ -362,6 +370,7 @@ export interface StreamTurnOptions {
   /**
    * Silence allowed before the first chunk, `idleMs` unless given; zero waits forever.
    *
+   * @remarks
    * The first wait is prefill, or a server loading the model, and is routinely many times the
    * gap between tokens. See `Endpoint.firstTokenSeconds` and `firstTokenMs`.
    */
@@ -371,6 +380,7 @@ export interface StreamTurnOptions {
   /**
    * The fences that mark a scratchpad written into `content`, `DEFAULT_FENCES` unless given.
    *
+   * @remarks
    * Text inside one goes to `onThinking` and `reasoning` rather than `onOutput` and `content`.
    * `ALL_FENCES` adds `<thinking>` and `<reasoning>`, which a model can also be quoting; an
    * empty list reads `content` as all answer.
@@ -391,7 +401,11 @@ export interface StreamTurnOptions {
 /**
  * Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a
  * message.
+ * @param client - The pooled client for this endpoint.
+ * @param body - The request, which must set `stream: true`.
+ * @param [options] - Cancellation, the idle watchdog, and the token callbacks.
  *
+ * @remarks
  * Streaming buys no speed — nothing waits on the reply but the loop itself. It is what makes a
  * run watchable: a run that stalls, loops, or reaches for the wrong tool says so while it is
  * happening instead of only in the row it leaves behind.
@@ -399,10 +413,6 @@ export interface StreamTurnOptions {
  * Two token callbacks rather than an event input, because a turn does not know which step of
  * which run it is: `step` is the caller's flow concept, and wrapping these into an `emit` is one
  * line at the call site.
- *
- * @param client - The pooled client for this endpoint.
- * @param body - The request, which must set `stream: true`.
- * @param [options] - Cancellation, the idle watchdog, and the token callbacks.
  */
 export async function streamTurn(
   client: OpenAI,

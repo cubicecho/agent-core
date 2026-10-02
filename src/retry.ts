@@ -18,6 +18,7 @@ export class EndpointSilent extends Error {
  * The request was bigger than the model will read. Its own class so nothing retries it: sending
  * the same too-large request again is the same refusal, one round trip later.
  *
+ * @remarks
  * `runTurn` raises it from either side of the round trip — its own pre-flight guard, or the
  * endpoint's refusal read back through `isOverflow` — so a caller has one thing to catch whether
  * or not it gave a `contextLimit`. The second carries the endpoint's own message, and the error
@@ -42,6 +43,7 @@ const OVERFLOW = [
 /**
  * A rate limit says the same words and means the opposite thing.
  *
+ * @remarks
  * OpenAI refuses a request over the per-minute token budget with "Request too large for gpt-4o
  * ... on tokens per min (TPM)", which is "too large for" beside "tokens" — both halves of the
  * test below. That is a 429, which `isTransient` accepts and which succeeds on the next attempt;
@@ -52,11 +54,11 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
 
 /**
  * Whether a refusal means the request was too big, rather than merely refused.
+ * @param detail - The endpoint's own message.
  *
+ * @remarks
  * Rate limits are ruled out first: they borrow the same words and mean the opposite, being worth
  * another attempt where an overflow never is.
- *
- * @param detail - The endpoint's own message.
  */
 export const isOverflow = (detail: string) =>
   !RATE_LIMITED.test(detail) && OVERFLOW.some((pattern) => pattern.test(detail)) && /token|context/i.test(detail);
@@ -64,6 +66,7 @@ export const isOverflow = (detail: string) =>
 /**
  * The smallest window worth believing in, and the floor under `runTurn`'s guard.
  *
+ * @remarks
  * `runTurn`'s `contextLimit` reads it as a sanity check on a number it was handed: below this,
  * the limit is taken for a placeholder — an unset column, a listing that said nothing — rather
  * than a window worth refusing a run over. That is the whole of what reads it; `contextLimitFor`
@@ -80,14 +83,14 @@ export const SMALLEST_LIKELY_WINDOW = 8192;
 
 /**
  * Whether a failed request is worth trying again.
+ * @param error - The rejection, as caught. What is not an SDK error is not transient.
  *
+ * @remarks
  * The question is whether the request was *refused or lost*, rather than answered with a
  * complaint about its contents: a connection that never landed, a server too busy or too broken
  * to answer, an endpoint that went quiet. A 400 for a malformed tool schema would fail exactly
  * the same way on every attempt, and the two capability cases below are negotiated rather than
  * retried blindly.
- *
- * @param error - The rejection, as caught. What is not an SDK error is not transient.
  */
 export function isTransient(error: unknown): boolean {
   if (error instanceof EndpointSilent) {
@@ -105,28 +108,28 @@ export function isTransient(error: unknown): boolean {
 
 /**
  * Whether a failure is the endpoint refusing the request as written, rather than losing it.
+ * @param error - The rejection, as caught. What is not an SDK error refuses nothing.
  *
+ * @remarks
  * 400 and 422 are what a server says when it read the body and disliked it, which makes them the
  * only statuses worth answering by sending something different. Any 4xx is too wide: 401, 404 and
  * 429 are 4xx and none of them is about the fields, and a 429 is one `isTransient` accepts — a
  * caller that re-sent on it at once doubled the rate against a server that had just asked for less.
  * Catching everything is wider still, since an abort or a connection that never landed then
  * latches off whatever the re-send left out.
- *
- * @param error - The rejection, as caught. What is not an SDK error refuses nothing.
  */
 export const refusesRequest = (error: unknown) =>
   error instanceof OpenAI.APIError && (error.status === 400 || error.status === 422);
 
 /**
  * Whether a failure is a local server still loading the model, rather than one failing to serve.
+ * @param error - The rejection, as caught.
  *
+ * @remarks
  * llama.cpp answers 503 `Loading model` with type `unavailable_error` from the moment it starts
  * until the weights are mapped, and a router build says the same while it swaps models. That is
  * thirty to ninety seconds for a large model from a cold page cache, and `backoffMs` gives up
  * inside fifteen: sized for a busy host, not for one reading a file. A plain 503 is not this.
- *
- * @param error - The rejection, as caught.
  */
 export function isModelLoading(error: unknown): boolean {
   if (!(error instanceof OpenAI.APIError) || error.status !== 503) {
@@ -147,14 +150,12 @@ export const LOADING_TIMEOUT_MS = 120_000;
 
 /**
  * Exponential, with jitter so several tasks failing at once do not return in lockstep.
- *
  * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
  */
 export const backoffMs = (attempt: number) => Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
 
 /**
  * A delay an abort cuts short, rejecting rather than resolving early.
- *
  * @param ms - How long to wait.
  * @param [signal] - Abandons the wait. One already aborted rejects without waiting at all.
  */

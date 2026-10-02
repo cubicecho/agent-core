@@ -26,13 +26,13 @@ export interface ContinueTurnOptions extends RunTurnOptions {
 /**
  * Whether a turn is one a continuation can finish: cut off at the ceiling, with an answer begun
  * and no tool call in it.
+ * @param turn - The turn as it came back.
  *
+ * @remarks
  * An answer not begun is a turn cut off in its scratchpad, and prefilling a half-closed fence is
  * the template's business rather than something this can do the same way everywhere — llama.cpp
  * refuses a prefill outright on a template with thinking enabled. A tool call is excluded because
  * its arguments are what was cut, and `parseToolArguments` already reports that truncation.
- *
- * @param turn - The turn as it came back.
  */
 export const isContinuable = (turn: Turn) =>
   turn.finishReason === 'length' && turn.content.trim() !== '' && turn.toolCalls.length === 0;
@@ -110,7 +110,15 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
 /**
  * Carries on an answer the token ceiling cut off, by sending the transcript again with the answer
  * so far as a trailing assistant message, and joins the pieces into one turn.
+ * @param client - The pooled client for this endpoint.
+ * @param supports - What the endpoint has already refused.
+ * @param request - Builds the body the cut-off turn was sent, exactly as `runTurn` was given it. The
+ * prefill is appended to what it builds.
+ * @param turn - The turn that came back cut off.
+ * @param [options] - `runTurn`'s options, with `model` needed for the latch — without one nothing is
+ * latched and each continuation finds out again — and the cap on continuations.
  *
+ * @remarks
  * Only a turn `isContinuable` accepts is continued; any other comes back as it was. Content and
  * reasoning are joined in order, the tool calls a continuation makes are kept, and usage is summed
  * across the requests with `continuations` counting them. The continuation is read as starting in
@@ -124,14 +132,6 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
  * that check is only as good as a restart being word for word. Either way the answer so far is
  * kept, with a notice. So is it when the continuation fails any other way, since the tokens
  * already in hand are worth more than the error; only a stop is thrown.
- *
- * @param client - The pooled client for this endpoint.
- * @param supports - What the endpoint has already refused.
- * @param request - Builds the body the cut-off turn was sent, exactly as `runTurn` was given it. The
- * prefill is appended to what it builds.
- * @param turn - The turn that came back cut off.
- * @param [options] - `runTurn`'s options, with `model` needed for the latch — without one nothing is
- * latched and each continuation finds out again — and the cap on continuations.
  */
 export async function continueTurn(
   client: OpenAI,

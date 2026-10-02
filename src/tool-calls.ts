@@ -18,6 +18,7 @@ export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
 /**
  * Tool arguments that could not be read as an object, with why.
  *
+ * @remarks
  * `truncated` is a call cut off at the reply ceiling, which no repair can finish and the fix for
  * is a larger `maxTokens`; `malformed` is one the model wrote wrongly, which it can be told about
  * and try again.
@@ -40,6 +41,7 @@ export class ToolArgumentsError extends Error {
 /**
  * Rewrites the almost-JSON local models write into JSON, in one pass that knows where strings are.
  *
+ * @remarks
  * Single-quoted strings become double-quoted, Python's `True`, `False` and `None` become their JSON
  * spellings, bare keys are quoted, and a comma before a closing bracket is dropped. Nothing inside
  * a string is touched, so an argument that happens to say `True` or `a, }` survives.
@@ -90,11 +92,11 @@ function repairJson(text: string): string {
 
 /**
  * JSON as it was written, then repaired, then undefined. A string holding JSON is opened once.
+ * @param text - What a model wrote where JSON was asked for, with no prose around it.
  *
+ * @remarks
  * Read as written first, so the repair can only ever add to what parses: nothing valid is
  * reinterpreted on its way through.
- *
- * @param text - What a model wrote where JSON was asked for, with no prose around it.
  */
 export function looseJson(text: string): unknown {
   for (const candidate of [text, repairJson(text)]) {
@@ -117,17 +119,17 @@ export function looseJson(text: string): unknown {
 
 /**
  * A tool call's arguments as the object the tool is handed. Empty is no arguments.
+ * @param raw - The arguments as the model sent them: usually the streamed string, sometimes an
+ * object a server parsed already. Null, absent or blank is no arguments.
+ * @param [options] - `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
+ * `truncated`, since a call cut off at the ceiling reads exactly like a malformed one.
  *
+ * @remarks
  * Lenient where the model's meaning is plain and strict where it is not: an object already
  * parsed passes through, JSON inside a string is opened, and the almost-JSON local models write —
  * single quotes, `True`, bare keys, a trailing comma — is repaired. What is still not an object
  * throws a `ToolArgumentsError`, and the loop hands its message back to the model as the tool's
  * result so it can try again.
- *
- * @param raw - The arguments as the model sent them: usually the streamed string, sometimes an
- * object a server parsed already. Null, absent or blank is no arguments.
- * @param [options] - `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
- * `truncated`, since a call cut off at the ceiling reads exactly like a malformed one.
  */
 export function parseToolArguments(
   raw: unknown,
@@ -369,7 +371,12 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
 
 /**
  * Tool calls a model wrote into its reply as text, taken out of it and made into calls.
+ * @param content - The turn's text.
+ * @param [options] - `names`, the tools that exist. Without them only the templates' markers count.
+ * @returns The text with the calls taken out, and the calls, numbered `call_recovered_0` onward.
+ * No calls leaves the text as it was.
  *
+ * @remarks
  * A server whose tool-call parser does not match the model's chat template streams the call as
  * content, and the run ends on what reads like a finished answer. The templates' own markers are
  * looked for — `<tool_call>` (Hermes, Qwen, Qwen3-Coder's markup included), `[TOOL_CALLS]`
@@ -377,11 +384,6 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  * nothing but a JSON call, or holds one fenced one, provided every name in it is in `names`. Only
  * text after the last `</think>` is searched, since a model deliberating about a call is not making
  * one.
- *
- * @param content - The turn's text.
- * @param [options] - `names`, the tools that exist. Without them only the templates' markers count.
- * @returns The text with the calls taken out, and the calls, numbered `call_recovered_0` onward.
- * No calls leaves the text as it was.
  */
 export function recoverToolCalls(
   content: string,
@@ -423,6 +425,7 @@ export function recoverToolCalls(
 /**
  * One call the model made, as `dispatch` and `onToolCall` are handed it.
  *
+ * @remarks
  * A `call_tool` arrives as the tool it names — that tool's name and arguments, under the
  * `call_tool`'s id — so a dispatcher is the same in every discovery mode.
  */
@@ -459,6 +462,7 @@ export interface ToolCallOutcome {
 /**
  * One call's whole answer, as `onToolResult` is handed it.
  *
+ * @remarks
  * The `tool-result` event carries the same answer cut by `preview`, which is right for a readout
  * and wrong for a host that renders or stores the result: this is the text the model reads.
  */

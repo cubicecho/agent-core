@@ -21,6 +21,7 @@ type Message = OpenAI.ChatCompletionMessageParam;
 /**
  * One request's reported prompt, and how far into the transcript that request reached.
  *
+ * @remarks
  * Three numbers and nothing else, so it serialises as it is: a host that stores a row per message
  * keeps `prompt` and `epoch` in two columns on the row `through` names, and one that stores a
  * session keeps the array beside it.
@@ -97,13 +98,13 @@ const leadingSystem = (messages: Message[]) => {
 /**
  * Where a request stopped matching the one before it, earliest in the rendered prompt first — the
  * tool block, then the system prompt, then the history — or `none-known` where it only appended.
+ * @param previous - The request before, as it was sent.
+ * @param next - The request being explained.
  *
+ * @remarks
  * Beside `recordRequest` because it is the same comparison asked for a different reason: that one
  * wants to know whether two prompts subtract, and this one why a cache that should have held
  * did not.
- *
- * @param previous - The request before, as it was sent.
- * @param next - The request being explained.
  */
 export function breakReason(previous: RequestShape, next: RequestShape): NonNullable<TurnUsage['cacheBreakReason']> {
   if (!sameTools(previous, next)) {
@@ -123,19 +124,19 @@ export function breakReason(previous: RequestShape, next: RequestShape): NonNull
 
 /**
  * The ledger with one more request on it, in the epoch the request before it says it belongs to.
+ * @param ledger - The ledger so far. Not written to; handed back as it is when nothing is recorded.
+ * @param previous - The request the ledger's last entry was recorded from — not merely the last one
+ * sent, so that a request which reported nothing is skipped over rather than compared against.
+ * `undefined` where that is not known, which starts a new epoch.
+ * @param next - The request just answered.
  *
+ * @remarks
  * The epoch carries on only where the new request declared the same tools in the same order and
  * sent every earlier message unchanged — the case in which the two prompts subtract. Anything else
  * starts a new one: a fold, a prune, a system prompt that moved, and a tool array that grew, whose
  * schema would otherwise be counted as the cost of the messages beside it. A request that reported
  * no prompt records nothing, and neither does one that reaches no further than the last entry in
  * the same epoch, so a retry or a continuation leaves the first reading standing.
- *
- * @param ledger - The ledger so far. Not written to; handed back as it is when nothing is recorded.
- * @param previous - The request the ledger's last entry was recorded from — not merely the last one
- * sent, so that a request which reported nothing is skipped over rather than compared against.
- * `undefined` where that is not known, which starts a new epoch.
- * @param next - The request just answered.
  */
 export function recordRequest(
   ledger: TokenLedger,
@@ -158,17 +159,17 @@ export function recordRequest(
 /**
  * The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left
  * standing.
+ * @param ledger - The ledger for `before`. Not written to.
+ * @param before - The transcript the ledger's indexes are in.
+ * @param after - The transcript that replaces it. One that only appended to `before`, or is the same
+ * array, hands the ledger back as it is.
  *
+ * @remarks
  * A difference inside an epoch stays true after the epoch ends, since the prefix the two requests
  * shared cancels whatever became of it. So the entries that fall in the part of the transcript
  * still at its head keep their place, the ones in the part still at its tail move with it, and
  * only the ones in between — the messages a fold removed or a prune stubbed — are dropped. The
  * tail's entries move to a later epoch as well, so no difference is read across the rewrite.
- *
- * @param ledger - The ledger for `before`. Not written to.
- * @param before - The transcript the ledger's indexes are in.
- * @param after - The transcript that replaces it. One that only appended to `before`, or is the same
- * array, hands the ledger back as it is.
  */
 export function rebaseLedger(ledger: TokenLedger, before: readonly Message[], after: readonly Message[]): TokenLedger {
   if (before === after) {
@@ -243,7 +244,14 @@ const fallback = ({ charsPerToken, estimate }: LedgerEstimateOptions) =>
 /**
  * What the messages from `from` up to, not including, `to` cost the window, measured where the
  * ledger can say and estimated where it cannot.
+ * @param ledger - The ledger kept for `messages`.
+ * @param from - The first message counted. Below zero counts from the start.
+ * @param to - The first message not counted, as `slice` takes it. Past the end counts to the end.
+ * @param messages - The transcript the ledger's indexes are in.
+ * @param [options] - The estimate for what is not measured: a divisor, or a function of the caller's.
+ * @returns Whole tokens, rounded once over the stretch rather than per message.
  *
+ * @remarks
  * Between two boundaries recorded in one epoch it is a subtraction and exact. A boundary falls
  * after a question and after each step's tool results, never after an assistant message, so a
  * stretch that starts or ends inside a group is given that group's measured total divided by
@@ -254,13 +262,6 @@ const fallback = ({ charsPerToken, estimate }: LedgerEstimateOptions) =>
  * A difference of zero or less is not trusted and is estimated instead. That is how a server
  * reporting `prompt_tokens` net of its cache would show up, though one whose net counts still
  * happened to rise would not be caught by it.
- *
- * @param ledger - The ledger kept for `messages`.
- * @param from - The first message counted. Below zero counts from the start.
- * @param to - The first message not counted, as `slice` takes it. Past the end counts to the end.
- * @param messages - The transcript the ledger's indexes are in.
- * @param [options] - The estimate for what is not measured: a divisor, or a function of the caller's.
- * @returns Whole tokens, rounded once over the stretch rather than per message.
  */
 export function tokensBetween(
   ledger: TokenLedger,
@@ -281,16 +282,16 @@ export function tokensBetween(
 /**
  * A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers
  * the message, the calibrated estimate where it does not.
- *
- * The planner asks about one message at a time, and nothing reports anything that fine, so a
- * measured message is given its group's total by character share. The shares are not rounded,
- * which is what makes a whole group of them add back up to the difference the server reported.
- *
  * @param ledger - The ledger kept for `messages`.
  * @param messages - The transcript the plan will be made for. The function it returns knows a
  * message by identity, so it has to be asked about these objects and not copies of them; one it
  * does not know is estimated.
  * @param [options] - The estimate for what is not measured: a divisor, or a function of the caller's.
+ *
+ * @remarks
+ * The planner asks about one message at a time, and nothing reports anything that fine, so a
+ * measured message is given its group's total by character share. The shares are not rounded,
+ * which is what makes a whole group of them add back up to the difference the server reported.
  */
 export function estimateFrom(
   ledger: TokenLedger,

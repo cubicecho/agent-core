@@ -17,6 +17,7 @@ import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
 /**
  * Where a request is cut for the preselector, in characters.
  *
+ * @remarks
  * A tool choice is made on what the work is, which is the top of a request rather than all of
  * it — and the whole of a long one is paid for again in the preselection call. `preselectInput`
  * takes another number for a caller whose requests are not shaped that way.
@@ -25,7 +26,10 @@ const PRESELECT_PROMPT_CHARS = 2000;
 
 /**
  * The system prompt a preselector is given, holding it to the cap its answer will be held to.
+ * @param [maxPerLoad] - The most to ask for. Give `preselection` the
+ * same number: this one is what the preselector is told, and that one is what it is held to.
  *
+ * @remarks
  * On-demand loading otherwise costs a round trip every run: the model reads the catalogue,
  * calls `load_tools`, and only then can do the work. A small model reading the same catalogue
  * usually names the right tools outright, so the task model finds them already loaded and
@@ -33,9 +37,6 @@ const PRESELECT_PROMPT_CHARS = 2000;
  *
  * A wrong guess is cheap — an unused definition is a few hundred tokens for one run — but a
  * broad guess is not, so the same cap applies here as to a `load_tools` call.
- *
- * @param [maxPerLoad] - The most to ask for. Give `preselection` the
- * same number: this one is what the preselector is told, and that one is what it is held to.
  */
 export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
   'You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON ' +
@@ -47,6 +48,7 @@ export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
 /**
  * The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
  *
+ * @remarks
  * An object around the array rather than the array, because a structured answer's root has to be
  * an object — OpenAI's strict mode and every tool-schema normaliser insist.
  */
@@ -62,7 +64,6 @@ export const PRESELECT_SYSTEM = preselectSystem();
 
 /**
  * The user message for a preselection call: the catalogue, then the request.
- *
  * @param catalog - The connected servers, rendered as the name-only listing.
  * @param prompt - The request being planned for, truncated — choosing tools needs the shape of the
  * ask, not all of it.
@@ -75,7 +76,6 @@ export const preselectInput = (catalog: CatalogServer[], prompt: string, maxProm
 
 /**
  * Resolves a preselection against the catalogue: unknown names dropped, count capped.
- *
  * @param names - What the preselector replied: `{ tools: [...] }` as `PRESELECT_SCHEMA` has it, or
  * the bare array an older prompt asked for. Unvalidated: anything else gives none, and entries
  * that are not strings are dropped.
@@ -95,6 +95,7 @@ export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoa
 /**
  * Saturation and length normalisation for the BM25 score. Robertson's usual values.
  *
+ * @remarks
  * Nothing here is tuned for this corpus, because tuning them against a catalogue of forty short
  * documents would be fitting noise. `dropoff` and `minScore` are the knobs worth turning.
  */
@@ -104,6 +105,7 @@ const BM25_B = 0.75;
 /**
  * The least a best match may score and still be acted on without a model.
  *
+ * @remarks
  * A BM25 score, so it is read against the shape of the corpus rather than as a percentage: a
  * query term carried by half the catalogue is worth about 0.7, and one carried by a single tool
  * about 3. One at this floor is therefore "something more distinctive than a word every other
@@ -118,6 +120,7 @@ export const KEYWORD_MIN_SCORE = 1;
 /**
  * How far the best unpicked tool must fall below the last picked one for the cut to count clean.
  *
+ * @remarks
  * Half. The cap is the only reason a hit is dropped, so a hit just underneath it scoring nearly
  * as much as one just above means the ranking chose arbitrarily, which is exactly the case a
  * model should be spent on.
@@ -127,6 +130,7 @@ export const KEYWORD_DROPOFF = 0.5;
 /**
  * English function words, dropped before matching.
  *
+ * @remarks
  * The inverse document frequency is supposed to make this unnecessary, and over a real corpus it
  * would: a word carried by every document is worth nothing. But a tool catalogue is twenty
  * one-line descriptions, and at that size "for" or "on" is rare by accident — it lands in one
@@ -146,6 +150,7 @@ const NOISE = new Set(
 /**
  * A text as the matcher reads it: lowercase words, `server__tool_name` and camelCase split apart.
  *
+ * @remarks
  * Plurals are folded, crudely, by dropping a trailing `s`: a request says "read the files" and
  * the tool is called `read_file`, and without this the two do not meet. Nothing else is stemmed —
  * a real stemmer is a table of English morphology, and this is matching identifiers.
@@ -189,7 +194,12 @@ export interface KeywordPreselectOptions {
 
 /**
  * The tools a request's own words point at, ranked, and whether they point clearly enough.
+ * @param catalog - The servers to choose from. Each tool is matched on its name, its server's label
+ * and its one-line description, which is everything the catalogue holds.
+ * @param prompt - The request being planned for. Only its head is read, as in `preselectInput`.
+ * @param [options] - The cap, the two confidence thresholds, and where the request is cut.
  *
+ * @remarks
  * A preselection call costs a round trip to a model that is being asked to do term matching, and
  * on a local box that is seconds before the run has started. For a catalogue of a few dozen tools
  * the words usually decide it: a request that says "commit" and a tool called `git__commit` need
@@ -206,11 +216,6 @@ export interface KeywordPreselectOptions {
  * unpicked have to score well below the ones picked. Anything else is ambiguous, and ambiguous is
  * what the model is for. Nothing matching is not confident either — the words cannot tell "this
  * request needs no tools" from "these words are not in the catalogue".
- *
- * @param catalog - The servers to choose from. Each tool is matched on its name, its server's label
- * and its one-line description, which is everything the catalogue holds.
- * @param prompt - The request being planned for. Only its head is read, as in `preselectInput`.
- * @param [options] - The cap, the two confidence thresholds, and where the request is cut.
  */
 export function preselectByKeywords(
   catalog: CatalogServer[],
@@ -302,7 +307,16 @@ export interface PreselectOptions {
 
 /**
  * The tools a request is likely to need, picked by a small model before the run starts, or none.
+ * @param config - The endpoint the preselector is reached through.
+ * @param model - The preselector. An empty name picks nothing, which is what `toolSelectModel`
+ * means by empty.
+ * @param catalog - The servers to choose from.
+ * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
+ * @param [options] - Cancellation, notices, the reply ceiling (256), the temperature and reasoning
+ * effort as `ask` reads them (0.3 and none when absent), the cap the choice is held to
+ * (`MAX_PER_LOAD`), and whether to try the words first.
  *
+ * @remarks
  * On-demand loading otherwise spends a round trip on reading the catalogue and calling
  * `load_tools`; a small model reading the same catalogue usually names the right tools, and the
  * task model opens with them in hand. A wrong guess costs a few hundred tokens for one run, and
@@ -313,15 +327,6 @@ export interface PreselectOptions {
  * is spent only on what they cannot settle, which on a local box is the difference between a run
  * starting now and starting in a few seconds. The words have to be clear about it; see
  * `preselectByKeywords` for what that means.
- *
- * @param config - The endpoint the preselector is reached through.
- * @param model - The preselector. An empty name picks nothing, which is what `toolSelectModel`
- * means by empty.
- * @param catalog - The servers to choose from.
- * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
- * @param [options] - Cancellation, notices, the reply ceiling (256), the temperature and reasoning
- * effort as `ask` reads them (0.3 and none when absent), the cap the choice is held to
- * (`MAX_PER_LOAD`), and whether to try the words first.
  */
 export async function preselect(
   config: Endpoint,

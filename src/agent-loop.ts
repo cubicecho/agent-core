@@ -94,6 +94,7 @@ import {
 /**
  * One step's request as `onRequest` is handed it: what the model is about to read.
  *
+ * @remarks
  * The loop assembles this and nothing else sees it — the system prompt with the catalogue on it,
  * the hooks' context on the question, the tool array ordered and sanitised as it is sent — so a
  * host that wants to say what is filling the window has nothing to measure without it.
@@ -110,6 +111,7 @@ export interface AgentLoopRequest {
 /**
  * The hooks a loop runs around one question. See `hooks.ts`.
  *
+ * @remarks
  * The loop gathers before its first request and nothing else can run beside that, so a host with
  * pre-turn work of its own to overlap with the hooks — compaction, a preselection — calls `gather`
  * itself, puts the context on with `withContext`, calls `notify` after, and passes no `hooks`.
@@ -151,6 +153,7 @@ export interface AgentLoopOptions {
    * to `runTurn` as `contextLimit`, which sizes each request against the window before sending.
    * `"proxy"` is on-demand loading behind a tool array that never changes; see `PROXY_TOOLS`.
    *
+   * @remarks
    * `tasks` is a resolved agent's, and is read only for the side tasks the loop was asked to run:
    * `tasks.toolSelect` under `preselect` and `tasks.compaction` under `compact`. `toolSelectModel`
    * is the flattened spelling of the first, for a host that is not on the spec.
@@ -192,6 +195,7 @@ export interface AgentLoopOptions {
    * has or picks a sibling. Everything comes back on the step after. `preselectRouting` trades
    * that for a first step shaped like the rest.
    *
+   * @remarks
    * Proxied, the tool array is fixed and there is no such step. The shortlist is written into the
    * transcript instead, after the question, as a `load_tools` call the model did not make and the
    * result that call would have had — an assistant message and a tool message, handed back in
@@ -210,6 +214,7 @@ export interface AgentLoopOptions {
    * back in front of the model. Which costs more has not been measured, which is why the default
    * has not moved.
    *
+   * @remarks
    * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
    * place and moves every definition after it, so only `toolOrder: false` keeps a carried array
    * a strict prefix. Either way the first step's system prompt is the second's, and so is its
@@ -222,6 +227,7 @@ export interface AgentLoopOptions {
    * the config names. Off by default: a host that passes a resolved agent and calls `preselect`
    * on its own is not sent a second one.
    *
+   * @remarks
    * The preselector is `config.tasks.toolSelect` with everything it states — its endpoint, model,
    * ceiling, temperature and reasoning effort, keyed as `taskCall` keys a task against `config` —
    * and otherwise `config.toolSelectModel` on the config's own endpoint at `preselect`'s defaults.
@@ -240,6 +246,7 @@ export interface AgentLoopOptions {
    * default, and nothing is folded without that task — there is no falling back to the main model
    * — or without a `config.contextLength` to plan against.
    *
+   * @remarks
    * It runs after `beforeStep`, on what that returned, and is `compactTranscript` and nothing
    * more: the plan is made from the last request's reported prompt, or an estimate before the
    * first step and after a `beforeStep` rewrite; `hooks`, when given, are told `beforeCompact`
@@ -267,6 +274,7 @@ export interface AgentLoopOptions {
    * Answers an identical repeat of a call — the same name and the same arguments, word for word —
    * within one step from the first one, rather than dispatching it again.
    *
+   * @remarks
    * On by default, and on whether or not the calls run in `parallel`: a model that asks the same
    * question twice in one reply gets one answer, and two that are still in flight share the
    * request. A call that threw is not an answer and is made again. The scope is the step and not
@@ -284,6 +292,7 @@ export interface AgentLoopOptions {
    * `load_tools`, an identical repeat answered from the first, and a call whose arguments could
    * not be read, which arrives with empty `args` and the model's own text in `raw`.
    *
+   * @remarks
    * For a host that shows each call as it is made and fills it in when its result lands, which
    * `dispatch` alone cannot do for those three. Not awaited: a promise it returns is dropped.
    */
@@ -291,6 +300,7 @@ export interface AgentLoopOptions {
   /**
    * Told of every call's answer as it lands, whole, under the id `onToolCall` announced it by.
    *
+   * @remarks
    * One per call the model made: a deduplicated repeat gets its own, carrying the answer it
    * shares with the first. With `parallel` they arrive as the calls finish, which need not be
    * the order they were made in; the transcript and the result's `toolCalls` keep that order.
@@ -300,6 +310,7 @@ export interface AgentLoopOptions {
   /**
    * Hooks gathered onto the question before the first request, and told the reply after.
    *
+   * @remarks
    * Only this question is touched — the last user message of `messages` — and the context is on
    * the request, never in the transcript handed back. An earlier question's context is therefore
    * the host's to send again: keep the result's `context` and `preface` beside the question, and
@@ -341,6 +352,7 @@ export interface AgentLoopOptions {
    * Each step's request as first built, before it goes out — for measuring what was sent, not for
    * changing it, which is `beforeStep`'s.
    *
+   * @remarks
    * Called once a step, synchronously, and what it throws ends the run. It is not called again
    * for what `runTurn` sends after that: a retry sends the same request, but a refusal is answered
    * with a lesser body — relaxed schemas, a field dropped — and a continuation with the reply so
@@ -354,6 +366,7 @@ export interface AgentLoopOptions {
    * the loop goes on — so a host that stores its transcript has written the assistant message
    * before its tools run, and every tool result before the next request is sent.
    *
+   * @remarks
    * The assistant message is the one replayed on later requests — arguments repaired, recovered
    * calls folded in — and comes with its `turn`, as `onTurn` was handed it, for the `reasoning` a
    * host keeps beside the message. A tool result comes without one, and so do the two messages
@@ -470,7 +483,10 @@ interface Standing {
  * Runs a question to its answer: one `runTurn` per step, the tools it asks for between them,
  * until a turn asks for none. Throws when `maxToolIterations` is spent, when stopped, and on
  * whatever `runTurn` throws — `ContextOverflow` among them, however it was found out.
+ * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
+ * and cancellation. See `AgentLoopOptions`.
  *
+ * @remarks
  * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded` and
  * `used` — because the steps before a failure were real and a host that stores its transcript
  * has nothing else to store them from. A spent budget is a `ToolIterationLimit`, an overflow is
@@ -508,9 +524,6 @@ interface Standing {
  * `compact` has it fold the transcript, each by the task `config.tasks` carries for it and on
  * that task's own settings — a setting the task leaves out is the side task's default, never the
  * run's `temperature` or `maxTokens`.
- *
- * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
- * and cancellation. See `AgentLoopOptions`.
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   // Until the steps have set themselves up there is only what the caller handed over.

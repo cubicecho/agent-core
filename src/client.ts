@@ -16,7 +16,6 @@ const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
 
 /**
  * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
- *
  * @param config - Read for `requestTimeoutSeconds` alone.
  */
 export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
@@ -25,11 +24,11 @@ export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): numb
 /**
  * How long to wait out a model that is still loading, in milliseconds — `undefined` where the
  * config has no opinion, and zero where it says not to wait at all.
+ * @param config - Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
  *
+ * @remarks
  * Zero rather than the SDK's `undefined` for "no wait", because here absent already means
  * something else: `runTurn`'s own default.
- *
- * @param config - Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
  */
 export const loadingMs = (config: Pick<RetryPolicy, 'loadingTimeoutSeconds'>): number | undefined =>
   config.loadingTimeoutSeconds === undefined ? undefined : (limitMs(config.loadingTimeoutSeconds) ?? 0);
@@ -37,6 +36,7 @@ export const loadingMs = (config: Pick<RetryPolicy, 'loadingTimeoutSeconds'>): n
 /**
  * A client per endpoint, made once and kept.
  *
+ * @remarks
  * The SDK holds its own connection pool, and a run makes a request per tool iteration on top of
  * whatever side tasks it asks for — building a fresh client for each of them throws that pool
  * away every time. A map rather than the single slot it would otherwise be, because agents each
@@ -55,6 +55,7 @@ const clients = scoped(() => new Map<string, OpenAI>());
 /**
  * How many endpoints' clients are kept at once, until `configureClients` moves it.
  *
+ * @remarks
  * This is a backstop rather than a design. The key includes the API key, and every argument in
  * this file for what bounds these caches is "a settings row's worth" — true of the deployments
  * this was written for, and false the moment a consumer mints a key per *user*, where the map
@@ -110,7 +111,13 @@ const evict = () => {
 /**
  * Changes what the client pool is held to, for a process whose endpoints are not shaped like the
  * deployments these defaults were chosen for.
+ * @param [options] - The bounds to change. A field left out — or given anything that is not a number
+ * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
+ * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
+ * about again until `resetClients`.
+ * @returns Everything in force afterwards, including what this call did not change.
  *
+ * @remarks
  * One setting per runtime for the same reason `configureEvents` is: the pool is one thing per
  * runtime, and its size is a deployment's setting, said once at startup. A multi-tenant host
  * keying on a key per user raises `maxClients` so its tenants stop evicting each other's
@@ -120,12 +127,6 @@ const evict = () => {
  * A `maxClients` below the pool's current size evicts down to it at once, least recently asked
  * for first, as the next `getClient` would have. A shorter `listingMissMs` applies to misses
  * already remembered, since each is a timestamp compared against it when read.
- *
- * @param [options] - The bounds to change. A field left out — or given anything that is not a number
- * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
- * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
- * about again until `resetClients`.
- * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
   const inForce = assignSettings(poolLimits(), options);
@@ -138,7 +139,6 @@ export const FIRST_TOKEN_FACTOR = 5;
 
 /**
  * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
- *
  * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
  */
 export const firstTokenMs = (
@@ -153,7 +153,9 @@ export const firstTokenMs = (
 
 /**
  * The client for an endpoint, built once and kept.
+ * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
  *
+ * @remarks
  * Pooled on the three fields that change how a request is sent, so agents sharing a server share
  * a connection and agents on different servers never share a client.
  *
@@ -163,8 +165,6 @@ export const firstTokenMs = (
  * connection pools rather than sharing them and holding every one of them — `maxClients` keeps
  * that from being unbounded, and it is the point at which a client of your own, built and held
  * per tenant, is the better answer than this.
- *
- * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
  */
 export function getClient(config: Endpoint): OpenAI {
   const apiKey = config.apiKey || NO_KEY;
@@ -189,6 +189,7 @@ export function getClient(config: Endpoint): OpenAI {
 /**
  * The context window, spelled every way a server spells it at the top of a listing entry.
  *
+ * @remarks
  * None of these is in the OpenAI listing schema, so every server that says anything says it as
  * an extra key of its own: `max_model_len` is vLLM, `context_length` OpenRouter, `n_ctx` the raw
  * llama bindings. Whichever turns up first is taken — a server reporting two of them is
@@ -202,6 +203,7 @@ const positive = (value: unknown) => (isPositive(value) ? value : 0);
 /**
  * A listing entry's window, and whether it is only the one the model was trained with.
  *
+ * @remarks
  * The two are told apart because they are trusted differently: a top-level key is taken as the
  * window being served and settles the lookup, and a trained one is a ceiling the server may be
  * running well under, so `contextLimitFor` still asks the native routes before settling for it.
@@ -225,6 +227,7 @@ function contextLengthOf(model: object): { contextLength: number; trained: boole
 /**
  * A model an endpoint offers, and what it says the model will read. Zero means it did not say.
  *
+ * @remarks
  * The number is whatever the listing carried, which from llama.cpp is the trained window rather
  * than the served one; `contextLimitFor` is the lookup that knows the difference.
  */
@@ -236,6 +239,7 @@ export interface ModelInfo {
 /**
  * The last listing from each endpoint, so a run can size its window without a round trip.
  *
+ * @remarks
  * Keyed by `endpointKey`, because two endpoints are two different sets of models and one of
  * them having answered says nothing about the other — and because a key can be the difference
  * between what a router will show one caller and another.
@@ -252,6 +256,7 @@ const listings = scoped(() => new Map<string, ModelInfo[]>());
 /**
  * The models in each endpoint's last listing whose window is only the trained one, by id.
  *
+ * @remarks
  * Kept beside `listings` rather than on `ModelInfo`, so what `listModels` hands back is the shape
  * it has always been. Replaced with each listing that lands, and left alone by one that fails.
  */
@@ -260,6 +265,7 @@ const trainedOnly = scoped(() => new Map<string, Set<string>>());
 /**
  * When an endpoint was last asked about a model it did not name, keyed on the two together.
  *
+ * @remarks
  * `contextLimitFor` asks again whenever the listing does not hold the model, which is right for
  * a model that arrives late and wrong for one that is never coming. The second is the ordinary
  * case rather than the exotic one — a llama.cpp box served under a `-a` alias that does not
@@ -276,7 +282,12 @@ const misses = scoped(() => new Map<string, number>());
 /**
  * What counts as one endpoint, everywhere in this package that has to remember something about
  * one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
+ * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
+ * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
+ * config, and absent and empty already mean the same thing. The timeout is deliberately not in
+ * it; see `listings`.
  *
+ * @remarks
  * The URL and the key together, because the key is part of what is on the other end rather than
  * only how it is paid for: a router is free to send two keys to two different backends, and then
  * what one of them refused is not a fact about the other. Absent reads as `NO_KEY`, so an
@@ -286,18 +297,12 @@ const misses = scoped(() => new Map<string, number>());
  * is impossible in a URL or a key, and two endpoints must never collide on one entry. A host
  * keeping its own per-endpoint state keys it on this rather than on a copy of it, so the two
  * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
- *
- * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
- * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
- * config, and absent and empty already mean the same thing. The timeout is deliberately not in
- * it; see `listings`.
  */
 export const endpointKey = (config: EndpointIdentity) => JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
 
 /**
  * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
  * into the other.
- *
  * @param endpoint - Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
  * where the key may be written down.
  * @param model - The model's name as the endpoint knows it.
@@ -306,19 +311,20 @@ export const modelKey = (endpoint: string, model: string) => JSON.stringify([end
 
 /**
  * `endpointKey` hashed, for the remembered facts that can leave the process.
+ * @param config - Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  *
+ * @remarks
  * What an endpoint refused is exported by `exportCapabilities` to be written into a settings row
  * or a file, and a key inside that blob is a credential copied somewhere nobody meant to keep one.
  * A digest identifies the same endpoint on the next boot without saying what the key was, and it
  * is how a host finds its own endpoint's entry in a `CapabilitySnapshot`.
- *
- * @param config - Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  */
 export const endpointId = (config: EndpointIdentity) => createHash('sha256').update(endpointKey(config)).digest('hex');
 
 /**
  * Served windows found by asking a server's own API, keyed on endpoint and model together.
  *
+ * @remarks
  * A model's entry stays until `resetClients`, like a listing; a server that answered without one
  * is asked again after `listingMissMs`, like a listing that did not name the model.
  */
@@ -330,6 +336,7 @@ const unserved = scoped(() => new Set<string>());
 /**
  * Endpoints whose `/api/v0/models` answered with an error, and when.
  *
+ * @remarks
  * `gone` is a route the server does not have (`NOT_THERE`), which is a fact about the server and
  * stands until `resetClients`. Any other error stands for `listingMissMs` only, because it may be
  * one the server gets over, and LM Studio latched for good on a passing 5xx would have no window
@@ -379,7 +386,9 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
 /**
  * The window a local server's own API says it is serving a model in, for the servers whose
  * listing does not say.
+ * @param config - The endpoint, plus the model whose window is wanted.
  *
+ * @remarks
  * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
  * Studio on `/api/v0/models` as `loaded_context_length` while the model is loaded. Both differ
  * from the trained window in the case that matters, a model started in a smaller one than it was
@@ -392,8 +401,6 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
  * other error. A server that could not be reached is not remembered at all.
  *
  * The listing is not read here; `contextLimitFor` reads it first and comes here after.
- *
- * @param config - The endpoint, plus the model whose window is wanted.
  */
 export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
   const endpoint = endpointKey(config);
@@ -440,7 +447,6 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
 
 /**
  * Asks an endpoint what it serves, and remembers the answer.
- *
  * @param config - The endpoint to ask. Remembered per base URL and key, not per model.
  * @returns The models in order of id, whatever order the endpoint listed them in.
  */
@@ -464,7 +470,10 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
 
 /**
  * How much a model will read, in tokens. Zero means nobody knows.
+ * @param config - The endpoint, plus the model whose window is wanted.
+ * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
  *
+ * @remarks
  * `declared` is the operator's own number, and it wins outright: an endpoint can report the
  * window a model was *built* with while serving it in a much smaller one — llama.cpp will
  * happily load a 256k model at `-c 16384` and go on listing it as 256k — and a run refused on
@@ -482,9 +491,6 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * are two more requests that a server stating its window in the listing never needed. Asked
  * first, they were also asked again every `listingMissMs` for the life of the process on a server
  * whose `/props` answers without a window, by any host that sizes the window per turn.
- *
- * @param config - The endpoint, plus the model whose window is wanted.
- * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
  */
 export async function contextLimitFor(config: Endpoint & { model: string }, declared = 0): Promise<number> {
   if (declared > 0) {
@@ -559,19 +565,19 @@ export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') ==
 
 /**
  * The key to send, where an endpoint may inherit one from the settings it overrides.
+ * @param own - The endpoint as the agent or profile states it. Its own key always wins. An empty or
+ * absent `baseUrl` is one that inherits the endpoint too.
+ * @param [inherited] - The settings it overrides. Absent treats `own` as the configured endpoint, so
+ * only its key and the environment's are in play.
+ * @param [env] - Where `OPENAI_API_KEY` is read from.
  *
+ * @remarks
  * A credential issued for one endpoint has no business being posted to another. A profile that
  * names its own `baseUrl` and no key of its own is sent `NO_KEY` — not the operator's key, and
  * not `$OPENAI_API_KEY` — because "I pointed an agent at a friend's server and it sent my OpenAI
  * key" is not a mistake worth being able to make, and a local server wants no key anyway. One on
  * the same endpoint inherits the key as it inherits everything else, and the environment is the
  * last word on the endpoint that was configured rather than overridden.
- *
- * @param own - The endpoint as the agent or profile states it. Its own key always wins. An empty or
- * absent `baseUrl` is one that inherits the endpoint too.
- * @param [inherited] - The settings it overrides. Absent treats `own` as the configured endpoint, so
- * only its key and the environment's are in play.
- * @param [env] - Where `OPENAI_API_KEY` is read from.
  */
 export function resolveApiKey(
   own: { baseUrl?: string; apiKey?: string },
