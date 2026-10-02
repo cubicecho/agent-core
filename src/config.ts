@@ -111,9 +111,9 @@ export interface RetryPolicy {
 /**
  * A whole agent configuration — every part, plus the two fields that belong to no group.
  *
- * Provided for callers that want one name for the lot. Nothing in this package asks for it:
- * the functions take the parts, so a caller missing `contextLength` can still use all of them
- * bar the window guard.
+ * Provided for callers that want one name for the lot. No function in this package asks for it:
+ * they take the parts, so a caller missing `contextLength` can still use all of them bar the
+ * window guard. `ResolvedAgent` extends it, which is how a resolved spec satisfies every one.
  */
 export interface AgentConfig extends Endpoint, ModelParams, ToolPolicy, RetryPolicy {
   /** The agent's own standing instruction, if it has one. */
