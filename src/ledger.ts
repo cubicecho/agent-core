@@ -65,8 +65,10 @@ export interface LedgerRequest extends RequestShape {
 /** What `tokensBetween` and `estimateFrom` take besides the ledger and the transcript. */
 export interface LedgerEstimateOptions extends TokenEstimateOptions {
   /**
-   * One unmeasured message's tokens. `messageTokens` by default, divided by `charsPerToken` — the
-   * calibrated estimate, given `charsPerTokenFor` the model.
+   * One unmeasured message's tokens.
+   *
+   * @defaultValue `messageTokens` divided by `charsPerToken` — the calibrated estimate, given
+   * `charsPerTokenFor` the model.
    */
   estimate?: (message: Message) => number;
 }

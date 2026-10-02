@@ -85,8 +85,10 @@ const REASONING_ALT_KEY = 15;
 /** What the two token estimates below take besides what they measure. */
 export interface TokenEstimateOptions {
   /**
-   * The divisor, `CHARS_PER_TOKEN` unless given — `charsPerTokenFor` for a model whose reported
-   * usage has calibrated it. A value that is not a number above zero is ignored.
+   * The divisor — `charsPerTokenFor` for a model whose reported usage has calibrated it. A value
+   * that is not a number above zero is ignored.
+   *
+   * @defaultValue `CHARS_PER_TOKEN`
    */
   charsPerToken?: number;
 }

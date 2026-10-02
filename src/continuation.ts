@@ -17,8 +17,10 @@ import { addCounts, type Turn, type TurnUsage } from './stream.ts';
 /** What `continueTurn` takes besides what `runTurn` does. */
 export interface ContinueTurnOptions extends RunTurnOptions {
   /**
-   * How many more requests one answer may be given, 1 unless given; zero continues nothing.
-   * The cap is what stops a model that never reaches a stop token from looping on the ceiling.
+   * How many more requests one answer may be given; zero continues nothing. The cap is what
+   * stops a model that never reaches a stop token from looping on the ceiling.
+   *
+   * @defaultValue `1`
    */
   maxContinuations?: number;
 }

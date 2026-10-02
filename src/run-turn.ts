@@ -58,7 +58,9 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    */
   onNotice?: OnNotice;
   /**
-   * What the model will read, in tokens. Zero — the default — sends whatever it is given.
+   * What the model will read, in tokens. Zero sends whatever it is given.
+   *
+   * @defaultValue `0`
    *
    * @remarks
    * With a limit, the request is sized before it is sent — the prompt plus the reply ceiling
@@ -87,8 +89,10 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    */
   droppable?: Iterable<string>;
   /**
-   * How long to wait on a server answering that the model is still loading, `LOADING_TIMEOUT_MS`
-   * unless given; zero gives up on the first such answer like any other 503.
+   * How long to wait on a server answering that the model is still loading; zero gives up on the
+   * first such answer like any other 503.
+   *
+   * @defaultValue `LOADING_TIMEOUT_MS`
    *
    * @remarks
    * Polled every `LOADING_POLL_MS` without spending `maxRetries`, and announced once rather than

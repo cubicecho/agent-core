@@ -369,7 +369,9 @@ export interface StreamTurnOptions {
    */
   idleMs?: number;
   /**
-   * Silence allowed before the first chunk, `idleMs` unless given; zero waits forever.
+   * Silence allowed before the first chunk; zero waits forever.
+   *
+   * @defaultValue `idleMs`
    *
    * @remarks
    * The first wait is prefill, or a server loading the model, and is routinely many times the
@@ -379,7 +381,9 @@ export interface StreamTurnOptions {
   /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
   produced?: Produced;
   /**
-   * The fences that mark a scratchpad written into `content`, `DEFAULT_FENCES` unless given.
+   * The fences that mark a scratchpad written into `content`.
+   *
+   * @defaultValue `DEFAULT_FENCES`
    *
    * @remarks
    * Text inside one goes to `onThinking` and `reasoning` rather than `onOutput` and `content`.

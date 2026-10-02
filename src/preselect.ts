@@ -185,13 +185,29 @@ export interface KeywordPreselection {
 
 /** What `preselectByKeywords` takes besides the catalogue and the request. */
 export interface KeywordPreselectOptions {
-  /** The most to pick, defaulting to `MAX_PER_LOAD`. The same cap the model is held to. */
+  /**
+   * The most to pick. The same cap the model is held to.
+   *
+   * @defaultValue `MAX_PER_LOAD`
+   */
   maxPerLoad?: number;
-  /** The floor under a confident best match, defaulting to `KEYWORD_MIN_SCORE`. */
+  /**
+   * The floor under a confident best match.
+   *
+   * @defaultValue `KEYWORD_MIN_SCORE`
+   */
   minScore?: number;
-  /** The gap a confident cut needs, defaulting to `KEYWORD_DROPOFF`. */
+  /**
+   * The gap a confident cut needs.
+   *
+   * @defaultValue `KEYWORD_DROPOFF`
+   */
   dropoff?: number;
-  /** Where the request is cut, defaulting to 2000 — the same head `preselectInput` reads. */
+  /**
+   * Where the request is cut — the same head `preselectInput` reads.
+   *
+   * @defaultValue `2000`
+   */
   maxPromptChars?: number;
 }
 
@@ -293,13 +309,21 @@ export interface PreselectOptions {
   signal?: AbortSignal;
   /** Hears how the choice was made, and what was given up on along the way. */
   onNotice?: OnNotice;
-  /** The reply's ceiling, 256 when absent. */
+  /**
+   * The reply's ceiling.
+   *
+   * @defaultValue `256`
+   */
   maxTokens?: number;
   /** As `SideTaskOptions.temperature`: absent is 0.3. */
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
   reasoningEffort?: string;
-  /** The most tools the choice may name, `MAX_PER_LOAD` when absent. */
+  /**
+   * The most tools the choice may name.
+   *
+   * @defaultValue `MAX_PER_LOAD`
+   */
   maxPerLoad?: number;
   /**
    * Try `preselectByKeywords` first and spend the model only on what it cannot settle. `true`
@@ -317,9 +341,8 @@ export interface PreselectOptions {
  * means by empty.
  * @param catalog - The servers to choose from.
  * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
- * @param [options] - Cancellation, notices, the reply ceiling (256), the temperature and reasoning
- * effort as `ask` reads them (0.3 and none when absent), the cap the choice is held to
- * (`MAX_PER_LOAD`), and whether to try the words first.
+ * @param [options] - Cancellation, notices, the reply ceiling, the temperature and reasoning effort
+ * as `ask` reads them, the cap the choice is held to, and whether to try the words first.
  *
  * @remarks
  * On-demand loading otherwise spends a round trip on reading the catalogue and calling

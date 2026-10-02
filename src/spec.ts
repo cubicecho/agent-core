@@ -283,13 +283,19 @@ export interface ParsedSpec {
 /** What `parseSpec` takes besides the document. */
 export interface ParseSpecOptions {
   /**
-   * Parse `bundle` rather than dropping it. Off by default, because a bundled server carries a
-   * command line and an environment map: loading one is equivalent to running a program, exactly
-   * as dangerous as pasting somebody's `.mcp.json`, and a host has to make that decision rather
-   * than inherit it from a default.
+   * Parse `bundle` rather than dropping it. Opt-in, because a bundled server carries a command
+   * line and an environment map: loading one is equivalent to running a program, exactly as
+   * dangerous as pasting somebody's `.mcp.json`, and a host has to make that decision rather than
+   * inherit it from a default.
+   *
+   * @defaultValue `false`
    */
   bundle?: boolean;
-  /** The events this host actually fires, defaulting to all of them. A hook bound elsewhere warns. */
+  /**
+   * The events this host actually fires. A hook bound elsewhere warns.
+   *
+   * @defaultValue `SPEC_EVENTS`, which is all of them
+   */
   events?: readonly string[];
   /** The `extensions` keys this host understands. A `requires` entry outside it refuses the load. */
   understands?: readonly string[];
@@ -974,8 +980,10 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
 /** What `exportSpec` takes besides the document. */
 export interface ExportSpecOptions {
   /**
-   * Keep the environment and headers of bundled servers. Off by default, mirroring the pool's
+   * Keep the environment and headers of bundled servers. Opt-in, mirroring the pool's
    * `state({ secrets })`, because those are where a bundled server's credentials live.
+   *
+   * @defaultValue `false`
    */
   secrets?: boolean;
 }

@@ -120,7 +120,11 @@ export interface AgentLoopHooks {
   run: HookRunner;
   /** What the hooks are told. `reply` and `turn` are filled in for `afterTurn`. */
   context: HookContext;
-  /** Run before the first request, `["beforeTurn"]` by default. */
+  /**
+   * Run before the first request.
+   *
+   * @defaultValue `['beforeTurn']`
+   */
   events?: readonly HookEvent[];
   /** The shared context budget. Absent is `configureHooks`'s. */
   maxTokens?: number;
@@ -205,7 +209,7 @@ export interface AgentLoopOptions {
    */
   preselected?: readonly string[];
   /**
-   * What a preselection does to the first step. `"exclusive"`, the default, is the shortlist alone
+   * What a preselection does to the first step. `"exclusive"` is the shortlist alone
    * as `preselected` describes — and a system prompt and tool array unlike the last request's and
    * unlike the next step's, so a prompt cache misses the whole transcript on the first step and
    * again on the second. `"append"` loads the shortlist as a `load_tools` call would have and
@@ -213,6 +217,8 @@ export interface AgentLoopOptions {
    * the shortlist after it, with a name already carried left where it is. The price is the menu
    * back in front of the model. Which costs more has not been measured, which is why the default
    * has not moved.
+   *
+   * @defaultValue `'exclusive'`
    *
    * @remarks
    * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
@@ -224,8 +230,10 @@ export interface AgentLoopOptions {
   preselectRouting?: 'exclusive' | 'append';
   /**
    * Has the loop make the preselection itself, before its first request, with the preselector
-   * the config names. Off by default: a host that passes a resolved agent and calls `preselect`
+   * the config names. Opt-in, so that a host that passes a resolved agent and calls `preselect`
    * on its own is not sent a second one.
+   *
+   * @defaultValue `false`
    *
    * @remarks
    * The preselector is `config.tasks.toolSelect` with everything it states — its endpoint, model,
@@ -274,8 +282,10 @@ export interface AgentLoopOptions {
    * Answers an identical repeat of a call — the same name and the same arguments, word for word —
    * within one step from the first one, rather than dispatching it again.
    *
+   * @defaultValue `true`
+   *
    * @remarks
-   * On by default, and on whether or not the calls run in `parallel`: a model that asks the same
+   * It holds whether or not the calls run in `parallel`: a model that asks the same
    * question twice in one reply gets one answer, and two that are still in flight share the
    * request. A call that threw is not an answer and is made again. The scope is the step and not
    * the run, because between steps other tools have run and the file the model read may be the
@@ -343,9 +353,11 @@ export interface AgentLoopOptions {
   onEvent?: (event: RunEventInput) => void;
   /**
    * Takes tool calls a model wrote into its reply as text and runs them as calls, with a notice
-   * saying so. On by default: a server whose tool-call parser does not match the model's template
-   * otherwise ends the run on a reply that is only a call nobody made. Off leaves such a reply as
-   * the answer. See `recoverToolCalls`.
+   * saying so. A server whose tool-call parser does not match the model's template otherwise ends
+   * the run on a reply that is only a call nobody made. Off leaves such a reply as the answer. See
+   * `recoverToolCalls`.
+   *
+   * @defaultValue `true`
    */
   recoverToolCalls?: boolean;
   /**
@@ -376,9 +388,11 @@ export interface AgentLoopOptions {
    */
   onMessage?: (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn) => void | Promise<void>;
   /**
-   * How many times an answer cut off at `maxTokens` is continued, zero — the default — for never.
-   * Opt-in because it spends another request, and on a server that does not continue a trailing
-   * assistant message it spends one to find that out. See `continueTurn`.
+   * How many times an answer cut off at `maxTokens` is continued, zero for never. Opt-in because
+   * it spends another request, and on a server that does not continue a trailing assistant
+   * message it spends one to find that out. See `continueTurn`.
+   *
+   * @defaultValue `0`
    */
   maxContinuations?: number;
 }

@@ -85,9 +85,17 @@ const systemHead = (messages: Message[]): { from: number; previous?: string } =>
 
 /** What `pruneToolResults` takes. */
 export interface PruneOptions {
-  /** How many of the latest tool results are left whole, 5 by default. */
+  /**
+   * How many of the latest tool results are left whole.
+   *
+   * @defaultValue `5`
+   */
   keepLast?: number;
-  /** A result this long or shorter is left whole wherever it is, 256 characters by default. */
+  /**
+   * A result this long or shorter, in characters, is left whole wherever it is.
+   *
+   * @defaultValue `256`
+   */
   maxChars?: number;
 }
 
@@ -145,9 +153,17 @@ export interface CompactionOptions {
    * absent is the estimate of the whole transcript.
    */
   used?: number;
-  /** The fraction of `limit` in use before compacting. `COMPACT_AT` by default. */
+  /**
+   * The fraction of `limit` in use before compacting.
+   *
+   * @defaultValue `COMPACT_AT`
+   */
   compactAt?: number;
-  /** The fraction of `limit` the kept tail may fill. `KEEP_RATIO` by default. */
+  /**
+   * The fraction of `limit` the kept tail may fill.
+   *
+   * @defaultValue `KEEP_RATIO`
+   */
   keepRatio?: number;
   /**
    * The fraction of `limit` the whole request should come down to, in place of `keepRatio`: the
@@ -157,15 +173,22 @@ export interface CompactionOptions {
   target?: number;
   /**
    * What the summary is assumed to cost when planning to a `target` — the ceiling its writer is
-   * held to, since the plan is made before it is written. 1024 by default, which is `summariser`'s.
+   * held to, since the plan is made before it is written.
+   *
+   * @defaultValue `1024`, which is `summariser`'s ceiling
    */
   summaryTokens?: number;
-  /** One message's tokens. `messageTokens` by default, divided by `charsPerToken`. */
+  /**
+   * One message's tokens.
+   *
+   * @defaultValue `messageTokens` divided by `charsPerToken`
+   */
   estimate?: (message: Message) => number;
   /**
    * The divisor the default `estimate` uses — `charsPerTokenFor` the model, for a transcript
-   * weighed the way `runTurn` sizes its requests. `CHARS_PER_TOKEN` when absent; ignored beside
-   * an `estimate` of the caller's own.
+   * weighed the way `runTurn` sizes its requests. Ignored beside an `estimate` of the caller's own.
+   *
+   * @defaultValue `CHARS_PER_TOKEN`
    */
   charsPerToken?: number;
   /**
@@ -323,8 +346,8 @@ export function summaryInput(plan: CompactionPlan): string {
  *
  * @param config - The endpoint the summary is written through.
  * @param model - The model to write it, which may be a smaller one than the run's.
- * @param [options] - Cancellation and notices; the ceiling is 1024 and the instruction
- * `SUMMARY_PROMPT` unless given.
+ * @param [options] - Cancellation and notices, and the instruction and ceiling the summary is
+ * written under.
  */
 export const summariser =
   (
@@ -358,7 +381,7 @@ export interface CompactionRunOptions {
   /**
    * Hooks to tell. `context` is extended with `compacting` and `range`, whose indexes are the
    * plan's — and so the host's own, for a plan made over a stored transcript. `honourVeto` waits
-   * for the hooks and lets one stop the compaction; off by default, which adds no latency.
+   * for the hooks and lets one stop the compaction; without it they add no latency.
    */
   hooks?: {
     run: HookRunner;
@@ -460,7 +483,7 @@ export function applyCompaction(
  * @param [record] - The fold in force, or `undefined` for a session that has none, which hands the
  * index straight back.
  * @param [head] - How many messages the request keeps ahead of the summary — the leading system
- * prompts, when the host keeps them in the array. Zero, the default, is the stored-fold case,
+ * prompts, when the host keeps them in the array. Zero is the stored-fold case,
  * where the summary is the request's first message.
  *
  * @remarks

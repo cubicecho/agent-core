@@ -82,11 +82,17 @@ export type SideTaskInput = string | OpenAI.ChatCompletionContentPart[];
 /** What a side task may be given. All optional — one given none of them still runs. */
 export interface SideTaskOptions {
   /**
-   * Ceiling on the reply, default 512. These answers are meant to be short. Zero or less sends
-   * none and leaves it to the server, which is what `maxTokens: 0` means on the main model too.
+   * Ceiling on the reply. These answers are meant to be short. Zero or less sends none and leaves
+   * it to the server, which is what `maxTokens: 0` means on the main model too.
+   *
+   * @defaultValue `512`
    */
   maxTokens?: number;
-  /** Sampling temperature, default 0.3. Naming and classifying want the same answer twice. */
+  /**
+   * Sampling temperature. Naming and classifying want the same answer twice.
+   *
+   * @defaultValue `0.3`
+   */
   temperature?: number;
   /**
    * A reasoning effort to ask for in place of the no-thinking hints, for a side task an operator
@@ -273,12 +279,18 @@ function answerOf(message: OpenAI.ChatCompletionMessage | undefined): string {
 
 /** What `askJson` takes besides a side task's options. */
 export interface AskJsonOptions extends SideTaskOptions {
-  /** What the schema is called in the request, `answer` by default. Letters, digits, `_` and `-`. */
+  /**
+   * What the schema is called in the request. Letters, digits, `_` and `-`.
+   *
+   * @defaultValue `'answer'`
+   */
   name?: string;
   /**
-   * Asks the server to hold the reply to the schema exactly, true by default. OpenAI's strict mode
-   * wants every property required and `additionalProperties: false`; a schema written otherwise
-   * wants this off there.
+   * Asks the server to hold the reply to the schema exactly. OpenAI's strict mode wants every
+   * property required and `additionalProperties: false`; a schema written otherwise wants this
+   * off there.
+   *
+   * @defaultValue `true`
    */
   strict?: boolean;
 }

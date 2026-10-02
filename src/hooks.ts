@@ -286,8 +286,8 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
  * leaves the request as it was.
  * @param context - What `assembleContext` built, this turn or the turn the question was asked.
  * Empty returns `history` itself.
- * @param [preface] - Said above the blocks. Absent is what `configureHooks` last set — `HOOK_PREFACE`
- * unless something moved it. Empty says nothing, rather than leaving a blank line where it was.
+ * @param [preface] - Said above the blocks. Empty says nothing, rather than leaving a blank line
+ * where it was.
  * @returns `history` when there was nothing to add or nowhere to add it, otherwise a new array.
  *
  * @remarks
@@ -389,8 +389,8 @@ export const textOf = (content: unknown): string => {
  * @param from - The first index, inclusive. Below zero reads from the start.
  * @param [to] - The end, exclusive. Absent, or past the end, reads to the end.
  * @param [options] - `offset` is what the array's first message is numbered as in the uuids — the
- * stored index of `messages[0]`, when `messages` is a request a fold has shifted. Zero by default,
- * which numbers by position as before. `from` and `to` stay array indexes either way.
+ * stored index of `messages[0]`, when `messages` is a request a fold has shifted. Zero numbers
+ * by position. `from` and `to` stay array indexes either way.
  *
  * @remarks
  * Tool calls and their results are left out. They are the model's working rather than the
@@ -442,8 +442,7 @@ export function turnMessages(
  * Which turn of a session begins at a point, from 0: the user messages ahead of it.
  *
  * @param messages - The transcript.
- * @param [before] - Where the turn begins. Absent is the end, which is the index of a turn whose
- * question has not been appended yet.
+ * @param [before] - Where the turn begins.
  * @param [offset] - Turns already folded away and so not in `messages`.
  *
  * @remarks
