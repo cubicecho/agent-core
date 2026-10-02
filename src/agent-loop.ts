@@ -1227,6 +1227,50 @@ async function runCalls(
 }
 
 /**
+ * Writes a proxied preselection into the transcript as a `load_tools` exchange: the tool array is
+ * fixed, so a shortlist has nowhere else to go, and it is answered as though the model had loaded
+ * it. Told to the host as a call the model made would be, so one pairing calls with results by id
+ * shows this one like the rest.
+ *
+ * @param run The run it opens.
+ * @param shortlist The definitions preselected, each of them in the catalogue.
+ * @param messages The transcript, which the exchange is appended to.
+ */
+async function loadShortlist(
+  run: Calling,
+  shortlist: OpenAI.ChatCompletionTool[],
+  messages: OpenAI.ChatCompletionMessageParam[],
+): Promise<void> {
+  const { catalog } = run;
+  const names = shortlist.map((tool) => toolName(tool) ?? "");
+  // Numbered by where the call lands, so two questions in one transcript do not share an id.
+  const id = `preselect-${messages.length}`;
+  const args = JSON.stringify({ names });
+  // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and a
+  // host that shortlisted more has already chosen.
+  const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
+  run.onEvent({ kind: "tool-call", id, name: LOAD_TOOLS, text: preview(args) });
+  run.onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
+  run.onEvent({ kind: "tool-result", id, name: LOAD_TOOLS, ok: true, text: preview(content) });
+  run.onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
+  run.toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
+  run.loads.toolsLoaded += names.length;
+  for (const name of names) run.loaded.add(name);
+  const exchange: OpenAI.ChatCompletionMessageParam[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id, type: "function", function: { name: LOAD_TOOLS, arguments: args } }],
+    },
+    { role: "tool", tool_call_id: id, content },
+  ];
+  // Both written before either is announced, so a host that throws on the first leaves a call
+  // with its result. Told as step zero's, with no turn: no request was made for them.
+  messages.push(...exchange);
+  for (const message of exchange) await run.announce(message, 0);
+}
+
+/**
  * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
  * when `maxToolIterations` is spent, and tells `standing` how to read the run either way.
  */
@@ -1347,45 +1391,14 @@ async function runSteps(
   // Nothing before this run's first: an earlier run's head is not something the loop can see.
   let measured: LedgerRequest | undefined;
 
-  // Proxied, a shortlist has nowhere to go but the history: the tool array is fixed, so it is
-  // answered as though the model had loaded it, and the definitions sit after the question.
+  // Proxied, a shortlist has nowhere to go but the history, where its definitions sit after the
+  // question.
   const shortlist = proxied
     ? byName(new Set(preselected)).filter((tool) => {
         const name = toolName(tool);
         return name !== undefined && inCatalog(catalog, name);
       })
     : [];
-  if (shortlist.length) {
-    const names = shortlist.map((tool) => toolName(tool) ?? "");
-    // Numbered by where the call lands, so two questions in one transcript do not share an id.
-    const id = `preselect-${messages.length}`;
-    const args = JSON.stringify({ names });
-    // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and a
-    // host that shortlisted more has already chosen.
-    const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
-    // Announced as a call the model made would be, so a host pairing calls with results by id
-    // shows this one like the rest.
-    onEvent({ kind: "tool-call", id, name: LOAD_TOOLS, text: preview(args) });
-    onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
-    onEvent({ kind: "tool-result", id, name: LOAD_TOOLS, ok: true, text: preview(content) });
-    onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
-    toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
-    loads.toolsLoaded += names.length;
-    for (const name of names) loaded.add(name);
-    const exchange: OpenAI.ChatCompletionMessageParam[] = [
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [{ id, type: "function", function: { name: LOAD_TOOLS, arguments: args } }],
-      },
-      { role: "tool", tool_call_id: id, content },
-    ];
-    // Both written before either is announced, so a host that throws on the first leaves a call
-    // with its result. Told as step zero's, with no turn: no request was made for them.
-    messages.push(...exchange);
-    for (const message of exchange) await announce(message, 0);
-  }
-
   const calling: Calling = {
     catalog,
     onDemand,
@@ -1405,6 +1418,8 @@ async function runSteps(
     onToolResult,
     announce,
   };
+
+  if (shortlist.length) await loadShortlist(calling, shortlist, messages);
 
   for (let step = 0; step < config.maxToolIterations; step++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
