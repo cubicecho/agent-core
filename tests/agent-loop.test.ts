@@ -4,8 +4,9 @@ import { PRESELECT_APPEND } from '../src/agent-loop.ts';
 import { ToolDiscovery } from '../src/config.ts';
 import { RunEventKind, RunOutcome } from '../src/events.ts';
 import { HookEvent } from '../src/hook-events.ts';
+import type { HookOutcome, HookRunner } from '../src/hooks.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, PartType, Role, SchemaType } from '../src/wire.ts';
-import { type Body, chunks, config, type Message, says, tool } from './helpers.ts';
+import { type Body, chunks, config, type Message, outcome, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -1331,10 +1332,10 @@ describe('runAgentLoop', () => {
 
   it("puts the hooks' context on the question, and tells them the reply", async () => {
     create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('the answer'));
-    const run = vi.fn(async (event: string) =>
+    const run = vi.fn<HookRunner>(async (event) =>
       event === HookEvent.BeforeTurn
         ? [
-            {
+            outcome({
               serverId: 'm',
               label: 'memory',
               hookId: 'h',
@@ -1343,7 +1344,7 @@ describe('runAgentLoop', () => {
               text: 'you like tea',
               inject: true,
               maxTokens: 500,
-            },
+            }),
           ]
         : [],
     );
@@ -1356,7 +1357,7 @@ describe('runAgentLoop', () => {
       ],
       tools: [tool('a')],
       dispatch: async () => 'ok',
-      hooks: { run: run as never, context: { session: { id: 's1' } } },
+      hooks: { run, context: { session: { id: 's1' } } },
     });
     for (const [body] of create.mock.calls) {
       const sent = (body as Body).messages;
@@ -1366,14 +1367,14 @@ describe('runAgentLoop', () => {
     // The transcript handed back is the one without the context; it was for the request only.
     expect(result.messages[2].content).toBe('what do I like?');
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-    const [event, context] = run.mock.calls[1] as unknown as [string, Record<string, unknown>];
+    const [event, context] = run.mock.calls[1];
     expect(event).toBe(HookEvent.AfterTurn);
     expect(context).toMatchObject({ reply: 'the answer', turn: { index: 1 } });
   });
 
   it("says configureHooks' preface above the hooks' context, unless the loop gives its own", async () => {
-    const run = async (event: string) => [
-      {
+    const run: HookRunner = async (event) => [
+      outcome({
         serverId: 'm',
         label: 'memory',
         hookId: 'h',
@@ -1382,7 +1383,7 @@ describe('runAgentLoop', () => {
         text: 'you like tea',
         inject: true,
         maxTokens: 500,
-      },
+      }),
     ];
     const sentQuestion = async (preface?: string) => {
       create.mockReset().mockReturnValueOnce(says('ok'));
@@ -1390,7 +1391,7 @@ describe('runAgentLoop', () => {
         config,
         messages: question,
         dispatch: async () => 'ok',
-        hooks: { run: run as never, context: { session: { id: 's1' } }, preface },
+        hooks: { run, context: { session: { id: 's1' } }, preface },
       });
       return (create.mock.calls[0][0] as Body).messages[0].content as string;
     };
@@ -1406,23 +1407,25 @@ describe('runAgentLoop', () => {
 
   describe("the hooks' context on past questions", () => {
     /** A runner whose `beforeTurn` hook recalls this, and whose other events do nothing. */
-    const recalls = (text: string) => async (event: string) =>
-      event === HookEvent.BeforeTurn
-        ? [
-            {
-              serverId: 'm',
-              label: 'memory',
-              hookId: 'h',
-              event,
-              ok: true,
-              text,
-              inject: true,
-              maxTokens: 500,
-            },
-          ]
-        : [];
+    const recalls =
+      (text: string): HookRunner =>
+      async (event) =>
+        event === HookEvent.BeforeTurn
+          ? [
+              outcome({
+                serverId: 'm',
+                label: 'memory',
+                hookId: 'h',
+                event,
+                ok: true,
+                text,
+                inject: true,
+                maxTokens: 500,
+              }),
+            ]
+          : [];
     const hooks = (text: string, preface?: string) => ({
-      run: recalls(text) as never,
+      run: recalls(text),
       context: { session: { id: 's1' } },
       preface,
     });
@@ -1541,11 +1544,11 @@ describe('runAgentLoop', () => {
 
     it("hands back afterTurn's notes as a promise, without waiting for them itself", async () => {
       create.mockReturnValueOnce(says('the answer'));
-      let finish: (outcomes: unknown[]) => void = () => {};
+      let finish: (outcomes: HookOutcome[]) => void = () => {};
       const heard: unknown[] = [];
-      const run = vi.fn((event: string) =>
+      const run = vi.fn<HookRunner>((event) =>
         event === HookEvent.AfterTurn
-          ? new Promise<unknown[]>((resolve) => {
+          ? new Promise<HookOutcome[]>((resolve) => {
               finish = resolve;
             })
           : Promise.resolve([]),
@@ -1555,7 +1558,7 @@ describe('runAgentLoop', () => {
         messages: question,
         dispatch: async () => 'ok',
         hooks: {
-          run: run as never,
+          run,
           context: { session: { id: 's1' } },
           onNote: (note) => heard.push(note),
         },
@@ -1566,7 +1569,7 @@ describe('runAgentLoop', () => {
       await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
       expect(heard).toEqual([]);
       finish([
-        {
+        outcome({
           serverId: 'm',
           label: 'memory',
           hookId: 'h',
@@ -1576,7 +1579,7 @@ describe('runAgentLoop', () => {
           ms: 1,
           inject: false,
           maxTokens: 0,
-        },
+        }),
       ]);
       const note = { event: HookEvent.AfterTurn, source: 'memory', hookId: 'h', error: 'down' };
       await expect(result.afterTurn).resolves.toEqual([note]);

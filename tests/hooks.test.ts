@@ -8,7 +8,6 @@ import {
   gather,
   HOOK_CONTEXT_TOKENS,
   HOOK_PREFACE,
-  type HookOutcome,
   type HookRunner,
   notify,
   resetHooks,
@@ -19,6 +18,7 @@ import {
   withContext,
 } from '../src/hooks.ts';
 import { FUNCTION_TOOL, PartType, Role } from '../src/wire.ts';
+import { outcome } from './helpers.ts';
 
 /**
  * The host's side of hooks. Running them is a runner's job and is stubbed here; what is tested is
@@ -35,18 +35,6 @@ const transcript = [
   { role: Role.Tool, tool_call_id: 'c1', content: 'a.txt\nb.txt' },
   { role: Role.Assistant, content: [{ type: PartType.Text, text: 'Two files.' }] },
 ];
-
-const outcome = (patch: Partial<HookOutcome>): HookOutcome => ({
-  serverId: 'mem',
-  label: 'Memory',
-  hookId: 'recall',
-  event: HookEvent.BeforeTurn,
-  ok: true,
-  ms: 1,
-  inject: false,
-  maxTokens: 1000,
-  ...patch,
-});
 
 describe('turnMessages', () => {
   it('keeps what was said, from strings or parts, and leaves the tool traffic out', () => {

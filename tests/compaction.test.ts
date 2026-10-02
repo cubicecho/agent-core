@@ -10,10 +10,10 @@ import {
   summaryInput,
 } from '../src/compaction.ts';
 import { HookEvent } from '../src/hook-events.ts';
-import { turnMessages } from '../src/hooks.ts';
+import { type HookRunner, turnMessages } from '../src/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../src/tool-loading.ts';
 import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
-import { assistant, type Message, result, user } from './helpers.ts';
+import { assistant, type Message, outcome, result, user } from './helpers.ts';
 
 /** Every message costs ten, so the arithmetic below can be read off the counts. */
 const estimate = () => 10;
@@ -233,10 +233,10 @@ describe('compactTranscript', () => {
   const plan = { from: 2, cut: 4, toSummarise: messages.slice(2, 4), previous: 'old' };
 
   it('replaces the stretch and any earlier summary with the new one, and tells the hooks', async () => {
-    const run = vi.fn(async () => []);
+    const run = vi.fn<HookRunner>(async () => []);
     const summarise = vi.fn(async (_text: string) => ' new notes ');
     const out = await compactTranscript(messages, plan, summarise, {
-      hooks: { run: run as never, context: { session: { id: 's' } } },
+      hooks: { run, context: { session: { id: 's' } } },
     });
     expect(out).toEqual([
       { role: Role.System, content: 'prompt' },
@@ -259,17 +259,17 @@ describe('compactTranscript', () => {
 
   describe('a veto', () => {
     const vetoing = () =>
-      vi.fn(async () => [
-        { serverId: 'm', label: 'Memory', hookId: 'file', event: HookEvent.BeforeCompact, ok: true },
-        {
+      vi.fn<HookRunner>(async () => [
+        outcome({ serverId: 'm', label: 'Memory', hookId: 'file', event: HookEvent.BeforeCompact, ok: true }),
+        outcome({
           serverId: 'g',
           label: 'Guard',
           hookId: 'keep',
           event: HookEvent.BeforeCompact,
           ok: true,
           veto: true,
-        },
-        {
+        }),
+        outcome({
           serverId: 'b',
           label: 'Broken',
           hookId: 'x',
@@ -277,23 +277,23 @@ describe('compactTranscript', () => {
           ok: false,
           veto: true,
           error: 'down',
-        },
+        }),
       ]);
 
     it('is ignored unless the host asks, and the summary is written beside the hooks', async () => {
       let hooksDone = false;
-      const run = vi.fn(async () => {
+      const run = vi.fn<HookRunner>(async () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
         hooksDone = true;
         return [
-          {
+          outcome({
             serverId: 'g',
             label: 'Guard',
             hookId: 'keep',
             event: HookEvent.BeforeCompact,
             ok: true,
             veto: true,
-          },
+          }),
         ];
       });
       const summarise = vi.fn(async () => {
@@ -301,7 +301,7 @@ describe('compactTranscript', () => {
         return 'notes';
       });
       const out = await compactTranscript(messages, plan, summarise, {
-        hooks: { run: run as never, context: { session: { id: 's' } } },
+        hooks: { run, context: { session: { id: 's' } } },
       });
       expect(out).not.toBe(messages);
       expect(summarise).toHaveBeenCalledOnce();
@@ -312,7 +312,7 @@ describe('compactTranscript', () => {
       const heard: unknown[] = [];
       const out = await compactTranscript(messages, plan, summarise, {
         hooks: {
-          run: vetoing() as never,
+          run: vetoing(),
           context: { session: { id: 's' } },
           onNote: (note) => heard.push(note),
           honourVeto: true,
@@ -328,16 +328,16 @@ describe('compactTranscript', () => {
 
     it('waits for the hooks and goes ahead when none of them vetoes', async () => {
       const order: string[] = [];
-      const run = vi.fn(async () => {
+      const run = vi.fn<HookRunner>(async () => {
         order.push('hooks');
-        return [{ serverId: 'm', label: 'Memory', hookId: 'file', event: HookEvent.BeforeCompact, ok: true }];
+        return [outcome({ serverId: 'm', label: 'Memory', hookId: 'file', event: HookEvent.BeforeCompact, ok: true })];
       });
       const summarise = vi.fn(async () => {
         order.push('summary');
         return 'notes';
       });
       const out = await compactTranscript(messages, plan, summarise, {
-        hooks: { run: run as never, context: { session: { id: 's' } }, honourVeto: true },
+        hooks: { run, context: { session: { id: 's' } }, honourVeto: true },
       });
       expect(order).toEqual(['hooks', 'summary']);
       expect(out.at(1)).toEqual({ role: Role.System, content: `${SUMMARY_LEAD}notes` });
@@ -348,7 +348,7 @@ describe('compactTranscript', () => {
       const heard: unknown[] = [];
       const out = await compactTranscript(messages, plan, summarise, {
         hooks: {
-          run: vetoing() as never,
+          run: vetoing(),
           context: { session: { id: 's' } },
           onNote: (note) => heard.push(note),
           honourVeto: true,
@@ -419,18 +419,18 @@ describe('a stored fold', () => {
   it('stores nothing when a hook vetoes or the summary comes back empty', async () => {
     const plan = { from: 0, cut: 2, toSummarise: stored.slice(0, 2) };
     expect(await runCompaction(stored, plan, async () => '   ')).toBeUndefined();
-    const run = vi.fn(async () => [
-      {
+    const run = vi.fn<HookRunner>(async () => [
+      outcome({
         serverId: 'g',
         label: 'Guard',
         hookId: 'keep',
         event: HookEvent.BeforeCompact,
         ok: true,
         veto: true,
-      },
+      }),
     ]);
     const record = await runCompaction(stored, plan, async () => 'notes', {
-      hooks: { run: run as never, context: { session: { id: 's' } }, honourVeto: true },
+      hooks: { run, context: { session: { id: 's' } }, honourVeto: true },
     });
     expect(record).toBeUndefined();
   });
