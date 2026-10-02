@@ -1,4 +1,4 @@
-import { isPositive } from "./guards.ts";
+import { getOrCreate, isPositive } from "./guards.ts";
 import type { TokenLedger } from "./ledger.ts";
 import { scoped } from "./scope.ts";
 import type { TurnUsage } from "./stream.ts";
@@ -251,19 +251,14 @@ interface Stream {
   ended: boolean;
 }
 
-const streamFor = ({ streams }: Bus, runId: string): Stream => {
-  const existing = streams.get(runId);
-  if (existing) return existing;
-  const stream: Stream = {
+const streamFor = ({ streams }: Bus, runId: string): Stream =>
+  getOrCreate(streams, runId, () => ({
     events: [],
     listeners: new Set(),
     seq: 0,
     touched: Date.now(),
     ended: false,
-  };
-  streams.set(runId, stream);
-  return stream;
-};
+  }));
 
 /**
  * Drops the streams nobody is reading and nothing is writing to.
@@ -683,9 +678,7 @@ export function runMetrics(
     if (event.kind === "step") metrics.steps++;
     else if (event.kind === "tool-call") {
       if (event.name === LOAD_TOOLS) metrics.loadCalls++;
-      const waiting = pending.get(event.name) ?? [];
-      waiting.push(event.at);
-      pending.set(event.name, waiting);
+      getOrCreate(pending, event.name, () => []).push(event.at);
     } else if (event.kind === "tool-result") {
       metrics.toolCalls++;
       if (event.ok === false)

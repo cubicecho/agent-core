@@ -1,5 +1,6 @@
 import { endpointId } from "./client.ts";
 import { errorMessage } from "./errors.ts";
+import { getOrCreate } from "./guards.ts";
 import { isGrammarError } from "./schema-compat.ts";
 import { scoped } from "./scope.ts";
 import type { Produced } from "./stream.ts";
@@ -198,12 +199,11 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
  * since that is the only name the refusal is about.
  */
 export function modelCapabilitiesFor(supports: Capabilities, model: string): ModelCapabilities {
-  let known = supports.models.get(model);
-  if (!known) {
-    known = { ...OPTIMISTIC_MODEL, refusedFields: new Set(), refusedEfforts: new Set() };
-    supports.models.set(model, known);
-  }
-  return known;
+  return getOrCreate(supports.models, model, () => ({
+    ...OPTIMISTIC_MODEL,
+    refusedFields: new Set(),
+    refusedEfforts: new Set(),
+  }));
 }
 
 /** Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`. */
@@ -214,12 +214,12 @@ export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabi
  * `importCapabilities` reaches an endpoint it has only a digest for.
  */
 export function capabilitiesById(id: string): Capabilities {
-  let known = capabilities().get(id);
-  if (!known) {
-    known = { strictSchemas: true, usageInStream: true, models: new Map(), since: Date.now() };
-    capabilities().set(id, known);
-  }
-  return known;
+  return getOrCreate(capabilities(), id, () => ({
+    strictSchemas: true,
+    usageInStream: true,
+    models: new Map(),
+    since: Date.now(),
+  }));
 }
 
 /**

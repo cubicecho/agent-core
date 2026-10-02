@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { getOrCreate } from "./guards.ts";
 
 /**
  * Everything one runtime remembers: each module's state, under a key only that module holds.
@@ -50,9 +51,7 @@ export interface Scoped<T> {
 export function scoped<T>(create: () => T): Scoped<T> {
   const key = Symbol();
   const read = (): T => {
-    const scope = currentScope();
-    if (!scope.has(key)) scope.set(key, create());
-    return scope.get(key) as T;
+    return getOrCreate(currentScope(), key, create) as T;
   };
   return Object.assign(read, {
     reset: () => {

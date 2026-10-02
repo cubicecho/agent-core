@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { isRecord } from "./guards.ts";
+import { getOrCreate, isRecord } from "./guards.ts";
 
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.
@@ -406,14 +406,7 @@ const through = (
   cache: WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>,
   tools: OpenAI.ChatCompletionTool[],
   fn: (parameters: unknown) => unknown,
-) =>
-  tools.map((tool) => {
-    const hit = cache.get(tool);
-    if (hit) return hit;
-    const built = mapTool(tool, fn);
-    cache.set(tool, built);
-    return built;
-  });
+) => tools.map((tool) => getOrCreate(cache, tool, () => mapTool(tool, fn)));
 
 /**
  * Tool definitions a strict server will accept, remembered per definition object.
