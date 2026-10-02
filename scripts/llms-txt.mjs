@@ -7,7 +7,7 @@
  *
  * The parse is deliberately small and hand-rolled. TypeScript 7 is the native compiler and no
  * longer ships the JS API this would otherwise have used; its replacement is published under
- * `typescript/unstable/*`, and `build` is what `prepare` runs, so an unstable API breaking under
+ * `typescript/unstable/*`, and `build` is what `prepack` runs, so an unstable API breaking under
  * a caret range would break publishing. The shape being read is our own and regular, so reading
  * it directly costs less than that risk — and every assumption below throws rather than guessing,
  * so a source file that stops matching fails the build instead of quietly emitting less.

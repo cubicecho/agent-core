@@ -68,7 +68,8 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      # Also builds dist/, via `prepare` — which is what actually gets published.
+      # Builds nothing. dist/ is built by `prepack`, which npm runs as part of
+      # the publish below.
       - run: npm ci
 
       - name: Semantic release

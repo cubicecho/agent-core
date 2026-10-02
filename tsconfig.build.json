@@ -1,9 +1,15 @@
 {
-  // The published build. Drops the maps: they point at `../src/*.ts`, which is not shipped
-  // (`files: ["dist"]`), so publishing them would leave consumers with dead references.
+  // The published build, and the one config that emits. No maps: they would point at
+  // `../src/*.ts`, which is not shipped (`files` is `dist` and `llms.txt`).
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "sourceMap": false,
-    "declarationMap": false
-  }
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "exclude": ["**/*.test.ts"]
 }

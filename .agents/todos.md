@@ -208,10 +208,12 @@ reverse.
 
 To be listed per export before the next breaking release.
 
-### A2 — `prepare` or `prepack`, and the tsconfig layout
+### A2 — `prepack` and the skill's tsconfig layout: done (`0c35470`)
 
-**File:** `package.json`, `tsconfig*.json`. The skill builds on `prepack` and keeps emit
-options out of the base tsconfig (`module: ESNext`, `moduleResolution: bundler`, `noEmit`).
-This repo builds on `prepare`, which also runs on `npm ci` and when it is installed from git,
-and its base tsconfig is `NodeNext` and emits. Moving to `prepack` would stop a git install
-from getting a `dist/`.
+Decided 2026-10-02: follow the skill. `tsconfig.json` checks src, tests and bench and emits
+nothing (`module: ESNext`, `moduleResolution: bundler`, `noEmit`); `tsconfig.build.json` is the
+only config that emits, and `tsconfig.tests.json` is gone. The build runs on `prepack`, and CI
+builds explicitly. `dist/` came out byte for byte the same.
+
+What it costs: an install from a git URL gets no `dist/`. No consumer in the org installs it
+that way; all ten depend on a published version.
