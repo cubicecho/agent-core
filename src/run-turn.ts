@@ -119,6 +119,39 @@ export type RequestBuilder = (
 ) => OpenAI.ChatCompletionCreateParamsStreaming;
 
 /**
+ * Throws `ContextOverflow` for a request that will not fit its window, before it is sent.
+ *
+ * The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with `n_predict`
+ * in, OpenAI with the ceiling — so a prompt that fits the window but not the window less the
+ * ceiling was let through here to be refused one round trip later, which is the trip this guard
+ * exists to save. The reserve is read off the body under whichever spelling was chosen, and no
+ * ceiling reserves nothing: the server then gives the reply what is left.
+ */
+function refuseOversized(
+  body: OpenAI.ChatCompletionCreateParamsStreaming,
+  contextLimit: number,
+  charsPerToken: number,
+): void {
+  const needed = requestTokens(body, { charsPerToken });
+  const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
+  if (needed + reserve <= contextLimit) return;
+  // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
+  // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
+  // loops on the first attempt instead of being sent again to be refused again.
+  const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : "";
+  throw new ContextOverflow(
+    `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
+  );
+}
+
+/**
+ * A backoff in whatever unit reads as a number: the first is under a second, and "retrying in
+ * 0s" is what rounding it to seconds says.
+ */
+const shownDelay = (ms: number) =>
+  ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
+
+/**
  * `request` is a callback rather than a body because the body has to be rebuilt from whatever
  * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
  * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
@@ -157,24 +190,7 @@ export async function runTurn(
     sent = body;
     if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
       sized = true;
-      const needed = requestTokens(body, {
-        charsPerToken: charsPerTokenFor(supports, body.model),
-      });
-      // The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with
-      // `n_predict` in, OpenAI with the ceiling — so a prompt that fits the window but not the
-      // window less the ceiling was let through here to be refused one round trip later, which
-      // is the trip this guard exists to save. Read off the body under whichever spelling was
-      // chosen. No ceiling reserves nothing: the server then gives the reply what is left.
-      const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
-      // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
-      // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
-      // loops on the first attempt instead of being sent again to be refused again.
-      if (needed + reserve > contextLimit) {
-        const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : "";
-        throw new ContextOverflow(
-          `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
-        );
-      }
+      refuseOversized(body, contextLimit, charsPerTokenFor(supports, body.model));
     }
     return body;
   };
@@ -235,10 +251,9 @@ export async function runTurn(
       retries++;
       if (error instanceof EndpointSilent) timeouts++;
       const wait = backoffMs(attempt);
-      // Reported in whatever unit reads as a number: the first backoff is under a second, and
-      // "retrying in 0s" is what rounding it to seconds says.
-      const delay = wait < 1000 ? `${Math.round(wait)}ms` : `${Math.round(wait / 1000)}s`;
-      onNotice?.(`${errorMessage(error)} — retrying in ${delay} (${attempt + 1}/${maxRetries})`);
+      onNotice?.(
+        `${errorMessage(error)} — retrying in ${shownDelay(wait)} (${attempt + 1}/${maxRetries})`,
+      );
       await sleep(wait, stream.signal);
     }
   }
