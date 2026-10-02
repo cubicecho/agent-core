@@ -883,6 +883,77 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
 };
 
 /**
+ * The loop's own preselection: by the task where the config carries one, and by the flattened
+ * name on its own endpoint where it does not. `preselect` answers an empty model with nothing, so
+ * a config that names neither asks nothing.
+ */
+async function chooseTools(
+  options: AgentLoopOptions,
+  notice: (text: string) => void,
+): Promise<string[]> {
+  const { config, catalog = [], signal } = options;
+  const prompt = userText(options.messages.findLast((message) => message.role === "user"));
+  if (!prompt.trim()) return [];
+  const asked = {
+    ...(typeof options.preselect === "object" ? options.preselect : {}),
+    signal,
+    onNotice: notice,
+  };
+  const selector = config.tasks?.toolSelect;
+  if (!selector?.model) {
+    return preselect(config, config.toolSelectModel ?? "", catalog, prompt, asked);
+  }
+  const call = taskCall(selector, asked, config);
+  return preselect(call.endpoint, call.model, catalog, prompt, call.options);
+}
+
+/**
+ * The loop's own summariser, which is the compaction task's or nothing: a summary the main model
+ * writes is a second full-price request the operator did not ask for.
+ */
+function ownSummariser(options: AgentLoopOptions, notice: (text: string) => void) {
+  const { config, signal } = options;
+  const compactor = options.compact ? config.tasks?.compaction : undefined;
+  if (!compactor?.model) return undefined;
+  const call = taskCall(compactor, { signal, onNotice: notice }, config);
+  const write = summariser(call.endpoint, call.model, call.options);
+  // A summary that fails folds nothing, and the step goes out as it was.
+  return async (text: string) =>
+    (await tryAsk("compaction", () => write(text), { onNotice: notice })) ?? "";
+}
+
+/**
+ * A step's transcript after the loop's own compaction: folded where a fold was due and its summary
+ * came back, and otherwise the array it was given.
+ */
+async function foldBeforeStep(
+  transcript: OpenAI.ChatCompletionMessageParam[],
+  reported: { used?: number },
+  summarise: (text: string) => Promise<string>,
+  {
+    options,
+    charsPerToken,
+    notice,
+  }: { options: AgentLoopOptions; charsPerToken: number; notice: (text: string) => void },
+): Promise<OpenAI.ChatCompletionMessageParam[]> {
+  const { config, hooks } = options;
+  const compactor = config.tasks?.compaction;
+  const plan = planCompaction(transcript, {
+    ...(typeof options.compact === "object" ? options.compact : {}),
+    limit: config.contextLength ?? 0,
+    ...reported,
+    charsPerToken,
+    ...((compactor?.maxTokens ?? 0) > 0 ? { summaryTokens: compactor?.maxTokens } : {}),
+  });
+  if (!plan) return transcript;
+  const folded = await compactTranscript(transcript, plan, summarise, {
+    ...(hooks ? { hooks: { run: hooks.run, context: hooks.context, onNote: hooks.onNote } } : {}),
+  });
+  if (folded !== transcript) notice(`compacted ${plan.cut - plan.from} messages into a summary`);
+  return folded;
+}
+
+/**
  * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
  * when `maxToolIterations` is spent, and tells `standing` how to read the run either way.
  */
@@ -929,41 +1000,14 @@ async function runSteps(
   const onDemand = proxied || (config.toolDiscovery === "ondemand" && catalog.length > 0);
   // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
   const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
-  // The loop's own preselection, where it was asked for and the host has not already decided: by
-  // the task where the config carries one, and by the flattened name on its own endpoint where
-  // it does not. `preselect` answers an empty model with nothing, so neither named asks nothing.
-  const choose = async () => {
-    const prompt = userText(options.messages.findLast((message) => message.role === "user"));
-    if (!prompt.trim()) return [];
-    const asked = {
-      ...(typeof options.preselect === "object" ? options.preselect : {}),
-      signal,
-      onNotice: notice,
-    };
-    const selector = config.tasks?.toolSelect;
-    if (!selector?.model) {
-      return preselect(config, config.toolSelectModel ?? "", catalog, prompt, asked);
-    }
-    const call = taskCall(selector, asked, config);
-    return preselect(call.endpoint, call.model, catalog, prompt, call.options);
-  };
+  // The loop's own preselection, where it was asked for and the host has not already decided.
   const preselected = !onDemand
     ? []
     : options.preselect && options.preselected === undefined
-      ? await choose()
+      ? await chooseTools(options, notice)
       : [...(options.preselected ?? [])];
   if (!proxied) for (const name of preselected) loaded.add(name);
-  // The loop's own compaction, which is the task's or nothing: a summary the main model writes is
-  // a second full-price request the operator did not ask for.
-  const compactor = options.compact ? config.tasks?.compaction : undefined;
-  const summarise = (() => {
-    if (!compactor?.model) return undefined;
-    const call = taskCall(compactor, { signal, onNotice: notice }, config);
-    const write = summariser(call.endpoint, call.model, call.options);
-    // A summary that fails folds nothing, and the step goes out as it was.
-    return async (text: string) =>
-      (await tryAsk("compaction", () => write(text), { onNotice: notice })) ?? "";
-  })();
+  const summarise = ownSummariser(options, notice);
   const used = new Set<string>();
   const definitions = new Map<string, OpenAI.ChatCompletionTool>();
   for (const tool of tools) {
@@ -1070,31 +1114,21 @@ async function runSteps(
     // end — so the signal is read between steps as well.
     signal?.throwIfAborted();
     const before = messages;
+    const reported = previous && previous.prompt > 0 ? { used: previous.prompt } : {};
     const rewritten = await beforeStep?.(messages, step, {
-      ...(previous && previous.prompt > 0 ? { used: previous.prompt } : {}),
+      ...reported,
       limit: config.contextLength ?? 0,
       ledger,
     });
-    let next = rewritten ?? messages;
-    if (summarise) {
-      const plan = planCompaction(next, {
-        ...(typeof options.compact === "object" ? options.compact : {}),
-        limit: config.contextLength ?? 0,
-        // The last request's prompt describes this transcript only while nothing has rewritten it.
-        ...(next === messages && previous && previous.prompt > 0 ? { used: previous.prompt } : {}),
-        charsPerToken: charsPerTokenFor(supports, config.model),
-        ...((compactor?.maxTokens ?? 0) > 0 ? { summaryTokens: compactor?.maxTokens } : {}),
-      });
-      if (plan) {
-        const folded = await compactTranscript(next, plan, summarise, {
-          ...(hooks
-            ? { hooks: { run: hooks.run, context: hooks.context, onNote: hooks.onNote } }
-            : {}),
-        });
-        if (folded !== next) notice(`compacted ${plan.cut - plan.from} messages into a summary`);
-        next = folded;
-      }
-    }
+    const given = rewritten ?? messages;
+    // The last request's prompt describes this transcript only while nothing has rewritten it.
+    const next = summarise
+      ? await foldBeforeStep(given, given === messages ? reported : {}, summarise, {
+          options,
+          charsPerToken: charsPerTokenFor(supports, config.model),
+          notice,
+        })
+      : given;
     // A rewrite may have folded a definition away, and a load answered "already loaded" would
     // then point at nothing. Forgetting costs a definition sent twice at worst.
     if (proxied && next !== messages) loaded.clear();
