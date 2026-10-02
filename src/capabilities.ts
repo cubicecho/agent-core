@@ -126,6 +126,29 @@ export interface ModelCapabilities {
   assistantPrefill: boolean;
 }
 
+/** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
+export type ModelFlag = {
+  [Key in keyof ModelCapabilities]-?: ModelCapabilities[Key] extends boolean ? Key : never;
+}[keyof ModelCapabilities];
+
+/**
+ * A model's on/off flags as it starts out, every one optimistic.
+ *
+ * A record over every boolean on `ModelCapabilities`, so a flag added there does not compile until
+ * it is listed here — and this is the list a snapshot is exported, imported and judged empty by,
+ * where each of those used to name the flags again and one could be missed.
+ */
+export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
+  reasoningEffort: true,
+  legacyTokenLimit: true,
+  chosenTemperature: true,
+  structuredOutput: true,
+  assistantPrefill: true,
+};
+
+/** The names of those flags, for a caller that reads or latches each in turn. */
+export const MODEL_FLAGS = Object.keys(OPTIMISTIC_MODEL) as ModelFlag[];
+
 /**
  * What each endpoint cannot do, remembered for the life of the process.
  *
@@ -177,15 +200,7 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
 export function modelCapabilitiesFor(supports: Capabilities, model: string): ModelCapabilities {
   let known = supports.models.get(model);
   if (!known) {
-    known = {
-      reasoningEffort: true,
-      legacyTokenLimit: true,
-      chosenTemperature: true,
-      refusedFields: new Set(),
-      structuredOutput: true,
-      refusedEfforts: new Set(),
-      assistantPrefill: true,
-    };
+    known = { ...OPTIMISTIC_MODEL, refusedFields: new Set(), refusedEfforts: new Set() };
     supports.models.set(model, known);
   }
   return known;

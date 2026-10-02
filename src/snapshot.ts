@@ -1,4 +1,10 @@
-import { capabilitiesById, knownCapabilities, modelCapabilitiesFor } from "./capabilities.ts";
+import {
+  capabilitiesById,
+  knownCapabilities,
+  MODEL_FLAGS,
+  modelCapabilitiesFor,
+  OPTIMISTIC_MODEL,
+} from "./capabilities.ts";
 import { isRecord } from "./guards.ts";
 import { hintKey, refusedHints } from "./side-task.ts";
 
@@ -62,25 +68,23 @@ export interface CapabilitySnapshot {
 }
 
 const optimisticModel = (): ModelSnapshot => ({
-  reasoningEffort: true,
-  legacyTokenLimit: true,
-  chosenTemperature: true,
-  refusedFields: [],
-  structuredOutput: true,
-  assistantPrefill: true,
+  ...OPTIMISTIC_MODEL,
   thinkingHints: true,
+  refusedFields: [],
   refusedEfforts: [],
 });
 
 const refusedAnything = (model: ModelSnapshot) =>
-  !model.reasoningEffort ||
-  !model.legacyTokenLimit ||
-  !model.chosenTemperature ||
+  MODEL_FLAGS.some((flag) => !model[flag]) ||
   !model.thinkingHints ||
-  !model.structuredOutput ||
-  !model.assistantPrefill ||
   model.refusedFields.length > 0 ||
   (model.refusedEfforts?.length ?? 0) > 0;
+
+/** Latches every string in a stored list into a live set, skipping what is not a list of them. */
+const latchInto = (held: Set<string>, stored: unknown) => {
+  if (!Array.isArray(stored)) return;
+  for (const value of stored) if (typeof value === "string") held.add(value);
+};
 
 /**
  * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
@@ -105,19 +109,13 @@ export function exportCapabilities(): CapabilitySnapshot {
   for (const [id, supports] of knownCapabilities()) {
     const models: Record<string, ModelSnapshot> = {};
     for (const [name, refused] of supports.models) {
-      const model = {
-        ...optimisticModel(),
-        reasoningEffort: refused.reasoningEffort,
-        legacyTokenLimit: refused.legacyTokenLimit,
-        chosenTemperature: refused.chosenTemperature,
-        refusedFields: [...refused.refusedFields].sort(),
-        structuredOutput: refused.structuredOutput,
-        assistantPrefill: refused.assistantPrefill,
-        refusedEfforts: [...refused.refusedEfforts].sort(),
-        // Only alongside a refusal, since on its own a published list latches nothing: the model
-        // named it while refusing a rung, and that rung is in `refusedEfforts`.
-        ...(refused.supportedEfforts ? { supportedEfforts: [...refused.supportedEfforts] } : {}),
-      };
+      const model = optimisticModel();
+      for (const flag of MODEL_FLAGS) model[flag] = refused[flag];
+      model.refusedFields = [...refused.refusedFields].sort();
+      model.refusedEfforts = [...refused.refusedEfforts].sort();
+      // Only alongside a refusal, since on its own a published list latches nothing: the model
+      // named it while refusing a rung, and that rung is in `refusedEfforts`.
+      if (refused.supportedEfforts) model.supportedEfforts = [...refused.supportedEfforts];
       if (refusedAnything(model)) models[name] = model;
     }
     if (!supports.strictSchemas || !supports.usageInStream || Object.keys(models).length) {
@@ -168,27 +166,15 @@ export function importCapabilities(snapshot: unknown): boolean {
     for (const [name, model] of Object.entries(endpoint.models)) {
       if (!isRecord(model)) continue;
       const refused = modelCapabilitiesFor(supports, name);
-      if (model.reasoningEffort === false) refused.reasoningEffort = false;
-      if (model.legacyTokenLimit === false) refused.legacyTokenLimit = false;
-      if (model.chosenTemperature === false) refused.chosenTemperature = false;
-      if (model.structuredOutput === false) refused.structuredOutput = false;
-      if (model.assistantPrefill === false) refused.assistantPrefill = false;
-      if (Array.isArray(model.refusedEfforts)) {
-        for (const effort of model.refusedEfforts) {
-          if (typeof effort === "string") refused.refusedEfforts.add(effort);
-        }
-      }
+      for (const flag of MODEL_FLAGS) if (model[flag] === false) refused[flag] = false;
+      latchInto(refused.refusedEfforts, model.refusedEfforts);
       // Replaced rather than merged: two lists of what one model takes are two readings of the
       // same fact, and the stored one is at least as recent as an empty absent.
       if (Array.isArray(model.supportedEfforts)) {
         const listed = model.supportedEfforts.filter((value) => typeof value === "string");
         if (listed.length) refused.supportedEfforts = listed;
       }
-      if (Array.isArray(model.refusedFields)) {
-        for (const field of model.refusedFields) {
-          if (typeof field === "string") refused.refusedFields.add(field);
-        }
-      }
+      latchInto(refused.refusedFields, model.refusedFields);
       if (model.thinkingHints === false) refusedHints().add(hintKey(id, name));
     }
   }
