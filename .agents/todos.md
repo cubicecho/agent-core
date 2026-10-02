@@ -169,6 +169,7 @@ Reviewed 2026-10-02, one answer each. Done on `fix/review-findings`, one commit 
 | --- | --- | --- |
 | B1 | `listModels` and the ranking tie-break order by code unit; `byCodeUnit` lives in `guards.ts` | `bcfa50e` |
 | B2 | `tryAsk` lets through an abort that is the signal's own `AbortError`; `isAbort` in `retry.ts` | `06e7d5e` |
+| B2 | `tryAsk` is handed the signal and asks it first, so a reason of the caller's own is an abort too | `2472cd5` |
 | B3 | one `CODE_FENCE` pattern for `parseJson` and `bareCalls` (they matched the same text) | `a4cdfb0` |
 | B4 | not a bug: `pruneDefs` had checked the pool and then cast it; it keeps what it checked | `7c095fd` |
 | B5 | the keyword pass takes the smaller of its own cap and `preselect`'s ceiling | `a89dd86` |
@@ -189,10 +190,9 @@ P16); the fourth is in its `tests.md`.
 
 ### Left as they are, and why
 
-- **B2** — `isAbort` looks at the error only. A signal aborted with a reason of the caller's own
-  making (`controller.abort(new Error('mine'))`) still reads as a failed side task; recognising
-  it means handing `tryAsk` the signal, which was the option not taken. `isAbort` is in
-  `retry.ts` rather than `guards.ts`, which has no imports and would need the SDK.
+- **B2** — `isAbort` is in `retry.ts` rather than `guards.ts`, which has no imports and would
+  need the SDK. It looks at the error only, so `tryAsk` asks the signal as well; a host calling
+  `tryAsk` itself has to hand it the signal to get that.
 
 ### B6 — `getOrCreate` reads a stored `undefined` as a miss
 
