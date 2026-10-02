@@ -4,16 +4,10 @@ import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src
 import { continueTurn, isContinuable } from '../src/continuation.ts';
 import type { Turn } from '../src/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire.ts';
+import { apiError, type Body, chunks, clientOf } from './helpers.ts';
 
-type Body = OpenAI.ChatCompletionCreateParamsStreaming;
-
-const chunks = (...list: unknown[]) => ({
-  async *[Symbol.asyncIterator]() {
-    yield* list as OpenAI.ChatCompletionChunk[];
-  },
-});
 /** A reply that says this, stops for this reason, and reports these counts and timings. */
-const reply = (content: string, finish: FinishReason = FinishReason.Stop, timings?: Record<string, number>) =>
+const replies = (content: string, finish: FinishReason = FinishReason.Stop, timings?: Record<string, number>) =>
   chunks(
     { choices: [{ delta: { content }, finish_reason: finish }] },
     {
@@ -22,9 +16,6 @@ const reply = (content: string, finish: FinishReason = FinishReason.Stop, timing
       ...(timings ? { timings } : {}),
     },
   );
-const clientOf = (create: (body: Body) => unknown) => ({ chat: { completions: { create } } }) as unknown as OpenAI;
-const apiError = (status: number, message: string) =>
-  new OpenAI.APIError(status, { error: { message } }, undefined, undefined);
 
 const question: Body = { model: 'm', stream: true, messages: [{ role: Role.User, content: 'why' }] };
 const request = () => question;
@@ -59,7 +50,7 @@ describe('isContinuable', () => {
 
 describe('continueTurn', () => {
   it('sends the answer so far as a prefill and joins what comes back onto it', async () => {
-    const create = vi.fn().mockReturnValue(reply(' of the way light scatters.', FinishReason.Stop));
+    const create = vi.fn().mockReturnValue(replies(' of the way light scatters.', FinishReason.Stop));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
       startInReasoning: true,
@@ -85,7 +76,7 @@ describe('continueTurn', () => {
   it('drops a field only one request reported, and weights the rates by the time they held', async () => {
     const create = vi
       .fn()
-      .mockReturnValue(reply(' more', FinishReason.Stop, { predicted_ms: 3000, predicted_per_second: 40 }));
+      .mockReturnValue(replies(' more', FinishReason.Stop, { predicted_ms: 3000, predicted_per_second: 40 }));
     const first = cut();
     first.usage = { ...first.usage, predictedMs: 1000, tokensPerSecond: 80, wallMs: 5 };
     const turn = await continueTurn(clientOf(create), supports(), request, first, { model: 'm' });
@@ -109,7 +100,7 @@ describe('continueTurn', () => {
   });
 
   it('stops at the cap on a model that never reaches a stop', async () => {
-    const create = vi.fn(() => reply(' and on', FinishReason.Length));
+    const create = vi.fn(() => replies(' and on', FinishReason.Length));
     const once = await continueTurn(clientOf(create), supports(), request, cut());
     expect(create).toHaveBeenCalledTimes(1);
     expect(once.finishReason).toBe(FinishReason.Length);
@@ -142,7 +133,7 @@ describe('continueTurn', () => {
 
   it('latches it off when the model answers afresh instead, and keeps the first answer', async () => {
     const notices: string[] = [];
-    const create = vi.fn(() => reply('The sky is blue because of Rayleigh scattering.'));
+    const create = vi.fn(() => replies('The sky is blue because of Rayleigh scattering.'));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
       onNotice: (n) => notices.push(n),

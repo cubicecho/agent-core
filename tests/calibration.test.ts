@@ -1,4 +1,3 @@
-import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { calibrate, charsPerTokenFor, resetCalibration } from '../src/calibration.ts';
 import { capabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
@@ -6,10 +5,9 @@ import { ContextOverflow } from '../src/retry.ts';
 import { runTurn } from '../src/run-turn.ts';
 import { CHARS_PER_TOKEN, requestChars, requestTokens, toolsChars } from '../src/tokens.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
+import { type Body, chunks, clientOf } from './helpers.ts';
 
-type Body = OpenAI.ChatCompletionCreateParamsStreaming;
-
-const says = (content: string, model = 'm'): Body => ({
+const asking = (content: string, model = 'm'): Body => ({
   model,
   stream: true,
   messages: [{ role: Role.User, content }],
@@ -17,12 +15,6 @@ const says = (content: string, model = 'm'): Body => ({
 /** The prompt count that puts a body at this many characters per token. */
 const promptAt = (body: Body, ratio: number) => (requestChars(body) + toolsChars(body.tools ?? [])) / ratio;
 
-const clientOf = (create: (body: Body) => unknown) => ({ chat: { completions: { create } } }) as unknown as OpenAI;
-const chunks = (...list: unknown[]) => ({
-  async *[Symbol.asyncIterator]() {
-    yield* list as OpenAI.ChatCompletionChunk[];
-  },
-});
 /** A turn that answers and reports this prompt count. */
 const reports = (prompt: number) =>
   chunks(
@@ -46,7 +38,7 @@ describe('calibration', () => {
   });
 
   it('takes the highest of the latest four readings, which is the lowest count', () => {
-    const body = says('x'.repeat(3000));
+    const body = asking('x'.repeat(3000));
     for (const ratio of [7, 2, 3, 2.5, 3.5]) {
       calibrate(supports(), body, promptAt(body, ratio));
     }
@@ -55,7 +47,7 @@ describe('calibration', () => {
   });
 
   it('keeps each model and each endpoint to itself', () => {
-    const body = says('x'.repeat(3000));
+    const body = asking('x'.repeat(3000));
     calibrate(supports(), body, promptAt(body, 2));
     expect(charsPerTokenFor(supports(), 'm')).toBeCloseTo(2);
     expect(charsPerTokenFor(supports(), 'other')).toBe(CHARS_PER_TOKEN);
@@ -64,14 +56,14 @@ describe('calibration', () => {
 
   it('counts the tools the request declared', () => {
     const body: Body = {
-      ...says('x'.repeat(1000)),
+      ...asking('x'.repeat(1000)),
       tools: [{ type: FUNCTION_TOOL, function: { name: 't', parameters: { type: SchemaType.Object } } }],
     };
     expect(calibrate(supports(), body, promptAt(body, 3))).toBeCloseTo(3);
   });
 
   it('does not learn from a reading no tokenizer produces, or from no reading', () => {
-    const body = says('x'.repeat(3000));
+    const body = asking('x'.repeat(3000));
     calibrate(supports(), body, promptAt(body, 0.5));
     calibrate(supports(), body, promptAt(body, 20));
     calibrate(supports(), body, 0);
@@ -96,7 +88,7 @@ describe('calibration', () => {
   });
 
   it('is forgotten by resetCalibration', () => {
-    const body = says('x'.repeat(3000));
+    const body = asking('x'.repeat(3000));
     calibrate(supports(), body, promptAt(body, 2));
     resetCalibration();
     expect(charsPerTokenFor(supports(), 'm')).toBe(CHARS_PER_TOKEN);
@@ -104,10 +96,10 @@ describe('calibration', () => {
 
   it('is learned by runTurn and then sizes the guard in front of the next request', async () => {
     // 30k characters is about 7.5k tokens at four, under an 8192 window; at two it is 15k.
-    const big = () => says('x'.repeat(30_000));
+    const big = () => asking('x'.repeat(30_000));
     // Sized at four, it would have been let through.
     expect(requestTokens(big(), { charsPerToken: charsPerTokenFor(supports(), 'm') })).toBeLessThan(8192);
-    const small = says('x'.repeat(2000));
+    const small = asking('x'.repeat(2000));
     const create = vi.fn().mockReturnValue(reports(promptAt(small, 2)));
     await runTurn(clientOf(create), supports(), () => small, { contextLimit: 8192 });
     expect(charsPerTokenFor(supports(), 'm')).toBeCloseTo(2);

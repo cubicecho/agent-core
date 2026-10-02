@@ -1,5 +1,5 @@
-import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { apiError, reply } from './helpers.ts';
 
 const create = vi.fn();
 vi.mock('../src/client.ts', async (importOriginal) => ({
@@ -14,8 +14,7 @@ const { ask } = await import('../src/side-task.ts');
 const { CAPABILITY_SNAPSHOT_VERSION, exportCapabilities, importCapabilities } = await import('../src/snapshot.ts');
 
 const config = { baseUrl: 'http://box/v1', apiKey: 'sk-secret', requestTimeoutSeconds: 60 };
-const reply = { choices: [{ message: { content: 'ok' } }] };
-const refuseHints = new OpenAI.APIError(400, { error: { message: 'no' } }, 'no', undefined);
+const refuseHints = apiError(400, 'no');
 
 afterEach(() => {
   create.mockReset();

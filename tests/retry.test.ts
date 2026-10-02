@@ -1,9 +1,7 @@
 import OpenAI from 'openai';
 import { expect, test } from 'vitest';
 import { backoffMs, ContextOverflow, EndpointSilent, isOverflow, isTransient, sleep } from '../src/retry.ts';
-
-/** An `APIError` as the SDK raises it, with only the status this cares about set. */
-const apiError = (status: number) => new OpenAI.APIError(status, { error: { message: 'nope' } }, 'nope', undefined);
+import { apiError } from './helpers.ts';
 
 test('a lost or refused request is worth sending again; a complaint about it is not', () => {
   expect(isTransient(new EndpointSilent('went quiet'))).toBe(true);

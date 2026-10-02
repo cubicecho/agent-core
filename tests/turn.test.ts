@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFor, negotiate, resetCapabilities } from '../src/capabilities.ts';
 import { streamTurn } from '../src/stream.ts';
+import { clientOf, text } from './helpers.ts';
 
 /**
  * `negotiate` wrapping `streamTurn` is the whole of a turn. Both are useful alone; this is the
@@ -9,8 +10,6 @@ import { streamTurn } from '../src/stream.ts';
  * to be passed to each of them separately.
  */
 
-const chunk = (partial: unknown) => partial as OpenAI.ChatCompletionChunk;
-const text = (content: string) => chunk({ choices: [{ delta: { content } }] });
 const NO_GRAMMAR = new Error('Failed to initialize samplers: failed to parse grammar');
 
 /** A server that refuses the first request, in the words llama.cpp uses, then answers. */
@@ -31,7 +30,6 @@ const refusesOnce = (words: string[], { after }: { after: number }) => {
   });
 };
 
-const clientOf = (create: unknown) => ({ chat: { completions: { create } } }) as unknown as OpenAI;
 const body = {} as OpenAI.ChatCompletionCreateParamsStreaming;
 
 beforeEach(() => resetCapabilities());

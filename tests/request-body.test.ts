@@ -3,23 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src/capabilities.ts';
 import { buildBody } from '../src/request-body.ts';
 import { FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
-
-type Message = OpenAI.ChatCompletionMessageParam;
-type Body = OpenAI.ChatCompletionCreateParamsStreaming;
-
-const tool = (name: string): OpenAI.ChatCompletionTool => ({
-  type: FUNCTION_TOOL,
-  function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
-});
-
-const config = {
-  baseUrl: 'http://local/v1',
-  apiKey: '',
-  model: 'm',
-  maxTokens: 100,
-  temperature: 0.2,
-  maxToolIterations: 4,
-};
+import { type Body, config, type Message, tool } from './helpers.ts';
 
 afterEach(() => resetCapabilities());
 

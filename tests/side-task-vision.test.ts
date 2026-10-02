@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSON_SCHEMA_FORMAT, PartType, Role, SchemaType } from '../src/wire.ts';
+import { answer } from './helpers.ts';
 
 const create = vi.fn();
 vi.mock('../src/client.ts', async (importOriginal) => ({
@@ -12,7 +13,6 @@ const { ask, askJson } = await import('../src/side-task.ts');
 const { resetAll } = await import('../src/reset.ts');
 
 const config = { baseUrl: 'http://box/v1', apiKey: '', requestTimeoutSeconds: 60 };
-const answer = (content: string) => ({ choices: [{ message: { content } }] });
 const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
 const userMessage = (nth: number) => (body(nth).messages as OpenAI.ChatCompletionMessageParam[])[1];
 

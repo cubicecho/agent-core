@@ -2,7 +2,8 @@ import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../src/config.ts';
 import { RunEventKind } from '../src/events.ts';
-import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire.ts';
+import { FinishReason, Role } from '../src/wire.ts';
+import { answer, type Message, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Every endpoint a client was asked for, in order, so a test can say where a request went. */
@@ -24,24 +25,10 @@ const { SUMMARY_LEAD, summariser } = await import('../src/compaction.ts');
 const { ask, resetHints, taskCall } = await import('../src/side-task.ts');
 const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../src/spec.ts');
 
-type Message = OpenAI.ChatCompletionMessageParam;
 type AgentSpec = import('../src/spec.ts').AgentSpec;
 type SideTask = import('../src/side-task.ts').SideTask;
 type RunEventInput = import('../src/events.ts').RunEventInput;
 
-/** What a side task is answered with. */
-const answers = (content: string) => ({ choices: [{ message: { content } }] });
-/** A streamed turn that answers in words and reports this prompt. */
-const says = (content: string, prompt = 10) => ({
-  async *[Symbol.asyncIterator]() {
-    yield { choices: [{ delta: { content } }] };
-    yield { choices: [{ delta: {}, finish_reason: FinishReason.Stop }], usage: null };
-    yield {
-      choices: [],
-      usage: { prompt_tokens: prompt, completion_tokens: 2, total_tokens: prompt + 2 },
-    };
-  },
-});
 /** A streamed turn that asks for one call. */
 const calls = (name: string) => ({
   async *[Symbol.asyncIterator]() {
@@ -73,10 +60,6 @@ const agent = (tasks: Record<string, unknown>, extra: Record<string, unknown> = 
 };
 
 const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
-const tool = (name: string): OpenAI.ChatCompletionTool => ({
-  type: FUNCTION_TOOL,
-  function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
-});
 
 beforeEach(() => {
   create.mockReset();
@@ -158,7 +141,7 @@ describe("a side task's own settings", () => {
       compaction: { model: 'tiny' },
       toolSelect: { model: 'tiny' },
     });
-    create.mockResolvedValue(answers('ok'));
+    create.mockResolvedValue(answer('ok'));
 
     const title = taskCall(resolved.tasks.title, {}, resolved);
     await ask(title.endpoint, title.model, 'Name it.', 'a chat', title.options);
@@ -182,7 +165,7 @@ describe("a side task's own settings", () => {
   it('sends what a task states through every entry point', async () => {
     const stated = { model: 'tiny', temperature: 0, maxTokens: 64, reasoningEffort: 'low' };
     const resolved = agent({ title: stated, compaction: stated, toolSelect: stated });
-    create.mockResolvedValue(answers('ok'));
+    create.mockResolvedValue(answer('ok'));
 
     const title = taskCall(resolved.tasks.title, {}, resolved);
     await ask(title.endpoint, title.model, 'Name it.', 'a chat', title.options);
@@ -199,7 +182,7 @@ describe("a side task's own settings", () => {
   });
 
   it('lets preselect be given a temperature, and keeps 0.3 without one', async () => {
-    create.mockResolvedValue(answers('["s__read"]'));
+    create.mockResolvedValue(answer('["s__read"]'));
     const config = { baseUrl: 'http://local/v1', apiKey: '' };
     await preselect(config, 'small', catalog, 'read it', { temperature: 0 });
     await preselect(config, 'small', catalog, 'read it');
@@ -247,7 +230,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
         endpoint: { baseUrl: 'http://side/v1' },
       },
     });
-    create.mockResolvedValueOnce(answers('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     await run(config, { preselect: true });
     expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0, max_tokens: 64 });
     // On its own endpoint, and without the agent's key: that key was issued for another server.
@@ -258,7 +241,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   });
 
   it("gives a preselector on the agent's endpoint the agent's key and its own defaults", async () => {
-    create.mockResolvedValueOnce(answers('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     await run(onDemand({ toolSelect: { model: 'tiny' } }), { preselect: true });
     expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 256 });
     expect(new Set(reached.map((endpoint) => JSON.stringify(endpoint)))).toEqual(
@@ -277,7 +260,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       toolDiscovery: ToolDiscovery.OnDemand,
       toolSelectModel: 'small',
     };
-    create.mockResolvedValueOnce(answers('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     await run(config, { preselect: true });
     expect(body(0)).toMatchObject({ model: 'small', temperature: 0.3, max_tokens: 256 });
     expect(declared(1)).toEqual(['s__read']);
@@ -324,7 +307,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       contextLength: 1000,
     };
     const events: RunEventInput[] = [];
-    create.mockResolvedValueOnce(answers('what was said')).mockResolvedValueOnce(says('hello'));
+    create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     const result = await runAgentLoop({
       config,
       messages: long,
@@ -365,7 +348,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     ];
     create
       .mockResolvedValueOnce(calls('s__read'))
-      .mockResolvedValueOnce(answers('what was said'))
+      .mockResolvedValueOnce(answer('what was said'))
       .mockResolvedValueOnce(says('hello'));
     await runAgentLoop({
       config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },

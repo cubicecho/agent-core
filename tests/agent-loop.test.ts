@@ -5,6 +5,7 @@ import { ToolDiscovery } from '../src/config.ts';
 import { RunEventKind, RunOutcome } from '../src/events.ts';
 import { HookEvent } from '../src/hook-events.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, PartType, Role, SchemaType } from '../src/wire.ts';
+import { type Body, chunks, config, type Message, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -20,7 +21,6 @@ const { CALL_TOOL, LOAD_TOOLS } = await import('../src/tool-loading.ts');
 const { configureHooks, resetHooks, withContext } = await import('../src/hooks.ts');
 const { tokensBetween } = await import('../src/ledger.ts');
 
-type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import('../src/stream.ts').Turn;
 type ToolCall = import('../src/tool-calls.ts').ToolCall;
 type ToolCallRequest = import('../src/tool-calls.ts').ToolCallRequest;
@@ -28,23 +28,10 @@ type AgentLoopRequest = import('../src/agent-loop.ts').AgentLoopRequest;
 type ToolCallResult = import('../src/tool-calls.ts').ToolCallResult;
 type RunEventInput = import('../src/events.ts').RunEventInput;
 type RunUsage = import('../src/events.ts').RunUsage;
-type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
-const stream = (...list: unknown[]) => ({
-  async *[Symbol.asyncIterator]() {
-    yield* list as OpenAI.ChatCompletionChunk[];
-  },
-});
-/** A turn that answers in words. */
-const says = (content: string, finish: FinishReason = FinishReason.Stop) =>
-  stream(
-    { choices: [{ delta: { content } }] },
-    { choices: [{ delta: {}, finish_reason: finish }], usage: null },
-    { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
-  );
 /** A turn that asks for these calls. */
 const calls = (...list: [name: string, args: string][]) =>
-  stream({
+  chunks({
     choices: [
       {
         delta: {
@@ -66,7 +53,7 @@ const reported = (
   delta: Record<string, unknown>,
   finish: FinishReason = FinishReason.Stop,
 ) =>
-  stream(
+  chunks(
     { choices: [{ delta, finish_reason: finish }] },
     {
       choices: [],
@@ -87,19 +74,6 @@ const reportedCall = (prompt: number, cached: number, name: string, args = '{}')
     FinishReason.ToolCalls,
   );
 
-const tool = (name: string): OpenAI.ChatCompletionTool => ({
-  type: FUNCTION_TOOL,
-  function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
-});
-
-const config = {
-  baseUrl: 'http://local/v1',
-  apiKey: '',
-  model: 'm',
-  maxTokens: 100,
-  temperature: 0.2,
-  maxToolIterations: 4,
-};
 const question: Message[] = [{ role: Role.User, content: 'hi' }];
 /** What each request was sent, by the name of every tool it declared. */
 const declared = () =>
@@ -413,7 +387,7 @@ describe('runAgentLoop', () => {
   it('tells a call cut off at the ceiling to raise maxTokens', async () => {
     create
       .mockReturnValueOnce(
-        stream({
+        chunks({
           choices: [
             {
               delta: {

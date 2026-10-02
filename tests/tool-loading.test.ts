@@ -21,17 +21,7 @@ import {
   shownCall,
 } from '../src/tool-loading.ts';
 import { FUNCTION_TOOL, SchemaType } from '../src/wire.ts';
-
-const tool = (name: string) => ({ name, description: `does ${name}` });
-
-const catalog: CatalogServer[] = [
-  {
-    id: '1',
-    label: 'Gmail',
-    tools: [tool('gmail__send_email'), tool('gmail__list_labels'), tool('gmail__read_email')],
-  },
-  { id: '2', label: 'Files', tools: [tool('files__read_file'), tool('files__write_file')] },
-];
+import { catalog, catalogTool } from './helpers.ts';
 
 test('matches exact names and unambiguous bare ones', () => {
   const resolved = expandNames(['gmail__send_email', 'list_labels'], catalog);
@@ -41,8 +31,8 @@ test('matches exact names and unambiguous bare ones', () => {
 
 test('a bare name matching two servers is not guessed at', () => {
   const ambiguous: CatalogServer[] = [
-    { id: '1', label: 'A', tools: [tool('a__read_file')] },
-    { id: '2', label: 'B', tools: [tool('b__read_file')] },
+    { id: '1', label: 'A', tools: [catalogTool('a__read_file')] },
+    { id: '2', label: 'B', tools: [catalogTool('b__read_file')] },
   ];
   expect(expandNames(['read_file'], ambiguous)).toMatchObject({
     matched: [],
@@ -61,7 +51,7 @@ test('an over-broad wildcard is refused with its hits listed', () => {
     {
       id: '1',
       label: 'Gmail',
-      tools: Array.from({ length: MAX_PER_LOAD + 1 }, (_, i) => tool(`gmail__tool_${i}`)),
+      tools: Array.from({ length: MAX_PER_LOAD + 1 }, (_, i) => catalogTool(`gmail__tool_${i}`)),
     },
   ];
   const resolved = expandNames(['gmail__*'], many);
@@ -199,7 +189,7 @@ test('an over-broad wildcard comes back with the names it would have loaded', ()
     {
       id: '3',
       label: 'Mail',
-      tools: Array.from({ length: MAX_PER_LOAD + 5 }, (_, i) => tool(`mail__tool_${i}`)),
+      tools: Array.from({ length: MAX_PER_LOAD + 5 }, (_, i) => catalogTool(`mail__tool_${i}`)),
     },
   ];
   const text = loadResult(expandNames(['mail__*'], wide), wide);
@@ -220,7 +210,7 @@ test('a server with no tools is not given a heading with nothing under it', () =
 });
 
 test('the load cap is what one call may load, not what one name may match', () => {
-  const dozen = (prefix: string) => Array.from({ length: MAX_PER_LOAD }, (_, i) => tool(`${prefix}__t${i}`));
+  const dozen = (prefix: string) => Array.from({ length: MAX_PER_LOAD }, (_, i) => catalogTool(`${prefix}__t${i}`));
   const wide: CatalogServer[] = [
     { id: '1', label: 'A', tools: dozen('a') },
     { id: '2', label: 'B', tools: dozen('b') },
@@ -241,7 +231,7 @@ test('a precise name that only misses the budget is not called over-broad', () =
     {
       id: '4',
       label: 'Many',
-      tools: Array.from({ length: MAX_PER_LOAD + 1 }, (_, i) => tool(`many__t${i}`)),
+      tools: Array.from({ length: MAX_PER_LOAD + 1 }, (_, i) => catalogTool(`many__t${i}`)),
     },
   ];
   const asked = wide[0].tools.map((t) => t.name);

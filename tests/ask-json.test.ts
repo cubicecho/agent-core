@@ -1,6 +1,6 @@
-import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSON_SCHEMA_FORMAT, SchemaType } from '../src/wire.ts';
+import { answer, apiError } from './helpers.ts';
 
 const create = vi.fn();
 vi.mock('../src/client.ts', async (importOriginal) => ({
@@ -13,8 +13,7 @@ const { capabilitiesFor, modelCapabilitiesFor } = await import('../src/capabilit
 const { resetAll } = await import('../src/reset.ts');
 
 const config = { baseUrl: 'http://box/v1', apiKey: '', requestTimeoutSeconds: 60 };
-const answer = (content: string) => ({ choices: [{ message: { content } }] });
-const refusal = (message: string) => new OpenAI.APIError(400, { error: { message } }, message, undefined);
+const refusal = (message: string) => apiError(400, message);
 const schema = {
   type: SchemaType.Object,
   properties: { tools: { type: SchemaType.Array, items: { type: SchemaType.String, pattern: '^\\w+$' } } },

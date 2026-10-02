@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RunEventKind } from '../src/events.ts';
 import { Role } from '../src/wire.ts';
+import { endpoint, reply } from './helpers.ts';
 
 const list = vi.fn();
 const create = vi.fn();
@@ -26,8 +27,6 @@ const { ask } = await import('../src/side-task.ts');
 const { resetAll } = await import('../src/reset.ts');
 const { calibrate, charsPerTokenFor } = await import('../src/calibration.ts');
 
-const endpoint = { baseUrl: 'http://local/v1', apiKey: '', requestTimeoutSeconds: 60 };
-const reply = { choices: [{ message: { content: 'ok' } }] };
 /** Whether the no-thinking hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
 

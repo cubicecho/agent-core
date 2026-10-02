@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HttpStatus } from '../src/wire.ts';
+import { endpoint } from './helpers.ts';
 
 const list = vi.fn();
 vi.mock('openai', () => ({
@@ -21,7 +22,6 @@ const {
   resolveApiKey,
 } = await import('../src/client.ts');
 
-const endpoint = { baseUrl: 'http://local/v1', apiKey: '', requestTimeoutSeconds: 60 };
 /** What a listing endpoint answers with: the OpenAI shape plus whatever window key it uses. */
 const listing = (...models: ({ id: string } & Record<string, unknown>)[]) => ({ data: models });
 

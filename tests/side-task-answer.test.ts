@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { answer, endpoint } from './helpers.ts';
 
 const create = vi.fn();
 /**
@@ -13,10 +14,9 @@ vi.mock('../src/client.ts', async (importOriginal) => ({
 
 const { ask } = await import('../src/side-task.ts');
 
-const endpoint = { baseUrl: 'http://local/v1', apiKey: '', requestTimeoutSeconds: 60 };
 /** What the caller gets back when the model replies with this content. */
 const answerTo = (content: string) => {
-  create.mockResolvedValue({ choices: [{ message: { content } }] });
+  create.mockResolvedValue(answer(content));
   return ask(endpoint, 'm', 'system', 'user');
 };
 

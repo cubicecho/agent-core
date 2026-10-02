@@ -4,22 +4,8 @@ import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../src
 import { ContextOverflow, EndpointSilent } from '../src/retry.ts';
 import { runTurn } from '../src/run-turn.ts';
 import { Role } from '../src/wire.ts';
+import { apiError, chunk, chunks, clientOf, text } from './helpers.ts';
 
-type Chunk = OpenAI.ChatCompletionChunk;
-/** Hand-written chunks carry only the fields under test; the SDK's Choice wants more. */
-const chunk = (partial: unknown) => partial as Chunk;
-const text = (content: string): Chunk => chunk({ choices: [{ delta: { content } }] });
-const chunks = (...list: Chunk[]) => ({
-  async *[Symbol.asyncIterator]() {
-    yield* list;
-  },
-});
-
-const clientOf = (create: (body: unknown, options: { signal: AbortSignal }) => unknown) =>
-  ({ chat: { completions: { create } } }) as unknown as OpenAI;
-/** The SDK builds the message from the body, not from its own `message` argument. */
-const apiError = (status: number, message: string) =>
-  new OpenAI.APIError(status, { error: { message } }, undefined, undefined);
 /** Lost rather than refused: nothing about the request, and the only thing worth waiting out. */
 const lost = () => new OpenAI.APIConnectionError({ message: 'socket hang up' });
 

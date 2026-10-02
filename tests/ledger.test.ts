@@ -1,4 +1,3 @@
-import type OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
 import { planCompaction } from '../src/compaction.ts';
 import {
@@ -11,12 +10,8 @@ import {
 } from '../src/ledger.ts';
 import { messageChars } from '../src/tokens.ts';
 import { Role } from '../src/wire.ts';
+import { assistant, type Message, result, user } from './helpers.ts';
 
-type Message = OpenAI.ChatCompletionMessageParam;
-
-const user = (content: string): Message => ({ role: Role.User, content });
-const assistant = (content: string): Message => ({ role: Role.Assistant, content });
-const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
 /** Every unmeasured message costs seven, so an estimate is easy to tell from a measurement. */
 const estimate = () => 7;
 

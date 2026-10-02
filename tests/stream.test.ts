@@ -3,17 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EndpointSilent } from '../src/retry.ts';
 import { streamTurn } from '../src/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../src/wire.ts';
-
-type Chunk = OpenAI.ChatCompletionChunk;
-/** Hand-written chunks carry only the fields under test; the SDK's Choice wants more. */
-const chunk = (partial: unknown) => partial as Chunk;
-
-/** A stream that hands over its chunks and ends, the way a request that answered does. */
-const chunks = (...list: Chunk[]) => ({
-  async *[Symbol.asyncIterator]() {
-    yield* list;
-  },
-});
+import { type Chunk, chunk, chunks, clientOf, text } from './helpers.ts';
 
 /**
  * A stream that yields what it has and then stops answering, the way an endpoint that dies
@@ -33,14 +23,11 @@ const stalls = (signal: AbortSignal, ...list: Chunk[]) => ({
   },
 });
 
-const clientOf = (create: (body: unknown, options: { signal: AbortSignal }) => unknown) =>
-  ({ chat: { completions: { create } } }) as unknown as OpenAI;
 const body = {
   model: 'm',
   messages: [],
   stream: true,
 } as OpenAI.ChatCompletionCreateParamsStreaming;
-const text = (content: string): Chunk => chunk({ choices: [{ delta: { content } }] });
 
 afterEach(() => vi.useRealTimers());
 

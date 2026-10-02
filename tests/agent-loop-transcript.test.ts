@@ -1,7 +1,7 @@
-import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../src/config.ts';
-import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire.ts';
+import { FinishReason, HttpStatus, Role } from '../src/wire.ts';
+import { type Body, chunks, config, type Message, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -16,26 +16,12 @@ const { ContextOverflow } = await import('../src/retry.ts');
 const { resetCapabilities } = await import('../src/capabilities.ts');
 const { CALL_TOOL, LOAD_TOOLS } = await import('../src/tool-loading.ts');
 
-type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import('../src/stream.ts').Turn;
 type ToolCallRequest = import('../src/tool-calls.ts').ToolCallRequest;
-type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
-const stream = (...list: unknown[]) => ({
-  async *[Symbol.asyncIterator]() {
-    yield* list as OpenAI.ChatCompletionChunk[];
-  },
-});
-/** A turn that answers in words. */
-const says = (content: string) =>
-  stream(
-    { choices: [{ delta: { content } }] },
-    { choices: [{ delta: {}, finish_reason: FinishReason.Stop }], usage: null },
-    { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
-  );
 /** A turn that asks for these calls, thinking first where told to, and reports what it cost. */
 const calls = (list: [name: string, args: string][], reasoning = '') =>
-  stream(
+  chunks(
     ...(reasoning ? [{ choices: [{ delta: { reasoning_content: reasoning } }] }] : []),
     {
       choices: [
@@ -54,19 +40,6 @@ const calls = (list: [name: string, args: string][], reasoning = '') =>
     { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
   );
 
-const tool = (name: string): OpenAI.ChatCompletionTool => ({
-  type: FUNCTION_TOOL,
-  function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
-});
-
-const config = {
-  baseUrl: 'http://local/v1',
-  apiKey: '',
-  model: 'm',
-  maxTokens: 100,
-  temperature: 0.2,
-  maxToolIterations: 4,
-};
 const question: Message[] = [{ role: Role.User, content: 'hi' }];
 /** A transcript as role and content, with a tool result's call id in front. */
 const outline = (messages: Message[]) =>

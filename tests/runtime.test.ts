@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RunEventKind } from '../src/events.ts';
-import { FinishReason, Role } from '../src/wire.ts';
+import { Role } from '../src/wire.ts';
+import { endpoint, reply, says } from './helpers.ts';
 
 const list = vi.fn();
 const create = vi.fn();
@@ -27,19 +28,9 @@ const { resetAll } = await import('../src/reset.ts');
 const { charsPerTokenFor } = await import('../src/calibration.ts');
 const { createRuntime, defaultRuntime } = await import('../src/runtime.ts');
 
-const endpoint = { baseUrl: 'http://local/v1', apiKey: '', requestTimeoutSeconds: 60 };
-const reply = { choices: [{ message: { content: 'ok' } }] };
 const refusal = () => new OpenAI.APIError(400, { error: {} }, 'rejected', undefined);
 /** Whether the no-thinking hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
-/** A streamed turn that answers in words. */
-const says = (content: string) => ({
-  async *[Symbol.asyncIterator]() {
-    yield { choices: [{ delta: { content } }] };
-    yield { choices: [{ delta: {}, finish_reason: FinishReason.Stop }], usage: null };
-    yield { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } };
-  },
-});
 const body = {
   model: 'm',
   stream: true as const,

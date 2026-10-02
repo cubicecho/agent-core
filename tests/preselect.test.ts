@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, test, vi } from 'vitest';
 import type { CatalogServer } from '../src/catalog.ts';
 import { MAX_PER_LOAD } from '../src/tool-loading.ts';
 import { JSON_SCHEMA_FORMAT } from '../src/wire.ts';
+import { catalog, config } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -13,26 +14,6 @@ vi.mock('../src/client.ts', async (importOriginal) => ({
 const { PRESELECT_SYSTEM, preselect, preselectByKeywords, preselectInput, preselection, preselectSystem } =
   await import('../src/preselect.ts');
 const { resetCapabilities } = await import('../src/capabilities.ts');
-
-const config = {
-  baseUrl: 'http://local/v1',
-  apiKey: '',
-  model: 'm',
-  maxTokens: 100,
-  temperature: 0.2,
-  maxToolIterations: 4,
-};
-
-const tool = (name: string) => ({ name, description: `does ${name}` });
-
-const catalog: CatalogServer[] = [
-  {
-    id: '1',
-    label: 'Gmail',
-    tools: [tool('gmail__send_email'), tool('gmail__list_labels'), tool('gmail__read_email')],
-  },
-  { id: '2', label: 'Files', tools: [tool('files__read_file'), tool('files__write_file')] },
-];
 
 beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());

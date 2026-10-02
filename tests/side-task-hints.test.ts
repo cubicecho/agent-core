@@ -1,5 +1,5 @@
-import OpenAI from 'openai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { apiError, reply } from './helpers.ts';
 
 const create = vi.fn();
 /**
@@ -15,14 +15,10 @@ vi.mock('../src/client.ts', async (importOriginal) => ({
 const { ask, resetHints } = await import('../src/side-task.ts');
 const { modelCapabilitiesFor, capabilitiesFor, resetCapabilities } = await import('../src/capabilities.ts');
 
-const reply = { choices: [{ message: { content: 'ok' } }] };
 const endpoint = (baseUrl: string) => ({ baseUrl, apiKey: '', requestTimeoutSeconds: 60 });
 const call = (config: ReturnType<typeof endpoint>, model = 'm') => ask(config, model, 'system', 'user');
 /** Whether the hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
-
-const apiError = (status: number, message = 'rejected') =>
-  new OpenAI.APIError(status, { error: { message } }, message, undefined);
 
 /** The three the model refuses by name, as OpenAI words them. */
 const WANTS_COMPLETION_LIMIT = apiError(

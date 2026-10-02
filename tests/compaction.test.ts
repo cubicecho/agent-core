@@ -1,4 +1,3 @@
-import type OpenAI from 'openai';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyCompaction,
@@ -14,12 +13,8 @@ import { HookEvent } from '../src/hook-events.ts';
 import { turnMessages } from '../src/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../src/tool-loading.ts';
 import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
+import { assistant, type Message, result, user } from './helpers.ts';
 
-type Message = OpenAI.ChatCompletionMessageParam;
-
-const user = (content: string): Message => ({ role: Role.User, content });
-const assistant = (content: string): Message => ({ role: Role.Assistant, content });
-const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
 /** Every message costs ten, so the arithmetic below can be read off the counts. */
 const estimate = () => 10;
 
