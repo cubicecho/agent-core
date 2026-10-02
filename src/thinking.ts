@@ -147,11 +147,15 @@ export class FenceSplitter {
     return parts;
   }
 
+  /** The markers worth looking for: only the close inside a fence, every one outside it. */
+  #candidates(): readonly string[] {
+    return this.#inside ? [this.#inside.close] : this.#markers;
+  }
+
   /** The earliest marker that means something in the current state. */
   #next(text: string): { at: number; marker: string } | undefined {
-    const candidates = this.#inside ? [this.#inside.close] : this.#markers;
     let best: { at: number; marker: string } | undefined;
-    for (const marker of candidates) {
+    for (const marker of this.#candidates()) {
       const at = text.indexOf(marker);
       if (at === -1) continue;
       if (!best || at < best.at || (at === best.at && marker.length > best.marker.length))
@@ -162,9 +166,8 @@ export class FenceSplitter {
 
   /** How much of the end of `text` could be the beginning of a marker. */
   #partialTail(text: string): number {
-    const candidates = this.#inside ? [this.#inside.close] : this.#markers;
     let keep = 0;
-    for (const marker of candidates)
+    for (const marker of this.#candidates())
       for (let length = Math.min(marker.length - 1, text.length); length > keep; length--)
         if (text.endsWith(marker.slice(0, length))) {
           keep = length;
