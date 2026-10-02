@@ -1,6 +1,6 @@
-import { getOrCreate, isPositive } from "./guards.ts";
+import { getOrCreate } from "./guards.ts";
 import type { TokenLedger } from "./ledger.ts";
-import { scoped } from "./scope.ts";
+import { assignSettings, scoped } from "./scope.ts";
 import type { TurnUsage } from "./stream.ts";
 import { LOAD_TOOLS } from "./tool-loading.ts";
 
@@ -96,11 +96,7 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
-  const { limits } = bus();
-  for (const [name, value] of Object.entries(options)) {
-    if (isPositive(value)) limits[name as keyof EventBusOptions] = value;
-  }
-  return { ...limits };
+  return assignSettings(bus().limits, options);
 }
 
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */

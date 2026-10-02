@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import type { Endpoint, EndpointIdentity, RetryPolicy } from "./config.ts";
 import { isPositive } from "./guards.ts";
-import { scoped } from "./scope.ts";
+import { assignSettings, scoped } from "./scope.ts";
 
 /**
  * The SDK insists on a non-empty key even where the server will not look at it. This is what it
@@ -130,11 +130,9 @@ const evict = () => {
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
-  for (const [name, value] of Object.entries(options)) {
-    if (isPositive(value)) poolLimits()[name as keyof ClientPoolOptions] = value;
-  }
+  const inForce = assignSettings(poolLimits(), options);
   evict();
-  return { ...poolLimits() };
+  return inForce;
 }
 
 /** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */

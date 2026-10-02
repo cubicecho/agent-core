@@ -3,7 +3,7 @@ import type OpenAI from "openai";
 import { errorMessage } from "./errors.ts";
 import { isPositive } from "./guards.ts";
 import { type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
-import { scoped } from "./scope.ts";
+import { assignSettings, scoped } from "./scope.ts";
 import { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
 
 /**
@@ -170,6 +170,10 @@ const HOOK_DEFAULTS: Required<HookOptions> = {
 /** What is in force now. Read where it is used, so a change applies from the next request. */
 const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }));
 
+/** Whether a value may be a hook setting: a budget above zero, or a preface that is a string. */
+const usableHookSetting = (value: unknown, name: string) =>
+  name === "preface" ? typeof value === "string" : name === "contextTokens" && isPositive(value);
+
 /**
  * Changes what hooks are held to, for a process whose windows are not the size these defaults
  * were chosen for, or whose host wants its own name above the context.
@@ -186,10 +190,7 @@ const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }))
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
-  const { contextTokens, preface } = options;
-  if (isPositive(contextTokens)) hookSettings().contextTokens = contextTokens;
-  if (typeof preface === "string") hookSettings().preface = preface;
-  return { ...hookSettings() };
+  return assignSettings(hookSettings(), options, usableHookSetting);
 }
 
 /**
