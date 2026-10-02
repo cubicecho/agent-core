@@ -1210,9 +1210,9 @@ async function runSteps(
     let calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
     let content = turn.content;
     if (recover && !calls.length && content && (tools.length > 0 || onDemand)) {
-      const names = tools.map(toolName).filter((name) => name !== undefined);
+      const callable = tools.map(toolName).filter((name) => name !== undefined);
       const recovered = recoverToolCalls(content, {
-        names: onDemand ? [...names, LOAD_TOOLS, ...(proxies ? [CALL_TOOL] : [])] : names,
+        names: onDemand ? [...callable, LOAD_TOOLS, ...(proxies ? [CALL_TOOL] : [])] : callable,
       });
       if (recovered.toolCalls.length) {
         calls = recovered.toolCalls;
