@@ -44,7 +44,7 @@ import { ContextOverflow, contextTokens, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { askJson, type SideTask, type SideTaskOptions, tryAsk } from "./side-task.ts";
-import type { Turn, TurnUsage } from "./stream.ts";
+import { noUsage, type Turn, type TurnUsage } from "./stream.ts";
 import { parseToolArguments, recoverToolCalls, type ToolCall } from "./tool-calls.ts";
 import {
   CALL_TOOL,
@@ -850,7 +850,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const standing: Standing = {
     read: () => ({
       messages: [...options.messages],
-      usage: { prompt: 0, completion: 0, total: 0, cached: 0 },
+      usage: noUsage(),
       toolCalls: [],
       loaded: [],
       used: [],
@@ -978,7 +978,7 @@ async function runSteps(
     [...names].flatMap((name) => definitions.get(name) ?? []);
 
   let messages = [...options.messages];
-  const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
+  const usage = noUsage();
   const toolCalls: ToolCallOutcome[] = [];
   standing.read = () => ({
     messages,

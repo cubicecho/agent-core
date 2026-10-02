@@ -110,6 +110,14 @@ export interface TurnUsage {
   context?: ContextBreakdown;
 }
 
+/**
+ * A usage with nothing counted yet, a fresh object each call since every caller adds into it.
+ *
+ * Only the four counts every turn has: the optional fields stay absent, which is what says
+ * nothing reported them.
+ */
+export const noUsage = (): TurnUsage => ({ prompt: 0, completion: 0, total: 0, cached: 0 });
+
 /** llama.cpp's per-response `timings`, which Lemonade and other servers fronting it pass through. */
 interface Timings {
   cache_n?: number;
@@ -351,7 +359,7 @@ export async function streamTurn(
     // In arrival order, sorted by index at the end; a call from a server that sent none keeps
     // its place in the order they arrived.
     const calls: PartialCall[] = [];
-    const usage: TurnUsage = { prompt: 0, completion: 0, total: 0, cached: 0 };
+    const usage = noUsage();
     // The usage block's own cache count wins over llama.cpp's, which is the same number in the
     // servers that send both; kept apart so the order the two arrive in does not decide.
     let cacheReport: number | undefined;
