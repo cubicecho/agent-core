@@ -1,7 +1,7 @@
 import type { OnNotice } from './capabilities.ts';
 import type { CatalogServer } from './catalog.ts';
 import type { Endpoint } from './config.ts';
-import { counted, isRecord } from './guards.ts';
+import { byCodeUnit, counted, isRecord } from './guards.ts';
 import { askJson, tryAsk } from './side-task.ts';
 import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
 import { SchemaType } from './wire.ts';
@@ -316,7 +316,7 @@ export function preselectByKeywords(
   }
   // Ties break on the name, not on where the tool sat in the catalogue, so reconnecting a
   // server in a different order does not change what a run opens with.
-  ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  ranked.sort((a, b) => b.score - a.score || byCodeUnit(a.name, b.name));
   if (!ranked.length) {
     return empty;
   }

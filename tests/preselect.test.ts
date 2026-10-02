@@ -219,6 +219,25 @@ describe('preselectByKeywords', () => {
     expect(ranked[0].name).toBe('desk__zebra');
   });
 
+  it('a tie breaks on the name by code unit, whatever order the catalogue came in', () => {
+    const twins: CatalogServer[] = [
+      {
+        id: '1',
+        label: 'Desk',
+        tools: [
+          { name: 'desk__alpha', description: 'Fetch the ledger' },
+          { name: 'desk__Zed', description: 'Fetch the ledger' },
+        ],
+      },
+    ];
+    const reversed = [{ ...twins[0], tools: [...twins[0].tools].reverse() }];
+    const names = (catalog: CatalogServer[]) =>
+      preselectByKeywords(catalog, 'fetch the ledger').ranked.map((hit) => hit.name);
+    // A locale's order would put `desk__alpha` first; which locale is the host's to say.
+    expect(names(twins)).toEqual(['desk__Zed', 'desk__alpha']);
+    expect(names(reversed)).toEqual(['desk__Zed', 'desk__alpha']);
+  });
+
   it('words the catalogue does not use pick nothing, and say so', () => {
     // The words cannot tell a request that needs no tools from one whose words are not in the
     // catalogue, so neither is a confident answer and both go to the model.

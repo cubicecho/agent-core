@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import type { CatalogServer } from './catalog.ts';
-import { isRecord } from './guards.ts';
+import { byCodeUnit, isRecord } from './guards.ts';
 import { ARGUMENT_PREVIEW_CHARS } from './tool-calls.ts';
 import { FUNCTION_TOOL, SchemaType } from './wire.ts';
 
@@ -191,27 +191,6 @@ export function loadedTools(
  * or a comparator over the two names.
  */
 export type ToolOrder = boolean | ((a: string, b: string) => number);
-
-/**
- * Orders two names by code unit.
- *
- * @param a - The name on the left.
- * @param b - The name on the right.
- * @returns Negative where `a` sorts first, positive where `b` does, zero where they are the same.
- *
- * @remarks
- * Rather than `localeCompare`, whose answer depends on the host's locale — which is the kind of
- * instability `orderTools` exists to remove.
- */
-function byCodeUnit(a: string, b: string): number {
-  if (a < b) {
-    return -1;
-  }
-  if (a > b) {
-    return 1;
-  }
-  return 0;
-}
 
 /**
  * The tool array in a stable order, so the same set of tools renders the same way twice.
