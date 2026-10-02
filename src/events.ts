@@ -360,6 +360,27 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
   return watching(bus(), runId, signal);
 }
 
+/**
+ * The notice a watcher that fell behind is given in place of the events it missed.
+ *
+ * One short of the event it precedes, which is the last seq that went missing. Sharing a seq
+ * with the event behind it made the notice indistinguishable from a duplicate, and de-duplicating
+ * on `seq` is the one thing the sequence is documented for — so a client doing exactly that
+ * dropped either the gap notice or the event it explains. Inside the gap there is nothing to
+ * collide with: those seqs reach no watcher.
+ */
+const gapNotice = (runId: string, gap: number, next: RunEvent): RunEvent =>
+  stamp(
+    {
+      kind: "notice",
+      text: `${gap} event(s) dropped: this watcher fell too far behind`,
+      step: next.step,
+    },
+    runId,
+    next.seq - 1,
+    next.at,
+  );
+
 async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
   const { limits, streams } = held;
   const stream = streamFor(held, runId);
@@ -414,24 +435,9 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
         if (dropped > 0) {
           // Said once per gap rather than per event, and before the event that follows it, so a
           // client reading `seq` sees why the numbers jump instead of assuming it lost its place.
-          //
-          // One short of the event it precedes, which is the last seq that went missing. Sharing
-          // a seq with the event behind it made the notice indistinguishable from a duplicate,
-          // and de-duplicating on `seq` is the one thing the sequence is documented for — so a
-          // client doing exactly that dropped either the gap notice or the event it explains.
-          // Inside the gap there is nothing to collide with: those seqs reach no watcher.
           const gap = dropped;
           dropped = 0;
-          yield stamp(
-            {
-              kind: "notice",
-              text: `${gap} event(s) dropped: this watcher fell too far behind`,
-              step: event.step,
-            },
-            runId,
-            event.seq - 1,
-            event.at,
-          );
+          yield gapNotice(runId, gap, event);
         }
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
