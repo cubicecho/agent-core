@@ -17,7 +17,7 @@ import { isAbort, refusesRequest } from './retry.ts';
 import { relaxSchema, sanitizeSchema } from './schema-compat.ts';
 import { scoped } from './scope.ts';
 import { stripThinking } from './thinking.ts';
-import { looseJson } from './tool-calls.ts';
+import { CODE_FENCE, looseJson } from './tool-calls.ts';
 import { JSON_SCHEMA_FORMAT, Role } from './wire.ts';
 
 /**
@@ -430,7 +430,7 @@ export async function tryAsk<T>(
  * a reply as in a call, and a side task that fails over one costs the run a second request.
  */
 export function parseJson<T>(text: string): T | undefined {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const [fenced] = text.matchAll(CODE_FENCE);
   const body = (fenced?.[1] ?? text).trim();
   const start = body.search(/[[{]/);
   if (start < 0) {
