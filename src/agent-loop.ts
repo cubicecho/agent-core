@@ -3,6 +3,7 @@ import { charsPerTokenFor } from "./calibration.ts";
 import {
   type Capabilities,
   capabilitiesFor,
+  ceilingAndTemperature,
   effortFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
@@ -126,12 +127,7 @@ export function buildBody(
     ([field]) => !RESERVED.has(field) && !refused?.refusedFields.has(field),
   );
   return {
-    ...(config.maxTokens > 0
-      ? refused?.legacyTokenLimit === false
-        ? { max_completion_tokens: config.maxTokens }
-        : { max_tokens: config.maxTokens }
-      : {}),
-    ...(refused?.chosenTemperature === false ? {} : { temperature: config.temperature }),
+    ...ceilingAndTemperature(refused, config.maxTokens, config.temperature),
     ...(effort ? { reasoning_effort: effort as OpenAI.ReasoningEffort } : {}),
     ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
     ...Object.fromEntries(extra),

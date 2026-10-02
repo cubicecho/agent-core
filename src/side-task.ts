@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import {
   type Capabilities,
   capabilitiesFor,
+  ceilingAndTemperature,
   effortFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
@@ -184,16 +185,10 @@ async function complete(
       {
         model,
         // The reasoning models want the ceiling spelled the other way, and they are exactly the
-        // models a side task most wants to stop deliberating. Zero is no ceiling, as it is on the
-        // main model: a spec's `maxTokens: 0` sent as `max_tokens: 0` asks for an empty reply.
-        ...(maxTokens > 0
-          ? refused && !refused.legacyTokenLimit
-            ? { max_completion_tokens: maxTokens }
-            : { max_tokens: maxTokens }
-          : {}),
-        // One that will only run at the temperature it was built with is sent none: a side task
-        // wants the same answer twice, and 1.0 from that model is as close as it gets.
-        ...(refused && !refused.chosenTemperature ? {} : { temperature }),
+        // models a side task most wants to stop deliberating. One that will only run at its own
+        // temperature is sent none: a side task wants the same answer twice, and 1.0 from that
+        // model is as close as it gets.
+        ...ceilingAndTemperature(refused, maxTokens, temperature),
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },

@@ -403,6 +403,32 @@ export function effortFor(refused: ModelCapabilities | undefined, asked: string 
   return nextEffort(refused, asked) ?? asked;
 }
 
+/**
+ * The reply ceiling and the temperature as this model takes them, to spread into a request body.
+ *
+ * The reasoning models want the ceiling spelled the other way, and one that will only run at the
+ * temperature it was built with is sent none. Both are tested `=== false`, so a caller that named
+ * no model sends what one that has refused nothing is sent; see `ModelCapabilities.legacyTokenLimit`.
+ *
+ * @param refused What the model has refused, as `negotiate` hands it over. Absent is a model that
+ * has refused nothing.
+ * @param maxTokens The ceiling. Zero or less sends none and leaves it to the server: a zero sent
+ * as `max_tokens: 0` asks for an empty reply.
+ * @param temperature What to sample at, where the model takes one that was picked for it.
+ */
+export const ceilingAndTemperature = (
+  refused: ModelCapabilities | undefined,
+  maxTokens: number,
+  temperature: number,
+) => ({
+  ...(maxTokens > 0
+    ? refused?.legacyTokenLimit === false
+      ? { max_completion_tokens: maxTokens }
+      : { max_tokens: maxTokens }
+    : {}),
+  ...(refused?.chosenTemperature === false ? {} : { temperature }),
+});
+
 /** What answering a refused effort *value* would latch, and the rung it would try next. */
 interface EffortStep {
   /** The effort the refusal named, to latch into `refusedEfforts`. */
