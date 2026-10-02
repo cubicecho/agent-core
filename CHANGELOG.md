@@ -1,3 +1,16 @@
+# [3.0.0](https://github.com/cubicecho/agent-core/compare/v2.25.1...v3.0.0) (2026-10-02)
+
+
+* refactor!: eight tuning constants are no longer exported from the package ([bc6bbf9](https://github.com/cubicecho/agent-core/commit/bc6bbf9559597a2ae5d83c0875b1e49202836fa6))
+
+
+### BREAKING CHANGES
+
+* CHARS_PER_TOKEN, FIRST_TOKEN_FACTOR, KEYWORD_DROPOFF,
+KEYWORD_MIN_SCORE, LOADING_POLL_MS, LOADING_TIMEOUT_MS, MAX_CARRIED and
+MAX_PER_LOAD are no longer exported. Pass the option each one was the
+default of instead.
+
 ## [2.25.1](https://github.com/cubicecho/agent-core/compare/v2.25.0...v2.25.1) (2026-10-02)
 
 
