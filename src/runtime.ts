@@ -101,6 +101,7 @@ export type Runtime = typeof STATEFUL & {
    * Runs `fn` with this runtime current, so every top-level function it calls — directly, after
    * an `await`, or from a timer it sets — uses this runtime's state. What the methods do, for
    * code that calls the top-level functions itself.
+   *
    * @param fn - What to run. Its return value, or what it throws, is handed straight back.
    *
    * @remarks
@@ -130,6 +131,7 @@ function bind(scope: Scope): Runtime {
 /**
  * A runtime of its own: separate clients, listings, capability latches, hints, event bus and hook
  * settings from the process's and from every other runtime's.
+ *
  * @param [options] - What to configure it with before first use. A part left out keeps the
  * defaults — not the default runtime's settings, which a new runtime does not inherit.
  *

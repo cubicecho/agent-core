@@ -40,6 +40,7 @@ const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>()
 /**
  * The characters per token to size a request to this model with, `CHARS_PER_TOKEN` until a turn
  * has reported one.
+ *
  * @param supports - The endpoint, as `capabilitiesFor` hands it over.
  * @param model - The name the endpoint knows the model as, as it goes in the body.
  *
@@ -64,6 +65,7 @@ const hasMedia = (messages: OpenAI.ChatCompletionMessageParam[]) =>
 
 /**
  * Takes one reading from a request that was answered, so the next one to this model is sized by it.
+ *
  * @param supports - The endpoint the request went to.
  * @param body - The request as it was last sent, which names the model.
  * @param promptTokens - The prompt count the endpoint reported for it. Zero or less is no report.

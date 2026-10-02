@@ -155,6 +155,7 @@ export function exportCapabilities(): CapabilitySnapshot {
 
 /**
  * Latches what a stored snapshot says was refused, on top of whatever this process has learned.
+ *
  * @param snapshot - What `exportCapabilities` returned, as stored. Read defensively: a field of the
  * wrong type is skipped rather than trusted.
  * @returns Whether the snapshot was of this version and applied.

@@ -7,6 +7,7 @@ import { orderTools, type ToolOrder } from './tool-loading.ts';
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and
  * the model have refused.
+ *
  * @param config - What to ask for. `maxTokens` of zero or less sends no ceiling; `reasoningEffort`
  * absent or `"off"` sends no effort, and one the model has refused by value is stepped up to the
  * cheapest it takes by `effortFor`.

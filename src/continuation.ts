@@ -26,6 +26,7 @@ export interface ContinueTurnOptions extends RunTurnOptions {
 /**
  * Whether a turn is one a continuation can finish: cut off at the ceiling, with an answer begun
  * and no tool call in it.
+ *
  * @param turn - The turn as it came back.
  *
  * @remarks
@@ -110,6 +111,7 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
 /**
  * Carries on an answer the token ceiling cut off, by sending the transcript again with the answer
  * so far as a trailing assistant message, and joins the pieces into one turn.
+ *
  * @param client - The pooled client for this endpoint.
  * @param supports - What the endpoint has already refused.
  * @param request - Builds the body the cut-off turn was sent, exactly as `runTurn` was given it. The

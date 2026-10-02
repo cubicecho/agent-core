@@ -61,6 +61,7 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
 
 /**
  * The catalogue as a plain grouped listing of names, loaded ones marked if asked.
+ *
  * @param catalog - The connected servers. Ones with no tools are dropped.
  * @param [loaded] - Names to mark `(loaded)` rather than remove. Absent marks nothing, which keeps the
  * listing the same text for the whole run.
@@ -82,6 +83,7 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
 
 /**
  * The catalogue block appended to the system prompt. Names only — descriptions arrive on load.
+ *
  * @param catalog - The connected servers. A catalogue with no tools in it produces an empty string.
  * @param [loaded] - Names to mark `(loaded)`, for a caller that rebuilds its prompt per load and does
  * not mind the cache. Absent marks nothing.
@@ -121,6 +123,7 @@ const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server
 
 /**
  * The name a tool definition is called by, or `undefined` for one that is not a function.
+ *
  * @param tool - The definition, as a request declares it.
  *
  * @remarks
@@ -133,6 +136,7 @@ export const toolName = (tool: OpenAI.ChatCompletionTool) =>
 
 /**
  * A tool array with newly loaded definitions appended, in the order they were loaded.
+ *
  * @param previous - What the last request declared, `load_tools` included. Not written to.
  * @param matched - The definitions to add. Ones whose name is already declared, here or earlier in
  * this list, are skipped rather than moved.
@@ -167,6 +171,7 @@ export type ToolOrder = boolean | ((a: string, b: string) => number);
 
 /**
  * The tool array in a stable order, so the same set of tools renders the same way twice.
+ *
  * @param tools - The definitions to order. Not written to.
  * @param [order] - `true` for name order, `false` to leave it alone, or a comparator over the names.
  * A tool that is not a function orders as the empty name.
@@ -225,6 +230,7 @@ export const MAX_CARRIED = 16;
 
 /**
  * The tools to start the next turn with: last turn's where they were, then what this turn used.
+ *
  * @param previous - Last turn's names, in the order they were declared.
  * @param used - What this turn called. Names not already carried are appended in the order given,
  * so pass them in load order to keep them where the tool array had them.
@@ -252,6 +258,7 @@ export function carryOver(previous: readonly string[], used: ReadonlySet<string>
 
 /**
  * Resolves requested names against the catalogue, expanding trailing `*` wildcards.
+ *
  * @param requested - What the model asked for. A trailing `*` expands.
  * @param catalog - The servers to resolve against.
  * @param [maxPerLoad] - The most this call may load. It comes back on
@@ -338,6 +345,7 @@ const joinBlocks = (blocks: string[][]) => blocks.map((block) => block.join('\n'
 
 /**
  * What `load_tools` reports back: the descriptions, now that they are worth their tokens.
+ *
  * @param expanded - What `expandNames` resolved: the matches, the misses, and the over-broad asks.
  * @param catalog - The servers, read for the descriptions now worth their tokens.
  * @param [loaded] - What was loaded before this call. Absent reports every match as newly loaded.
@@ -391,6 +399,7 @@ export function loadResult(
 
 /**
  * Whether the catalogue holds a tool by this name.
+ *
  * @param catalog - The connected servers and the tools each one offers.
  * @param name - An exact name. Nothing is prefixed, trimmed or fuzzily matched.
  */
@@ -399,6 +408,7 @@ export const inCatalog = (catalog: CatalogServer[], name: string) =>
 
 /**
  * `load_tools` arguments, defensively — a model may send a bare string or a nested object.
+ *
  * @param args - The tool call's arguments, exactly as the model sent them.
  */
 export function requestedNames(args: Record<string, unknown>): string[] {
@@ -490,6 +500,7 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
 /**
  * The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a
  * tool list.
+ *
  * @param catalog - The connected servers. A catalogue with no tools in it produces an empty string.
  *
  * @remarks
@@ -520,6 +531,7 @@ const PROXY_LOADED = /^Loaded \d+ tool\(s\)\. Run them with `call_tool`\./;
 /**
  * Whether a tool result is a proxied load carrying definitions, which is the only copy of them
  * the model has.
+ *
  * @param result - The tool message's text. A load that only pointed back or refused is not one.
  *
  * @remarks
@@ -533,6 +545,7 @@ export const holdsDefinitions = (result: string) => PROXY_LOADED.test(result);
 /**
  * What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since
  * the result is the only place the model will ever see it.
+ *
  * @param resolved - What the call asked for, from `expandNames`.
  * @param catalog - The servers, read for the refusals' wording.
  * @param definitions - The definitions of `resolved.matched`, as many as the host has. Ones that
@@ -584,6 +597,7 @@ export function proxyLoadResult(
 
 /**
  * The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
+ *
  * @param args - The `call_tool` call's own arguments, parsed. An absent `arguments` is no arguments.
  * @param catalog - What may be called. The name is trimmed and then matched exactly.
  *
@@ -622,6 +636,7 @@ export function proxiedCall(
 /**
  * A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it
  * is.
+ *
  * @param name - The name the model called.
  * @param input - The call's arguments as JSON text.
  * @returns The inner name and its arguments as JSON text — the string itself where the model

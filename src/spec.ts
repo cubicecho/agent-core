@@ -660,6 +660,7 @@ const KNOWN = new Set([
 
 /**
  * Reads a document, dropping what it cannot use and refusing only what it cannot identify.
+ *
  * @param document - Anything at all — this is the front door, and it is given parsed JSON from a
  * form, a file or another host.
  * @param [options] - Whether to parse a bundle, which events this host fires, and which extension
@@ -869,6 +870,7 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
 
 /**
  * Layers documents into the flat object the loop takes, weakest first.
+ *
  * @param layers - The documents, weakest first: settings, then the agent, then a task, then a step.
  *
  * @remarks
@@ -980,6 +982,7 @@ export interface ExportSpecOptions {
 
 /**
  * A document fit to leave the host: the same agent, with the secrets of its bundled servers gone.
+ *
  * @param spec - A document, ordinarily one `parseSpec` returned.
  * @param [options] - Whether to keep the secrets.
  *

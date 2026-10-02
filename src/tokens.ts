@@ -13,6 +13,7 @@ export const CHARS_PER_TOKEN = 4;
  * Rough token count. Characters over four, because there is no tokenizer here and there is not
  * going to be one: a server that will not say how big its window is will not lend us its
  * vocabulary either.
+ *
  * @param text - Prose or serialised JSON — both counted the same way, which is why JSON reads low.
  *
  * @remarks
@@ -31,6 +32,7 @@ export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PE
 
 /**
  * 1234 → "1.2k". The numbers in an overflow message are large and nobody reads the units digit.
+ *
  * @param tokens - The count to render.
  */
 export const compact = (tokens: number) => (tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens));
@@ -95,6 +97,7 @@ const divisor = (charsPerToken: number | undefined) =>
 
 /**
  * How many characters one message is worth: its keys, and its content in whichever shape.
+ *
  * @param message - The message as it will be sent.
  */
 export function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
@@ -166,6 +169,7 @@ const toolLengths = new WeakMap<OpenAI.ChatCompletionTool[], number>();
 
 /**
  * How many characters a tool array is worth, measured once per array.
+ *
  * @param tools - The tool definitions as they will be sent. An empty array is worth nothing.
  */
 export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
@@ -185,6 +189,7 @@ export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
 
 /**
  * How many characters a request is worth: the walk `requestTokens` divides, without the division.
+ *
  * @param body - The request as it was sent, tools included.
  *
  * @remarks
@@ -201,6 +206,7 @@ export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
 
 /**
  * What this request will cost the window, in tokens, near enough.
+ *
  * @param body - The request as it will be sent, tools included.
  * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
  *
@@ -259,6 +265,7 @@ const PARTS = ['system', 'tools', 'history', 'toolResults'] as const;
 
 /**
  * What each part of a request is worth in characters, by the same walk `requestTokens` divides.
+ *
  * @param body - The request as it will be sent, tools included.
  *
  * @remarks
@@ -325,6 +332,7 @@ function share(chars: ContextBreakdown, over: readonly (keyof ContextBreakdown)[
 
 /**
  * What each part of a request costs the window, in tokens, adding up to the whole.
+ *
  * @param body - The request as it will be sent, tools included.
  * @param [options] - The divisor, and the reported prompt count when there is one.
  *
@@ -360,6 +368,7 @@ export function contextTokens(
 
 /**
  * One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
+ *
  * @param message - The message as it will be sent.
  * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
  *

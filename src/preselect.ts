@@ -26,6 +26,7 @@ const PRESELECT_PROMPT_CHARS = 2000;
 
 /**
  * The system prompt a preselector is given, holding it to the cap its answer will be held to.
+ *
  * @param [maxPerLoad] - The most to ask for. Give `preselection` the
  * same number: this one is what the preselector is told, and that one is what it is held to.
  *
@@ -64,6 +65,7 @@ export const PRESELECT_SYSTEM = preselectSystem();
 
 /**
  * The user message for a preselection call: the catalogue, then the request.
+ *
  * @param catalog - The connected servers, rendered as the name-only listing.
  * @param prompt - The request being planned for, truncated — choosing tools needs the shape of the
  * ask, not all of it.
@@ -76,6 +78,7 @@ export const preselectInput = (catalog: CatalogServer[], prompt: string, maxProm
 
 /**
  * Resolves a preselection against the catalogue: unknown names dropped, count capped.
+ *
  * @param names - What the preselector replied: `{ tools: [...] }` as `PRESELECT_SCHEMA` has it, or
  * the bare array an older prompt asked for. Unvalidated: anything else gives none, and entries
  * that are not strings are dropped.
@@ -194,6 +197,7 @@ export interface KeywordPreselectOptions {
 
 /**
  * The tools a request's own words point at, ranked, and whether they point clearly enough.
+ *
  * @param catalog - The servers to choose from. Each tool is matched on its name, its server's label
  * and its one-line description, which is everything the catalogue holds.
  * @param prompt - The request being planned for. Only its head is read, as in `preselectInput`.
@@ -307,6 +311,7 @@ export interface PreselectOptions {
 
 /**
  * The tools a request is likely to need, picked by a small model before the run starts, or none.
+ *
  * @param config - The endpoint the preselector is reached through.
  * @param model - The preselector. An empty name picks nothing, which is what `toolSelectModel`
  * means by empty.

@@ -190,6 +190,7 @@ const capabilities = scoped(() => new Map<string, Capabilities>());
 /**
  * What this endpoint is known not to support. The same object every time, so what `negotiate`
  * latches off stays off.
+ *
  * @param baseUrl - Where the endpoint is. The two flags on it are per-server; what is per-model
  * hangs off `models`, which `modelCapabilitiesFor` reads.
  * @param [apiKey] - The rest of the endpoint's identity. Optional, because it changes nothing for
@@ -204,6 +205,7 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
 /**
  * What this model on this endpoint is known not to support. The same object every time, so what
  * `negotiate` latches off stays off.
+ *
  * @param supports - The endpoint's own, as `capabilitiesFor` hands it over.
  * @param model - The name the endpoint knows the model as — whatever goes in the request body,
  * since that is the only name the refusal is about.
@@ -240,6 +242,7 @@ export function capabilitiesById(id: string): Capabilities {
 
 /**
  * Forgets what one endpoint refused, or every endpoint's when told none.
+ *
  * @param [endpoint] - Whose to forget, by the same identity `capabilitiesFor` takes. Absent clears
  * every endpoint, which is what tests and `resetAll` mean by it.
  * @returns Whether there was anything to forget.
@@ -262,6 +265,7 @@ export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
 
 /**
  * Forgets every endpoint whose entry is older than this, so the next request finds out again.
+ *
  * @param maxAgeMs - How old an entry may be. Zero or less expires everything.
  * @param [now] - The clock, for tests.
  * @returns How many endpoints were forgotten.
@@ -375,6 +379,7 @@ function listedEfforts(detail: string): string[] | undefined {
 /**
  * Which effort a refusal says was refused, in the two shapes the wording takes: the field quoted
  * then `does not support 'none'`, and `reasoning_effort: none`.
+ *
  * @param detail - The refusal.
  * @param [supported] - What the same refusal listed, which the value cannot be one of.
  *
@@ -421,6 +426,7 @@ function nextEffort(refused: ModelCapabilities, asked: string): string | undefin
 
 /**
  * What to actually put in `reasoning_effort` for a model that has refused the value asked for.
+ *
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model that
  * has refused nothing.
  * @param asked - What the config asks for. `"off"` and absent mean no effort.
@@ -451,6 +457,7 @@ export function effortFor(refused: ModelCapabilities | undefined, asked: string 
 
 /**
  * The reply ceiling and the temperature as this model takes them, to spread into a request body.
+ *
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model that
  * has refused nothing.
  * @param maxTokens - The ceiling. Zero or less sends none and leaves it to the server: a zero sent
@@ -753,6 +760,7 @@ const ANSWERS: readonly Answer[] = [
  * Sends a request, re-sending it each time the answer is this endpoint refusing something the
  * request can do without. Returns once the endpoint has answered, or throws if the refusal is
  * not one of ours.
+ *
  * @param supports - What this endpoint has already refused. Latched off further as it refuses more.
  * @param send - Builds and sends the request. Called again per downgrade, never once tokens
  * have arrived. Its third argument is what the named model has refused, absent when no model

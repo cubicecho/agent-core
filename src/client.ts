@@ -16,6 +16,7 @@ const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
 
 /**
  * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
+ *
  * @param config - Read for `requestTimeoutSeconds` alone.
  */
 export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
@@ -24,6 +25,7 @@ export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): numb
 /**
  * How long to wait out a model that is still loading, in milliseconds — `undefined` where the
  * config has no opinion, and zero where it says not to wait at all.
+ *
  * @param config - Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
  *
  * @remarks
@@ -111,6 +113,7 @@ const evict = () => {
 /**
  * Changes what the client pool is held to, for a process whose endpoints are not shaped like the
  * deployments these defaults were chosen for.
+ *
  * @param [options] - The bounds to change. A field left out — or given anything that is not a number
  * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
  * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
@@ -139,6 +142,7 @@ export const FIRST_TOKEN_FACTOR = 5;
 
 /**
  * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
+ *
  * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
  */
 export const firstTokenMs = (
@@ -153,6 +157,7 @@ export const firstTokenMs = (
 
 /**
  * The client for an endpoint, built once and kept.
+ *
  * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
  *
  * @remarks
@@ -282,6 +287,7 @@ const misses = scoped(() => new Map<string, number>());
 /**
  * What counts as one endpoint, everywhere in this package that has to remember something about
  * one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
+ *
  * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
  * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
  * config, and absent and empty already mean the same thing. The timeout is deliberately not in
@@ -303,6 +309,7 @@ export const endpointKey = (config: EndpointIdentity) => JSON.stringify([config.
 /**
  * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
  * into the other.
+ *
  * @param endpoint - Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
  * where the key may be written down.
  * @param model - The model's name as the endpoint knows it.
@@ -311,6 +318,7 @@ export const modelKey = (endpoint: string, model: string) => JSON.stringify([end
 
 /**
  * `endpointKey` hashed, for the remembered facts that can leave the process.
+ *
  * @param config - Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  *
  * @remarks
@@ -386,6 +394,7 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
 /**
  * The window a local server's own API says it is serving a model in, for the servers whose
  * listing does not say.
+ *
  * @param config - The endpoint, plus the model whose window is wanted.
  *
  * @remarks
@@ -447,6 +456,7 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
 
 /**
  * Asks an endpoint what it serves, and remembers the answer.
+ *
  * @param config - The endpoint to ask. Remembered per base URL and key, not per model.
  * @returns The models in order of id, whatever order the endpoint listed them in.
  */
@@ -470,6 +480,7 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
 
 /**
  * How much a model will read, in tokens. Zero means nobody knows.
+ *
  * @param config - The endpoint, plus the model whose window is wanted.
  * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
  *
@@ -565,6 +576,7 @@ export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') ==
 
 /**
  * The key to send, where an endpoint may inherit one from the settings it overrides.
+ *
  * @param own - The endpoint as the agent or profile states it. Its own key always wins. An empty or
  * absent `baseUrl` is one that inherits the endpoint too.
  * @param [inherited] - The settings it overrides. Absent treats `own` as the configured endpoint, so

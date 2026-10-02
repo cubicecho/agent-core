@@ -100,6 +100,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
 
 /**
  * What a notice calls the model, where the caller did not say which one it is.
+ *
  * @param model - The model's name. Absent reads as "the model", which is all there is to say.
  */
 export const modelLabel = (model: string | undefined) => model ?? 'the model';
@@ -156,6 +157,7 @@ const shownDelay = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${Math.
  * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
  * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
  * object throughout, and a caller that reads those from its own closure can ignore the argument.
+ *
  * @param client - The pooled client for this endpoint.
  * @param supports - What the endpoint has already refused, threaded through the negotiation.
  * @param request - Builds the body. Called again per attempt, since a downgrade changes it. Its

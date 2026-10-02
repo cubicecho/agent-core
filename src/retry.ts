@@ -54,6 +54,7 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
 
 /**
  * Whether a refusal means the request was too big, rather than merely refused.
+ *
  * @param detail - The endpoint's own message.
  *
  * @remarks
@@ -83,6 +84,7 @@ export const SMALLEST_LIKELY_WINDOW = 8192;
 
 /**
  * Whether a failed request is worth trying again.
+ *
  * @param error - The rejection, as caught. What is not an SDK error is not transient.
  *
  * @remarks
@@ -108,6 +110,7 @@ export function isTransient(error: unknown): boolean {
 
 /**
  * Whether a failure is the endpoint refusing the request as written, rather than losing it.
+ *
  * @param error - The rejection, as caught. What is not an SDK error refuses nothing.
  *
  * @remarks
@@ -123,6 +126,7 @@ export const refusesRequest = (error: unknown) =>
 
 /**
  * Whether a failure is a local server still loading the model, rather than one failing to serve.
+ *
  * @param error - The rejection, as caught.
  *
  * @remarks
@@ -150,12 +154,14 @@ export const LOADING_TIMEOUT_MS = 120_000;
 
 /**
  * Exponential, with jitter so several tasks failing at once do not return in lockstep.
+ *
  * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
  */
 export const backoffMs = (attempt: number) => Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
 
 /**
  * A delay an abort cuts short, rejecting rather than resolving early.
+ *
  * @param ms - How long to wait.
  * @param [signal] - Abandons the wait. One already aborted rejects without waiting at all.
  */

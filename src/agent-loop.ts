@@ -483,6 +483,7 @@ interface Standing {
  * Runs a question to its answer: one `runTurn` per step, the tools it asks for between them,
  * until a turn asks for none. Throws when `maxToolIterations` is spent, when stopped, and on
  * whatever `runTurn` throws — `ContextOverflow` among them, however it was found out.
+ *
  * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
  *

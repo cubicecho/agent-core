@@ -179,6 +179,7 @@ const usableHookSetting = (value: unknown, name: string) =>
 /**
  * Changes what hooks are held to, for a process whose windows are not the size these defaults
  * were chosen for, or whose host wants its own name above the context.
+ *
  * @param [options] - The settings to change. A field left out keeps what it has, and so does one given
  * the wrong kind of value — `contextTokens` anything but a number above zero, `preface` anything
  * but a string — so a half-built config narrows nothing. `Infinity` is a number above zero, and
@@ -228,6 +229,7 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
 
 /**
  * Builds the context a set of outcomes adds and the notes that go with it.
+ *
  * @param outcomes - What the runners returned. An injecting outcome on an event that cannot inject
  * adds nothing; a failed one is noted wherever it falls, including past the budget.
  * @param [maxTokens] - The budget every block shares. Absent, or not a number above zero, is what
@@ -277,6 +279,7 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
 
 /**
  * The request, with the hooks' context added to this turn's question.
+ *
  * @param history - The request's messages. Neither the array nor any message in it is changed.
  * @param index - Where the question sits in `history` — which is not where it sits in the
  * session once a compaction has folded the head into a summary. Anything but a user message there
@@ -334,6 +337,7 @@ const UNTRUSTED_TAG = /<(\s*\/?\s*untrusted)/gi;
 /**
  * Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the
  * model can see where it starts and ends and read it as data rather than as instructions.
+ *
  * @param text - What came in. Kept whole, apart from the escaped tags.
  * @param [options] - `source` names where it came from, for the model and for whoever reads the
  * transcript later — a URL, a sender, a tool's name. Left out, the block carries no attribute.
@@ -355,6 +359,7 @@ export function untrusted(text: string, { source }: { source?: string } = {}): s
 
 /**
  * A message's text, whether its content is a string or a list of parts.
+ *
  * @param content - A message's `content`, in any of the shapes the API allows. One that is neither
  * a string nor a list reads as empty.
  *
@@ -377,6 +382,7 @@ export const textOf = (content: unknown): string => {
 /**
  * A stretch of a transcript as a hook reads it: what the user and the assistant said, and nothing
  * else.
+ *
  * @param sessionId - Prefixes every uuid, so two sessions never share one.
  * @param messages - The transcript, in whatever shape the host stores it, so long as each message
  * has an OpenAI-style `role` and `content`.
@@ -434,6 +440,7 @@ export function turnMessages(
 
 /**
  * Which turn of a session begins at a point, from 0: the user messages ahead of it.
+ *
  * @param messages - The transcript.
  * @param [before] - Where the turn begins. Absent is the end, which is the index of a turn whose
  * question has not been appended yet.
@@ -468,6 +475,7 @@ const runSafely = (run: HookRunner, event: HookEvent, context: HookContext, sign
 
 /**
  * Runs the hooks ahead of a request and builds what they add to it.
+ *
  * @param run - Runs one event's hooks.
  * @param events - Which to run: `["beforeTurn"]` ordinarily, and `sessionStart` ahead of it on a
  * session's first turn. The outcomes are assembled in this order, so it is also the order the
@@ -502,6 +510,7 @@ export async function gather(
 /**
  * Runs the hooks for an event that reads what happened and adds nothing to a request. Never
  * rejects, so a host can fire it without awaiting it.
+ *
  * @param run - Runs the event's hooks.
  * @param event - `afterTurn`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
  * works too, but what its hooks return is dropped, since there is no request here to add it to.
@@ -531,6 +540,7 @@ export async function notify(
 /**
  * Runs an event's hooks and waits for their say, for a host that will hold off when one of them
  * vetoes.
+ *
  * @param run - Runs the event's hooks.
  * @param event - What is about to happen. Only `beforeCompact` has anything a veto can stop.
  * @param context - What the hooks are told.

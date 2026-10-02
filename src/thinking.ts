@@ -109,6 +109,7 @@ export class FenceSplitter {
 
   /**
    * Reads one more piece of content, returning what it settled, in order.
+   *
    * @param text - The next delta.
    */
   push(text: string): Split[] {
@@ -214,6 +215,7 @@ export class FenceSplitter {
 
 /**
  * What is left of a complete reply once every scratchpad is taken out of it.
+ *
  * @param text - The whole reply.
  * @param [fences] - The fences to read.
  */

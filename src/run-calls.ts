@@ -34,6 +34,7 @@ import {
 
 /**
  * A long tool argument or result cut to what a watcher needs, with the full length said.
+ *
  * @param text - What to show.
  * @param [limit] - Characters kept. Text at or under it comes back as it was.
  *
@@ -178,6 +179,7 @@ async function once(answered: Map<string, Promise<string>>, key: string, make: (
 /**
  * Runs one call to its result, telling the host of both. A tool that throws is that call's answer
  * rather than the run's end, unless the run was stopped.
+ *
  * @param run - The run the call belongs to.
  * @param entry - The call, with its arguments read.
  * @param answered - The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
@@ -247,6 +249,7 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
 
 /**
  * Runs a step's calls and writes each result into the transcript, in the order asked.
+ *
  * @param run - The run the step belongs to.
  * @param parsed - The step's calls, with their arguments read.
  * @param messages - The transcript the results are written into.
@@ -330,6 +333,7 @@ export async function runCalls(
  * fixed, so a shortlist has nowhere else to go, and it is answered as though the model had loaded
  * it. Told to the host as a call the model made would be, so one pairing calls with results by id
  * shows this one like the rest.
+ *
  * @param run - The run it opens.
  * @param shortlist - The definitions preselected, each of them in the catalogue.
  * @param messages - The transcript, which the exchange is appended to.

@@ -176,6 +176,7 @@ function poolsOf(parameters: Schema): Schema {
  * arrives at none — a pointer into another document, one that comes back around to itself, or a
  * name the pools do not hold. A node that is not a reference resolves to itself, so a caller can
  * hand this a branch without first asking which spelling it is.
+ *
  * @param node - The schema position to resolve, reference or not.
  * @param defs - The pools to resolve against, as `poolsOf` collects them from the root.
  */
@@ -427,6 +428,7 @@ function pruneRequired(schema: Schema): Schema {
 
 /**
  * One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
+ *
  * @param schema - The schema as written. Never mutated. Its root is held to an object, as a tool's
  * parameters are, and anything that is not a schema at all comes back as an object with no
  * properties.
@@ -496,6 +498,7 @@ const through = (
 
 /**
  * Tool definitions a strict server will accept, remembered per definition object.
+ *
  * @param tools - The definitions as the pool hands them over. Never mutated — where a schema
  * changed, a new definition is returned in its place.
  *
@@ -532,6 +535,7 @@ const strip = (node: unknown): unknown => {
 
 /**
  * One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
+ *
  * @param schema - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeSchema`.
  * Never mutated; anything that is not a schema comes back as an object with no properties.
  *
@@ -548,6 +552,7 @@ export function relaxSchema(schema: unknown): Record<string, unknown> {
  * The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in
  * `pattern` and most `format` values, both of which only ever narrowed a string the tool
  * re-validates anyway.
+ *
  * @param tools - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) => through(relaxed, tools, relaxSchema);
@@ -561,6 +566,7 @@ const NO_USER_QUERY = 'no user query found';
 
 /**
  * Does this failure look like the server could not build a grammar from our tool schemas?
+ *
  * @param message - The server's error text. Matched case-insensitively.
  *
  * @remarks

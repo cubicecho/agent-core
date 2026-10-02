@@ -68,8 +68,8 @@ function docBlocks(source) {
  * The paragraphs of a doc comment body ahead of its first tag, each collapsed to a single line.
  *
  * @remarks
- * The tags follow the summary with no blank line between, so a summary would otherwise run on
- * into its `@param` lines — and a summary with no full stop would take them all.
+ * Tags and the `@remarks` under them are not the summary's to index, and a block written without
+ * the blank line above its tags would otherwise run its summary on into them.
  */
 function paragraphs(body) {
   const out = [];

@@ -92,6 +92,7 @@ function repairJson(text: string): string {
 
 /**
  * JSON as it was written, then repaired, then undefined. A string holding JSON is opened once.
+ *
  * @param text - What a model wrote where JSON was asked for, with no prose around it.
  *
  * @remarks
@@ -119,6 +120,7 @@ export function looseJson(text: string): unknown {
 
 /**
  * A tool call's arguments as the object the tool is handed. Empty is no arguments.
+ *
  * @param raw - The arguments as the model sent them: usually the streamed string, sometimes an
  * object a server parsed already. Null, absent or blank is no arguments.
  * @param [options] - `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
@@ -371,6 +373,7 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
 
 /**
  * Tool calls a model wrote into its reply as text, taken out of it and made into calls.
+ *
  * @param content - The turn's text.
  * @param [options] - `names`, the tools that exist. Without them only the templates' markers count.
  * @returns The text with the calls taken out, and the calls, numbered `call_recovered_0` onward.

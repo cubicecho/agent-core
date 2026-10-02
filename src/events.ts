@@ -80,6 +80,7 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
 /**
  * Changes what the bus keeps, for a process whose runs are not shaped like the ones these
  * defaults were chosen for.
+ *
  * @param [options] - The bounds to change. A field left out — or given anything that is not a
  * number above zero — keeps what it has, so a partial or a half-built config narrows nothing.
  * @returns Everything in force afterwards, including what this call did not change.
@@ -219,6 +220,7 @@ export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kin
 
 /**
  * A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
+ *
  * @param input - What happened. An `at` it carries wins over the one given here.
  * @param runId - The run it belongs to. Written after `input`, which gets no say in it.
  * @param seq - Its place in that run, the same.
@@ -300,6 +302,7 @@ function scheduleSweep(held: Bus) {
  * Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose
  * loop threw where it could not be caught. The sweep gets there on its own; this is for a
  * caller that already knows.
+ *
  * @param runId - The run to forget. An id nothing was emitted under is ignored.
  */
 export function endRun(runId: string) {
@@ -322,6 +325,7 @@ export function endRun(runId: string) {
 
 /**
  * Records one event and hands it to everyone watching that run. Never throws at the caller.
+ *
  * @param runId - The run this belongs to. Created on first use.
  * @param input - The event. `kind` is required; `runId` and `seq` are not a caller's to set.
  * @returns The event as it was recorded: its `seq` in the run, its time, and every unset field
@@ -358,6 +362,7 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
 
 /**
  * Everything that has happened on a run, then everything that happens next, until it ends.
+ *
  * @param runId - The run to follow. One that has not started yet is waited on, not refused.
  * @param [signal] - Stops following. The only other way out is the run's own `done`, and a watcher
  * with no way out is a leak rather than a lost backlog: the sweep below skips any stream a
@@ -494,6 +499,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
 
 /**
  * The backlog alone, for a caller that wants a snapshot rather than a subscription.
+ *
  * @param runId - The run to read. An unknown or already-swept run gives an empty array.
  *
  * @remarks
@@ -530,6 +536,7 @@ export const resetEvents = () => {
 
 /**
  * Consecutive tokens of one kind are one thing being said, not hundreds of things.
+ *
  * @param events - Events in `seq` order, from `history` or collected from `watch`.
  *
  * @remarks
@@ -665,6 +672,7 @@ export interface RunMetricsOptions {
 
 /**
  * A run's totals, timings and cache findings, derived from the events it emitted.
+ *
  * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
  * that has lost its oldest events to the cap sums what it still has.
  * @param [options] - The served window, for how full the run came to it.

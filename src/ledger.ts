@@ -98,6 +98,7 @@ const leadingSystem = (messages: Message[]) => {
 /**
  * Where a request stopped matching the one before it, earliest in the rendered prompt first — the
  * tool block, then the system prompt, then the history — or `none-known` where it only appended.
+ *
  * @param previous - The request before, as it was sent.
  * @param next - The request being explained.
  *
@@ -124,6 +125,7 @@ export function breakReason(previous: RequestShape, next: RequestShape): NonNull
 
 /**
  * The ledger with one more request on it, in the epoch the request before it says it belongs to.
+ *
  * @param ledger - The ledger so far. Not written to; handed back as it is when nothing is recorded.
  * @param previous - The request the ledger's last entry was recorded from — not merely the last one
  * sent, so that a request which reported nothing is skipped over rather than compared against.
@@ -159,6 +161,7 @@ export function recordRequest(
 /**
  * The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left
  * standing.
+ *
  * @param ledger - The ledger for `before`. Not written to.
  * @param before - The transcript the ledger's indexes are in.
  * @param after - The transcript that replaces it. One that only appended to `before`, or is the same
@@ -244,6 +247,7 @@ const fallback = ({ charsPerToken, estimate }: LedgerEstimateOptions) =>
 /**
  * What the messages from `from` up to, not including, `to` cost the window, measured where the
  * ledger can say and estimated where it cannot.
+ *
  * @param ledger - The ledger kept for `messages`.
  * @param from - The first message counted. Below zero counts from the start.
  * @param to - The first message not counted, as `slice` takes it. Past the end counts to the end.
@@ -282,6 +286,7 @@ export function tokensBetween(
 /**
  * A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers
  * the message, the calibrated estimate where it does not.
+ *
  * @param ledger - The ledger kept for `messages`.
  * @param messages - The transcript the plan will be made for. The function it returns knows a
  * message by identity, so it has to be asked about these objects and not copies of them; one it

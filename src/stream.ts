@@ -127,6 +127,7 @@ export const noUsage = (): TurnUsage => ({ prompt: 0, completion: 0, total: 0, c
 /**
  * The four token counts of two usages, added. Only those: the rest are measurements a sum of
  * would mean nothing, or would mean something only `runMetrics` knows how to weigh.
+ *
  * @param a - One usage. Neither is changed.
  * @param b - The other.
  */
@@ -401,6 +402,7 @@ export interface StreamTurnOptions {
 /**
  * Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a
  * message.
+ *
  * @param client - The pooled client for this endpoint.
  * @param body - The request, which must set `stream: true`.
  * @param [options] - Cancellation, the idle watchdog, and the token callbacks.

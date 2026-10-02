@@ -5,6 +5,7 @@ import type { ToolCallOutcome } from './tool-calls.ts';
 
 /**
  * What went wrong, as a string.
+ *
  * @param error - Whatever a `catch` bound. Anything that is not an `Error` is stringified.
  *
  * @remarks
@@ -115,6 +116,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
 
 /**
  * The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
+ *
  * @param error - Whatever a `catch` around `runAgentLoop` bound. Anything the loop did not throw
  * answers `undefined`.
  *

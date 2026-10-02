@@ -26,6 +26,7 @@ export const currentScope = (): Scope => active.getStore() ?? rootScope;
 
 /**
  * Runs `fn` with `scope` as the current one, for it and for everything it awaits or schedules.
+ *
  * @param scope - The runtime's state. Nested calls replace it for their own duration only.
  * @param fn - What to run. Its return value, or what it throws, is handed straight back.
  */
@@ -41,6 +42,7 @@ export interface Scoped<T> {
 
 /**
  * Declares a piece of module state that every runtime has its own copy of.
+ *
  * @param create - Builds a fresh, empty copy. Called once per scope, and again after `reset`.
  *
  * @remarks
@@ -62,6 +64,7 @@ export function scoped<T>(create: () => T): Scoped<T> {
 
 /**
  * Writes what a caller gave onto the settings in force, field by field, skipping what is unusable.
+ *
  * @param held - The settings in force. Written to — the same object the module goes on reading.
  * @param options - What to change. A field left out is left alone.
  * @param [usable] - Whether a value may be written under a name.

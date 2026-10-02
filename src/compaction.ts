@@ -93,6 +93,7 @@ export interface PruneOptions {
 
 /**
  * The transcript with every tool result but the latest few replaced by a one-line stub.
+ *
  * @param messages - The transcript. Not written to.
  * @param [options] - How many results to keep and how long one must be to clear.
  *
@@ -202,6 +203,7 @@ const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most
 
 /**
  * Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
+ *
  * @param messages - The transcript, system prompts included if the caller keeps them in it.
  * @param options - The window, what is in use, the ratios, and where the last fold ended. See
  * `CompactionOptions`.
@@ -300,6 +302,7 @@ export function planCompaction(
 /**
  * What the summariser is handed for a plan: the earlier summary if there was one, then each
  * message as its role and at most 4000 characters of its text.
+ *
  * @param plan - What `planCompaction` returned.
  */
 export function summaryInput(plan: CompactionPlan): string {
@@ -317,6 +320,7 @@ export function summaryInput(plan: CompactionPlan): string {
 
 /**
  * A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
+ *
  * @param config - The endpoint the summary is written through.
  * @param model - The model to write it, which may be a smaller one than the run's.
  * @param [options] - Cancellation and notices; the ceiling is 1024 and the instruction
@@ -371,6 +375,7 @@ export interface CompactionRunOptions {
 
 /**
  * The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
+ *
  * @param messages - The transcript the plan was made for. Read only, and only for the hooks.
  * @param plan - What `planCompaction` returned for it.
  * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
@@ -416,6 +421,7 @@ export async function runCompaction(
 
 /**
  * The transcript as the server should see it: the folded head replaced by its summary.
+ *
  * @param messages - The stored transcript, whole. Not written to.
  * @param [record] - The fold, or `undefined` for a session that has not been compacted, which hands
  * back `messages` itself.
@@ -449,6 +455,7 @@ export function applyCompaction(
 /**
  * Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted
  * everything after it.
+ *
  * @param index - The position in the stored transcript.
  * @param [record] - The fold in force, or `undefined` for a session that has none, which hands the
  * index straight back.
@@ -471,6 +478,7 @@ export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'thr
 
 /**
  * The transcript with the plan's stretch replaced by one system message holding its summary.
+ *
  * @param messages - The transcript the plan was made for. Not written to.
  * @param plan - What `planCompaction` returned for it.
  * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
