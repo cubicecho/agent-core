@@ -163,6 +163,8 @@ const shownDelay = (ms: number) =>
  * second argument is what the model named in `options.model` has refused, absent when none was.
  * @param options Retry budget, context limit, the model to negotiate for, notices, and the
  * stream's own callbacks.
+ * @returns The turn the attempt that got through produced, its usage carrying what every attempt
+ * together cost: `wallMs`, `retries` and `timeouts`.
  */
 export async function runTurn(
   client: OpenAI,

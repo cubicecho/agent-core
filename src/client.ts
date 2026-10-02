@@ -450,6 +450,7 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
  * Asks an endpoint what it serves, and remembers the answer.
  *
  * @param config The endpoint to ask. Remembered per base URL and key, not per model.
+ * @returns The models in order of id, whatever order the endpoint listed them in.
  */
 export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
   const { data } = await getClient(config).models.list();

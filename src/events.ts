@@ -312,6 +312,8 @@ export function endRun(runId: string) {
  *
  * @param runId The run this belongs to. Created on first use.
  * @param input The event. `kind` is required; `runId` and `seq` are not a caller's to set.
+ * @returns The event as it was recorded: its `seq` in the run, its time, and every unset field
+ * filled in.
  */
 export function emit(runId: string, input: RunEventInput): RunEvent {
   const held = bus();

@@ -259,6 +259,8 @@ export function carryOver(
  * @param catalog The servers to resolve against.
  * @param maxPerLoad The most this call may load, defaulting to `MAX_PER_LOAD`. It comes back on
  * the resolution so `loadResult` reports the same number rather than a second opinion of it.
+ * @returns The names that resolved, each once; the ones nothing matched; the asks too broad for
+ * any call, with what they matched; and the ones that only did not fit this call.
  */
 export function expandNames(
   requested: string[],
