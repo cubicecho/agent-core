@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiError, reply } from './helpers.ts';
+import { NO_EFFORT, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from './refusals.ts';
 
 const create = vi.fn();
 /**
@@ -20,16 +21,6 @@ const call = (config: ReturnType<typeof endpoint>, model = 'm') => ask(config, m
 /** Whether the hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
 
-/** The three the model refuses by name, as OpenAI words them. */
-const WANTS_COMPLETION_LIMIT = apiError(
-  400,
-  "Unsupported parameter: 'max_tokens' is not supported with this model. " + "Use 'max_completion_tokens' instead.",
-);
-const OWN_TEMPERATURE = apiError(
-  400,
-  "Unsupported value: 'temperature' does not support 0.3 with this model. " + 'Only the default (1) is supported.',
-);
-const NO_EFFORT = apiError(400, "Unsupported parameter: 'reasoning_effort' is not supported with this model.");
 /** The opposite refusal: the model reasons, it just does not offer the `none` a side task wants. */
 const NO_EFFORT_NONE = apiError(
   400,

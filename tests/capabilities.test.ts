@@ -10,46 +10,43 @@ import {
   resetCapabilities,
 } from '../src/capabilities.ts';
 import type { Produced } from '../src/stream.ts';
+import { apiError } from './helpers.ts';
+import { NO_EFFORT, NO_GRAMMAR, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from './refusals.ts';
 
 /** How each server words the refusal, near enough. */
-const NO_GRAMMAR = new Error('Failed to initialize samplers: failed to parse grammar');
-const NO_USAGE = new Error('400 Unrecognized request argument supplied: stream_options');
+const NO_USAGE = apiError(400, 'Unrecognized request argument supplied: stream_options');
 
-/** The three that are about the model, as OpenAI words them. */
-const NO_EFFORT = new Error("400 Unsupported parameter: 'reasoning_effort' is not supported with this model.");
-const WANTS_COMPLETION_LIMIT = new Error(
-  "400 Unsupported parameter: 'max_tokens' is not supported with this model. " + "Use 'max_completion_tokens' instead.",
-);
-const OWN_TEMPERATURE = new Error(
-  "400 Unsupported value: 'temperature' does not support 0.7 with this model. " + 'Only the default (1) is supported.',
-);
 /** Not a refusal of the field at all — the number was too big, which is the caller's to see. */
-const TOO_MANY_TOKENS = new Error(
-  '400 max_tokens is too large: 200000. This model supports at most 16384 completion tokens.',
+const TOO_MANY_TOKENS = apiError(
+  400,
+  'max_tokens is too large: 200000. This model supports at most 16384 completion tokens.',
 );
 
 /** Not a refusal of the field either — the model reasons, it just does not offer this effort. */
-const NO_SUCH_EFFORT = new Error(
-  "400 Unsupported value: 'reasoning_effort' does not support 'none' with this model. " +
+const NO_SUCH_EFFORT = apiError(
+  400,
+  "Unsupported value: 'reasoning_effort' does not support 'none' with this model. " +
     "Supported values are: 'minimal', 'low', 'medium', and 'high'.",
 );
 /** A real field refusal that happens to be worded the way a value refusal usually is. */
-const NO_EFFORT_FIELD = new Error('400 This model does not support reasoning_effort.');
+const NO_EFFORT_FIELD = apiError(400, 'This model does not support reasoning_effort.');
 
 // The temperature's own value refusals, which read almost exactly like the field refusal above
 // it. `does not support` is in all three, which is why it cannot be the marker.
 
 /** The caller typed 5. The field works; the number is theirs to see rejected. */
-const TEMPERATURE_OUT_OF_RANGE = new Error(
-  "400 Invalid value: 'temperature' does not support 5. Supported values are between 0 and 2.",
+const TEMPERATURE_OUT_OF_RANGE = apiError(
+  400,
+  "Invalid value: 'temperature' does not support 5. Supported values are between 0 and 2.",
 );
 
 /** The same refusal in a server's plainer words, quoting nothing. */
-const TEMPERATURE_TOO_HIGH = new Error('400 temperature does not support values above 2');
+const TEMPERATURE_TOO_HIGH = apiError(400, 'temperature does not support values above 2');
 
 /** A refusal of another field that says the word in passing — the advice at the end is all. */
-const ANOTHER_FIELD_REFUSED = new Error(
-  "400 Unsupported value: 'top_p' does not support 3 with this model. Adjust temperature instead.",
+const ANOTHER_FIELD_REFUSED = apiError(
+  400,
+  "Unsupported value: 'top_p' does not support 3 with this model. Adjust temperature instead.",
 );
 
 /** The same, for a model: refuses in order, recording what each attempt was built with. */
@@ -413,7 +410,7 @@ describe('negotiate, for a model', () => {
   it('walks the ladder a rung at a time when the refusal lists nothing', async () => {
     const supports = openai();
     const refuse = (value: string) =>
-      new Error(`400 Unsupported value: 'reasoning_effort' does not support '${value}'.`);
+      apiError(400, `Unsupported value: 'reasoning_effort' does not support '${value}'.`);
     const { send } = modelThatRefuses(refuse('none'), refuse('minimal'));
     await expect(negotiate(supports, send, { model: 'gpt-5' })).resolves.toBe('answered');
     const refused = modelCapabilitiesFor(supports, 'gpt-5');
@@ -426,15 +423,17 @@ describe('negotiate, for a model', () => {
     // Never a step *down*: answering a refused `xhigh` with `high` would quietly reason less than
     // whoever typed it asked for, where stepping up only costs tokens and says so in a notice.
     const supports = openai();
-    const unplaceable = new Error(
-      "400 Unsupported value: 'reasoning_effort' does not support 'xhigh' with this model.",
+    const unplaceable = apiError(
+      400,
+      "Unsupported value: 'reasoning_effort' does not support 'xhigh' with this model.",
     );
     const { send } = modelThatRefuses(unplaceable);
     await expect(negotiate(supports, send, { model: 'gpt-5' })).rejects.toThrow('xhigh');
     expect(send).toHaveBeenCalledTimes(1);
 
-    const topOut = new Error(
-      "400 Unsupported value: 'reasoning_effort' does not support 'high' with this model. " +
+    const topOut = apiError(
+      400,
+      "Unsupported value: 'reasoning_effort' does not support 'high' with this model. " +
         "Supported values are: 'low', 'medium'.",
     );
     const { send: second } = modelThatRefuses(topOut);
@@ -569,9 +568,9 @@ describe('negotiate, for a model', () => {
 
 describe('negotiate, for a field the caller can do without', () => {
   const vllm = () => capabilitiesFor('http://vllm:8000/v1');
-  const UNRECOGNIZED = new Error('400 Unrecognized request argument supplied: min_p');
-  const UNKNOWN = new Error("400 Unknown parameter: 'chat_template_kwargs.enable_thinking'.");
-  const SEVERAL = new Error('400 Unrecognized request arguments supplied: id_slot, min_p');
+  const UNRECOGNIZED = apiError(400, 'Unrecognized request argument supplied: min_p');
+  const UNKNOWN = apiError(400, "Unknown parameter: 'chat_template_kwargs.enable_thinking'.");
+  const SEVERAL = apiError(400, 'Unrecognized request arguments supplied: id_slot, min_p');
 
   it('drops a named droppable field and remembers it for the model', async () => {
     const supports = vllm();
@@ -671,7 +670,7 @@ describe('two runs on one endpoint', () => {
   it('still gives up on a refusal nothing here knows how to answer', async () => {
     const supports = capabilitiesFor('http://local/v1');
     const send = vi.fn(async () => {
-      throw new Error('401 Incorrect API key provided');
+      throw apiError(401, 'Incorrect API key provided');
     });
 
     // The re-send above is bounded by the flags latching off. Nothing latched here, so this has

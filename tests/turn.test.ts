@@ -3,14 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFor, negotiate, resetCapabilities } from '../src/capabilities.ts';
 import { streamTurn } from '../src/stream.ts';
 import { clientOf, text } from './helpers.ts';
+import { NO_GRAMMAR } from './refusals.ts';
 
 /**
  * `negotiate` wrapping `streamTurn` is the whole of a turn. Both are useful alone; this is the
  * shape every consumer actually builds, and the seam between them is a flag that used to have
  * to be passed to each of them separately.
  */
-
-const NO_GRAMMAR = new Error('Failed to initialize samplers: failed to parse grammar');
 
 /** A server that refuses the first request, in the words llama.cpp uses, then answers. */
 const refusesOnce = (words: string[], { after }: { after: number }) => {
