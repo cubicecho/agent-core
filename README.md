@@ -1245,7 +1245,8 @@ cannot drift. `endpointKey` holds the key in the clear; `endpointId`, its SHA-25
 that is safe to write down.
 
 `resetAll` drops all five, and `reset.ts` names each seam separately for a test that wants one —
-`resetCalibration` for the measured ratios.
+`resetCalibration` for the measured ratios, `resetHints` for the models that refused the
+no-thinking hints.
 
 The latches can outlive the process as well, because otherwise every restart spends one refused
 request per endpoint and model learning the same facts again. `exportCapabilities` returns every

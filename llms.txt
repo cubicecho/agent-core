@@ -90,7 +90,6 @@ Keeping a long run inside its window: stale tool results cleared, and the oldest
 - `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
 - `SUMMARY_PROMPT` — The summariser's instruction when the caller gives none.
 - `summariser` — A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
-- `summaryInput` — What the summariser is handed for a plan: the earlier summary if there was one, then each message as its role and at most 4000 characters of its text.
 
 ### config
 
@@ -109,7 +108,6 @@ Picking up an answer the token ceiling cut off, instead of keeping half of it.
 
 - `ContinueTurnOptions` (type) — What `continueTurn` takes besides what `runTurn` does.
 - `continueTurn` — Carries on an answer the token ceiling cut off, by sending the transcript again with the answer so far as a trailing assistant message, and joins the pieces into one turn.
-- `isContinuable` — Whether a turn is one a continuation can finish: cut off at the ceiling, with an answer begun and no tool call in it.
 
 ### errors
 
@@ -222,7 +220,6 @@ Everything about a request failing that is not about what the request said.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
-- `sleep` — A delay an abort cuts short, rejecting rather than resolving early.
 
 ### run-calls
 
@@ -350,7 +347,6 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `requestChars` — How many characters a request is worth: the walk `requestTokens` divides, without the division.
 - `requestTokens` — What this request will cost the window, in tokens, near enough.
 - `TokenEstimateOptions` (type) — What the two token estimates below take besides what they measure.
-- `toolsChars` — How many characters a tool array is worth, measured once per array.
 
 ### tool-calls
 

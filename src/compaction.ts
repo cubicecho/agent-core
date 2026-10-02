@@ -396,7 +396,7 @@ export function summaryInput(plan: CompactionPlan): string {
  * @param model - The model to write it, which may be a smaller one than the run's.
  * @param [options] - Cancellation and notices, and the instruction and ceiling the summary is
  * written under.
- * @returns A function from `summaryInput`'s text to the summary. It rejects as `ask` does, and
+ * @returns A function from the text of what is being folded to the summary. It rejects as `ask` does, and
  * resolves with an empty string where the model wrote nothing.
  */
 export const summariser =
@@ -451,7 +451,7 @@ export interface CompactionRunOptions {
  *
  * @param messages - The transcript the plan was made for. Read only, and only for the hooks.
  * @param plan - What `planCompaction` returned for it.
- * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
+ * @param summarise - Writes the summary from the text it is handed. See `summariser`. Not called
  * when a hook vetoes.
  * @param [options] - Hooks to tell and whether the window is already past. See `CompactionRunOptions`.
  * @returns `undefined` when nothing was folded — a hook vetoed, or the summary came back empty —
@@ -558,7 +558,7 @@ export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'thr
  *
  * @param messages - The transcript the plan was made for. Not written to.
  * @param plan - What `planCompaction` returned for it.
- * @param summarise - Writes the summary from `summaryInput`'s text. See `summariser`. Not called
+ * @param summarise - Writes the summary from the text it is handed. See `summariser`. Not called
  * when a hook vetoes.
  * @param [options] - Hooks to tell and whether the window is already past. See
  * `CompactionRunOptions`.

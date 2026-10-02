@@ -215,7 +215,7 @@ export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
  *
  * @param body - The request as it was sent, tools included.
  * @returns The sum of `messageChars` over the messages. The tools are not in it, whether or not
- * the body carries them; `toolsChars` counts those.
+ * the body carries them; `contextChars` counts those, under `tools`.
  *
  * @remarks
  * What calibration reads a reported prompt count against, since a ratio is only as good as the
@@ -297,7 +297,7 @@ const PARTS = ['system', 'tools', 'history', 'toolResults'] as const;
  * that is neither that nor a `tool` message as `history`.
  *
  * @remarks
- * Exact and additive: the parts sum to `total`, which is `requestChars` plus `toolsChars`. The
+ * Exact and additive: the parts sum to `total`, which is `requestChars` plus the characters of the tools. The
  * conversion to tokens is `contextTokens`' business, because that is where an estimate and a
  * reported count have to be told apart.
  */
