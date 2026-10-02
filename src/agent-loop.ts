@@ -70,6 +70,7 @@ import {
   requestedNames,
   shownCall,
   type ToolOrder,
+  toolName,
 } from "./tool-loading.ts";
 
 /**
@@ -963,9 +964,8 @@ async function runSteps(
   const used = new Set<string>();
   const definitions = new Map<string, OpenAI.ChatCompletionTool>();
   for (const tool of tools) {
-    if (tool.type === "function" && !definitions.has(tool.function.name)) {
-      definitions.set(tool.function.name, tool);
-    }
+    const name = toolName(tool);
+    if (name !== undefined && !definitions.has(name)) definitions.set(name, tool);
   }
   // Looked through unless the host has a tool by that name, which is then the host's to answer.
   const proxies = onDemand && !definitions.has(CALL_TOOL);
@@ -1025,12 +1025,13 @@ async function runSteps(
   // Proxied, a shortlist has nowhere to go but the history: the tool array is fixed, so it is
   // answered as though the model had loaded it, and the definitions sit after the question.
   const shortlist = proxied
-    ? byName(new Set(preselected)).filter(
-        (tool) => tool.type === "function" && inCatalog(catalog, tool.function.name),
-      )
+    ? byName(new Set(preselected)).filter((tool) => {
+        const name = toolName(tool);
+        return name !== undefined && inCatalog(catalog, name);
+      })
     : [];
   if (shortlist.length) {
-    const names = shortlist.map((tool) => (tool.type === "function" ? tool.function.name : ""));
+    const names = shortlist.map((tool) => toolName(tool) ?? "");
     // Numbered by where the call lands, so two questions in one transcript do not share an id.
     const id = `preselect-${messages.length}`;
     const args = JSON.stringify({ names });
@@ -1154,7 +1155,7 @@ async function runSteps(
       onRequest({ messages: opening.messages, tools: opening.tools ?? [], step });
     }
     const first = await runTurn(client, supports, build, turnOptions);
-    const names = declared.map((tool) => (tool.type === "function" ? tool.function.name : ""));
+    const names = declared.map((tool) => toolName(tool) ?? "");
     // Compared before any continuation is joined on: the cache a request meets is the one its own
     // prompt found, and a continuation's prompt is this request's plus the reply so far.
     // The breakdown measures the array `toolSchemaTokens` does, so where no prompt was reported
@@ -1210,7 +1211,7 @@ async function runSteps(
     let calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
     let content = turn.content;
     if (recover && !calls.length && content && (tools.length > 0 || onDemand)) {
-      const names = tools.flatMap((tool) => (tool.type === "function" ? [tool.function.name] : []));
+      const names = tools.map(toolName).filter((name) => name !== undefined);
       const recovered = recoverToolCalls(content, {
         names: onDemand ? [...names, LOAD_TOOLS, ...(proxies ? [CALL_TOOL] : [])] : names,
       });
