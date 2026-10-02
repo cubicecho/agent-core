@@ -145,10 +145,14 @@ and after each, and the same titles.
   is built on a mocked SDK. Renamed so one name means one thing: `says` → `asking`
   (calibration), `reply` → `replies` (continuation), `stream` → `chunks` (agent-loop), `tool` →
   `catalogTool` (tool-loading), `answers` → `answer` (side-task-settings).
-- **T1, open** — `NO_GRAMMAR` is identical in `capabilities` and `turn` and not yet shared.
-  `NO_EFFORT`, `OWN_TEMPERATURE` and `WANTS_COMPLETION_LIMIT` are a plain `Error` in
-  `capabilities` and an `APIError` in `side-task-hints`: a parameter, a mistake, or intended?
-- **T2** — titles were not reworded. Some start with a noun and read oddly after `it`.
+- **T1, closed** (`3d7926a`) — answered 2026-10-02: one shape, the SDK's. Every refusal
+  that carries a status is built with `apiError`, and the four that two files share are in
+  `tests/refusals.ts`, apart from `helpers.ts` because a file that mocks the SDK whole cannot
+  build them on load. Doing it showed `apiError` wrapped the body once too often, so its
+  message was the JSON of the body; it reads `400 rejected` now.
+- **T2, closed** (`e98d4dc`) — answered 2026-10-02: reword them. Eighty-six titles led with
+  a noun; each starts with the verb now and takes its subject from its `describe`, plural
+  where the `describe` names two things. Titles only.
 - **T3** — a cast that is the test stays: a wrong type handed in to see it refused (`'900' as
   never`, `'8' as never`, `[...] as never[]`, `emit(... as never)`, `reasoning_content`).
 
@@ -194,11 +198,12 @@ P16); the fourth is in its `tests.md`.
   need the SDK. It looks at the error only, so `tryAsk` asks the signal as well; a host calling
   `tryAsk` itself has to hand it the signal to get that.
 
-### B6 — `getOrCreate` reads a stored `undefined` as a miss
+### B6 — `getOrCreate` reads a stored `undefined` as a miss: accepted (`a226ead`)
 
 **File:** `guards.ts`. Changed by R18 to drop an assertion (`has` then `get as V`). No caller
-stores `undefined`; recorded because it is a behaviour change in a refactor. Open: accept or
-reverse.
+stores `undefined`. Answered 2026-10-02: accept it, and have the type say so. The value type
+is bounded (`V extends {}`) in `getOrCreate` and in `scoped`, so a map that could hold
+`undefined` does not compile, and a test holds that with `@ts-expect-error`.
 
 ---
 
