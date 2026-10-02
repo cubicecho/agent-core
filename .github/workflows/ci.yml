@@ -26,7 +26,7 @@ jobs:
       - run: npm ci
 
       # Formatting, lint, and import order in one pass. `ci` differs from
-      # `npm run lint` only in never writing fixes.
+      # `npm run check:biome` in never writing fixes.
       - name: Lint
         run: npx biome ci .
 
@@ -36,7 +36,7 @@ jobs:
       # tsconfig.json excludes `**/*.test.ts`, and vitest transpiles without
       # checking, so plain `tsc --noEmit` type-checked none of the suite.
       - name: Typecheck
-        run: npm run typecheck
+        run: npm run check:types
 
       # Coverage rather than a bare run, so the summary is in the log for a
       # reviewer to read. Deliberately no threshold: a number that fails a build

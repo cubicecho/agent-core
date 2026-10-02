@@ -12,9 +12,9 @@ holds only what is true of this repo.
 
 | | |
 | --- | --- |
-| `npm run lint` | biome, check only |
-| `npm run format` | biome, writing |
-| `npm run typecheck` | tsc over src and tests |
+| `npm run check` | `check:biome`, then `check:types` |
+| `npm run check:biome` | biome, writing its fixes; CI runs `npx biome ci .`, which writes none |
+| `npm run check:types` | tsc over src and tests |
 | `npm test` | vitest, one pass |
 | `npm run build` | emits `dist/`, then regenerates `llms.txt` |
 
