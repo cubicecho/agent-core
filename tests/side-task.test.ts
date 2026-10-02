@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { describe, expect, it, vi } from 'vitest';
+import { sleep } from '../src/retry.ts';
 import { clean, listLines, parseJson, tryAsk } from '../src/side-task.ts';
 import { estimateTokens } from '../src/tokens.ts';
 
@@ -103,5 +104,16 @@ describe('tryAsk', () => {
   it('lets a cancelled run through instead of reporting it as a failed side task', async () => {
     const abort = new OpenAI.APIUserAbortError();
     await expect(tryAsk('naming', () => Promise.reject(abort))).rejects.toBe(abort);
+  });
+
+  it("lets through an abort that landed between attempts, which is the signal's own error", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const notices: string[] = [];
+    const waiting = tryAsk('naming', () => sleep(1000, controller.signal), {
+      onNotice: (message) => notices.push(message),
+    });
+    await expect(waiting).rejects.toBe(controller.signal.reason);
+    expect(notices).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { ABORT_EVENT } from './platform.ts';
+import { ABORT_ERROR, ABORT_EVENT } from './platform.ts';
 import { HttpStatus } from './wire.ts';
 
 /**
@@ -138,6 +138,22 @@ export function isTransient(error: unknown): boolean {
 export const refusesRequest = (error: unknown) =>
   error instanceof OpenAI.APIError &&
   (error.status === HttpStatus.BadRequest || error.status === HttpStatus.UnprocessableEntity);
+
+/**
+ * Whether a failure is the caller cancelling, rather than anything going wrong.
+ *
+ * @param error - The rejection, as caught.
+ * @returns `true` for the SDK's `APIUserAbortError` and for any error named `AbortError`, which is
+ * what an aborted signal gives as its reason; `false` for everything else, a timeout included.
+ *
+ * @remarks
+ * An abort reaches a catch in two shapes. The SDK raises its own class when a request in flight is
+ * cancelled, and `sleep` rejects with the signal's reason when the cancel lands between attempts.
+ * A catch that knew only the first reported the second as a failure. A signal aborted with a
+ * reason of the caller's own making is not recognised: only the error is looked at.
+ */
+export const isAbort = (error: unknown) =>
+  error instanceof OpenAI.APIUserAbortError || (error instanceof Error && error.name === ABORT_ERROR);
 
 /** The error type llama.cpp gives a request it cannot serve yet. */
 const UNAVAILABLE_ERROR = 'unavailable_error';

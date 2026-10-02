@@ -14,3 +14,6 @@ export const MS_PER_MINUTE = 60 * MS_PER_SECOND;
 
 /** The event an `AbortSignal` fires when it aborts. */
 export const ABORT_EVENT = 'abort';
+
+/** The name an error carries when it is what an aborted `AbortSignal` gave as its reason. */
+export const ABORT_ERROR = 'AbortError';

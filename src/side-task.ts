@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import {
   type Capabilities,
   capabilitiesFor,
@@ -13,7 +13,7 @@ import {
 import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from './client.ts';
 import type { Endpoint, EndpointIdentity } from './config.ts';
 import { errorMessage } from './errors.ts';
-import { refusesRequest } from './retry.ts';
+import { isAbort, refusesRequest } from './retry.ts';
 import { relaxSchema, sanitizeSchema } from './schema-compat.ts';
 import { scoped } from './scope.ts';
 import { stripThinking } from './thinking.ts';
@@ -387,8 +387,8 @@ export async function askJson<T>(
  * @param label - Names the task in the notice when it fails.
  * @param run - The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
  * @param [options] - `onNotice`, told what was given up on.
- * @returns What `run` resolved with, or `undefined` when it threw. An `APIUserAbortError` is thrown
- * on and raises no notice.
+ * @returns What `run` resolved with, or `undefined` when it threw. An abort — the SDK's, or a
+ * signal's `AbortError` — is thrown on and raises no notice.
  *
  * @remarks
  * A side task is never worth failing the work it supports. Callers that can carry on without
@@ -404,7 +404,7 @@ export async function tryAsk<T>(
   } catch (error) {
     // A cancelled run is not a failed side task. Swallowing the abort made the two
     // indistinguishable and left the cancellation with nowhere to go.
-    if (error instanceof OpenAI.APIUserAbortError) {
+    if (isAbort(error)) {
       throw error;
     }
     onNotice?.(`${label}: ${errorMessage(error)}`);
