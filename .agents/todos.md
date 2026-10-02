@@ -70,6 +70,22 @@ Surveyed against the skills as they stand after P13 was rewritten and P15–P17 
 Baseline on `refactor/preferences-pass`: lint clean, typecheck clean, 654 tests pass.
 Not approved. Counts are for `src` unless they say otherwise.
 
+Approved 2026-10-02: R15–R22, D3, D4. Answers given at the gate, which the items follow:
+
+- Doc prose that says why goes under `@remarks`, after the tags (D3). File-level comments
+  stay as paragraphs.
+- Every module-level function and every method, private ones too, has a doc block with
+  `@param` and `@returns`. A closure inside a function body does not need one (D4).
+- Magic strings: a member of a union is named even though the compiler checks it. `typeof`
+  answers and checks against empty stay inline (R17).
+- A union with three or more members in use gets one `as const` object and the type derived
+  from it; one or two values get flat constants. The name is used where a value is built as
+  well as where it is compared (R17).
+- Numbers that come as a set: each member is its own constant, and the set is built from the
+  names (R17).
+- Assertions on an untyped reply stay. Only the ones with a fix in the types go: `x as T` in a
+  generic, `{} as T`, a string already checked against a list, `as unknown as` (R18).
+
 #### R15 [sweep] — P15: every conditional and loop body is a braced block
 
 **File:** 463 hits of Biome's `style/useBlockStatements`: 395 in `src`, 68 in `tests`, `bench`
