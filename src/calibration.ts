@@ -39,13 +39,13 @@ const PLAUSIBLE = { least: 1, most: 8 };
 const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>());
 
 /**
- * The characters per token to size a request to this model with, `CHARS_PER_TOKEN` until a turn
+ * The characters per token to size a request to this model with, four until a turn
  * has reported one.
  *
  * @param supports - The endpoint, as `capabilitiesFor` hands it over.
  * @param model - The name the endpoint knows the model as, as it goes in the body.
  * @returns The highest of the readings held for the model in the current runtime, or
- * `CHARS_PER_TOKEN` where it holds none.
+ * four where it holds none.
  *
  * @remarks
  * The highest of the model's last few readings rather than their mean. The estimate guards a

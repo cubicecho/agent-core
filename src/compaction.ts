@@ -225,7 +225,7 @@ export interface CompactionOptions {
    * The divisor the default `estimate` uses — `charsPerTokenFor` the model, for a transcript
    * weighed the way `runTurn` sizes its requests. Ignored beside an `estimate` of the caller's own.
    *
-   * @defaultValue `CHARS_PER_TOKEN`
+   * @defaultValue `4`
    */
   charsPerToken?: number;
   /**

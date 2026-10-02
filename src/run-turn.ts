@@ -93,10 +93,10 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * How long to wait on a server answering that the model is still loading; zero gives up on the
    * first such answer like any other 503.
    *
-   * @defaultValue `LOADING_TIMEOUT_MS`
+   * @defaultValue `120000`
    *
    * @remarks
-   * Polled every `LOADING_POLL_MS` without spending `maxRetries`, and announced once rather than
+   * Polled every three seconds without spending `maxRetries`, and announced once rather than
    * per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
    * has to swap in, meets this on its first request every time.
    */

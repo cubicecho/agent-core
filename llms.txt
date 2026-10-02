@@ -27,7 +27,7 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 How many characters a token is worth on one model, learned from what its endpoint reports.
 
 - `calibrate` — Takes one reading from a request that was answered, so the next one to this model is sized by it.
-- `charsPerTokenFor` — The characters per token to size a request to this model with, `CHARS_PER_TOKEN` until a turn has reported one.
+- `charsPerTokenFor` — The characters per token to size a request to this model with, four until a turn has reported one.
 - `resetCalibration` — Forgets every reading, so the next request is sized at `CHARS_PER_TOKEN` again.
 
 ### capabilities
@@ -60,7 +60,6 @@ The contract between whatever holds the tools and the loop that offers them to a
 - `contextLimitFor` — How much a model will read, in tokens.
 - `endpointId` — `endpointKey` hashed, for the remembered facts that can leave the process.
 - `endpointKey` — What counts as one endpoint, everywhere in this package that has to remember something about one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
-- `FIRST_TOKEN_FACTOR` — How many idle windows the first chunk gets when `firstTokenSeconds` is not given.
 - `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for an endpoint, built once and kept.
 - `listModels` — Asks an endpoint what it serves, and remembers the answer.
@@ -193,8 +192,6 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 
 Choosing a run's tools before it starts, from the request and the catalogue's names.
 
-- `KEYWORD_DROPOFF` — How far the best unpicked tool must fall below the last picked one for the cut to count clean.
-- `KEYWORD_MIN_SCORE` — The least a best match may score and still be acted on without a model.
 - `KeywordPreselection` (type) — What `preselectByKeywords` found.
 - `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
 - `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
@@ -224,8 +221,6 @@ Everything about a request failing that is not about what the request said.
 - `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
-- `LOADING_POLL_MS` — How long to wait between asking a loading server again.
-- `LOADING_TIMEOUT_MS` — How long `runTurn` waits for a model to load unless told otherwise.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 - `sleep` — A delay an abort cuts short, rejecting rather than resolving early.
 
@@ -345,7 +340,6 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 
 ### tokens
 
-- `CHARS_PER_TOKEN` — The characters one token is taken to be, where nothing has measured it.
 - `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
 - `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
 - `compact` — A token count as a message shows it: 1234 → "1.2k".
@@ -385,8 +379,6 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
 - `loadedTools` — A tool array with newly loaded definitions appended, in the order they were loaded.
 - `loadResult` — What `load_tools` reports back: the descriptions, now that they are worth their tokens.
-- `MAX_CARRIED` — The most a conversation carries between turns.
-- `MAX_PER_LOAD` — The most a single `load_tools` call may pull in.
 - `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
 - `PROXY_TOOLS` — The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is shared.
 - `proxiedCall` — The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.

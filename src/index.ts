@@ -42,7 +42,6 @@ export {
   contextLimitFor,
   endpointId,
   endpointKey,
-  FIRST_TOKEN_FACTOR,
   firstTokenMs,
   getClient,
   listModels,
@@ -146,8 +145,6 @@ export {
   tokensBetween,
 } from './ledger.ts';
 export {
-  KEYWORD_DROPOFF,
-  KEYWORD_MIN_SCORE,
   type KeywordPreselection,
   type KeywordPreselectOptions,
   PRESELECT_SCHEMA,
@@ -168,8 +165,6 @@ export {
   isModelLoading,
   isOverflow,
   isTransient,
-  LOADING_POLL_MS,
-  LOADING_TIMEOUT_MS,
   SMALLEST_LIKELY_WINDOW,
   sleep,
 } from './retry.ts';
@@ -253,7 +248,6 @@ export {
   THINK_FENCE,
 } from './thinking.ts';
 export {
-  CHARS_PER_TOKEN,
   type ContextBreakdown,
   type ContextBreakdownOptions,
   compact,
@@ -289,8 +283,6 @@ export {
   LOAD_TOOLS_DEFINITION,
   loadedTools,
   loadResult,
-  MAX_CARRIED,
-  MAX_PER_LOAD,
   orderTools,
   PROXY_TOOLS,
   proxiedCall,

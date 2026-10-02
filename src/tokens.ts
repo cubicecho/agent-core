@@ -16,7 +16,7 @@ export const CHARS_PER_TOKEN = 4;
  * vocabulary either.
  *
  * @param text - Prose or serialised JSON — both counted the same way, which is why JSON reads low.
- * @returns The length over `CHARS_PER_TOKEN`, rounded up: zero for an empty string, and one for
+ * @returns The length over four, rounded up: zero for an empty string, and one for
  * anything shorter than a token.
  *
  * @remarks
@@ -99,7 +99,7 @@ export interface TokenEstimateOptions {
    * The divisor — `charsPerTokenFor` for a model whose reported usage has calibrated it. A value
    * that is not a number above zero is ignored.
    *
-   * @defaultValue `CHARS_PER_TOKEN`
+   * @defaultValue `4`
    */
   charsPerToken?: number;
 }
@@ -108,7 +108,7 @@ export interface TokenEstimateOptions {
  * The divisor an option asked for, or the fallback when it asked for nothing usable.
  *
  * @param charsPerToken - What the caller gave. Absent, zero, negative or `NaN` is nothing usable.
- * @returns `charsPerToken` when it is above zero, otherwise `CHARS_PER_TOKEN`.
+ * @returns `charsPerToken` when it is above zero, otherwise four.
  */
 const divisor = (charsPerToken: number | undefined) =>
   charsPerToken !== undefined && charsPerToken > 0 ? charsPerToken : CHARS_PER_TOKEN;
@@ -233,7 +233,7 @@ export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
  * What this request will cost the window, in tokens, near enough.
  *
  * @param body - The request as it will be sent, tools included.
- * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
+ * @param [options] - The divisor, four when none is given.
  * @returns Whole tokens: the messages' and the tools', each rounded up on its own and added.
  *
  * @remarks
@@ -406,7 +406,7 @@ export function contextTokens(
  * One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
  *
  * @param message - The message as it will be sent.
- * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
+ * @param [options] - The divisor, four when none is given.
  * @returns `messageChars` over the divisor, rounded up per message, where `requestTokens` rounds
  * once over them all.
  *
