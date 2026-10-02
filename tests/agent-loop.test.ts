@@ -4,15 +4,7 @@ import { PRESELECT_APPEND } from '../src/agent-loop.ts';
 import { ToolDiscovery } from '../src/config.ts';
 import { RunEventKind, RunOutcome } from '../src/events.ts';
 import { HookEvent } from '../src/hook-events.ts';
-import {
-  FinishReason,
-  FUNCTION_TOOL,
-  HttpStatus,
-  JSON_SCHEMA_FORMAT,
-  PartType,
-  Role,
-  SchemaType,
-} from '../src/wire.ts';
+import { FinishReason, FUNCTION_TOOL, HttpStatus, PartType, Role, SchemaType } from '../src/wire.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -22,11 +14,8 @@ vi.mock('../src/client.ts', async (importOriginal) => ({
 }));
 
 const { runAgentLoop } = await import('../src/agent-loop.ts');
-const { buildBody } = await import('../src/request-body.ts');
-const { preselect } = await import('../src/preselect.ts');
 const { preview } = await import('../src/run-calls.ts');
-const { resolveApiKey } = await import('../src/client.ts');
-const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await import('../src/capabilities.ts');
+const { resetCapabilities } = await import('../src/capabilities.ts');
 const { CALL_TOOL, LOAD_TOOLS } = await import('../src/tool-loading.ts');
 const { configureHooks, resetHooks, withContext } = await import('../src/hooks.ts');
 const { tokensBetween } = await import('../src/ledger.ts');
@@ -120,208 +109,6 @@ const declared = () =>
 
 beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
-
-describe('buildBody', () => {
-  const messages: Message[] = [{ role: Role.User, content: 'hi' }];
-
-  it('sends what a fresh endpoint and model have not refused', () => {
-    const supports = capabilitiesFor('https://api.openai.com/v1');
-    const body = buildBody({ ...config, reasoningEffort: 'low' }, supports, undefined, messages, [tool('a')]);
-    expect(body).toMatchObject({
-      model: 'm',
-      max_tokens: 100,
-      temperature: 0.2,
-      reasoning_effort: 'low',
-      stream: true,
-      stream_options: { include_usage: true },
-      messages,
-    });
-    expect(body.tools).toHaveLength(1);
-  });
-
-  it('spells the ceiling, drops the temperature and effort the model refused', () => {
-    const supports = capabilitiesFor('https://api.openai.com/v1');
-    const refused = modelCapabilitiesFor(supports, 'm');
-    Object.assign(refused, {
-      legacyTokenLimit: false,
-      chosenTemperature: false,
-      reasoningEffort: false,
-    });
-    const body = buildBody({ ...config, reasoningEffort: 'high' }, supports, refused, messages);
-    expect(body).toMatchObject({ max_completion_tokens: 100 });
-    expect(body).not.toHaveProperty('max_tokens');
-    expect(body).not.toHaveProperty('temperature');
-    expect(body).not.toHaveProperty('reasoning_effort');
-    expect(body).not.toHaveProperty('tools');
-  });
-
-  it('steps an effort the model refused by value up to one it takes', () => {
-    // The refusal that means the opposite of the one above: the model reasons, it just does not
-    // reason at `none`. Sending nothing would run at its own default, which is neither what the
-    // config asks for nor anything an operator reading the settings row can see.
-    const supports = capabilitiesFor('https://api.openai.com/v1');
-    const refused = modelCapabilitiesFor(supports, 'm');
-    refused.refusedEfforts.add('none');
-    refused.supportedEfforts = ['minimal', 'low', 'medium', 'high'];
-    const body = buildBody({ ...config, reasoningEffort: 'none' }, supports, refused, messages);
-    expect(body).toMatchObject({ reasoning_effort: 'minimal' });
-    // Anything the model does list goes out as asked.
-    expect(buildBody({ ...config, reasoningEffort: 'high' }, supports, refused, messages)).toMatchObject({
-      reasoning_effort: 'high',
-    });
-  });
-
-  it('sends no ceiling at zero and no effort at off', () => {
-    const body = buildBody(
-      { ...config, maxTokens: 0, reasoningEffort: 'off' },
-      capabilitiesFor('http://local/v1'),
-      undefined,
-      messages,
-    );
-    expect(body).not.toHaveProperty('max_tokens');
-    expect(body).not.toHaveProperty('reasoning_effort');
-  });
-
-  it("merges extraBody last, less the refused fields and the loop's own", () => {
-    const supports = capabilitiesFor('http://local/v1');
-    const refused = modelCapabilitiesFor(supports, 'm');
-    refused.refusedFields.add('min_p');
-    const body = buildBody(
-      {
-        ...config,
-        extraBody: { id_slot: 2, min_p: 0.1, temperature: 0.9, model: 'x', stream: false },
-      },
-      supports,
-      refused,
-      messages,
-    );
-    expect(body).toMatchObject({ id_slot: 2, temperature: 0.9, model: 'm', stream: true });
-    expect(body).not.toHaveProperty('min_p');
-  });
-
-  it('relaxes schemas where the endpoint could not build a grammar', () => {
-    const supports = capabilitiesFor('http://local/v1');
-    supports.strictSchemas = false;
-    const pattern: OpenAI.ChatCompletionTool = {
-      type: FUNCTION_TOOL,
-      function: {
-        name: 'p',
-        parameters: { type: SchemaType.Object, properties: { s: { type: SchemaType.String, pattern: '^a$' } } },
-      },
-    };
-    const body = buildBody(config, supports, undefined, messages, [pattern]);
-    expect(JSON.stringify(body.tools)).not.toContain('pattern');
-  });
-
-  /** The names a built body declares, in the order it declares them. */
-  const names = (body: Body) => (body.tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name);
-
-  it('declares the same set in the same order however the caller built the array', () => {
-    const supports = capabilitiesFor('http://local/v1');
-    const one = buildBody(config, supports, undefined, messages, [tool('b__x'), tool('a__y'), tool('a__x')]);
-    const other = buildBody(config, supports, undefined, messages, [tool('a__x'), tool('b__x'), tool('a__y')]);
-    expect(names(one)).toEqual(['a__x', 'a__y', 'b__x']);
-    expect(names(other)).toEqual(names(one));
-  });
-
-  it("sends the caller's own order when told to", () => {
-    const supports = capabilitiesFor('http://local/v1');
-    const body = buildBody(config, supports, undefined, messages, [tool('b'), tool('a')], false);
-    expect(names(body)).toEqual(['b', 'a']);
-  });
-
-  it("orders by a comparator of the caller's", () => {
-    const supports = capabilitiesFor('http://local/v1');
-    const body = buildBody(config, supports, undefined, messages, [tool('a'), tool('b'), tool('c')], (a, b) =>
-      b.localeCompare(a),
-    );
-    expect(names(body)).toEqual(['c', 'b', 'a']);
-  });
-});
-
-describe('resolveApiKey', () => {
-  const env = { OPENAI_API_KEY: 'env-key' };
-
-  it("prefers the endpoint's own key", () => {
-    expect(resolveApiKey({ apiKey: 'own', baseUrl: 'http://x' }, { baseUrl: 'http://y' }, env)).toBe('own');
-  });
-
-  it('sends no inherited key to an endpoint the settings did not name', () => {
-    expect(
-      resolveApiKey({ baseUrl: 'http://friend/v1' }, { baseUrl: 'https://api.openai.com/v1', apiKey: 'k' }, env),
-    ).toBe('agent-core');
-  });
-
-  it('inherits on the same endpoint, however the URL is written', () => {
-    expect(resolveApiKey({ baseUrl: ' http://x/v1/ ' }, { baseUrl: 'http://x/v1', apiKey: 'k' }, env)).toBe('k');
-    expect(resolveApiKey({}, { baseUrl: 'http://x/v1' }, env)).toBe('env-key');
-    expect(resolveApiKey({}, undefined, {})).toBe('agent-core');
-  });
-});
-
-describe('preview', () => {
-  it('cuts long text and says how long it was', () => {
-    expect(preview('abc', 5)).toBe('abc');
-    expect(preview('abcdefgh', 5)).toBe('abcde… (8 chars)');
-  });
-});
-
-describe('preselect', () => {
-  const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
-
-  it('hands back the catalogued names the small model picked', async () => {
-    create.mockResolvedValue({ choices: [{ message: { content: '["s__read", "nope"]' } }] });
-    expect(await preselect(config, 'small', catalog, 'read it')).toEqual(['s__read']);
-    expect(create.mock.calls[0][0]).toMatchObject({
-      response_format: { type: JSON_SCHEMA_FORMAT, json_schema: { name: 'preselection' } },
-    });
-    create.mockResolvedValue({ choices: [{ message: { content: '{"tools": ["s__read"]}' } }] });
-    expect(await preselect(config, 'small', catalog, 'read it')).toEqual(['s__read']);
-  });
-
-  it('picks nothing without a model, and nothing when the call fails', async () => {
-    expect(await preselect(config, '', catalog, 'read it')).toEqual([]);
-    const notices: string[] = [];
-    create.mockRejectedValueOnce(new Error('boom'));
-    const got = await preselect(config, 'small', catalog, 'x', {
-      onNotice: (n) => notices.push(n),
-    });
-    expect(got).toEqual([]);
-    expect(notices).toEqual([expect.stringContaining('boom')]);
-  });
-
-  it("spends no round trip when the request's own words name the tool", async () => {
-    // A catalogue with something to discriminate between: a term is only distinctive against
-    // other terms, so one tool alone can never be a confident match, and does not need to be.
-    const desks = [
-      { id: 's', label: 'S', tools: [{ name: 's__read', description: 'Read a file' }] },
-      { id: 'd', label: 'D', tools: [{ name: 'd__query', description: 'Query the database' }] },
-      { id: 'c', label: 'C', tools: [{ name: 'c__event', description: 'Add a calendar event' }] },
-      { id: 'w', label: 'W', tools: [{ name: 'w__fetch', description: 'Fetch a URL' }] },
-    ];
-    const notices: string[] = [];
-    const got = await preselect(config, 'small', desks, 'read the file', {
-      keywords: true,
-      onNotice: (n) => notices.push(n),
-    });
-    expect(got).toEqual(['s__read']);
-    // The whole point: the model was never asked.
-    expect(create).not.toHaveBeenCalled();
-    expect(notices).toEqual([expect.stringContaining('by name')]);
-  });
-
-  it('falls through to the model when the words settle nothing', async () => {
-    create.mockResolvedValue({ choices: [{ message: { content: '{"tools": ["s__read"]}' } }] });
-    expect(await preselect(config, 'small', catalog, 'sing me a song', { keywords: true })).toEqual(['s__read']);
-    expect(create).toHaveBeenCalledTimes(1);
-  });
-
-  it('asks for no preselection at all without a model, words or not', async () => {
-    // `toolSelectModel: ""` means don't preselect, and the cheap path does not reinterpret it.
-    expect(await preselect(config, '', catalog, 'read the file', { keywords: true })).toEqual([]);
-    expect(create).not.toHaveBeenCalled();
-  });
-});
 
 describe('runAgentLoop', () => {
   it('runs the tools between turns and hands back the transcript', async () => {

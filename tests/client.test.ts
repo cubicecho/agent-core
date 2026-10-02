@@ -18,6 +18,7 @@ const {
   listModels,
   NO_KEY,
   resetClients,
+  resolveApiKey,
 } = await import('../src/client.ts');
 
 const endpoint = { baseUrl: 'http://local/v1', apiKey: '', requestTimeoutSeconds: 60 };
@@ -406,6 +407,26 @@ describe('configureClients', () => {
     configureClients({ maxClients: 1, listingMissMs: 1 });
     resetClients();
     expect(configureClients()).toEqual({ maxClients: MAX_CLIENTS, listingMissMs: LISTING_MISS_MS });
+  });
+});
+
+describe('resolveApiKey', () => {
+  const env = { OPENAI_API_KEY: 'env-key' };
+
+  it("prefers the endpoint's own key", () => {
+    expect(resolveApiKey({ apiKey: 'own', baseUrl: 'http://x' }, { baseUrl: 'http://y' }, env)).toBe('own');
+  });
+
+  it('sends no inherited key to an endpoint the settings did not name', () => {
+    expect(
+      resolveApiKey({ baseUrl: 'http://friend/v1' }, { baseUrl: 'https://api.openai.com/v1', apiKey: 'k' }, env),
+    ).toBe('agent-core');
+  });
+
+  it('inherits on the same endpoint, however the URL is written', () => {
+    expect(resolveApiKey({ baseUrl: ' http://x/v1/ ' }, { baseUrl: 'http://x/v1', apiKey: 'k' }, env)).toBe('k');
+    expect(resolveApiKey({}, { baseUrl: 'http://x/v1' }, env)).toBe('env-key');
+    expect(resolveApiKey({}, undefined, {})).toBe('agent-core');
   });
 });
 
