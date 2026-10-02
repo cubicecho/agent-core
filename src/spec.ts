@@ -378,15 +378,15 @@ class Report {
   }
 }
 
+/** What `kept` hands back: a field that could be undefined is one that may be absent instead. */
+type Kept<T> = { [K in keyof T as undefined extends T[K] ? never : K]: T[K] } & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
+};
+
 /** Drops the keys whose value did not survive, so an absent field stays absent. */
-function kept<T extends object>(fields: T): { [K in keyof T]: T[K] } {
-  const out = {} as T;
-  for (const [key, value] of Object.entries(fields)) {
-    if (value !== undefined) {
-      (out as Record<string, unknown>)[key] = value;
-    }
-  }
-  return out;
+function kept<T extends object>(fields: T): Kept<T> {
+  // The one assertion: `Object.entries` forgets which keys it was handed, and `Kept` says them again.
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Kept<T>;
 }
 
 /** Whether a parsed sub-object said anything at all. An empty one is the same as an absent one. */
@@ -481,7 +481,7 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
       report.drop(path, 'has neither text nor a reference');
       continue;
     }
-    parts.push(kept({ id, text, ref }) as PromptPart);
+    parts.push(kept({ id, text, ref }));
   }
   return parts;
 }
@@ -582,7 +582,8 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
       report.drop(path, 'needs an id, an event, a server and a tool');
       continue;
     }
-    if (!SPEC_EVENTS.includes(on as HookEvent)) {
+    const event = SPEC_EVENTS.find((known) => known === on);
+    if (!event) {
       report.drop(`${path}.on`, `"${on}" is not an event`);
       continue;
     }
@@ -592,19 +593,19 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
       report.note(`${path}.on`, `"${on}" is never fired by this host`);
     }
     let inject = report.boolean(`${path}.inject`, held.inject);
-    if (inject && !INJECT_EVENTS.has(on as HookEvent)) {
+    if (inject && !INJECT_EVENTS.has(event)) {
       report.drop(`${path}.inject`, `"${on}" runs after the model has already answered`);
       inject = undefined;
     }
     let veto = report.boolean(`${path}.veto`, held.veto);
-    if (veto && on !== HookEvent.BeforeCompact) {
+    if (veto && event !== HookEvent.BeforeCompact) {
       report.drop(`${path}.veto`, `"${on}" announces nothing a hook can decline`);
       veto = undefined;
     }
     hooks.push(
       kept({
         id,
-        on: on as HookEvent,
+        on: event,
         server,
         tool,
         args: absent(held.args) ? undefined : held.args,
@@ -613,7 +614,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
         maxTokens: report.number(`${path}.maxTokens`, held.maxTokens, 0),
         timeoutMs: report.number(`${path}.timeoutMs`, held.timeoutMs, 0),
         enabled: report.boolean(`${path}.enabled`, held.enabled),
-      }) as AgentHook,
+      }),
     );
   }
   return hooks;
@@ -882,7 +883,7 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
       maxTokens: task.maxTokens,
       temperature: task.temperature,
       reasoningEffort: task.reasoningEffort,
-    }) as ResolvedTask;
+    });
   }
   return tasks;
 }

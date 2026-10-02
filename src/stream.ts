@@ -171,11 +171,16 @@ interface Timings {
   draft_n_accepted?: number;
 }
 
+/** The fields of `TurnUsage` that are a number, which are the ones a timing can be written to. */
+type CountField = {
+  [K in keyof TurnUsage]-?: TurnUsage[K] extends number | undefined ? K : never;
+}[keyof TurnUsage];
+
 /**
  * The fields of `timings` a turn reports, under the names `TurnUsage` gives them. A value that is
  * not a finite number is left out rather than guessed at.
  */
-const TIMINGS: readonly [keyof Timings, keyof TurnUsage][] = [
+const TIMINGS: readonly [keyof Timings, CountField][] = [
   ['prompt_ms', 'promptMs'],
   ['prompt_per_second', 'promptTokensPerSecond'],
   ['predicted_ms', 'predictedMs'],
@@ -286,7 +291,7 @@ function chunkReport(chunk: OpenAI.ChatCompletionChunk): ChunkReport {
     for (const [from, to] of TIMINGS) {
       const value = timings[from];
       if (isCount(value)) {
-        (counts as Record<string, number>)[to] = value;
+        counts[to] = value;
       }
     }
     if (isCount(timings.cache_n)) {

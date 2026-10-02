@@ -459,11 +459,11 @@ export function sanitizeSchema(schema: unknown): Record<string, unknown> {
 }
 
 /** Rewrites one tool's parameters, leaving a non-function tool alone. */
-const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => unknown): OpenAI.ChatCompletionTool =>
+const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => Schema): OpenAI.ChatCompletionTool =>
   tool.type === FUNCTION_TOOL
     ? {
         ...tool,
-        function: { ...tool.function, parameters: fn(tool.function.parameters) as Schema },
+        function: { ...tool.function, parameters: fn(tool.function.parameters) },
       }
     : tool;
 
@@ -494,7 +494,7 @@ const relaxed = new WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool
 const through = (
   cache: WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>,
   tools: OpenAI.ChatCompletionTool[],
-  fn: (parameters: unknown) => unknown,
+  fn: (parameters: unknown) => Schema,
 ) => tools.map((tool) => getOrCreate(cache, tool, () => mapTool(tool, fn)));
 
 /**

@@ -239,8 +239,8 @@ function toCall(entry: unknown): WrittenCall | undefined {
 /** Every call in a value that is one call or a list of them, or undefined if any entry is not one. */
 function toCalls(value: unknown): WrittenCall[] | undefined {
   const entries = Array.isArray(value) ? value : [value];
-  const calls = entries.map(toCall);
-  return calls.length && calls.every((call) => call) ? (calls as WrittenCall[]) : undefined;
+  const calls = entries.flatMap((entry) => toCall(entry) ?? []);
+  return calls.length && calls.length === entries.length ? calls : undefined;
 }
 
 /** A value read as text: JSON where it parses, the string where it does not. */

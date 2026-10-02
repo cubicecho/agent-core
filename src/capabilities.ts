@@ -359,7 +359,10 @@ export const EFFORT_NONE = 'none' as const;
  */
 export const EFFORT_LADDER = [EFFORT_NONE, 'minimal', 'low', 'medium', 'high'] as const;
 
-const rankOf = (effort: string): number => (EFFORT_LADDER as readonly string[]).indexOf(effort.toLowerCase());
+/** The ladder as plain strings, so a value that is not on it can be looked for. */
+const LADDER: readonly string[] = EFFORT_LADDER;
+
+const rankOf = (effort: string): number => LADDER.indexOf(effort.toLowerCase());
 
 /**
  * The efforts a refusal lists as this model's: `Supported values are: 'minimal', 'low', 'medium',

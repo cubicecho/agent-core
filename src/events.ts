@@ -667,6 +667,11 @@ export interface RunMetrics {
   outcome?: RunOutcome;
 }
 
+/** The fields of `RunMetrics` that are a number, which are the ones a report can be added to. */
+type CountedMetric = {
+  [K in keyof RunMetrics]-?: RunMetrics[K] extends number | undefined ? K : never;
+}[keyof RunMetrics];
+
 /** How a run ended, as `runMetrics` reads it. */
 export const RunOutcome = {
   /** The run did not fail, and its last turn was not cut off. */
@@ -719,12 +724,11 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
     truncatedTurns: 0,
   };
   /** Adds to a field that is absent until something reports it. */
-  const add = (field: keyof RunMetrics, value: number | undefined) => {
+  const add = (field: CountedMetric, value: number | undefined) => {
     if (value === undefined) {
       return;
     }
-    const known = metrics as unknown as Record<string, number | undefined>;
-    known[field] = (known[field] ?? 0) + value;
+    metrics[field] = (metrics[field] ?? 0) + value;
   };
   let reportedPrompt = 0;
   let reportedCached = 0;

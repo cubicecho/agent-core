@@ -30,7 +30,6 @@ export const isPositive = (value: unknown): value is number => typeof value === 
 /** What `getOrCreate` needs of a map, so a `WeakMap` serves as well as a `Map`. */
 interface Lookup<K, V> {
   get(key: K): V | undefined;
-  has(key: K): boolean;
   set(key: K, value: V): unknown;
 }
 
@@ -39,13 +38,17 @@ interface Lookup<K, V> {
  *
  * @param map - Where to look. Gains an entry on a miss, which is the point of calling this.
  * @param key - What to look under.
- * @param create - Builds the value on a miss, and is not called on a hit.
+ * @param create - Builds the value on a miss, and is not called on a hit. A stored `undefined`
+ *   reads as a miss, so one that returns it is called every time.
  */
 export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V {
-  if (!map.has(key)) {
-    map.set(key, create());
+  const held = map.get(key);
+  if (held !== undefined) {
+    return held;
   }
-  return map.get(key) as V;
+  const made = create();
+  map.set(key, made);
+  return made;
 }
 
 /**

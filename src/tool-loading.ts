@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import type { CatalogServer } from './catalog.ts';
+import { isRecord } from './guards.ts';
 import { ARGUMENT_PREVIEW_CHARS } from './tool-calls.ts';
 import { FUNCTION_TOOL, SchemaType } from './wire.ts';
 
@@ -631,10 +632,10 @@ export function proxiedCall(
       );
     }
   }
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+  if (!isRecord(input)) {
     throw new Error(`${CALL_TOOL} arguments for ${name} must be an object.`);
   }
-  return { name, input: input as Record<string, unknown> };
+  return { name, input };
 }
 
 /**
