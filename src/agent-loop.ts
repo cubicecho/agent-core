@@ -150,6 +150,9 @@ export function buildBody(
 export const preview = (text: string, limit = 2000) =>
   text.length > limit ? `${text.slice(0, limit)}… (${text.length} chars)` : text;
 
+/** A count and its noun, plural unless the count is one: `1 tool`, `3 tools`. */
+const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 /** A base URL as two settings rows would agree on it: trimmed, without the trailing slash. */
 const sameUrl = (a: string, b: string) =>
   a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
@@ -289,7 +292,7 @@ export async function preselect(
       ...(keywords === true ? {} : keywords),
     });
     if (guess.confident) {
-      onNotice?.(`chose ${guess.names.length} tool${guess.names.length === 1 ? "" : "s"} by name`);
+      onNotice?.(`chose ${counted(guess.names.length, "tool")} by name`);
       return guess.names;
     }
   }
@@ -1215,7 +1218,7 @@ async function runSteps(
         calls = recovered.toolCalls;
         content = recovered.content;
         notice(
-          `recovered ${calls.length} tool call${calls.length === 1 ? "" : "s"} the model wrote as text; the server's tool-call parser does not match this model's template`,
+          `recovered ${counted(calls.length, "tool call")} the model wrote as text; the server's tool-call parser does not match this model's template`,
         );
       }
     }
