@@ -210,6 +210,19 @@ const budget = (given?: number) =>
 const attribute = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 
+/** What every note about an outcome opens with: which hook it was, and on which event. */
+const noteOf = (outcome: HookOutcome) => ({
+  event: outcome.event,
+  source: outcome.label,
+  hookId: outcome.hookId,
+});
+
+/** The note a failed outcome leaves, the same whichever of the three callers reports it. */
+const failureNote = (outcome: HookOutcome): HookNote => ({
+  ...noteOf(outcome),
+  error: outcome.error ?? "failed",
+});
+
 /**
  * Builds the context a set of outcomes adds and the notes that go with it.
  *
@@ -233,9 +246,8 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
   const notes: HookNote[] = [];
   let remaining = budget(maxTokens);
   for (const outcome of outcomes) {
-    const base = { event: outcome.event, source: outcome.label, hookId: outcome.hookId };
     if (!outcome.ok) {
-      notes.push({ ...base, error: outcome.error ?? "failed" });
+      notes.push(failureNote(outcome));
       continue;
     }
     if (!outcome.inject || !INJECT_EVENTS.has(outcome.event)) continue;
@@ -247,7 +259,7 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
     const tokens = estimateTokens(text);
     remaining -= tokens;
     blocks.push(`<context source="${attribute(outcome.label)}">\n${text}\n</context>`);
-    notes.push({ ...base, tokens, text });
+    notes.push({ ...noteOf(outcome), tokens, text });
   }
   return { context: blocks.join("\n\n"), notes };
 }
@@ -484,9 +496,7 @@ export async function notify(
   onNote?: (note: HookNote) => void,
 ): Promise<HookNote[]> {
   const outcomes = await runSafely(run, event, context);
-  const notes = outcomes
-    .filter((outcome) => !outcome.ok)
-    .map((outcome) => assembleContext([outcome]).notes[0]);
+  const notes = outcomes.filter((outcome) => !outcome.ok).map(failureNote);
   for (const note of notes) onNote?.(note);
   return notes;
 }
@@ -515,15 +525,8 @@ export async function consult(
   const outcomes = await runSafely(run, event, context);
   const notes: HookNote[] = [];
   for (const outcome of outcomes) {
-    if (!outcome.ok) notes.push(assembleContext([outcome]).notes[0]);
-    else if (outcome.veto === true) {
-      notes.push({
-        event: outcome.event,
-        source: outcome.label,
-        hookId: outcome.hookId,
-        veto: true,
-      });
-    }
+    if (!outcome.ok) notes.push(failureNote(outcome));
+    else if (outcome.veto === true) notes.push({ ...noteOf(outcome), veto: true });
   }
   for (const note of notes) onNote?.(note);
   return { notes, vetoed: notes.some((note) => note.veto) };
