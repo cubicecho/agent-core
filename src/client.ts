@@ -11,15 +11,16 @@ import { scoped } from "./scope.ts";
  */
 export const NO_KEY = "agent-core";
 
+/** A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit. */
+const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
+
 /**
  * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
  *
  * @param config Read for `requestTimeoutSeconds` alone.
  */
-export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined => {
-  const seconds = config.requestTimeoutSeconds ?? 0;
-  return seconds > 0 ? seconds * 1000 : undefined;
-};
+export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined =>
+  limitMs(config.requestTimeoutSeconds ?? 0);
 
 /**
  * A client per endpoint, made once and kept.
@@ -135,7 +136,7 @@ export const firstTokenMs = (
     const idle = timeoutMs(config);
     return idle === undefined ? undefined : idle * FIRST_TOKEN_FACTOR;
   }
-  return config.firstTokenSeconds > 0 ? config.firstTokenSeconds * 1000 : undefined;
+  return limitMs(config.firstTokenSeconds);
 };
 
 /**
