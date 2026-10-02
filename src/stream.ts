@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import { type ContextBreakdown, EndpointSilent } from "./retry.ts";
 import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from "./thinking.ts";
+import type { ToolCall } from "./tool-calls.ts";
 
 /**
  * Reading one streamed turn back into a message.
@@ -179,7 +180,7 @@ export interface Turn {
    * belongs to, every caller had to narrow before it could read `.function`, to rule out a
    * custom call that this loop cannot produce. Still assignable wherever the union is wanted.
    */
-  toolCalls: OpenAI.ChatCompletionMessageFunctionToolCall[];
+  toolCalls: ToolCall[];
   usage: TurnUsage;
   /**
    * Why the model stopped, in the endpoint's own words — `stop`, `length`, `tool_calls`, or `""`

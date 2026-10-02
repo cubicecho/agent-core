@@ -23,6 +23,7 @@ export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
  * and try again.
  */
 export class ToolArgumentsError extends Error {
+  override readonly name = "ToolArgumentsError";
   /** Whether the model ran out of room or wrote something unreadable. */
   readonly kind: "truncated" | "malformed";
 
@@ -32,7 +33,6 @@ export class ToolArgumentsError extends Error {
    */
   constructor(kind: "truncated" | "malformed", message: string) {
     super(message);
-    this.name = "ToolArgumentsError";
     this.kind = kind;
   }
 }
