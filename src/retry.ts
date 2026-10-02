@@ -428,6 +428,21 @@ export function isTransient(error: unknown): boolean {
 }
 
 /**
+ * Whether a failure is the endpoint refusing the request as written, rather than losing it.
+ *
+ * 400 and 422 are what a server says when it read the body and disliked it, which makes them the
+ * only statuses worth answering by sending something different. Any 4xx is too wide: 401, 404 and
+ * 429 are 4xx and none of them is about the fields, and a 429 is one `isTransient` accepts — a
+ * caller that re-sent on it at once doubled the rate against a server that had just asked for less.
+ * Catching everything is wider still, since an abort or a connection that never landed then
+ * latches off whatever the re-send left out.
+ *
+ * @param error The rejection, as caught. What is not an SDK error refuses nothing.
+ */
+export const refusesRequest = (error: unknown) =>
+  error instanceof OpenAI.APIError && (error.status === 400 || error.status === 422);
+
+/**
  * Whether a failure is a local server still loading the model, rather than one failing to serve.
  *
  * llama.cpp answers 503 `Loading model` with type `unavailable_error` from the moment it starts

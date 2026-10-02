@@ -1,7 +1,7 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { type Capabilities, type ModelCapabilities, modelCapabilitiesFor } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
-import { ContextOverflow } from "./retry.ts";
+import { ContextOverflow, refusesRequest } from "./retry.ts";
 import { type RunTurnOptions, runTurn } from "./run-turn.ts";
 import type { Turn, TurnUsage } from "./stream.ts";
 
@@ -103,10 +103,6 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
   }
   return joined;
 }
-
-/** Whether a failure is the endpoint refusing the request as written, rather than losing it. */
-const refusesRequest = (error: unknown) =>
-  error instanceof OpenAI.APIError && (error.status === 400 || error.status === 422);
 
 /**
  * Carries on an answer the token ceiling cut off, by sending the transcript again with the answer

@@ -10,7 +10,7 @@ import {
 import { endpointId, getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
-import { isTransient } from "./retry.ts";
+import { refusesRequest } from "./retry.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { scoped } from "./scope.ts";
 import { stripThinking } from "./thinking.ts";
@@ -61,25 +61,6 @@ export const refusedHints = (): Set<string> => noHints();
 
 /** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
 export const resetHints = () => noHints().clear();
-
-/**
- * Whether a failure is the server complaining about the request, rather than failing to answer.
- *
- * The retry below used to catch everything, so an aborted first call — or a connection that
- * never landed — latched the hints off for the life of the process and every later side task
- * paid for it by burning a whole budget on deliberation. Narrowing that to any 4xx was still
- * too wide: 401, 404 and 429 are all 4xx and none of them is about the fields. A 429 was the
- * worst of them, because the retry then re-sent the whole request immediately — doubling the
- * rate against a server that had just asked for less of it — and `isTransient` accepts exactly
- * that status, so the two halves of this package disagreed about one error.
- *
- * 400 and 422 are what a server says when it read the body and disliked it. Everything else
- * is left to the caller's own retry.
- */
-function rejectedTheRequest(error: unknown): boolean {
-  if (!(error instanceof OpenAI.APIError) || isTransient(error)) return false;
-  return error.status === 400 || error.status === 422;
-}
 
 /**
  * The input a side task applies its instruction to: text, or the content parts a vision model
@@ -251,7 +232,7 @@ async function complete(
     // does not offer as `none`. Or a 400 about something else entirely, which is why the
     // notice says what was tried rather than what was wrong.
     const effort = sentEffort;
-    if (!(hints || effort) || !rejectedTheRequest(error)) throw error;
+    if (!(hints || effort) || !refusesRequest(error)) throw error;
     onNotice?.(
       level
         ? `${model} rejected a request carrying a reasoning effort; retrying without it`
