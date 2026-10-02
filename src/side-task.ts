@@ -9,8 +9,8 @@ import {
   negotiate,
   type OnNotice,
 } from "./capabilities.ts";
-import { endpointId, getClient, modelKey } from "./client.ts";
-import type { Endpoint } from "./config.ts";
+import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from "./client.ts";
+import type { Endpoint, EndpointIdentity } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { refusesRequest } from "./retry.ts";
 import { relaxSchema, sanitizeSchema } from "./schema-compat.ts";
@@ -384,3 +384,51 @@ export const listLines = (text: string, max: number, maxChars: number) =>
     .map(clean)
     .filter((line) => line.length > 0 && line.length <= maxChars)
     .slice(0, max);
+
+/**
+ * A side task's settings as the call that honours them: its endpoint, its model, and the options
+ * `ask`, `askJson`, `summariser` and `preselect` take last.
+ *
+ * A helper rather than a second signature on each of the four, so a setting added to a task later
+ * arrives through `options` without a host's call changing. What the task states wins over the
+ * same field in `options`: the host's code is written once and the task is what an operator
+ * configured over it, so a host passes its own ceiling as the value for a task that names none.
+ * A setting the task leaves out and `options` does too is absent from the result, which is what
+ * leaves it to the entry point's own default — 0.3, not the agent's temperature.
+ *
+ * A resolved spec carries no key, so a task on the agent's own endpoint would otherwise go out
+ * unkeyed, and be remembered under a second capability entry beside the agent's. Given `agent`,
+ * such a task is sent the agent's `baseUrl` as the agent spells it and, having no key of its own,
+ * the agent's key, so `capabilitiesFor` answers both with one object; a task on another endpoint
+ * is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
+ * agent's key is whatever the main turn is sent.
+ *
+ * @param task The task, ordinarily `resolved.tasks.<key>`.
+ * @param options What the host adds — cancellation, notices, `keywords` — and its own defaults
+ * for the settings a task may leave out.
+ * @param agent The endpoint the main turn uses, key included. Absent sends the task's endpoint
+ * as it stands.
+ */
+export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
+  task: SideTask,
+  options?: Options,
+  agent?: EndpointIdentity,
+): { endpoint: Endpoint; model: string; options: Options } {
+  const own = task.endpoint;
+  const shared = agent && (!own.baseUrl.trim() || sameUrl(own.baseUrl, agent.baseUrl));
+  const stated: SideTaskOptions = {};
+  if (task.maxTokens !== undefined) stated.maxTokens = task.maxTokens;
+  if (task.temperature !== undefined) stated.temperature = task.temperature;
+  if (task.reasoningEffort !== undefined) stated.reasoningEffort = task.reasoningEffort;
+  return {
+    endpoint: agent
+      ? {
+          ...own,
+          ...(shared ? { baseUrl: agent.baseUrl } : {}),
+          apiKey: resolveApiKey(own, agent, {}),
+        }
+      : own,
+    model: task.model,
+    options: { ...options, ...stated } as Options,
+  };
+}

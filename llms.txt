@@ -17,16 +17,8 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
 - `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
 - `AgentLoopResult` (type) — What a finished loop hands back.
-- `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
-- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
-- `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
-- `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
-- `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
-- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
-- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
-- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
 
 ### calibration
 
@@ -71,6 +63,7 @@ The contract between whatever holds the tools and the loop that offers them to a
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `resetClients` — Forgets every cached client and listing, and puts `configureClients` back to the defaults.
+- `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `servedWindow` — The window a local server's own API says it is serving a model in, for the servers whose listing does not say.
 - `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
 
@@ -190,6 +183,14 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 - `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
 - `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
 
+### preselect
+
+- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
+
+### request-body
+
+- `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
+
 ### reset
 
 - `resetAll` — Forgets everything this package remembers between calls.
@@ -208,6 +209,12 @@ Everything about a request failing that is not about what the request said.
 - `LOADING_TIMEOUT_MS` — How long `runTurn` waits for a model to load unless told otherwise.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 - `sleep` — A delay an abort cuts short, rejecting rather than resolving early.
+
+### run-calls
+
+The tools between two turns: a step's calls read, run and written into the transcript.
+
+- `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 
 ### run-turn
 
@@ -247,6 +254,7 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
+- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
 - `tryAsk` — A side task is never worth failing the work it supports.
 
 ### snapshot
@@ -334,6 +342,9 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `recoverToolCalls` — Tool calls a model wrote into its reply as text, taken out of it and made into calls.
 - `ToolArgumentsError` — Tool arguments that could not be read as an object, with why.
 - `ToolCall` (type) — A tool call as the loop handles it, recovered or streamed.
+- `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
+- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
+- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
 ### tool-loading
 

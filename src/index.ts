@@ -15,16 +15,8 @@ export {
   type AgentLoopOptions,
   type AgentLoopRequest,
   type AgentLoopResult,
-  buildBody,
-  preselect,
-  preview,
-  resolveApiKey,
   runAgentLoop,
   type StepWindow,
-  type ToolCallOutcome,
-  type ToolCallRequest,
-  type ToolCallResult,
-  taskCall,
 } from "./agent-loop.ts";
 export { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
 export {
@@ -53,6 +45,7 @@ export {
   type ModelInfo,
   NO_KEY,
   resetClients,
+  resolveApiKey,
   servedWindow,
   timeoutMs,
 } from "./client.ts";
@@ -146,6 +139,8 @@ export {
   type TokenLedger,
   tokensBetween,
 } from "./ledger.ts";
+export { preselect } from "./preselect.ts";
+export { buildBody } from "./request-body.ts";
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,
@@ -159,6 +154,7 @@ export {
   SMALLEST_LIKELY_WINDOW,
   sleep,
 } from "./retry.ts";
+export { preview } from "./run-calls.ts";
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from "./runtime.ts";
 export {
@@ -179,6 +175,7 @@ export {
   type SideTask,
   type SideTaskInput,
   type SideTaskOptions,
+  taskCall,
   tryAsk,
 } from "./side-task.ts";
 export {
@@ -250,6 +247,9 @@ export {
   recoverToolCalls,
   ToolArgumentsError,
   type ToolCall,
+  type ToolCallOutcome,
+  type ToolCallRequest,
+  type ToolCallResult,
 } from "./tool-calls.ts";
 export {
   CALL_TOOL,

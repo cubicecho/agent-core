@@ -287,7 +287,7 @@ export interface ResolvedTask {
 ```
 
 `ResolvedAgent extends AgentConfig` (`src/config.ts:108`), so it already satisfies
-`AgentLoopOptions["config"]` (`src/agent-loop.ts:241-245`) structurally. `getClient(resolved)` and
+`AgentLoopOptions["config"]` (`src/agent-loop.ts`) structurally. `getClient(resolved)` and
 `runAgentLoop({ config: resolved })` take it unchanged and no adapter export is needed. The config
 seam survives on one rule: the spec module imports from `config.ts`, and nothing else in `src/`
 imports from the spec module.
@@ -368,7 +368,7 @@ without interpolation needs no denylist. The attack this closes is a confused de
 naming `https://attacker.example/v1` that causes the host's own provider key to be sent there.
 
 Resolution therefore yields `apiKey: ""`, which `getClient` turns into `NO_KEY` (`src/client.ts:10`).
-A host that wants inheritance applies `resolveApiKey` (`src/agent-loop.ts:140`) afterwards — the
+A host that wants inheritance applies `resolveApiKey` (`src/client.ts`) afterwards — the
 existing seam, deliberately not applied by the loop, unchanged. `exportSpec(spec, { secrets })`
 mirrors `state({ secrets })` in the pool and strips every bundled server's `env` and `headers`,
 with the property that **a redacted spec is still a valid spec**.
@@ -414,7 +414,7 @@ otherwise good agent unimportable. The validator takes the host's fired-event se
 
 `tasks` generalises `min-agent`'s `taskModels`, and each entry may carry **its own endpoint** —
 because every side task in this package already takes one: `summariser` (`src/compaction.ts:232`),
-`preselect` (`src/agent-loop.ts`) and `ask` (`src/side-task.ts`). A 1.5B titler on a local
+`preselect` (`src/preselect.ts`) and `ask` (`src/side-task.ts`). A 1.5B titler on a local
 llama.cpp beside a frontier main model is expressible here, and no published format serves it. An
 unknown task key is carried through untouched and not warned about, since a host may run tasks this
 package has never heard of. `toolSelectModel` flattens from `tasks.toolSelect?.model ?? ""`, where
@@ -428,7 +428,7 @@ field by field before an entry without a model is dropped, so a profile can set
 `tasks.title.temperature` alone over a base that names the model; with no model beneath it, the
 setting configures nothing and the task is absent.
 
-`taskCall(task, options, agent)` in `src/agent-loop.ts` is what carries them the rest of the way.
+`taskCall(task, options, agent)` in `src/side-task.ts` is what carries them the rest of the way.
 It turns a `ResolvedTask` into the endpoint, model and options that `ask`, `askJson`, `summariser`
 and `preselect` take, with what the task states winning over the host's options. Given the agent's
 endpoint it also keys a task on that endpoint as the agent is keyed, so the two share one

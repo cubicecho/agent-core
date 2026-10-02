@@ -554,3 +554,34 @@ export function resetClients() {
   unserved().clear();
   refusals().clear();
 }
+
+/** A base URL as two settings rows would agree on it: trimmed, without the trailing slash. */
+export const sameUrl = (a: string, b: string) =>
+  a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+
+/**
+ * The key to send, where an endpoint may inherit one from the settings it overrides.
+ *
+ * A credential issued for one endpoint has no business being posted to another. A profile that
+ * names its own `baseUrl` and no key of its own is sent `NO_KEY` — not the operator's key, and
+ * not `$OPENAI_API_KEY` — because "I pointed an agent at a friend's server and it sent my OpenAI
+ * key" is not a mistake worth being able to make, and a local server wants no key anyway. One on
+ * the same endpoint inherits the key as it inherits everything else, and the environment is the
+ * last word on the endpoint that was configured rather than overridden.
+ *
+ * @param own The endpoint as the agent or profile states it. Its own key always wins. An empty or
+ * absent `baseUrl` is one that inherits the endpoint too.
+ * @param inherited The settings it overrides. Absent treats `own` as the configured endpoint, so
+ * only its key and the environment's are in play.
+ * @param env Where `OPENAI_API_KEY` is read from, `process.env` by default.
+ */
+export function resolveApiKey(
+  own: { baseUrl?: string; apiKey?: string },
+  inherited?: EndpointIdentity,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (own.apiKey) return own.apiKey;
+  const baseUrl = own.baseUrl?.trim();
+  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) return NO_KEY;
+  return inherited?.apiKey || env.OPENAI_API_KEY || NO_KEY;
+}

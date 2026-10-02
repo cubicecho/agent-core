@@ -369,3 +369,54 @@ export function recoverToolCalls(
   rest += tail.slice(cursor);
   return { content: `${content.slice(0, from)}${rest}`.trim(), toolCalls };
 }
+
+/**
+ * One call the model made, as `dispatch` and `onToolCall` are handed it.
+ *
+ * A `call_tool` arrives as the tool it names — that tool's name and arguments, under the
+ * `call_tool`'s id — so a dispatcher is the same in every discovery mode.
+ */
+export interface ToolCallRequest {
+  id: string;
+  name: string;
+  /**
+   * Parsed by `parseToolArguments`, repairs and all. Empty for a call whose arguments could not be
+   * read, which only `onToolCall` is ever handed.
+   */
+  args: Record<string, unknown>;
+  /**
+   * The arguments as the model wrote them, before any repair. Through `call_tool`, the inner
+   * arguments as JSON text.
+   */
+  raw: string;
+}
+
+/** What one tool call did, in the order the model asked. */
+export interface ToolCallOutcome {
+  /**
+   * The id the model's reply gave the call, which is what tells two calls to one tool apart.
+   * Distinct within a step — `streamTurn` mints one where the server sent none or repeated one —
+   * but nothing stops a server using the same id again in a later step. `runAgentLoop` always
+   * sets it; optional so an outcome built before it existed still compiles.
+   */
+  id?: string;
+  /** The tool that was called. For a `call_tool`, the tool it named. */
+  name: string;
+  /** False when the arguments did not parse, the tool threw, or `load_tools` loaded nothing. */
+  ok: boolean;
+}
+
+/**
+ * One call's whole answer, as `onToolResult` is handed it.
+ *
+ * The `tool-result` event carries the same answer cut by `preview`, which is right for a readout
+ * and wrong for a host that renders or stores the result: this is the text the model reads.
+ */
+export interface ToolCallResult extends ToolCallOutcome {
+  id: string;
+  /**
+   * What went into the transcript for this call, uncut: what the tool returned, what it threw, the
+   * `load_tools` answer, or why the arguments could not be read.
+   */
+  content: string;
+}

@@ -8,9 +8,11 @@ vi.mock("../src/client.ts", async (importOriginal) => ({
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { buildBody, preselect, preview, resolveApiKey, runAgentLoop } = await import(
-  "../src/agent-loop.ts"
-);
+const { runAgentLoop } = await import("../src/agent-loop.ts");
+const { buildBody } = await import("../src/request-body.ts");
+const { preselect } = await import("../src/preselect.ts");
+const { preview } = await import("../src/run-calls.ts");
+const { resolveApiKey } = await import("../src/client.ts");
 const { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } = await import(
   "../src/capabilities.ts"
 );
@@ -21,9 +23,9 @@ const { tokensBetween } = await import("../src/ledger.ts");
 type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
 type ToolCall = import("../src/tool-calls.ts").ToolCall;
-type ToolCallRequest = import("../src/agent-loop.ts").ToolCallRequest;
+type ToolCallRequest = import("../src/tool-calls.ts").ToolCallRequest;
 type AgentLoopRequest = import("../src/agent-loop.ts").AgentLoopRequest;
-type ToolCallResult = import("../src/agent-loop.ts").ToolCallResult;
+type ToolCallResult = import("../src/tool-calls.ts").ToolCallResult;
 type RunEventInput = import("../src/events.ts").RunEventInput;
 type RunUsage = import("../src/events.ts").RunUsage;
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;

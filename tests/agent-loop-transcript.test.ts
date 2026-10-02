@@ -18,7 +18,7 @@ const { CALL_TOOL, LOAD_TOOLS } = await import("../src/tool-loading.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;
 type Turn = import("../src/stream.ts").Turn;
-type ToolCallRequest = import("../src/agent-loop.ts").ToolCallRequest;
+type ToolCallRequest = import("../src/tool-calls.ts").ToolCallRequest;
 type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 
 const stream = (...list: unknown[]) => ({

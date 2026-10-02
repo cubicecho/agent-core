@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
-import type { ToolCallOutcome } from "./agent-loop.ts";
 import { ContextOverflow } from "./retry.ts";
 import type { TurnUsage } from "./stream.ts";
+import type { ToolCallOutcome } from "./tool-calls.ts";
 
 /**
  * What went wrong, as a string.

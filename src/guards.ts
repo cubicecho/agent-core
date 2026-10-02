@@ -3,8 +3,9 @@
  *
  * A leaf with no imports, because the modules that need these — a browser-safe `spec`, the schema
  * walk, the tool-call reader, the snapshot importer — otherwise share nothing, and each had grown
- * its own copy. `getOrCreate` is here for the same reason and is the one thing that is not a
- * check: every cache in the package fills itself on a miss, and each had written that out.
+ * its own copy. `getOrCreate` and `counted` are here for the same reason and are the two things that
+ * are not checks: every cache in the package fills itself on a miss, and each had written that
+ * out, and a notice that counts something is written in more than one module.
  */
 
 /**
@@ -44,3 +45,11 @@ export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V
   if (!map.has(key)) map.set(key, create());
   return map.get(key) as V;
 }
+
+/**
+ * A count and its noun, plural unless the count is one: `1 tool`, `3 tools`.
+ *
+ * @param count How many.
+ * @param noun The singular, which takes an `s` and nothing cleverer.
+ */
+export const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
