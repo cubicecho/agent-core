@@ -14,13 +14,18 @@ holds only what is true of this repo.
 | --- | --- |
 | `npm run check` | `check:biome`, then `check:types` |
 | `npm run check:biome` | biome, writing its fixes; CI runs `npx biome ci .`, which writes none |
-| `npm run check:types` | tsc over src and tests |
+| `npm run check:types` | `tsc --noEmit` over src, tests and bench |
 | `npm test` | vitest, one pass |
 | `npm run build` | emits `dist/`, then regenerates `llms.txt` |
 
-`prepare` runs `build`, so `npm ci` regenerates `llms.txt` — which means CI checks it with
+`prepack` runs `build`, so the package is built when it is packed or published and not on
+`npm ci`. CI runs `npm run build` itself and then checks `llms.txt` with
 `git diff --exit-code -- llms.txt`, not with `npm run llms:check` (that would compare the file
-against itself). Anything added to `build` runs at publish time too; keep unstable APIs out of it.
+against the one the build just wrote). Anything added to `build` runs at publish time too; keep
+unstable APIs out of it. An install from a git URL gets no `dist/`: install from npm.
+
+`tsconfig.json` checks everything and emits nothing; `tsconfig.build.json` is the only config
+that emits.
 
 ## Documentation
 

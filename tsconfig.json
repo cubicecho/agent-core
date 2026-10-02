@@ -1,34 +1,29 @@
 {
+  // The checking config: everything in the repo that is TypeScript, and no emit. The published
+  // build is `tsconfig.build.json`, which is the only place `dist/` is described.
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023"],
-    "module": "NodeNext",
-    "moduleResolution": "nodenext",
-
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
 
     "strict": true,
+    "noEmit": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
 
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    // Source carries `.ts` specifiers so the same files run unbuilt under `tsx` and Node's
-    // type stripping; tsc rewrites them to `.js` on emit. See standards/typescript-and-scripts.
-    "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
+    // Source carries `.ts` specifiers so the same files run unbuilt under `tsx` and Node's
+    // type stripping; the build rewrites them to `.js`.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
 
     "types": ["node"]
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "include": ["src", "tests", "bench", "vitest.config.ts"]
 }

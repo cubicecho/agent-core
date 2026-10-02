@@ -46,10 +46,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/llms-txt.mjs",
-    "prepare": "npm run build",
+    "prepack": "npm run build",
     "check": "npm run check:biome && npm run check:types",
     "check:biome": "biome check --write .",
-    "check:types": "tsc -p tsconfig.tests.json",
+    "check:types": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "llms": "node scripts/llms-txt.mjs",

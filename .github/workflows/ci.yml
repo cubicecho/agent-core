@@ -20,9 +20,6 @@ jobs:
           node-version: '26'
           cache: npm
 
-      # `prepare` builds on install, so a package that no longer compiles fails
-      # here rather than at publish time, and there is no separate build step
-      # below for it to fail in.
       - run: npm ci
 
       # Formatting, lint, and import order in one pass. `ci` differs from
@@ -30,11 +27,9 @@ jobs:
       - name: Lint
         run: npx biome ci .
 
-      # The build above compiles src/ alone — tsconfig.build.json excludes the
-      # tests. This is the pass that puts tests/ through the compiler, via
-      # tsconfig.tests.json. It has to be that project explicitly: the default
-      # tsconfig.json excludes `**/*.test.ts`, and vitest transpiles without
-      # checking, so plain `tsc --noEmit` type-checked none of the suite.
+      # The pass that puts tests/ and bench/ through the compiler as well as
+      # src/: vitest transpiles without checking, and the build compiles src/
+      # alone.
       - name: Typecheck
         run: npm run check:types
 
@@ -45,16 +40,19 @@ jobs:
       - name: Test
         run: npm run coverage
 
-      # `npm ci` above ran `prepare`, which regenerates llms.txt — so this asks git
-      # whether the regenerated file matches the committed one. `npm run llms:check`
-      # would pass unconditionally here, having just written the file it compares.
+      # The build runs on `prepack`, so nothing has built yet. Doing it here
+      # means a package that no longer compiles fails on the pull request
+      # rather than at publish time.
+      - name: Build
+        run: npm run build
+
+      # The build regenerates llms.txt, so this asks git whether the
+      # regenerated file matches the committed one. `npm run llms:check` would
+      # pass unconditionally here, having just written the file it compares.
       - name: llms.txt matches the exports it indexes
         run: git diff --exit-code -- llms.txt
 
-      # `files` is ["dist"] and dist is gitignored, so every git-URL consumer
-      # builds this themselves from `prepare`. A build that succeeds while
-      # emitting nothing would leave them with an exports map pointing at a
-      # dist/ that is not there — which is how the prepack-instead-of-prepare
-      # bug reached a consumer rather than this repo.
+      # A build that succeeds while emitting nothing would publish an exports
+      # map pointing at a dist/ that is not there.
       - name: The build actually emitted
         run: test -f dist/index.js && test -f dist/index.d.ts
