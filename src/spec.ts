@@ -1,4 +1,4 @@
-import type { AgentConfig, Endpoint } from "./config.ts";
+import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS } from "./config.ts";
 import { isRecord } from "./guards.ts";
 import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 
@@ -43,9 +43,6 @@ export const AGENT_TASKS = ["compaction", "toolSelect", "title", "followups"] as
  * browser can load it.
  */
 export const SPEC_EVENTS: readonly HookEvent[] = HOOK_EVENTS;
-
-/** Body fields the loop owns. `buildBody` would overwrite them anyway; better to say so on import. */
-const RESERVED_BODY = ["model", "messages", "stream", "tools"];
 
 /** One agent, as a document. Every field but `spec` is optional, because a layer says only what it changes. */
 export interface AgentSpec {
@@ -394,7 +391,8 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
     else {
       extraBody = {};
       for (const [key, held] of Object.entries(value.extraBody)) {
-        if (RESERVED_BODY.includes(key))
+        // `buildBody` would overwrite them anyway; better to say so on import.
+        if (RESERVED_BODY_FIELDS.includes(key))
           report.drop(`model.extraBody.${key}`, "is the loop's to set");
         else extraBody[key] = held;
       }

@@ -47,6 +47,14 @@ export interface Endpoint {
   firstTokenSeconds?: number;
 }
 
+/**
+ * The request fields `extraBody` may not set, because the loop's request is built around them.
+ *
+ * Here beside `extraBody` rather than with `buildBody`, which is what enforces it, because `spec`
+ * says so on import as well and has to stay loadable in a browser.
+ */
+export const RESERVED_BODY_FIELDS: readonly string[] = ["model", "messages", "stream", "tools"];
+
 /** What to ask the model for. */
 export interface ModelParams {
   model: string;

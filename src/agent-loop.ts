@@ -16,7 +16,13 @@ import {
   planCompaction,
   summariser,
 } from "./compaction.ts";
-import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from "./config.ts";
+import {
+  type Endpoint,
+  type ModelParams,
+  RESERVED_BODY_FIELDS,
+  type RetryPolicy,
+  type ToolPolicy,
+} from "./config.ts";
 import { continueTurn } from "./continuation.ts";
 import {
   AgentLoopError,
@@ -84,9 +90,6 @@ import {
  * prompts, the tools and what a run means stay with the caller.
  */
 
-/** The fields `extraBody` may not override, because the loop's request is built around them. */
-const RESERVED = new Set(["model", "messages", "stream", "tools"]);
-
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and
  * the model have refused.
@@ -125,7 +128,7 @@ export function buildBody(
     : relaxTools(sanitizeTools(sorted));
   const effort = effortFor(refused, config.reasoningEffort);
   const extra = Object.entries(config.extraBody ?? {}).filter(
-    ([field]) => !RESERVED.has(field) && !refused?.refusedFields.has(field),
+    ([field]) => !RESERVED_BODY_FIELDS.includes(field) && !refused?.refusedFields.has(field),
   );
   return {
     ...ceilingAndTemperature(refused, config.maxTokens, config.temperature),
