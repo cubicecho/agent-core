@@ -1,3 +1,10 @@
+# [2.25.0](https://github.com/cubicecho/agent-core/compare/v2.24.0...v2.25.0) (2026-10-02)
+
+
+### Features
+
+* the words the wire and the bus are written in have names (R17) ([9f1313d](https://github.com/cubicecho/agent-core/commit/9f1313d8b44ab4c9b15c4b2599f1cb27a88b03e2))
+
 # [2.24.0](https://github.com/cubicecho/agent-core/compare/v2.23.0...v2.24.0) (2026-10-02)
 
 
