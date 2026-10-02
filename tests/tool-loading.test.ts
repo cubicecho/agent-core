@@ -1,6 +1,13 @@
 import { expect, test } from "vitest";
 import type { CatalogServer } from "../src/catalog.ts";
 import {
+  PRESELECT_SYSTEM,
+  preselectByKeywords,
+  preselectInput,
+  preselection,
+  preselectSystem,
+} from "../src/preselect.ts";
+import {
   CALL_TOOL,
   carryOver,
   catalogPrompt,
@@ -13,12 +20,7 @@ import {
   MAX_CARRIED,
   MAX_PER_LOAD,
   orderTools,
-  PRESELECT_SYSTEM,
   PROXY_TOOLS,
-  preselectByKeywords,
-  preselectInput,
-  preselection,
-  preselectSystem,
   proxiedCall,
   proxyCatalogPrompt,
   proxyLoadResult,

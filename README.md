@@ -23,7 +23,7 @@ only, Node >=22.
 | Module | What it does |
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`, and `sanitizeSchema` and `relaxSchema` for a schema that is not a tool's. |
-| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model, and the proxied form of the same thing — `PROXY_TOOLS`, `proxyLoadResult`, `proxiedCall` — for a server whose prompt cache a growing tool array throws away. |
+| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus the proxied form of the same thing — `PROXY_TOOLS`, `proxyLoadResult`, `proxiedCall` — for a server whose prompt cache a growing tool array throws away. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, fenced reasoning taken out of the answer, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
@@ -39,7 +39,7 @@ only, Node >=22.
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. |
 | `request-body` | `buildBody`: the one place a streamed request's body is decided from a config and what the endpoint and the model have refused. |
 | `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher. |
-| `preselect` | `preselect`: the tools a request is likely to need, picked by a small model before the run starts. |
+| `preselect` | Choosing a run's tools before it starts: `preselect` asks a small model, `preselectByKeywords` scores the request's own words against the tool names without one, and `preselectSystem`, `preselectInput` and `preselection` are the prompt and the reading of the reply for a host that makes the call itself. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. Plus the shapes a call is handed round in: `ToolCallRequest`, `ToolCallResult`, `ToolCallOutcome`. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `ledger` | What stretches of a transcript cost, read off the prompt counts the server reported rather than estimated: `recordRequest`, `tokensBetween`, `estimateFrom`, `rebaseLedger`. |

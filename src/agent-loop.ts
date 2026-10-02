@@ -48,7 +48,7 @@ import {
   recordRequest,
   type TokenLedger,
 } from "./ledger.ts";
-import { preselect } from "./preselect.ts";
+import { type KeywordPreselectOptions, preselect } from "./preselect.ts";
 import { buildBody } from "./request-body.ts";
 import { ContextOverflow } from "./retry.ts";
 import {
@@ -75,7 +75,6 @@ import {
   CALL_TOOL,
   catalogPrompt,
   inCatalog,
-  type KeywordPreselectOptions,
   LOAD_TOOLS,
   LOAD_TOOLS_DEFINITION,
   loadedTools,

@@ -139,7 +139,20 @@ export {
   type TokenLedger,
   tokensBetween,
 } from "./ledger.ts";
-export { preselect } from "./preselect.ts";
+export {
+  KEYWORD_DROPOFF,
+  KEYWORD_MIN_SCORE,
+  type KeywordPreselection,
+  type KeywordPreselectOptions,
+  PRESELECT_SCHEMA,
+  PRESELECT_SYSTEM,
+  preselect,
+  preselectByKeywords,
+  preselectInput,
+  preselection,
+  preselectSystem,
+  type ToolMatch,
+} from "./preselect.ts";
 export { buildBody } from "./request-body.ts";
 export { resetAll } from "./reset.ts";
 export {
@@ -259,10 +272,6 @@ export {
   expandNames,
   holdsDefinitions,
   inCatalog,
-  KEYWORD_DROPOFF,
-  KEYWORD_MIN_SCORE,
-  type KeywordPreselection,
-  type KeywordPreselectOptions,
   LOAD_TOOLS,
   LOAD_TOOLS_DEFINITION,
   loadedTools,
@@ -270,18 +279,11 @@ export {
   MAX_CARRIED,
   MAX_PER_LOAD,
   orderTools,
-  PRESELECT_SCHEMA,
-  PRESELECT_SYSTEM,
   PROXY_TOOLS,
-  preselectByKeywords,
-  preselectInput,
-  preselection,
-  preselectSystem,
   proxiedCall,
   proxyCatalogPrompt,
   proxyLoadResult,
   requestedNames,
   shownCall,
-  type ToolMatch,
   type ToolOrder,
 } from "./tool-loading.ts";
