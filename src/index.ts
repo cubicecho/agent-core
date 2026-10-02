@@ -24,6 +24,7 @@ export {
   type ToolCallOutcome,
   type ToolCallRequest,
   type ToolCallResult,
+  taskCall,
 } from "./agent-loop.ts";
 export { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
 export {
@@ -181,6 +182,7 @@ export {
   listLines,
   parseJson,
   resetHints,
+  type SideTask,
   type SideTaskInput,
   type SideTaskOptions,
   tryAsk,

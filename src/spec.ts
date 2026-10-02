@@ -159,8 +159,14 @@ export interface TaskSpec {
   model?: string;
   /** Where that model lives, when it is not on the agent's endpoint. */
   endpoint?: EndpointSpec;
+  /** The reply's ceiling. Absent is the side task's own default, not the agent's `maxTokens`. */
   maxTokens?: number;
+  /** Absent is the side task's own default, 0.3, whatever the agent's temperature is. */
   temperature?: number;
+  /**
+   * A level has the task deliberate. Absent and `"off"` leave it with the no-thinking hints a
+   * side task is sent by default; see `SideTaskOptions.reasoningEffort`.
+   */
   reasoningEffort?: string;
 }
 
@@ -209,7 +215,13 @@ export interface SpecBundle {
   mcpServers?: SpecServer[];
 }
 
-/** One side task, resolved: a model, and the endpoint it is reached through. */
+/**
+ * One side task, resolved: a model, and the endpoint it is reached through.
+ *
+ * The three settings are present only where a layer stated them, and nothing is filled in from
+ * the agent's own model — `taskCall` turns one into a call, and what is absent there is left to
+ * the side task's default.
+ */
 export interface ResolvedTask {
   model: string;
   /** This task's endpoint, which is the agent's unless a layer named another. */

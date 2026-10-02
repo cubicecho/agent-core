@@ -297,4 +297,56 @@ describe("what the model refuses", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(body(0).max_completion_tokens).toBe(512);
   });
+
+  it("sends the effort a caller chose in place of the hints", async () => {
+    // A compaction model pointed at a reasoning model on purpose: `enable_thinking: false` beside
+    // `reasoning_effort: "high"` would be a request that contradicts itself.
+    create.mockResolvedValue(reply);
+    await ask(endpoint("http://thinker/v1"), "m", "system", "user", { reasoningEffort: "high" });
+    expect(body(0).reasoning_effort).toBe("high");
+    expect(body(0)).not.toHaveProperty("chat_template_kwargs");
+  });
+
+  it("reads off and empty as no choice, and keeps the hints", async () => {
+    // Off is what the hints already ask for. Sending nothing, as the main model's `"off"` does,
+    // would leave a local model to think by its server's default.
+    create.mockResolvedValue(reply);
+    for (const reasoningEffort of ["off", "", undefined]) {
+      await ask(endpoint("http://quiet/v1"), "m", "system", "user", { reasoningEffort });
+    }
+    for (const nth of [0, 1, 2]) {
+      expect(body(nth).reasoning_effort).toBe("none");
+      expect(body(nth).chat_template_kwargs).toEqual({ enable_thinking: false });
+    }
+  });
+
+  it("drops a chosen effort the server will not take, and says which it dropped", async () => {
+    const notices: string[] = [];
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await expect(
+      ask(endpoint("http://plain/v1"), "m", "system", "user", {
+        reasoningEffort: "high",
+        onNotice: (message) => notices.push(message),
+      }),
+    ).resolves.toBe("ok");
+    expect(body(1)).not.toHaveProperty("reasoning_effort");
+    expect(body(1)).not.toHaveProperty("chat_template_kwargs");
+    expect(notices).toEqual([
+      "m rejected a request carrying a reasoning effort; retrying without it",
+    ]);
+    // The hints were never sent, so they are not what gets latched off.
+    create.mockReset();
+    create.mockResolvedValue(reply);
+    await call(endpoint("http://plain/v1"));
+    expect(sentHints(0)).toBe(true);
+  });
+
+  it("sends no ceiling at all for a ceiling of zero", async () => {
+    // What `maxTokens: 0` means on the main model, and what a spec's task says by it. Sent as
+    // `max_tokens: 0` it asks for an empty reply.
+    create.mockResolvedValue(reply);
+    await ask(endpoint("http://open/v1"), "m", "system", "user", { maxTokens: 0 });
+    expect(body(0)).not.toHaveProperty("max_tokens");
+    expect(body(0)).not.toHaveProperty("max_completion_tokens");
+  });
 });

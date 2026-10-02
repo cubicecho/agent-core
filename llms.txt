@@ -26,6 +26,7 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
 - `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
 - `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
+- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
 
 ### calibration
 
@@ -240,6 +241,7 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
 - `parseJson` — Models are asked for JSON and often answer with prose around it, or a fenced block.
 - `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
+- `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
 - `tryAsk` — A side task is never worth failing the work it supports.
