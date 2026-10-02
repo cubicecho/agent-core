@@ -12,6 +12,8 @@
  * Whether a value is a plain keyed object: not null, and not an array.
  *
  * @param value - Anything, usually just parsed. An array is an object to `typeof` and not to this.
+ * @returns True for anything else `typeof` calls an object — a `Date`, a `Map` and a class
+ * instance included, since the prototype is not looked at.
  */
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -20,6 +22,7 @@ export const isRecord = (value: unknown): value is Record<string, unknown> =>
  * Whether a value is a number above zero, which is what a limit has to be to be one.
  *
  * @param value - Anything, usually a setting that may be absent, zero or mistyped.
+ * @returns True only for a `number` greater than zero: a numeric string or a `bigint` is not one.
  *
  * @remarks
  * `Infinity` passes and `NaN` does not, so a caller lifting a bound and one handing over a
@@ -39,7 +42,9 @@ interface Lookup<K, V> {
  * @param map - Where to look. Gains an entry on a miss, which is the point of calling this.
  * @param key - What to look under.
  * @param create - Builds the value on a miss, and is not called on a hit. A stored `undefined`
- *   reads as a miss, so one that returns it is called every time.
+ * reads as a miss, so one that returns it is called every time.
+ * @returns What the map holds under the key afterwards: the held value itself on a hit, what
+ * `create` returned on a miss.
  */
 export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V {
   const held = map.get(key);
@@ -56,5 +61,6 @@ export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V
  *
  * @param count - How many.
  * @param noun - The singular, which takes an `s` and nothing cleverer.
+ * @returns The phrase. Only a count of exactly one is singular: zero reads `0 tools`.
  */
 export const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;

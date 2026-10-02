@@ -118,7 +118,7 @@ export interface ModelCapabilities {
    */
   refusedEfforts: Set<string>;
   /**
-   * The efforts a refusal published as this model's, in ladder order, filtered to the ones
+   * The efforts a refusal published as this model's, in the order it gave them, filtered to the ones
    * `EFFORT_LADDER` can place. Absent until a refusal lists them, and a model that lists nothing
    * is walked up the ladder a rung per refusal instead.
    */
@@ -188,8 +188,7 @@ export type OnNotice = (message: string) => void;
 const capabilities = scoped(() => new Map<string, Capabilities>());
 
 /**
- * What this endpoint is known not to support. The same object every time, so what `negotiate`
- * latches off stays off.
+ * What this endpoint is known not to support.
  *
  * @param baseUrl - Where the endpoint is. The two flags on it are per-server; what is per-model
  * hangs off `models`, which `modelCapabilitiesFor` reads.
@@ -197,6 +196,11 @@ const capabilities = scoped(() => new Map<string, Capabilities>());
  * the ordinary case of one key per base URL and a caller with one need not thread it through;
  * absent reads as `NO_KEY`, exactly as it does in `getClient`, so an endpoint with no key and
  * one that passes `undefined` share an entry rather than holding two.
+ * @returns The endpoint's live entry, made with both flags on and no models the first time it is
+ * asked for.
+ *
+ * @remarks
+ * The same object every time, so what `negotiate` latches off stays off.
  */
 export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities {
   return capabilitiesById(endpointId({ baseUrl, apiKey }));
@@ -209,6 +213,8 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
  * @param supports - The endpoint's own, as `capabilitiesFor` hands it over.
  * @param model - The name the endpoint knows the model as — whatever goes in the request body,
  * since that is the only name the refusal is about.
+ * @returns The model's live entry under `supports.models`, made with every flag on and nothing
+ * refused the first time it is asked for.
  *
  * @remarks
  * Nested under the endpoint rather than keyed by name alone, because `gpt-4o` at OpenAI and
@@ -224,12 +230,20 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
   }));
 }
 
-/** Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`. */
+/**
+ * Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`.
+ *
+ * @returns The map itself rather than a copy, read-only by type alone: what is latched or forgotten
+ * afterwards shows through it.
+ */
 export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabilities();
 
 /**
  * The capabilities of the endpoint with this `endpointId`, created optimistic if unseen — the way
  * `importCapabilities` reaches an endpoint it has only a digest for.
+ *
+ * @param id - The digest `endpointId` gives. Not checked: any string opens an entry under itself.
+ * @returns The live entry, the same object `capabilitiesFor` hands over for that endpoint.
  */
 export function capabilitiesById(id: string): Capabilities {
   return getOrCreate(capabilities(), id, () => ({
@@ -295,6 +309,15 @@ export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
 
 /**
  * Every latching flag in play on one attempt, endpoint and model together, in a stable order.
+ *
+ * @param supports - The endpoint's. Only its booleans are read, which leaves `models` and `since`
+ * out of the reading.
+ * @param model - The named model's. Absent, for a request that named none, the reading is the
+ * endpoint's alone.
+ * @returns A fresh array: the endpoint's booleans, then every value on the model, a set standing
+ * as its size.
+ *
+ * @remarks
  * Read positionally and only against another reading of the same two objects: what it answers is
  * whether anything moved while the request was out, and a flag added to either interface later is
  * compared without an edit here. `models` is not one of them — it is the second level, not a
@@ -310,9 +333,14 @@ const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): 
 const REJECTS_USAGE = /stream_options/i;
 
 /**
- * `response_format` or its `json_schema` type refused, rather than the schema in it. A server
- * that validates the schema and finds it wanting — `Invalid schema for response_format` — is
- * telling the caller about their schema, and falling back to words for good would hide that.
+ * `response_format` or its `json_schema` type refused, rather than the schema in it.
+ *
+ * @param detail - The server's error text.
+ * @returns `true` where the text names either; `false` where it also says `invalid schema`.
+ *
+ * @remarks
+ * A server that validates the schema and finds it wanting — `Invalid schema for response_format`
+ * — is telling the caller about their schema, and falling back to words for good would hide that.
  */
 const rejectsResponseFormat = (detail: string) =>
   /response_format|json_schema/i.test(detail) && !/invalid schema/i.test(detail);
@@ -332,11 +360,16 @@ const rejectsResponseFormat = (detail: string) =>
 const REFUSED_VALUE = /unsupported value|invalid value|supported values/i;
 
 /**
- * A model that cannot reason refuses the field by name — and only the field. See `REFUSED_VALUE`
- * for the refusal that names it too and means the opposite, which is the caller's to see rather
- * than ours to work around. `does not support` is deliberately not the marker: a proxy that
- * words a real field refusal as `this model does not support reasoning_effort` has to keep
- * latching.
+ * A model that cannot reason refuses the field by name — and only the field.
+ *
+ * @param detail - The server's error text.
+ * @returns `true` where the text names `reasoning_effort` and is not a refusal of its value.
+ *
+ * @remarks
+ * See `REFUSED_VALUE` for the refusal that names it too and means the opposite, which is the
+ * caller's to see rather than ours to work around. `does not support` is deliberately not the
+ * marker: a proxy that words a real field refusal as `this model does not support
+ * reasoning_effort` has to keep latching.
  */
 const rejectsEffort = (detail: string) => /reasoning_effort/i.test(detail) && !REFUSED_VALUE.test(detail);
 
@@ -362,11 +395,24 @@ export const EFFORT_LADDER = [EFFORT_NONE, 'minimal', 'low', 'medium', 'high'] a
 /** The ladder as plain strings, so a value that is not on it can be looked for. */
 const LADDER: readonly string[] = EFFORT_LADDER;
 
+/**
+ * Where an effort stands on the ladder, whatever case it was written in.
+ *
+ * @param effort - The effort as a config or a refusal spelled it.
+ * @returns Its index in `EFFORT_LADDER`, or -1 for one the ladder cannot place.
+ */
 const rankOf = (effort: string): number => LADDER.indexOf(effort.toLowerCase());
 
 /**
  * The efforts a refusal lists as this model's: `Supported values are: 'minimal', 'low', 'medium',
- * and 'high'.` Quoted or bare, separated by commas and a trailing `and` or `or`.
+ * and 'high'.`
+ *
+ * @param detail - The server's error text.
+ * @returns The listed efforts the ladder can place, lowercased and in the order the refusal gave
+ * them; `undefined` where it lists none, or none that can be placed.
+ *
+ * @remarks
+ * Quoted or bare, separated by commas and a trailing `and` or `or`.
  */
 function listedEfforts(detail: string): string[] | undefined {
   const listed = detail.match(/supported values(?:\s+\w+)?\s*(?:are|is|include)?\s*:?\s*([^\n.]+)/i)?.[1];
@@ -391,6 +437,8 @@ function listedEfforts(detail: string): string[] | undefined {
  *
  * @param detail - The refusal.
  * @param [supported] - What the same refusal listed, which the value cannot be one of.
+ * @returns The value, lowercased; `undefined` where the refusal names none in either shape, or
+ * names one that `supported` holds.
  *
  * @remarks
  * Read rather than remembered, because `negotiate` builds no request and so does not know what
@@ -409,6 +457,13 @@ function refusedEffortValue(detail: string, supported: readonly string[] = []): 
 /**
  * The cheapest effort above this one that the model has not refused, or `undefined` when the
  * ladder is out of rungs.
+ *
+ * @param refused - What the model has refused and, where a refusal published one, its list. Not
+ * written to.
+ * @param asked - The effort to step up from, in any case. One the ladder cannot place steps
+ * nowhere.
+ * @returns The effort to send instead, lowercased as the list or the ladder holds it; `undefined`
+ * too where `asked` is not on the ladder.
  *
  * @remarks
  * Above, never below: see `EFFORT_LADDER`. Where a refusal published a list that is the whole of
@@ -439,6 +494,8 @@ function nextEffort(refused: ModelCapabilities, asked: string): string | undefin
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model that
  * has refused nothing.
  * @param asked - What the config asks for. `"off"` and absent mean no effort.
+ * @returns The value for the field, or the empty string for no field. `asked` itself, as written,
+ * where the model has not refused it — and where it has but there is no rung left to step to.
  *
  * @remarks
  * The caller's own value, until this model has said that value is not one of its own; then the
@@ -472,6 +529,8 @@ export function effortFor(refused: ModelCapabilities | undefined, asked: string 
  * @param maxTokens - The ceiling. Zero or less sends none and leaves it to the server: a zero sent
  * as `max_tokens: 0` asks for an empty reply.
  * @param temperature - What to sample at, where the model takes one that was picked for it.
+ * @returns A fresh object holding the ceiling under one of its two names, or under neither, and
+ * `temperature` unless the model refused ours.
  *
  * @remarks
  * The reasoning models want the ceiling spelled the other way, and one that will only run at the
@@ -504,6 +563,12 @@ interface EffortStep {
 /**
  * How to answer a refused effort *value*, or `undefined` when there is nothing new to learn or
  * nowhere left to go — in which case the refusal is the caller's, as it was before this existed.
+ *
+ * @param detail - The server's error text.
+ * @param refused - What the model has refused so far. Read and never written to: the next rung is
+ * worked out against a copy.
+ * @returns The value to latch, what would be sent once it is, and the list the refusal published
+ * where it published one.
  *
  * @remarks
  * Pure, so `negotiate` can work out whether this refusal is one of its own before deciding to
@@ -542,6 +607,9 @@ function planEffortStep(detail: string, refused: ModelCapabilities): EffortStep 
  * Read only alongside the name it is asking for: `'max_tokens' is not supported with this model.
  * Use 'max_completion_tokens' instead.`
  *
+ * @param detail - The server's error text.
+ * @returns `true` where the text names both spellings; `max_tokens` on its own is not enough.
+ *
  * @remarks
  * A bare `max_tokens` complaint is also how a server says the *number* was too large —
  * `max_tokens is too large: 200000. This model supports at most 16384.` — and the answer to that
@@ -564,6 +632,10 @@ const NAMES_TEMPERATURE = /(['"`])temperature\1|\btemperature\s+(?:is|does|must|
 
 /**
  * `'temperature' does not support 0.7 with this model. Only the default (1) is supported.`
+ *
+ * @param detail - The server's error text.
+ * @returns `true` where the text names temperature as the field refused and says `only the
+ * default`; either without the other is `false`.
  *
  * @remarks
  * The qualifier is load-bearing, and `does not support` is not the qualifier: that is how a
@@ -588,8 +660,15 @@ const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(deta
 /**
  * The fields a refusal names as ones the endpoint has never heard of, in the two wordings OpenAI
  * has used: `Unrecognized request argument supplied: min_p` (or `arguments`, listing several) and
- * `Unknown parameter: 'min_p'.` A nested name — `'chat_template_kwargs.enable_thinking'` — is
- * answered at its top-level field, which is the only level a body builder leaves things out at.
+ * `Unknown parameter: 'min_p'.`
+ *
+ * @param detail - The server's error text.
+ * @returns The top-level names, in the refusal's order and not deduplicated; empty where it is in
+ * neither wording.
+ *
+ * @remarks
+ * A nested name — `'chat_template_kwargs.enable_thinking'` — is answered at its top-level field,
+ * which is the only level a body builder leaves things out at.
  */
 function unknownFields(detail: string): string[] {
   const [, listed] = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i) ?? [];
@@ -679,7 +758,15 @@ interface Refusal {
  */
 type Answer = (refusal: Refusal) => string | undefined;
 
-/** The answer to a refusal that is the endpoint's: a flag still set, and a wording that clears it. */
+/**
+ * The answer to a refusal that is the endpoint's: a flag still set, and a wording that clears it.
+ *
+ * @param flag - Which of the endpoint's flags the answer latches off.
+ * @param matches - Whether an error text is this refusal. Not asked once the flag is off.
+ * @param notice - What a watcher is told when it latches.
+ * @returns An `Answer` that clears the flag on `supports` and returns the notice, or returns
+ * `undefined` having touched nothing.
+ */
 const endpointAnswer =
   (flag: 'strictSchemas' | 'usageInStream', matches: (detail: string) => boolean, notice: string): Answer =>
   ({ detail, supports }) => {
@@ -690,7 +777,16 @@ const endpointAnswer =
     return notice;
   };
 
-/** The same for a refusal that is the model's, which only a request that named one can meet. */
+/**
+ * The same for a refusal that is the model's, which only a request that named one can meet.
+ *
+ * @param flag - Which of the model's flags the answer latches off.
+ * @param matches - Whether an error text is this refusal. Not asked once the flag is off, or where
+ * no model was named.
+ * @param notice - Builds what a watcher is told, from the model's name as the request gave it.
+ * @returns An `Answer` that clears the flag on the named model and returns the notice, or returns
+ * `undefined` having touched nothing.
+ */
 const modelAnswer =
   (flag: ModelFlag, matches: (detail: string) => boolean, notice: (name: string) => string): Answer =>
   ({ detail, named }) => {
@@ -701,7 +797,14 @@ const modelAnswer =
     return notice(named.name);
   };
 
-/** An effort refused by value: latched, so `effortFor` sends the next rung down. */
+/**
+ * An effort refused by value: latched, so `effortFor` sends the next rung up.
+ *
+ * @param refusal - The refusal. Its named model is written to: the value joins `refusedEfforts`,
+ * and a list the refusal published replaces `supportedEfforts`.
+ * @returns The notice, naming the effort refused and the one tried next; `undefined`, having
+ * latched nothing, where no model was named or `planEffortStep` has no step to take.
+ */
 const effortStepAnswer: Answer = ({ detail, named }) => {
   const stepped = named && planEffortStep(detail, named.refused);
   if (!named || !stepped) {
@@ -714,7 +817,13 @@ const effortStepAnswer: Answer = ({ detail, named }) => {
   return `${named.name} does not reason at ${stepped.value}; retrying at ${stepped.next}`;
 };
 
-/** Fields the endpoint has never heard of, where they are droppable and not refused already. */
+/**
+ * Fields the endpoint has never heard of, where they are droppable and not refused already.
+ *
+ * @param refusal - The refusal. Each such field it names joins the named model's `refusedFields`.
+ * @returns The notice, listing those fields; `undefined`, having latched nothing, where no model
+ * was named, nothing is droppable, or the refusal names no field that is both droppable and new.
+ */
 const droppedFieldsAnswer: Answer = ({ detail, named, droppable }) => {
   if (!named || droppable.size === 0) {
     return undefined;
@@ -775,12 +884,15 @@ const ANSWERS: readonly Answer[] = [
  * request can do without. Returns once the endpoint has answered, or throws if the refusal is
  * not one of ours.
  *
+ * @typeParam T - What `send` resolves, which is handed back as it came.
  * @param supports - What this endpoint has already refused. Latched off further as it refuses more.
  * @param send - Builds and sends the request. Called again per downgrade, never once tokens
  * have arrived. Its third argument is what the named model has refused, absent when no model
  * was named.
  * @param [options] - `produced` for a caller with its own retry budget, `onNotice` for a watcher,
  * `model` to negotiate the model's refusals alongside the endpoint's.
+ * @returns What the first `send` to succeed resolved. A rejection is `send`'s own error, rethrown
+ * as it was caught.
  *
  * @remarks
  * A loop rather than one retry. A server that has heard of neither `stream_options` nor a

@@ -75,25 +75,60 @@ export interface LedgerEstimateOptions extends TokenEstimateOptions {
   estimate?: (message: Message) => number;
 }
 
-/** Whether two messages say the same thing, by identity first since most of a transcript is. */
+/**
+ * Whether two messages say the same thing, by identity first since most of a transcript is.
+ *
+ * @param a - One message.
+ * @param b - The other. The order makes no difference.
+ * @returns `true` for the same object, or two that serialise to the same JSON — so the same fields
+ * written in another key order are not the same.
+ */
 const sameMessage = (a: Message, b: Message) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
-/** Whether two requests declared the same tools in the same order. */
+/**
+ * Whether two requests declared the same tools in the same order.
+ *
+ * @param previous - The request before. Absent `tools` reads as none.
+ * @param next - The request after, read the same way.
+ * @returns `true` when the names match one for one. Only names are compared, so a schema that
+ * changed under the same name is not seen.
+ */
 const sameTools = (previous: RequestShape, next: RequestShape) => {
   const before = previous.tools ?? [];
   const now = next.tools ?? [];
   return before.length === now.length && before.every((name, at) => name === now[at]);
 };
 
-/** Whether a request sent every message the one before it did, in the same place. */
+/**
+ * Whether a request sent every message the one before it did, in the same place.
+ *
+ * @param previous - The earlier request's messages.
+ * @param next - The later one's, which may run on past them.
+ * @returns `true` when `previous` is a prefix of `next` by `sameMessage` — the two being equal
+ * included, and an empty `previous` always.
+ */
 const keptMessages = (previous: Message[], next: Message[]) =>
   previous.length <= next.length && previous.every((message, at) => sameMessage(message, next[at]));
 
-/** Whether a request sent everything the one before it did, in the same place, and then more. */
+/**
+ * Whether a request sent everything the one before it did, in the same place, and then more.
+ *
+ * @param previous - The request before.
+ * @param next - The request after.
+ * @returns `true` when the tools are the same and the earlier messages a prefix of the later —
+ * which a request that added nothing also is.
+ */
 const appended = (previous: RequestShape, next: RequestShape) =>
   sameTools(previous, next) && keptMessages(previous.messages, next.messages);
 
-/** The system messages a request opens with, which a template renders ahead of the history. */
+/**
+ * The system messages a request opens with, which a template renders ahead of the history.
+ *
+ * @param messages - The request's messages. Not written to.
+ * @returns A new array of the messages ahead of the first that is not `system`: empty when the
+ * request does not open with one, and all of them when it holds nothing else. A `developer` message
+ * ends the run.
+ */
 const leadingSystem = (messages: Message[]) => {
   const end = messages.findIndex((message) => message.role !== Role.System);
   return messages.slice(0, end === -1 ? messages.length : end);
@@ -105,6 +140,8 @@ const leadingSystem = (messages: Message[]) => {
  *
  * @param previous - The request before, as it was sent.
  * @param next - The request being explained.
+ * @returns The first of the three that differs, so a request that changed its tools and its history
+ * is reported as `tools-changed` alone.
  *
  * @remarks
  * Beside `recordRequest` because it is the same comparison asked for a different reason: that one
@@ -135,6 +172,8 @@ export function breakReason(previous: RequestShape, next: RequestShape): NonNull
  * sent, so that a request which reported nothing is skipped over rather than compared against.
  * `undefined` where that is not known, which starts a new epoch.
  * @param next - The request just answered.
+ * @returns `ledger` itself when nothing was recorded, otherwise a new array with the entry at its
+ * end. The first entry of an empty ledger is epoch 0.
  *
  * @remarks
  * The epoch carries on only where the new request declared the same tools in the same order and
@@ -170,6 +209,8 @@ export function recordRequest(
  * @param before - The transcript the ledger's indexes are in.
  * @param after - The transcript that replaces it. One that only appended to `before`, or is the same
  * array, hands the ledger back as it is.
+ * @returns `ledger` itself where nothing was rewritten, otherwise a new array. The entries it keeps
+ * from the head are the same objects; the ones from the tail are copies.
  *
  * @remarks
  * A difference inside an epoch stays true after the epoch ends, since the prefix the two requests
@@ -210,10 +251,18 @@ export function rebaseLedger(ledger: TokenLedger, before: readonly Message[], af
 }
 
 /**
- * Each measured message's share of its group's cost, by index. A group is the messages between two
- * neighbouring entries of one epoch, and is left out — for the estimate to answer — where the
- * difference is not above zero, where the entries are out of order, or where the transcript does
- * not reach its end.
+ * Each measured message's share of its group's cost, by index.
+ *
+ * @param ledger - The entries, in the order their requests were sent.
+ * @param messages - The transcript the ledger's indexes are in. Each measured message is read for
+ * its characters.
+ * @returns Tokens by message index, unrounded, so a group's shares add back up to its difference.
+ * A message no group covers has no entry.
+ *
+ * @remarks
+ * A group is the messages between two neighbouring entries of one epoch, and is left out — for the
+ * estimate to answer — where the difference is not above zero, where the entries are out of order,
+ * or where the transcript does not reach its end.
  */
 function shares(ledger: TokenLedger, messages: readonly Message[]): Map<number, number> {
   const out = new Map<number, number>();
@@ -244,7 +293,14 @@ function shares(ledger: TokenLedger, messages: readonly Message[]): Map<number, 
   return out;
 }
 
-/** The estimate for a message nothing measured, as the options ask for it. */
+/**
+ * The estimate for a message nothing measured, as the options ask for it.
+ *
+ * @param options - `estimate` is handed back as it is, and `charsPerToken` is then not read.
+ * Without one, `charsPerToken` is the divisor.
+ * @returns A function giving one message's tokens: the caller's own, or `messageTokens` at that
+ * divisor.
+ */
 const fallback = ({ charsPerToken, estimate }: LedgerEstimateOptions) =>
   estimate ?? ((message: Message) => messageTokens(message, { charsPerToken }));
 
@@ -296,6 +352,8 @@ export function tokensBetween(
  * message by identity, so it has to be asked about these objects and not copies of them; one it
  * does not know is estimated.
  * @param [options] - The estimate for what is not measured: a divisor, or a function of the caller's.
+ * @returns A function giving one message's tokens, unrounded where it was measured. It holds what
+ * the ledger said when this was called, and does not see entries recorded since.
  *
  * @remarks
  * The planner asks about one message at a time, and nothing reports anything that fine, so a

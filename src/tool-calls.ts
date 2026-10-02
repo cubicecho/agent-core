@@ -51,6 +51,9 @@ export class ToolArgumentsError extends Error {
 /**
  * Rewrites the almost-JSON local models write into JSON, in one pass that knows where strings are.
  *
+ * @param text - What the model wrote. A string left open is closed at the end of the text.
+ * @returns The rewritten text, which nothing here has checked parses.
+ *
  * @remarks
  * Single-quoted strings become double-quoted, Python's `True`, `False` and `None` become their JSON
  * spellings, bare keys are quoted, and a comma before a closing bracket is dropped. Nothing inside
@@ -104,6 +107,8 @@ function repairJson(text: string): string {
  * JSON as it was written, then repaired, then undefined. A string holding JSON is opened once.
  *
  * @param text - What a model wrote where JSON was asked for, with no prose around it.
+ * @returns The value — `null` for a JSON `null` — or `undefined` where neither the text nor its
+ * repair parses. A string holding an object or array that does not parse stays the string.
  *
  * @remarks
  * Read as written first, so the repair can only ever add to what parses: nothing valid is
@@ -135,6 +140,8 @@ export function looseJson(text: string): unknown {
  * object a server parsed already. Null, absent or blank is no arguments.
  * @param [options] - `finishReason`, the turn's. A turn that stopped at `"length"` makes a failure
  * `truncated`, since a call cut off at the ceiling reads exactly like a malformed one.
+ * @returns `raw` itself where it was already an object, otherwise what its text parsed to, and a
+ * new empty object for no arguments.
  *
  * @remarks
  * Lenient where the model's meaning is plain and strict where it is not: an object already
@@ -177,7 +184,14 @@ export function parseToolArguments(
 
 /**
  * Where the JSON value opening at `start` closes, one past its last character, or -1 when it
- * never does. Brackets inside either kind of string are not counted.
+ * never does.
+ *
+ * @param text - The text the value is in.
+ * @param start - The index of the value's opening `{` or `[`, which the caller has checked.
+ * @returns An index to slice up to, or -1 for a value still open where the text ends.
+ *
+ * @remarks
+ * Brackets inside either kind of string are not counted.
  */
 function valueEnd(text: string, start: number): number {
   let depth = 0;
@@ -205,8 +219,15 @@ function valueEnd(text: string, start: number): number {
 }
 
 /**
- * The JSON value opening at or after `at`, past whitespace, and where it ends. An unclosed one
- * runs to the end of the text; one that does not parse even repaired is undefined.
+ * The JSON value opening at or after `at`, past whitespace, and where it ends.
+ *
+ * @param text - The text to read from.
+ * @param at - Where to look. Only whitespace may sit between it and the value's `{` or `[`.
+ * @returns The value and the index one past it, or `undefined` where no object or array opens
+ * there.
+ *
+ * @remarks
+ * An unclosed one runs to the end of the text; one that does not parse even repaired is undefined.
  */
 function readValue(text: string, at: number): { value: unknown; end: number } | undefined {
   const start = at + (text.slice(at).match(/^\s*/)?.[0].length ?? 0);
@@ -222,7 +243,14 @@ function readValue(text: string, at: number): { value: unknown; end: number } | 
 /** A call as a template wrote it into the text: the name, and the arguments still serialised. */
 type WrittenCall = { name: string; arguments: string };
 
-/** One call in any of the shapes templates write: `{name, arguments}`, `{name, parameters}`, `{function: {...}}`. */
+/**
+ * One call in any of the shapes templates write: `{name, arguments}`, `{name, parameters}`, `{function: {...}}`.
+ *
+ * @param entry - A parsed value. Its arguments are read from `arguments`, else `parameters`, else
+ * `args`, and none of them is no arguments.
+ * @returns The name, and the arguments as JSON text — a string kept as it was written, unchecked.
+ * `undefined` for anything that is not an object with a non-empty string for a name.
+ */
 function toCall(entry: unknown): WrittenCall | undefined {
   if (!isRecord(entry)) {
     return undefined;
@@ -236,14 +264,24 @@ function toCall(entry: unknown): WrittenCall | undefined {
   return { name, arguments: typeof args === 'string' ? args : JSON.stringify(args) };
 }
 
-/** Every call in a value that is one call or a list of them, or undefined if any entry is not one. */
+/**
+ * Every call in a value that is one call or a list of them, or undefined if any entry is not one.
+ *
+ * @param value - A parsed value: one call, or an array of them, in the shapes `toCall` reads.
+ * @returns The calls in the order written. An empty array is `undefined` too.
+ */
 function toCalls(value: unknown): WrittenCall[] | undefined {
   const entries = Array.isArray(value) ? value : [value];
   const calls = entries.flatMap((entry) => toCall(entry) ?? []);
   return calls.length && calls.length === entries.length ? calls : undefined;
 }
 
-/** A value read as text: JSON where it parses, the string where it does not. */
+/**
+ * A value read as text: JSON where it parses, the string where it does not.
+ *
+ * @param text - A parameter's body, as the markup held it.
+ * @returns The parsed value, so `3` is a number and `true` a boolean, or `text` as it was given.
+ */
 function scalar(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -258,7 +296,14 @@ interface Found {
   calls: WrittenCall[];
 }
 
-/** `<tool_call>` blocks: Hermes and Qwen's JSON, and Qwen3-Coder's `<function=…>` markup. */
+/**
+ * `<tool_call>` blocks: Hermes and Qwen's JSON, and Qwen3-Coder's `<function=…>` markup.
+ *
+ * @param text - The reply to search.
+ * @returns One span per block that held a call, in the order they appear: where it starts and ends
+ * in `text`, the closing tag included where there is one, and its calls. A block whose JSON does
+ * not read as calls is left out. Empty for none.
+ */
 function taggedCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/<tool_call>/g)) {
@@ -295,7 +340,14 @@ function taggedCalls(text: string): Found[] {
   return found;
 }
 
-/** Mistral's `[TOOL_CALLS] [...]`, and the newer `[TOOL_CALLS]name[ARGS]{...}`. */
+/**
+ * Mistral's `[TOOL_CALLS] [...]`, and the newer `[TOOL_CALLS]name[ARGS]{...}`.
+ *
+ * @param text - The reply to search.
+ * @returns One span per marker with calls after it, in the order they appear, from the marker to
+ * the end of its JSON. A marker followed by anything else is left out — the newer spelling's
+ * arguments have to be an object. Empty for none.
+ */
 function mistralCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/\[TOOL_CALLS\]/g)) {
@@ -322,7 +374,14 @@ function mistralCalls(text: string): Found[] {
   return found;
 }
 
-/** Llama 3's `<|python_tag|>{...}`, several calls separated by semicolons, up to `<|eom_id|>`. */
+/**
+ * Llama 3's `<|python_tag|>{...}`, several calls separated by semicolons, up to `<|eom_id|>`.
+ *
+ * @param text - The reply to search.
+ * @returns One span per tag with at least one call after it, in the order they appear, from the
+ * tag through its last call, a semicolon and an `<|eom_id|>` straight after it included. Empty
+ * for none.
+ */
 function pythonTagCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/<\|python_tag\|>/g)) {
@@ -355,6 +414,14 @@ function pythonTagCalls(text: string): Found[] {
 
 /**
  * A bare JSON call — the whole reply, or its one fenced block — naming only tools that exist.
+ *
+ * @param text - The reply to search.
+ * @param names - The tools that exist. Empty finds nothing, and one call naming a tool outside it
+ * disqualifies the calls written beside it.
+ * @returns At most one span: the JSON where the reply is nothing else, or the fenced block, fences
+ * included, where the reply holds exactly one and it holds nothing but calls.
+ *
+ * @remarks
  * Without the names this is too easily an answer that happens to be JSON.
  */
 function bareCalls(text: string, names: ReadonlySet<string>): Found[] {

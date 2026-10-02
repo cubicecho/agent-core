@@ -173,7 +173,15 @@ const HOOK_DEFAULTS: Required<HookOptions> = {
 /** What is in force now. Read where it is used, so a change applies from the next request. */
 const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }));
 
-/** Whether a value may be a hook setting: a budget above zero, or a preface that is a string. */
+/**
+ * Whether a value may be a hook setting: a budget above zero, or a preface that is a string.
+ *
+ * @param value - What a caller gave for the setting, of any type.
+ * @param name - Which setting it was given for. One that is neither `preface` nor `contextTokens`
+ * is never usable.
+ * @returns `true` when the value may be written under that name. `Infinity` is a usable budget and
+ * an empty string a usable preface.
+ */
 const usableHookSetting = (value: unknown, name: string) =>
   name === 'preface' ? typeof value === 'string' : name === 'contextTokens' && isPositive(value);
 
@@ -207,22 +215,47 @@ export const resetHooks = () => {
 };
 
 /**
- * The budget a call is held to: its own when it gave a usable one, the process's otherwise. The
- * same rule `configureHooks` applies, so a `0` threaded through for "no opinion" does not quietly
- * turn every hook's context off.
+ * The budget a call is held to: its own when it gave a usable one, the process's otherwise.
+ *
+ * @param [given] - The call's own budget, in estimated tokens. Absent, zero, negative or `NaN` is
+ * no opinion.
+ * @returns `given` when it is a number above zero, `Infinity` included, otherwise what
+ * `configureHooks` last set.
+ *
+ * @remarks
+ * The same rule `configureHooks` applies, so a `0` threaded through for "no opinion" does not
+ * quietly turn every hook's context off.
  */
 const budget = (given?: number) => (isPositive(given) ? given : hookSettings().contextTokens);
 
+/**
+ * Text made safe to sit inside a double-quoted attribute of a tag the model reads.
+ *
+ * @param text - The attribute's value as it was given — a hook's label, a source.
+ * @returns The text with `&`, `"` and `<` escaped, in that order, and nothing else touched.
+ */
 const attribute = (text: string) => text.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
 
-/** What every note about an outcome opens with: which hook it was, and on which event. */
+/**
+ * What every note about an outcome opens with: which hook it was, and on which event.
+ *
+ * @param outcome - The outcome the note is about. Read, not kept.
+ * @returns A new object holding `event`, `source` — the outcome's `label` — and `hookId`, for the
+ * caller to spread the rest of the note onto.
+ */
 const noteOf = (outcome: HookOutcome) => ({
   event: outcome.event,
   source: outcome.label,
   hookId: outcome.hookId,
 });
 
-/** The note a failed outcome leaves, the same whichever of the three callers reports it. */
+/**
+ * The note a failed outcome leaves, the same whichever of the three callers reports it.
+ *
+ * @param outcome - An outcome that is not `ok`. That is the caller's to have checked; nothing here
+ * does.
+ * @returns The note, its `error` the outcome's own, or `failed` where it gave none.
+ */
 const failureNote = (outcome: HookOutcome): HookNote => ({
   ...noteOf(outcome),
   error: outcome.error ?? 'failed',
@@ -235,6 +268,8 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
  * adds nothing; a failed one is noted wherever it falls, including past the budget.
  * @param [maxTokens] - The budget every block shares. Absent, or not a number above zero, is what
  * `configureHooks` last set — `HOOK_CONTEXT_TOKENS` unless something moved it.
+ * @returns The blocks joined by a blank line — an empty string when nothing was injected — and the
+ * notes in the order of `outcomes`.
  *
  * @remarks
  * Each injected outcome is wrapped in `<context source="…">` naming its label, so a model reading
@@ -363,6 +398,8 @@ export function untrusted(text: string, { source }: { source?: string } = {}): s
  *
  * @param content - A message's `content`, in any of the shapes the API allows. One that is neither
  * a string nor a list reads as empty.
+ * @returns The text, untrimmed. A string comes back as it is, and a list with no text part is
+ * empty.
  *
  * @remarks
  * Parts are joined with nothing between them, because they are one text an API split rather than
@@ -397,6 +434,8 @@ const UUID_DIGEST_CHARS = 12;
  * @param [options] - `offset` is what the array's first message is numbered as in the uuids — the
  * stored index of `messages[0]`, when `messages` is a request a fold has shifted. Zero numbers
  * by position. `from` and `to` stay array indexes either way.
+ * @returns One entry per user or assistant message in the range that has text once trimmed, in
+ * transcript order. Empty when there is none.
  *
  * @remarks
  * Tool calls and their results are left out. They are the model's working rather than the
@@ -450,6 +489,7 @@ export function turnMessages(
  * @param messages - The transcript.
  * @param [before] - Where the turn begins.
  * @param [offset] - Turns already folded away and so not in `messages`.
+ * @returns `offset` plus the count of user messages before `before`.
  *
  * @remarks
  * Counted over what it is given, which is the session only while nothing has been folded away — a
@@ -460,7 +500,15 @@ export function turnMessages(
 export const turnIndex = (messages: readonly { role: string }[], before = messages.length, offset = 0) =>
   offset + messages.slice(0, before).filter((message) => message.role === Role.User).length;
 
-/** A runner that rejected, as the one outcome its event can still be noted by. */
+/**
+ * A runner that rejected, as the one outcome its event can still be noted by.
+ *
+ * @param event - The event the runner was running.
+ * @param error - What it threw or rejected with. An `Error` gives its message, anything else its
+ * string form.
+ * @returns An outcome that is not `ok` and injects nothing, with `serverId`, `label` and `hookId`
+ * all empty, since no one hook is to blame.
+ */
 const rejected = (event: HookEvent, error: unknown): HookOutcome => ({
   serverId: '',
   label: '',
@@ -473,6 +521,17 @@ const rejected = (event: HookEvent, error: unknown): HookOutcome => ({
   maxTokens: 0,
 });
 
+/**
+ * Runs one event's hooks through a runner that may not keep its word about resolving.
+ *
+ * @param run - The runner. Called inside the chain, so one that throws before returning a promise
+ * is caught the same as one that rejects.
+ * @param event - The event to run.
+ * @param context - What the hooks are told.
+ * @param [signal] - Handed to the runner as it is. Absent leaves the runner nothing to stop on.
+ * @returns A promise that never rejects: the runner's outcomes, or the single `rejected` outcome
+ * when it threw or rejected.
+ */
 const runSafely = (run: HookRunner, event: HookEvent, context: HookContext, signal?: AbortSignal) =>
   Promise.resolve()
     .then(() => run(event, context, { signal }))
@@ -490,6 +549,8 @@ const runSafely = (run: HookRunner, event: HookEvent, context: HookContext, sign
  * stopped the turn stopped its recall. `onNote` hears each note as the whole is assembled.
  * `maxTokens` is the shared budget for this request, read as `assembleContext` reads it: absent
  * or unusable is the process's, from `configureHooks`.
+ * @returns What `assembleContext` built from every event's outcomes together. Does not reject for a
+ * runner that did.
  *
  * @remarks
  * This is on the path of the first token, so the events run together rather than one after the

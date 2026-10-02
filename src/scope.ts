@@ -21,7 +21,11 @@ const active = new AsyncLocalStorage<Scope>();
 /** The default runtime's scope: what the top-level functions use when no runtime is running. */
 export const rootScope: Scope = new Map();
 
-/** The scope of the runtime whose method is running, or the default one outside any. */
+/**
+ * The scope of the runtime whose method is running, or the default one outside any.
+ *
+ * @returns The scope itself, not a copy — writing to it is writing to that runtime's state.
+ */
 export const currentScope = (): Scope => active.getStore() ?? rootScope;
 
 /**
@@ -29,6 +33,7 @@ export const currentScope = (): Scope => active.getStore() ?? rootScope;
  *
  * @param scope - The runtime's state. Nested calls replace it for their own duration only.
  * @param fn - What to run. Its return value, or what it throws, is handed straight back.
+ * @returns What `fn` returned, as it returned it — from an async one the promise itself, unawaited.
  */
 export const inScope = <T>(scope: Scope, fn: () => T): T => active.run(scope, fn);
 
@@ -44,6 +49,8 @@ export interface Scoped<T> {
  * Declares a piece of module state that every runtime has its own copy of.
  *
  * @param create - Builds a fresh, empty copy. Called once per scope, and again after `reset`.
+ * @returns A function that reads the copy of whichever scope is current when it is called, not
+ * when this was, with a `reset` on it that drops that scope's copy.
  *
  * @remarks
  * What used to be `const cache = new Map()` at the top of a module is `scoped(() => new Map())`,

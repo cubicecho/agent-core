@@ -61,10 +61,22 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  */
 const noHints = scoped(() => new Set<string>());
 
-/** The pairs that refused the hints, the live set, for `exportCapabilities` and `importCapabilities`. */
+/**
+ * The pairs that refused the hints, the live set, for `exportCapabilities` and
+ * `importCapabilities`.
+ *
+ * @returns The current scope's set itself and not a copy, each pair a
+ * `modelKey(endpointId, model)`. Adding to it stops the hints being sent to that pair from the
+ * next call.
+ */
 export const refusedHints = (): Set<string> => noHints();
 
-/** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
+/**
+ * Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
+ *
+ * @remarks
+ * The current scope's set is emptied in place, so a holder of it sees it empty.
+ */
 export const resetHints = () => noHints().clear();
 
 /**
@@ -141,7 +153,11 @@ export interface SideTask {
   endpoint: Endpoint;
   /** The reply's ceiling. Absent is the entry point's default; zero sends none. */
   maxTokens?: number;
-  /** Absent is 0.3, whatever the agent's own temperature is. Zero means zero. */
+  /**
+   * Sampling temperature, whatever the agent's own is. Zero means zero.
+   *
+   * @defaultValue `0.3`
+   */
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: a level replaces the no-thinking hints. */
   reasoningEffort?: string;
@@ -155,6 +171,8 @@ export interface SideTask {
  * @param system - The instruction.
  * @param user - The input it applies to. Content parts where the model is being shown an image.
  * @param [options] - Reply ceiling, temperature, a reasoning effort, cancellation, notices.
+ * @returns The reply's content, trimmed. Where that is empty once the thinking is stripped, a
+ * `reasoning_content` the server sent beside it, stripped the same way, or an empty string.
  */
 export function ask(
   config: Endpoint,
@@ -169,6 +187,19 @@ export function ask(
 /**
  * The request `ask` and `askJson` share, with `format` deciding the extra body fields from what
  * the model and the endpoint have refused, rebuilt on every re-send.
+ *
+ * @param config - Where to send it. Its `baseUrl` and key also pick the capabilities the request is
+ * negotiated against, and with `model` the pair a refusal of the hints is latched on.
+ * @param model - The model to ask.
+ * @param system - The instruction, sent as the system message.
+ * @param user - The input, sent as the user message as it was given.
+ * @param options - A side task's options. A `reasoningEffort` that is a level leaves the
+ * no-thinking hints out; absent, `""` or `"off"` sends them unless this pair has refused them.
+ * @param [format] - Builds the extra body fields from the endpoint's capabilities and the model's.
+ * Called on every send, so a re-send is built from what has been latched since. Absent adds none.
+ * @returns The first choice's message as `answerOf` reads it, empty when there was no answer.
+ * Throws what the request throws, except that a 400 or 422 `negotiate` did not answer, on a
+ * request that carried the hints or an effort, is retried once without either.
  */
 async function complete(
   config: Endpoint,
@@ -263,6 +294,11 @@ async function complete(
 /**
  * A reply's answer, thinking stripped, or its scratchpad where the answer is nothing else.
  *
+ * @param message - The first choice's message. Absent, as when the reply held no choices, reads as
+ * an empty one.
+ * @returns The content, trimmed, with its thinking fences stripped. Where that leaves nothing, a
+ * string `reasoning_content` read the same way, and an empty string where there is none.
+ *
  * @remarks
  * Reasoning models that ignore the hints still fence their scratchpad. A side task answers under
  * a small ceiling, so the fence often never closes, and a template that opened it in the prompt
@@ -307,6 +343,8 @@ export interface AskJsonOptions extends SideTaskOptions {
  * @param user - The input it applies to. Content parts where the model is being shown an image.
  * @param schema - The JSON Schema of the answer. Its root is held to an object, as a tool's is.
  * @param [options] - A side task's options, plus the schema's `name` and whether it is `strict`.
+ * @returns What the reply parsed to, unchecked against the schema: `T` is the caller's claim.
+ * `undefined` when `parseJson` found nothing in it.
  *
  * @remarks
  * Sends `response_format` with the schema, which a llama.cpp server compiles into a grammar and
@@ -350,6 +388,8 @@ export async function askJson<T>(
  * @param label - Names the task in the notice when it fails.
  * @param run - The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
  * @param [options] - `onNotice`, told what was given up on.
+ * @returns What `run` resolved with, or `undefined` when it threw. An `APIUserAbortError` is thrown
+ * on and raises no notice.
  */
 export async function tryAsk<T>(
   label: string,
@@ -374,6 +414,9 @@ export async function tryAsk<T>(
  * the first array or object rather than failing the task over a wrapper.
  *
  * @param text - The reply, fences and prose included. Nothing parseable gives `undefined`.
+ * @returns What lies between the first `[` or `{` and the last `]` or `}`, parsed — inside the
+ * first fenced block where there is one. Unchecked: `T` is the caller's claim. `undefined` when
+ * there is no such stretch or it will not parse even repaired.
  *
  * @remarks
  * What is pulled out is read the way a tool call's arguments are: as written where that parses,
@@ -399,6 +442,8 @@ export function parseJson<T>(text: string): T | undefined {
  * Strips the quoting and list punctuation models decorate short answers with.
  *
  * @param line - One line of a reply.
+ * @returns The line trimmed, without one leading bullet or number, any quotes or backticks at
+ * either end, or trailing full stops. Empty when nothing else was there.
  */
 export const clean = (line: string) =>
   line
@@ -415,6 +460,8 @@ export const clean = (line: string) =>
  * @param text - The reply, one item per line.
  * @param max - How many items to keep.
  * @param maxChars - Longest item kept. Longer ones are dropped, not truncated.
+ * @returns The first `max` items that survive, in reply order. Lines that clean to nothing are not
+ * items, and an overlong one does not count towards `max`.
  */
 export const listLines = (text: string, max: number, maxChars: number) =>
   text
@@ -432,6 +479,8 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * for the settings a task may leave out.
  * @param [agent] - The endpoint the main turn uses, key included. Absent sends the task's endpoint
  * as it stands.
+ * @returns The three arguments a side-task entry point takes. `options` is a new object, and
+ * `endpoint` is the task's own object when no `agent` was given, a copy otherwise.
  *
  * @remarks
  * A helper rather than a second signature on each of the four, so a setting added to a task later

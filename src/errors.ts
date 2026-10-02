@@ -7,6 +7,8 @@ import type { ToolCallOutcome } from './tool-calls.ts';
  * What went wrong, as a string.
  *
  * @param error - Whatever a `catch` bound. Anything that is not an `Error` is stringified.
+ * @returns An `Error`'s `message` as it is, empty included; otherwise `String(error)`, so a thrown
+ * `undefined` reads `undefined`.
  *
  * @remarks
  * Almost everything caught here ends up in a run row, a tool result or a log line, and a
@@ -119,6 +121,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
  *
  * @param error - Whatever a `catch` around `runAgentLoop` bound. Anything the loop did not throw
  * answers `undefined`.
+ * @returns The error itself, read as the run it carries — the same object, not a copy.
  *
  * @remarks
  * Two classes carry it — an overflow has to stay a `ContextOverflow` and so cannot also be an

@@ -31,6 +31,8 @@ export interface ContinueTurnOptions extends RunTurnOptions {
  * and no tool call in it.
  *
  * @param turn - The turn as it came back.
+ * @returns False for a turn that stopped for any reason but `length`, whose content is blank, or
+ * that holds a tool call.
  *
  * @remarks
  * An answer not begun is a turn cut off in its scratchpad, and prefilling a half-closed fence is
@@ -50,6 +52,11 @@ const RESTART_MIN = 12;
 /**
  * Whether the continuation began the answer again rather than carrying it on — how a server that
  * ignores the prefill shows itself, since it takes the request without complaint.
+ *
+ * @param answer - The answer so far, as it was sent back as the prefill.
+ * @param continuation - The content the continuation came back with.
+ * @returns True where the continuation opens with the answer's own opening, leading whitespace
+ * aside on both. Never true for an answer whose opening is shorter than `RESTART_MIN`.
  */
 const restarted = (answer: string, continuation: string) => {
   const opening = answer.trimStart().slice(0, RESTART_PROBE);
@@ -76,9 +83,16 @@ const RATES = [
 ] as const;
 
 /**
- * Two requests' usage as one turn's. The first request's own measurements and the loop's
- * comparison with the request before it stay as they were; a field only one of them reported is
- * dropped rather than passed off as the total.
+ * Two requests' usage as one turn's.
+ *
+ * @param first - The turn so far, which may itself be a joined one. Not written to.
+ * @param next - The continuation's usage. Not written to.
+ * @returns A new usage: the four counts summed, `continuations` one more than `first` had, and a
+ * rate both requests timed as the mean of the two, weighted by the time each was measured over.
+ *
+ * @remarks
+ * The first request's own measurements and the loop's comparison with the request before it stay
+ * as they were; a field only one of them reported is dropped rather than passed off as the total.
  */
 function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
   const joined: TurnUsage = {
@@ -122,6 +136,8 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
  * @param turn - The turn that came back cut off.
  * @param [options] - `runTurn`'s options, with `model` needed for the latch — without one nothing is
  * latched and each continuation finds out again — and the cap on continuations.
+ * @returns `turn` itself where nothing was joined to it; otherwise a new turn, with the last
+ * continuation's `finishReason` and tool calls.
  *
  * @remarks
  * Only a turn `isContinuable` accepts is continued; any other comes back as it was. Content and

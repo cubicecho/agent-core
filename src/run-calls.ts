@@ -39,6 +39,7 @@ import { FUNCTION_TOOL, Role } from './wire.ts';
  *
  * @param text - What to show.
  * @param [limit] - Characters kept. Text at or under it comes back as it was.
+ * @returns The text to show. Cut, it ends in an ellipsis and the whole length, `… (N chars)`.
  *
  * @remarks
  * For events, never for the transcript: the model reads the whole of what a tool returned.
@@ -80,14 +81,28 @@ function readCall(call: ToolCall, finishReason: Turn['finishReason']): ReadCall 
 }
 
 /**
- * A turn's calls with their arguments read. A server that parses replayed arguments refuses the
- * almost-JSON a model wrote, so each is normalised here, and one that could not be read at all is
- * replayed as no arguments.
+ * A turn's calls with their arguments read.
+ *
+ * @param calls - The turn's calls, in the order the model made them.
+ * @param finishReason - Why the turn ended, which tells a call cut off from one written wrongly.
+ * @returns One entry per call, in the same order. Unreadable arguments do not throw: the entry
+ * carries the error in place of them.
+ *
+ * @remarks
+ * A server that parses replayed arguments refuses the almost-JSON a model wrote, so each is
+ * normalised here, and one that could not be read at all is replayed as no arguments.
  */
 export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason']): ReadCall[] =>
   calls.map((call) => readCall(call, finishReason));
 
-/** The assistant message a turn is written into the transcript as, its calls' arguments repaired. */
+/**
+ * The assistant message a turn is written into the transcript as, its calls' arguments repaired.
+ *
+ * @param content - The turn's text. Empty is written as `null`.
+ * @param parsed - The turn's calls as `readCalls` read them. Not written to. None leaves
+ * `tool_calls` off the message rather than empty.
+ * @returns A new message, each call on it a copy with `normal` for its arguments.
+ */
 export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.ChatCompletionAssistantMessageParam => ({
   role: Role.Assistant,
   content: content || null,
@@ -101,7 +116,14 @@ export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.Ch
     : {}),
 });
 
-/** The definitions the host gave for these names, in the order the names are given. */
+/**
+ * The definitions the host gave for these names, in the order the names are given.
+ *
+ * @param definitions - The host's definitions by name.
+ * @param names - The names wanted. One the host gave no definition for is left out, and one given
+ * twice is answered twice.
+ * @returns A new array of the definitions themselves, not copies.
+ */
 export const definedAs = (definitions: ReadonlyMap<string, OpenAI.ChatCompletionTool>, names: Iterable<string>) =>
   [...names].flatMap((name) => definitions.get(name) ?? []);
 
@@ -137,15 +159,30 @@ export interface Calling {
 }
 
 /**
- * What a call is shown, counted and dispatched as: a `call_tool` as the tool it names. Read from
- * the repaired arguments where there are any, since the model's own may be almost-JSON.
+ * What a call is shown, counted and dispatched as: a `call_tool` as the tool it names.
+ *
+ * @param run - The run, read for whether a `call_tool` is looked through.
+ * @param entry - The call, with its arguments read.
+ * @returns The name, and the arguments as JSON text under `input`: the inner tool's for a
+ * `call_tool` that names one, and otherwise the call's own, as the model wrote them.
+ *
+ * @remarks
+ * Read from the repaired arguments where there are any, since the model's own may be almost-JSON.
  */
 const shownAs = (run: Calling, { call, args, normal }: ReadCall) =>
   run.proxies && call.function.name === CALL_TOOL
     ? shownCall(CALL_TOOL, args ? normal : call.function.arguments)
     : { name: call.function.name, input: call.function.arguments };
 
-/** Answers a `load_tools`, counting what it loaded. Not ok where it named nothing loadable. */
+/**
+ * Answers a `load_tools`, counting what it loaded.
+ *
+ * @param run - The run. Written to: the names this call loads are added to `loaded`, and `loads`
+ * counts the new ones, the ones already loaded and the ones not in the catalogue.
+ * @param args - The call's arguments, read as `requestedNames` reads them.
+ * @returns The text the model reads, and `ok`: false where nothing it named was loadable, true
+ * where it named even one tool that was loaded already.
+ */
 function answerLoad(run: Calling, args: Record<string, unknown>) {
   const { catalog, proxied, definitions, loaded, loads } = run;
   const resolved = expandNames(requestedNames(args), catalog);
@@ -167,8 +204,17 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
 
 /**
  * Makes a call at most once per key, sharing the in-flight promise so two identical calls in one
- * step make one request between them whether they run together or one after the other. A call
- * that rejected is forgotten, so asking again is a real retry rather than a replayed failure.
+ * step make one request between them whether they run together or one after the other.
+ *
+ * @param answered - The step's calls so far, by key. Written to.
+ * @param key - What makes two calls the same one.
+ * @param make - Makes the call. Not called where the key has an answer, or one on its way.
+ * @returns The answer, which for a repeat is the first call's. Rejects with what the call did, for
+ * every caller waiting on it.
+ *
+ * @remarks
+ * A call that rejected is forgotten, so asking again is a real retry rather than a replayed
+ * failure.
  */
 async function once(answered: Map<string, Promise<string>>, key: string, make: () => Promise<string>): Promise<string> {
   const previous = answered.get(key);
@@ -194,6 +240,8 @@ async function once(answered: Map<string, Promise<string>>, key: string, make: (
  * @param run - The run the call belongs to.
  * @param entry - The call, with its arguments read.
  * @param answered - The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
+ * @returns The call's id, the name it was shown under, whether it worked, and the whole of what
+ * the model reads. Rejects where the run was stopped or a host callback threw.
  */
 async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Promise<string>>) {
   const { catalog, onDemand, proxied, signal } = run;

@@ -30,6 +30,7 @@ const PRESELECT_PROMPT_CHARS = 2000;
  *
  * @param [maxPerLoad] - The most to ask for. Give `preselection` the
  * same number: this one is what the preselector is told, and that one is what it is held to.
+ * @returns The prompt, with the cap written into it.
  *
  * @remarks
  * On-demand loading otherwise costs a round trip every run: the model reads the catalogue,
@@ -73,6 +74,8 @@ export const PRESELECT_SYSTEM = preselectSystem();
  * @param [maxPromptChars] - Where the request is cut. A caller whose requests
  * carry the part that names the work at the end wants a larger one, and pays for it in the
  * preselector's prompt.
+ * @returns The message text: the listing under a `# Tool catalogue` heading, then the cut request
+ * under `# Request`.
  */
 export const preselectInput = (catalog: CatalogServer[], prompt: string, maxPromptChars = PRESELECT_PROMPT_CHARS) =>
   `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, maxPromptChars)}`;
@@ -86,6 +89,8 @@ export const preselectInput = (catalog: CatalogServer[], prompt: string, maxProm
  * @param catalog - The servers to resolve against.
  * @param [maxPerLoad] - The most to keep. The same number
  * `preselectSystem` was given, or the model is being held to a cap it was never told about.
+ * @returns Names as the catalogue spells them, each once, in the order they resolved, and never
+ * more than `maxPerLoad`. Empty where nothing resolved.
  */
 export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD): string[] {
   const list = isRecord(names) ? names.tools : names;
@@ -163,6 +168,10 @@ const NOISE = new Set(
 /**
  * A text as the matcher reads it: lowercase words, `server__tool_name` and camelCase split apart.
  *
+ * @param text - A request, or a tool's name, server label and description run together.
+ * @returns The words in the order they came, repeats kept. One-character words and the function
+ * words in `NOISE` are left out, and anything but an ASCII letter or digit only separates words.
+ *
  * @remarks
  * Plurals are folded, crudely, by dropping a trailing `s`: a request says "read the files" and
  * the tool is called `read_file`, and without this the two do not meet. Nothing else is stemmed —
@@ -230,6 +239,9 @@ export interface KeywordPreselectOptions {
  * and its one-line description, which is everything the catalogue holds.
  * @param prompt - The request being planned for. Only its head is read, as in `preselectInput`.
  * @param [options] - The cap, the two confidence thresholds, and where the request is cut.
+ * @returns The ranking, the names picked from the top of it, and whether to act on them. No names
+ * and not confident where the catalogue has no tools, the request has no word left to match on,
+ * or nothing scored.
  *
  * @remarks
  * A preselection call costs a round trip to a model that is being asked to do term matching, and
@@ -327,7 +339,11 @@ export interface PreselectOptions {
    * @defaultValue `256`
    */
   maxTokens?: number;
-  /** As `SideTaskOptions.temperature`: absent is 0.3. */
+  /**
+   * As `SideTaskOptions.temperature`.
+   *
+   * @defaultValue `0.3`
+   */
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
   reasoningEffort?: string;
@@ -355,6 +371,8 @@ export interface PreselectOptions {
  * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
  * @param [options] - Cancellation, notices, the reply ceiling, the temperature and reasoning effort
  * as `ask` reads them, the cap the choice is held to, and whether to try the words first.
+ * @returns Names as the catalogue spells them. Empty where `model` is empty, the catalogue has no
+ * tools, the call failed, or its reply named nothing in the catalogue.
  *
  * @remarks
  * On-demand loading otherwise spends a round trip on reading the catalogue and calling

@@ -111,7 +111,13 @@ export type Runtime = typeof STATEFUL & {
   run<T>(fn: () => T): T;
 };
 
-/** Makes the methods of the runtime whose state is `scope`. */
+/**
+ * Makes the methods of the runtime whose state is `scope`.
+ *
+ * @param scope - The state the methods run against. Held, not copied.
+ * @returns Every function in `STATEFUL` wrapped to run in `scope`, and `run`. What `summariser`
+ * hands back is wrapped as well, since it is called after the method has returned.
+ */
 function bind(scope: Scope): Runtime {
   const within =
     <A extends unknown[], R>(fn: (...args: A) => R) =>
@@ -134,6 +140,7 @@ function bind(scope: Scope): Runtime {
  *
  * @param [options] - What to configure it with before first use. A part left out keeps the
  * defaults — not the default runtime's settings, which a new runtime does not inherit.
+ * @returns A runtime whose state starts empty, with whatever `options` gave already applied.
  *
  * @remarks
  * For a host that must not share them — one that mints a key per tenant, where a shared pool has

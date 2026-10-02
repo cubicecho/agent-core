@@ -136,9 +136,17 @@ export interface AgentLoopHooks {
    * @defaultValue `[HookEvent.BeforeTurn]`
    */
   events?: readonly HookEvent[];
-  /** The shared context budget. Absent is `configureHooks`'s. */
+  /**
+   * The shared context budget.
+   *
+   * @defaultValue The budget `configureHooks` holds.
+   */
   maxTokens?: number;
-  /** Said above the context blocks. Absent is `configureHooks`'s; empty is none. */
+  /**
+   * Said above the context blocks. Empty is none.
+   *
+   * @defaultValue The preface `configureHooks` holds.
+   */
   preface?: string;
   /** Hears each note, from before the request and from `afterTurn`. */
   onNote?: OnNote;
@@ -487,6 +495,17 @@ const CACHE_KEPT = 0.9;
 
 /**
  * What one turn's cache should have been and whether it was, against the request before it.
+ *
+ * @param previous - The request before this one, with what it reported. Absent, or with no prompt
+ * reported, diagnoses nothing.
+ * @param next - The request this turn sent, read only to say why a broken cache broke.
+ * @param usage - The turn's own report. Not written to. One with no `uncached` did not report its
+ * cache, and is told what to expect without being judged.
+ * @returns The fields to lay over the turn's usage: `cacheExpected`, the previous prompt plus its
+ * completion; `cacheBroken` where the cache was reported; and `cacheBreakReason` where it broke.
+ * Empty where nothing is diagnosed.
+ *
+ * @remarks
  * Nothing before the second request, or where the previous prompt was not reported.
  */
 function cacheDiagnosis(previous: Sent | undefined, next: RequestShape, usage: TurnUsage): Partial<TurnUsage> {
@@ -516,6 +535,9 @@ interface Standing {
  *
  * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
+ * @returns The turn that asked for no tools and the run around it: the transcript with what the
+ * run added, usage, every call, what is loaded and used, the hooks' notes and context, metrics
+ * and the ledger. See `AgentLoopResult`.
  *
  * @remarks
  * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded` and
@@ -584,7 +606,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   throw new ToolIterationLimit(`Stopped after ${options.config.maxToolIterations} tool iterations.`, standing.read());
 }
 
-/** A message's words, as the preselector is asked about them: its string, or its text parts. */
+/**
+ * A message's words, as the preselector is asked about them: its string, or its text parts.
+ *
+ * @param message - The message to read. Absent, or with content that is neither a string nor
+ * parts, reads as empty.
+ * @returns The string as it is, or the text parts joined by newlines with parts of any other kind
+ * left out. Not trimmed.
+ */
 const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): string => {
   const content = message?.content;
   if (typeof content === 'string') {
@@ -598,8 +627,16 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
 
 /**
  * The loop's own preselection: by the task where the config carries one, and by the flattened
- * name on its own endpoint where it does not. `preselect` answers an empty model with nothing, so
- * a config that names neither asks nothing.
+ * name on its own endpoint where it does not.
+ *
+ * @param options - The run's options. Read for the config, the catalogue, the signal, what
+ * `preselect` passes through, and the last user message, whose text is what is asked about.
+ * @param notice - Hears the preselector's notices, a failure among them.
+ * @returns The names picked. Empty where there is no user message or its text is blank — nothing
+ * is asked — and where the preselection picked nothing or failed. An aborted request still rejects.
+ *
+ * @remarks
+ * `preselect` answers an empty model with nothing, so a config that names neither asks nothing.
  */
 async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise<string[]> {
   const { config, catalog = [], signal } = options;
@@ -623,6 +660,11 @@ async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise
 /**
  * The loop's own summariser, which is the compaction task's or nothing: a summary the main model
  * writes is a second full-price request the operator did not ask for.
+ *
+ * @param options - The run's options. Read for `compact`, `config.tasks.compaction` and the signal.
+ * @param notice - Hears the task's notices, and a summary that failed.
+ * @returns A summariser resolving to the summary, or to an empty string where writing it failed —
+ * an aborted request still rejects. `undefined` where `compact` is off or the task names no model.
  */
 function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
   const { config, signal } = options;
@@ -639,6 +681,16 @@ function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
 /**
  * A step's transcript after the loop's own compaction: folded where a fold was due and its summary
  * came back, and otherwise the array it was given.
+ *
+ * @param transcript - The step's messages, after `beforeStep`. Not written to.
+ * @param reported - The last request's prompt tokens as `used`, where they still describe this
+ * transcript. Empty plans from an estimate instead.
+ * @param summarise - Writes the summary. Not called where no fold is due.
+ * @param context - The run's options, read for `compact`'s thresholds, the window, the compaction
+ * task's ceiling and the hooks; the characters per token an estimate is made at; and `notice`,
+ * told of a fold.
+ * @returns `transcript` itself where nothing was folded, otherwise a new array with the folded
+ * stretch replaced by its summary.
  */
 async function foldBeforeStep(
   transcript: OpenAI.ChatCompletionMessageParam[],
@@ -669,7 +721,14 @@ async function foldBeforeStep(
 
 /**
  * Tells the `afterTurn` hooks what was answered, with the turn it closed where the question is
- * still in the transcript. Resolves to their notes — failures only, as `notify` returns them.
+ * still in the transcript.
+ *
+ * @param hooks - The run's hooks: the runner, the context the hooks are told, and who hears a note.
+ * @param messages - The transcript as the run ended, the answer on the end.
+ * @param at - Where the question is in `messages`. Negative — there was none, or it has been
+ * folded away — tells the hooks the reply and no `turn`.
+ * @param reply - The answer's text.
+ * @returns A promise of their notes — failures only, as `notify` returns them.
  */
 const tellAfterTurn = (
   hooks: NonNullable<AgentLoopOptions['hooks']>,
@@ -697,6 +756,13 @@ const tellAfterTurn = (
 
 /**
  * The loop's own record of what it emitted, less the token deltas, for `runMetrics` at the end.
+ *
+ * @param heard - The host's `onEvent`, still told of every event, deltas included. Absent records
+ * all the same.
+ * @returns `recorded`, the array each event is added to as it is emitted, and `onEvent`, which the
+ * loop emits through in place of the host's.
+ *
+ * @remarks
  * Stamped here rather than by the bus, which the loop does not know about.
  */
 function recorder(heard: AgentLoopOptions['onEvent']) {
@@ -714,6 +780,13 @@ function recorder(heard: AgentLoopOptions['onEvent']) {
  * How this run finds its tools, and what it starts with in hand: the loop's own preselection
  * where it was asked for and the host has not already decided, and what an earlier question
  * carried over.
+ *
+ * @param options - The run's options. Read for the discovery mode, the catalogue, `loaded`,
+ * `preselected` and `preselect`.
+ * @param notice - Hears what the loop's own preselection has to say.
+ * @returns `proxied` and `onDemand`, the second true of both modes and both false where `catalog`
+ * is empty; `preselected`, the shortlist, empty in eager mode; and `loaded`, a new set of what was
+ * carried and then the shortlist — empty when eager or proxied.
  */
 async function discovery(options: AgentLoopOptions, notice: OnNotice) {
   const { config, catalog = [] } = options;
@@ -738,7 +811,13 @@ async function discovery(options: AgentLoopOptions, notice: OnNotice) {
   return { proxied, onDemand, loaded, preselected };
 }
 
-/** The host's definitions by name, the first kept where two share one. */
+/**
+ * The host's definitions by name, the first kept where two share one.
+ *
+ * @param tools - Every definition the host gave. One that is not a function has no name and is
+ * left out.
+ * @returns A new map, in the order of `tools`, holding the definitions themselves.
+ */
 function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
   const definitions = new Map<string, OpenAI.ChatCompletionTool>();
   for (const tool of tools) {
@@ -751,9 +830,15 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
 }
 
 /**
- * Offers each message written into the transcript to the host. Once `onMessage` has thrown the
- * run is ending on that, and the results still to be written are not offered to a host that has
- * just failed to take one.
+ * Offers each message written into the transcript to the host.
+ *
+ * @param onMessage - The host's callback, awaited. Absent offers nothing.
+ * @returns The offer, taking a message, its step and the turn it came with: it resolves once the
+ * host has taken the message, and rejects with what the host threw — once.
+ *
+ * @remarks
+ * Once `onMessage` has thrown the run is ending on that, and the results still to be written are
+ * not offered to a host that has just failed to take one.
  */
 function announcer(onMessage: AgentLoopOptions['onMessage']) {
   let heard = true;
@@ -770,7 +855,14 @@ function announcer(onMessage: AgentLoopOptions['onMessage']) {
   };
 }
 
-/** The `usage` event a turn ends in: the run's totals so far, and the turn's own report. */
+/**
+ * The `usage` event a turn ends in: the run's totals so far, and the turn's own report.
+ *
+ * @param usage - The run's totals, this turn's already added.
+ * @param turn - The turn just finished, read for its usage and why it ended.
+ * @param ledger - The ledger as it stands. Carried on the event as it is, not copied.
+ * @returns The event, for the caller to emit.
+ */
 const usageEvent = (usage: TurnUsage, turn: Turn, ledger: TokenLedger): RunEventInput => ({
   kind: RunEventKind.Usage,
   usage: {
@@ -785,8 +877,14 @@ const usageEvent = (usage: TurnUsage, turn: Turn, ledger: TokenLedger): RunEvent
 
 /**
  * The calls a turn made and the answer beside them, with calls the model wrote as text taken out
- * of the answer and counted as calls. `recoverable` is the names such a call may use, and absent
- * recovers nothing.
+ * of the answer and counted as calls.
+ *
+ * @param turn - The turn as it came back. Not written to.
+ * @param recoverable - The names a call written as text may use. Absent recovers nothing, and
+ * nothing is looked for in a turn that made a named call of its own or has no text.
+ * @param notice - Told when calls were recovered, and how many.
+ * @returns `calls`, the turn's own less any with no name, and `content`, its text as it was — or,
+ * where calls were recovered, those calls and the text without them.
  */
 function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNotice) {
   // A call with no name is a fragment the server never finished sending: nothing to run, and
@@ -806,8 +904,13 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
 }
 
 /**
- * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
- * when `maxToolIterations` is spent, and tells `standing` how to read the run either way.
+ * The steps of `runAgentLoop`, throwing what they caught as it was caught.
+ *
+ * @param options - What `runAgentLoop` was given.
+ * @param standing - Written to: once the steps have set themselves up, its `read` is theirs, so the
+ * caller can read the run as it stands whether they return or throw.
+ * @returns The result of the turn that asked for no tools, or `undefined` when `maxToolIterations`
+ * is spent.
  */
 async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<AgentLoopResult | undefined> {
   const { config, system = '', tools = [], catalog = [], dispatch, hooks, signal } = options;

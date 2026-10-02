@@ -58,6 +58,8 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
  * Whether a refusal means the request was too big, rather than merely refused.
  *
  * @param detail - The endpoint's own message.
+ * @returns `true` for an overflow: one of the over-long wordings, beside `token` or `context`.
+ * `false` for anything that reads as a rate limit, whatever else it says.
  *
  * @remarks
  * Rate limits are ruled out first: they borrow the same words and mean the opposite, being worth
@@ -95,6 +97,8 @@ const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([
  * Whether a failed request is worth trying again.
  *
  * @param error - The rejection, as caught. What is not an SDK error is not transient.
+ * @returns `true` for an `EndpointSilent`, a connection error, a 408, 409 or 429, and any status
+ * of 500 or above; `false` for any other SDK error, one with no status included.
  *
  * @remarks
  * The question is whether the request was *refused or lost*, rather than answered with a
@@ -121,6 +125,7 @@ export function isTransient(error: unknown): boolean {
  * Whether a failure is the endpoint refusing the request as written, rather than losing it.
  *
  * @param error - The rejection, as caught. What is not an SDK error refuses nothing.
+ * @returns `true` for an SDK error whose status is 400 or 422, and for nothing else.
  *
  * @remarks
  * 400 and 422 are what a server says when it read the body and disliked it, which makes them the
@@ -141,6 +146,8 @@ const UNAVAILABLE_ERROR = 'unavailable_error';
  * Whether a failure is a local server still loading the model, rather than one failing to serve.
  *
  * @param error - The rejection, as caught.
+ * @returns `true` for a 503 whose body is of type `unavailable_error`, or whose message says the
+ * model is loading; `false` for any other status and for what is not an SDK error.
  *
  * @remarks
  * llama.cpp answers 503 `Loading model` with type `unavailable_error` from the moment it starts
@@ -178,6 +185,7 @@ const JITTER_FLOOR = 0.5;
  * Exponential, with jitter so several tasks failing at once do not return in lockstep.
  *
  * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
+ * @returns Milliseconds, somewhere between half of that wait and all of it, and not a whole number.
  */
 export const backoffMs = (attempt: number) =>
   Math.min(BACKOFF_CEILING_MS, 2 ** attempt * BACKOFF_BASE_MS) * (JITTER_FLOOR + Math.random() * (1 - JITTER_FLOOR));
@@ -187,6 +195,8 @@ export const backoffMs = (attempt: number) =>
  *
  * @param ms - How long to wait.
  * @param [signal] - Abandons the wait. One already aborted rejects without waiting at all.
+ * @returns A promise that resolves once `ms` has passed, or rejects with the signal's reason — an
+ * `Error` of its own where the signal carries none.
  */
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {

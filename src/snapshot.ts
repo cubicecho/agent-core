@@ -41,7 +41,7 @@ export interface ModelSnapshot {
    * none refused.
    */
   refusedEfforts?: string[];
-  /** The efforts a refusal published as this model's, in ladder order. Absent is none published. */
+  /** The efforts a refusal published as this model's, in the order it gave them. Absent is none published. */
   supportedEfforts?: string[];
 }
 
@@ -68,6 +68,11 @@ export interface CapabilitySnapshot {
   endpoints: Record<string, EndpointSnapshot>;
 }
 
+/**
+ * A model's snapshot as it starts out: every flag on, and both refused lists empty.
+ *
+ * @returns A fresh object each time, since `exportCapabilities` writes onto what it is given.
+ */
 const optimisticModel = (): ModelSnapshot => ({
   ...OPTIMISTIC_MODEL,
   thinkingHints: true,
@@ -75,13 +80,26 @@ const optimisticModel = (): ModelSnapshot => ({
   refusedEfforts: [],
 });
 
+/**
+ * Whether a model's snapshot holds a refusal, which is what earns it a place in the blob.
+ *
+ * @param model - The snapshot. Its `supportedEfforts` is not read: a published list latches
+ * nothing.
+ * @returns `true` where a flag is off, the hints were refused, or either refused list has an entry.
+ */
 const refusedAnything = (model: ModelSnapshot) =>
   MODEL_FLAGS.some((flag) => !model[flag]) ||
   !model.thinkingHints ||
   model.refusedFields.length > 0 ||
   (model.refusedEfforts?.length ?? 0) > 0;
 
-/** Latches every string in a stored list into a live set, skipping what is not a list of them. */
+/**
+ * Latches every string in a stored list into a live set, skipping what is not a list of them.
+ *
+ * @param held - The live set. Written to, and only ever added to.
+ * @param stored - The list as the snapshot holds it. Anything but an array is skipped whole, and
+ * an entry that is not a string is skipped on its own.
+ */
 const latchInto = (held: Set<string>, stored: unknown) => {
   if (!Array.isArray(stored)) {
     return;
@@ -95,6 +113,9 @@ const latchInto = (held: Set<string>, stored: unknown) => {
 
 /**
  * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
+ *
+ * @returns A fresh object that shares nothing with the live latches, its lists copied and the two
+ * refused ones sorted.
  *
  * @remarks
  * Covers what `negotiate` latches on endpoints and models and the models `ask` found refusing the

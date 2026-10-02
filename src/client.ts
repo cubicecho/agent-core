@@ -13,13 +13,19 @@ import { HttpStatus } from './wire.ts';
  */
 export const NO_KEY = 'agent-core';
 
-/** A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit. */
+/**
+ * A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit.
+ *
+ * @param seconds - The wait as a config states it.
+ * @returns Milliseconds, or `undefined` for zero or less.
+ */
 const limitMs = (seconds: number) => (seconds > 0 ? seconds * MS_PER_SECOND : undefined);
 
 /**
  * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
  *
  * @param config - Read for `requestTimeoutSeconds` alone.
+ * @returns The request timeout in milliseconds, or `undefined` for no limit.
  */
 export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
@@ -29,6 +35,8 @@ export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): numb
  * config has no opinion, and zero where it says not to wait at all.
  *
  * @param config - Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
+ * @returns Milliseconds: `undefined` only where the field is absent, and zero where it is zero or
+ * less.
  *
  * @remarks
  * Zero rather than the SDK's `undefined` for "no wait", because here absent already means
@@ -146,6 +154,8 @@ export const FIRST_TOKEN_FACTOR = 5;
  * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
  *
  * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
+ * @returns Milliseconds. `firstTokenSeconds` where it is given, zero or less being no limit;
+ * otherwise `FIRST_TOKEN_FACTOR` request timeouts, and no limit where the request has none.
  */
 export const firstTokenMs = (
   config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,
@@ -161,6 +171,8 @@ export const firstTokenMs = (
  * The client for an endpoint, built once and kept.
  *
  * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
+ * @returns The pooled client: the same object for the same base URL, key and timeout, until it is
+ * evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
  *
  * @remarks
  * Pooled on the three fields that change how a request is sent, so agents sharing a server share
@@ -205,10 +217,21 @@ export function getClient(config: Endpoint): OpenAI {
  */
 const CONTEXT_KEYS = ['context_length', 'max_context_window', 'max_model_len', 'context_window', 'n_ctx'];
 
+/**
+ * A number above zero as itself and anything else as zero, which here means "not stated".
+ *
+ * @param value - Whatever a server put under a key. Absent, a string and a negative all read as
+ * zero.
+ * @returns The number, or 0.
+ */
 const positive = (value: unknown) => (isPositive(value) ? value : 0);
 
 /**
  * A listing entry's window, and whether it is only the one the model was trained with.
+ *
+ * @param model - A listing entry as the server sent it, extra keys included. Not written to.
+ * @returns The window in tokens, and `trained` where it came from `meta.n_ctx_train`. An entry
+ * that states neither answers zero and `false`.
  *
  * @remarks
  * The two are told apart because they are trusted differently: a top-level key is taken as the
@@ -294,6 +317,7 @@ const misses = scoped(() => new Map<string, number>());
  * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
  * config, and absent and empty already mean the same thing. The timeout is deliberately not in
  * it; see `listings`.
+ * @returns The URL and the key as one JSON string, the key in the clear.
  *
  * @remarks
  * The URL and the key together, because the key is part of what is on the other end rather than
@@ -315,6 +339,7 @@ export const endpointKey = (config: EndpointIdentity) => JSON.stringify([config.
  * @param endpoint - Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
  * where the key may be written down.
  * @param model - The model's name as the endpoint knows it.
+ * @returns The pair as a JSON array, which `JSON.parse` takes apart again.
  */
 export const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
@@ -322,6 +347,8 @@ export const modelKey = (endpoint: string, model: string) => JSON.stringify([end
  * `endpointKey` hashed, for the remembered facts that can leave the process.
  *
  * @param config - Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
+ * @returns The digest of that endpoint's `endpointKey`: the same for the same URL and key in any
+ * process, and no key to be read out of it.
  *
  * @remarks
  * What an endpoint refused is exported by `exportCapabilities` to be written into a settings row
@@ -357,7 +384,13 @@ const unserved = scoped(() => new Set<string>());
  */
 const refusals = scoped(() => new Map<string, { at: number; gone: boolean }>());
 
-/** Whether `/api/v0/models` is to be left alone on this endpoint for now. */
+/**
+ * Whether `/api/v0/models` is to be left alone on this endpoint for now.
+ *
+ * @param endpoint - The endpoint, by `endpointKey`.
+ * @returns `true` where the route last answered as one the server does not have, or with any other
+ * error inside `listingMissMs`; `false` for an endpoint with no error on record.
+ */
 const refused = (endpoint: string) => {
   const refusal = refusals().get(endpoint);
   return refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs);
@@ -366,7 +399,13 @@ const refused = (endpoint: string) => {
 /** How long a probe may take before the window is taken from the listing instead. */
 const PROBE_TIMEOUT_MS = 10_000;
 
-/** The server root behind an OpenAI-compatible base URL, which is where the native APIs live. */
+/**
+ * The server root behind an OpenAI-compatible base URL, which is where the native APIs live.
+ *
+ * @param baseUrl - The base URL as configured. Not trimmed of whitespace.
+ * @returns The URL less its trailing slashes and then one trailing `/v1`; one that ends in neither
+ * comes back as given.
+ */
 const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
 
 /** A route this server does not have, rather than one that failed to answer. */
@@ -377,9 +416,17 @@ const NOT_THERE: ReadonlySet<number> = new Set([
 ]);
 
 /**
- * Asks one native endpoint. `failed` is any answer that was not a 2xx and `missing` the ones among
- * them that mean a server without the route; `body` is absent for both, and for a 2xx that was not
- * JSON. A server that could not be reached throws.
+ * Asks one native endpoint.
+ *
+ * @param config - The endpoint. Its key goes as a bearer token where it has one, and its request
+ * timeout bounds the wait — `PROBE_TIMEOUT_MS` where it has none.
+ * @param path - The route and its query, from the server root rather than from the base URL.
+ * @returns How the server answered, with `body` only for a 2xx that parsed as JSON.
+ *
+ * @remarks
+ * `failed` is any answer that was not a 2xx and `missing` the ones among them that mean a server
+ * without the route; `body` is absent for both, and for a 2xx that was not JSON. A server that
+ * could not be reached throws.
  */
 async function probe(config: Endpoint, path: string): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
   const apiKey = config.apiKey || undefined;
@@ -402,6 +449,8 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
  * listing does not say.
  *
  * @param config - The endpoint, plus the model whose window is wanted.
+ * @returns The window in tokens, or zero where none was found. Never rejects: a server that could
+ * not be reached answers zero too.
  *
  * @remarks
  * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
@@ -489,6 +538,8 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  *
  * @param config - The endpoint, plus the model whose window is wanted.
  * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
+ * @returns The window in tokens, or zero. Never rejects: a listing or a native route that failed
+ * is an unknown window.
  *
  * @remarks
  * `declared` is the operator's own number, and it wins outright: an endpoint can report the
@@ -577,7 +628,14 @@ export function resetClients() {
   refusals().clear();
 }
 
-/** A base URL as two settings rows would agree on it: trimmed, without the trailing slash. */
+/**
+ * A base URL as two settings rows would agree on it: trimmed, without the trailing slash.
+ *
+ * @param a - The URL as one row has it.
+ * @param b - The URL as the other has it.
+ * @returns `true` where the two differ in nothing but surrounding whitespace and trailing slashes.
+ * Case counts, and so does a `/v1`.
+ */
 export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '');
 
 /**
@@ -588,6 +646,8 @@ export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') ==
  * @param [inherited] - The settings it overrides. Absent treats `own` as the configured endpoint, so
  * only its key and the environment's are in play.
  * @param [env] - Where `OPENAI_API_KEY` is read from.
+ * @returns The key, never empty: `own`'s, else `NO_KEY` for an endpoint other than the inherited
+ * one, else the inherited key, then the environment's, then `NO_KEY`.
  *
  * @remarks
  * A credential issued for one endpoint has no business being posted to another. A profile that

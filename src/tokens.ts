@@ -16,6 +16,8 @@ export const CHARS_PER_TOKEN = 4;
  * vocabulary either.
  *
  * @param text - Prose or serialised JSON — both counted the same way, which is why JSON reads low.
+ * @returns The length over `CHARS_PER_TOKEN`, rounded up: zero for an empty string, and one for
+ * anything shorter than a token.
  *
  * @remarks
  * The estimate runs low on tool schemas — JSON packs more tokens into a character than prose
@@ -38,6 +40,8 @@ const THOUSAND = 1000;
  * 1234 → "1.2k". The numbers in an overflow message are large and nobody reads the units digit.
  *
  * @param tokens - The count to render.
+ * @returns The count in thousands to one decimal place with a `k`, or the number as it is below a
+ * thousand.
  */
 export const compact = (tokens: number) => (tokens >= THOUSAND ? `${(tokens / THOUSAND).toFixed(1)}k` : String(tokens));
 
@@ -97,7 +101,12 @@ export interface TokenEstimateOptions {
   charsPerToken?: number;
 }
 
-/** The divisor an option asked for, or the fallback when it asked for nothing usable. */
+/**
+ * The divisor an option asked for, or the fallback when it asked for nothing usable.
+ *
+ * @param charsPerToken - What the caller gave. Absent, zero, negative or `NaN` is nothing usable.
+ * @returns `charsPerToken` when it is above zero, otherwise `CHARS_PER_TOKEN`.
+ */
 const divisor = (charsPerToken: number | undefined) =>
   charsPerToken !== undefined && charsPerToken > 0 ? charsPerToken : CHARS_PER_TOKEN;
 
@@ -105,6 +114,9 @@ const divisor = (charsPerToken: number | undefined) =>
  * How many characters one message is worth: its keys, and its content in whichever shape.
  *
  * @param message - The message as it will be sent.
+ * @returns The characters of its role, its content — a string, or the text and refusal parts of a
+ * list — and its name, call id, reasoning and tool calls, plus a constant for each key and part
+ * that carries them. An image or audio part adds nothing.
  */
 export function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
   let chars = message.role.length + ENVELOPE;
@@ -177,6 +189,8 @@ const toolLengths = new WeakMap<OpenAI.ChatCompletionTool[], number>();
  * How many characters a tool array is worth, measured once per array.
  *
  * @param tools - The tool definitions as they will be sent. An empty array is worth nothing.
+ * @returns The length of the array serialised as JSON, as it was the first time this array was
+ * asked about — a change made to it since is not seen.
  */
 export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
   if (!tools.length) {
@@ -197,6 +211,8 @@ export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
  * How many characters a request is worth: the walk `requestTokens` divides, without the division.
  *
  * @param body - The request as it was sent, tools included.
+ * @returns The sum of `messageChars` over the messages. The tools are not in it, whether or not
+ * the body carries them; `toolsChars` counts those.
  *
  * @remarks
  * What calibration reads a reported prompt count against, since a ratio is only as good as the
@@ -215,6 +231,7 @@ export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
  *
  * @param body - The request as it will be sent, tools included.
  * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
+ * @returns Whole tokens: the messages' and the tools', each rounded up on its own and added.
  *
  * @remarks
  * See `estimateTokens` for why it is characters over four and which way it is wrong on purpose,
@@ -273,6 +290,8 @@ const PARTS = ['system', 'tools', 'history', 'toolResults'] as const;
  * What each part of a request is worth in characters, by the same walk `requestTokens` divides.
  *
  * @param body - The request as it will be sent, tools included.
+ * @returns A new breakdown in characters. A `developer` message counts as `system`, and anything
+ * that is neither that nor a `tool` message as `history`.
  *
  * @remarks
  * Exact and additive: the parts sum to `total`, which is `requestChars` plus `toolsChars`. The
@@ -316,6 +335,12 @@ export interface ContextBreakdownOptions extends TokenEstimateOptions {
 /**
  * Shares `total` out over these parts by their character counts, the largest absorbing the
  * rounding so they add up to it exactly rather than to within a few tokens of it.
+ *
+ * @param chars - What each part measured, in characters. Not written to.
+ * @param over - The parts to share between. One left out stays zero in the result.
+ * @param total - What to share out, in tokens.
+ * @returns A new breakdown whose `total` is `total` as given. Every part is zero where the parts
+ * measured nothing or `total` is not above zero.
  */
 function share(chars: ContextBreakdown, over: readonly (keyof ContextBreakdown)[], total: number): ContextBreakdown {
   const out: ContextBreakdown = { system: 0, tools: 0, history: 0, toolResults: 0, total };
@@ -341,6 +366,8 @@ function share(chars: ContextBreakdown, over: readonly (keyof ContextBreakdown)[
  *
  * @param body - The request as it will be sent, tools included.
  * @param [options] - The divisor, and the reported prompt count when there is one.
+ * @returns A new breakdown in tokens. Its `total` is the reported count when one above zero was
+ * given, and `requestTokens` of the same body otherwise.
  *
  * @remarks
  * Shares rather than four independent estimates, because a readout whose parts do not add up to
@@ -377,6 +404,8 @@ export function contextTokens(
  *
  * @param message - The message as it will be sent.
  * @param [options] - The divisor, `CHARS_PER_TOKEN` when none is given.
+ * @returns `messageChars` over the divisor, rounded up per message, where `requestTokens` rounds
+ * once over them all.
  *
  * @remarks
  * For the arithmetic that weighs part of a transcript against a window — `planCompaction`'s kept

@@ -56,7 +56,13 @@ export const SUMMARY_PROMPT =
  */
 export const SUMMARY_LEAD = 'Summary of the earlier part of this conversation, which is no longer shown in full:\n\n';
 
-/** What the summariser reads for one message: its text and the calls it made. */
+/**
+ * What the summariser reads for one message: its text and the calls it made.
+ *
+ * @param message - Any message of the transcript. Only its function calls are written out.
+ * @returns The text, then each call as `name(arguments)`, space-separated and trimmed. Empty for a
+ * message with neither. Not cut to length; `summaryInput` does that.
+ */
 const messageText = (message: Message): string => {
   const calls =
     'tool_calls' in message && message.tool_calls
@@ -67,10 +73,22 @@ const messageText = (message: Message): string => {
   return `${textOf(message.content)} ${calls}`.trim();
 };
 
+/**
+ * Whether a message is a summary an earlier fold left, rather than a system prompt.
+ *
+ * @param message - Any message of the transcript.
+ * @returns `true` for a `system` message whose text opens with `SUMMARY_LEAD`, which is what
+ * `summaryMessage` writes.
+ */
 const isSummary = (message: Message) =>
   message.role === Role.System && textOf(message.content).startsWith(SUMMARY_LEAD);
 
-/** The summary as it sits in a transcript, which is the one shape `isSummary` recognises again. */
+/**
+ * The summary as it sits in a transcript, which is the one shape `isSummary` recognises again.
+ *
+ * @param summary - The notes, without the lead. Trimmed here.
+ * @returns A new `system` message: `SUMMARY_LEAD`, then the notes.
+ */
 const summaryMessage = (summary: string): Message => ({
   role: Role.System,
   content: `${SUMMARY_LEAD}${summary.trim()}`,
@@ -78,7 +96,15 @@ const summaryMessage = (summary: string): Message => ({
 
 /**
  * The leading system messages a fold never touches, and the summary an earlier one left among
- * them. What a caller who keeps its system prompt out of the array knows already, and passes.
+ * them.
+ *
+ * @param messages - The transcript. Not written to.
+ * @returns `from` is the index of the first message that is not `system` — the length when all of
+ * them are. `previous` is the text of the last summary among those ahead of it, lead removed, and
+ * absent when there is none.
+ *
+ * @remarks
+ * What a caller who keeps its system prompt out of the array knows already, and passes.
  */
 const systemHead = (messages: Message[]): { from: number; previous?: string } => {
   let from = 0;
@@ -113,6 +139,8 @@ export interface PruneOptions {
  *
  * @param messages - The transcript. Not written to.
  * @param [options] - How many results to keep and how long one must be to clear.
+ * @returns `messages` itself when nothing was cleared, otherwise a new array in which each cleared
+ * result is a new message and every other one the same object.
  *
  * @remarks
  * The cheap half of compaction. A `read_file` of a 40k-character file is 10k tokens on every turn
@@ -230,7 +258,14 @@ export interface CompactionPlan {
   after?: number;
 }
 
-/** An index held between the start of the transcript and `most`, for a caller's `from` that is neither. */
+/**
+ * An index held between the start of the transcript and `most`, for a caller's `from` that is
+ * neither.
+ *
+ * @param index - The index as it was given, which may be negative or past the end.
+ * @param most - The highest index allowed, itself included.
+ * @returns `index` where it lies from zero to `most`, otherwise the nearer of the two.
+ */
 const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most);
 
 /**
@@ -239,6 +274,8 @@ const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most
  * @param messages - The transcript, system prompts included if the caller keeps them in it.
  * @param options - The window, what is in use, the ratios, and where the last fold ended. See
  * `CompactionOptions`.
+ * @returns The plan, its `toSummarise` a new array of the same message objects, or `undefined` when
+ * there is nothing to fold. `messages` is not written to.
  *
  * @remarks
  * The kept tail is walked back from the end until it fills `keepRatio` of the window, then moved
@@ -336,6 +373,8 @@ export function planCompaction(
  * message as its role and at most 4000 characters of its text.
  *
  * @param plan - What `planCompaction` returned.
+ * @returns The text for the summariser, messages a blank line apart. A message with neither text
+ * nor calls is left out, and a plan with a `previous` opens with it under `Notes so far:`.
  */
 export function summaryInput(plan: CompactionPlan): string {
   const transcript = plan.toSummarise
@@ -357,6 +396,8 @@ export function summaryInput(plan: CompactionPlan): string {
  * @param model - The model to write it, which may be a smaller one than the run's.
  * @param [options] - Cancellation and notices, and the instruction and ceiling the summary is
  * written under.
+ * @returns A function from `summaryInput`'s text to the summary. It rejects as `ask` does, and
+ * resolves with an empty string where the model wrote nothing.
  */
 export const summariser =
   (
@@ -461,6 +502,8 @@ export async function runCompaction(
  * that keeps its system prompts in the array; everything before it is kept ahead of the summary.
  * Absent, the leading `system` messages are found by scanning, and zero of them is the ordinary
  * case for a host whose system prompt is a separate argument.
+ * @returns `messages` itself when there is no record or its summary is blank, otherwise a new
+ * array: the kept head, one summary message, then everything from the record's `through` on.
  *
  * @remarks
  * The inverse of storing a `CompactionRecord`, and the shape `planCompaction` expects to meet
@@ -494,6 +537,8 @@ export function applyCompaction(
  * @param [head] - How many messages the request keeps ahead of the summary — the leading system
  * prompts, when the host keeps them in the array. Zero is the stored-fold case,
  * where the summary is the request's first message.
+ * @returns The index in the request. One before the record's `through` gives `head`, where the
+ * summary sits — an index among the kept head messages themselves included.
  *
  * @remarks
  * A transcript that stays append-only and a request that does not are two numberings of the same

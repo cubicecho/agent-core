@@ -157,7 +157,11 @@ export interface TaskSpec {
   endpoint?: EndpointSpec;
   /** The reply's ceiling. Absent is the side task's own default, not the agent's `maxTokens`. */
   maxTokens?: number;
-  /** Absent is the side task's own default, 0.3, whatever the agent's temperature is. */
+  /**
+   * Sampling temperature, whatever the agent's own is.
+   *
+   * @defaultValue `0.3`
+   */
   temperature?: number;
   /**
    * A level has the task deliberate. Absent and `"off"` leave it with the no-thinking hints a
@@ -307,7 +311,12 @@ export interface ParseSpecOptions {
   understands?: readonly string[];
 }
 
-/** Absent and null are the same thing: a nullable column round-trips through JSON as `null`. */
+/**
+ * Absent and null are the same thing: a nullable column round-trips through JSON as `null`.
+ *
+ * @param value - Whatever a document held under a key.
+ * @returns `true` for `undefined` and `null` only — `0`, `""`, `false` and `[]` are values.
+ */
 const absent = (value: unknown) => value === undefined || value === null;
 
 /** A `${VAR}`-shaped string, which is kept as the literal it is rather than expanded. */
@@ -318,23 +327,48 @@ class Report {
   readonly errors: string[] = [];
   readonly warnings: string[] = [];
 
+  /**
+   * Records a reason to refuse the document.
+   *
+   * @param path - Where in the document the problem is, as `requires[2]`.
+   * @param problem - What is wrong there, worded to follow the path and a colon.
+   */
   fail(path: string, problem: string) {
     this.errors.push(`${path}: ${problem}`);
   }
 
+  /**
+   * Records a field that did not survive, as a warning.
+   *
+   * @param path - Where in the document the field is.
+   * @param problem - Why it could not be used, worded to read before ", and was dropped".
+   */
   drop(path: string, problem: string) {
     this.warnings.push(`${path}: ${problem}, and was dropped`);
   }
 
+  /**
+   * Records a warning about something that was kept as it is.
+   *
+   * @param path - Where in the document it is.
+   * @param problem - What is worth an operator's attention there.
+   */
   note(path: string, problem: string) {
     this.warnings.push(`${path}: ${problem}`);
   }
 
   /**
-   * A string field, or nothing. Interpolation is never performed, so a `${VAR}` is reported as
-   * the literal it will stay — the alternative hands whoever wrote the document the ability to
-   * read any variable the process has, which is why the formats that do it need a credential
-   * denylist bolted on afterwards.
+   * A string field, or nothing.
+   *
+   * @param path - Where the field is, for the warnings.
+   * @param value - What the document held there.
+   * @returns The string exactly as written, an empty one included. `undefined` where it is absent,
+   * and where it is not a string, which is warned about as well.
+   *
+   * @remarks
+   * Interpolation is never performed, so a `${VAR}` is reported as the literal it will stay — the
+   * alternative hands whoever wrote the document the ability to read any variable the process has,
+   * which is why the formats that do it need a credential denylist bolted on afterwards.
    */
   string(path: string, value: unknown): string | undefined {
     if (absent(value)) {
@@ -349,6 +383,16 @@ class Report {
     return value;
   }
 
+  /**
+   * A number field held to its bounds, or nothing.
+   *
+   * @param path - Where the field is, for the warning.
+   * @param value - What the document held there.
+   * @param least - The lowest value accepted, itself included.
+   * @param [most] - The highest value accepted, itself included.
+   * @returns The number as written. `undefined` where it is absent, and where it is not a finite
+   * number or lies outside the bounds — dropped with a warning, never clamped.
+   */
   number(path: string, value: unknown, least: number, most = Infinity): number | undefined {
     if (absent(value)) {
       return undefined;
@@ -367,6 +411,14 @@ class Report {
     return value;
   }
 
+  /**
+   * A boolean field, or nothing.
+   *
+   * @param path - Where the field is, for the warning.
+   * @param value - What the document held there.
+   * @returns The boolean as written. `undefined` where it is absent, and where it is anything but
+   * `true` or `false` — dropped with a warning, never coerced.
+   */
   boolean(path: string, value: unknown): boolean | undefined {
     if (absent(value)) {
       return undefined;
@@ -383,15 +435,41 @@ type Kept<T> = { [K in keyof T as undefined extends T[K] ? never : K]: T[K] } & 
   [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
 };
 
-/** Drops the keys whose value did not survive, so an absent field stays absent. */
+/**
+ * Drops the keys whose value did not survive, so an absent field stays absent.
+ *
+ * @param fields - Read, not written to. Only `undefined` counts as not surviving: `0`, `""`,
+ * `false` and `null` stay.
+ * @returns A new object holding the keys that are left.
+ */
 function kept<T extends object>(fields: T): Kept<T> {
   // The one assertion: `Object.entries` forgets which keys it was handed, and `Kept` says them again.
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Kept<T>;
 }
 
-/** Whether a parsed sub-object said anything at all. An empty one is the same as an absent one. */
+/**
+ * Whether a parsed sub-object said anything at all.
+ *
+ * @param value - The object to ask about. Only its own keys are counted.
+ * @returns `false` for an object with no keys, whatever the ones it has hold.
+ *
+ * @remarks
+ * An empty one is the same as an absent one.
+ */
 const said = (value: object) => Object.keys(value).length > 0;
 
+/**
+ * Reads an endpoint section, the agent's or a side task's.
+ *
+ * @param report - Where what is dropped is written.
+ * @param path - Where the section sits in the document: `endpoint`, or `tasks.title.endpoint`.
+ * @param value - What the document held there.
+ * @returns The fields that survived, or `undefined` where the section is absent, is not an object
+ * or held nothing usable.
+ *
+ * @remarks
+ * An `apiKey` or an `api_key` is dropped with a warning: a document carries no credentials.
+ */
 function parseEndpoint(report: Report, path: string, value: unknown): EndpointSpec | undefined {
   if (absent(value)) {
     return undefined;
@@ -413,13 +491,33 @@ function parseEndpoint(report: Report, path: string, value: unknown): EndpointSp
 /** The highest temperature the wire takes. */
 const MAX_TEMPERATURE = 2;
 
-/** The three fields a model and a side task both carry, held to the same bounds in each. */
+/**
+ * The three fields a model and a side task both carry, held to the same bounds in each.
+ *
+ * @param report - Where what is dropped is written.
+ * @param path - The section the fields sit in: `model`, or `tasks.title`.
+ * @param value - That section.
+ * @returns All three keys, each `undefined` where its field is absent or was dropped — a caller
+ * puts the result through `kept`.
+ */
 const parseSampling = (report: Report, path: string, value: Record<string, unknown>) => ({
   maxTokens: report.number(`${path}.maxTokens`, value.maxTokens, 0),
   temperature: report.number(`${path}.temperature`, value.temperature, 0, MAX_TEMPERATURE),
   reasoningEffort: report.string(`${path}.reasoningEffort`, value.reasoningEffort),
 });
 
+/**
+ * Reads the `model` section.
+ *
+ * @param report - Where what is dropped is written.
+ * @param value - What the document held under `model`.
+ * @returns The fields that survived — an empty object where none did — or `undefined` where the
+ * section is absent or is not an object.
+ *
+ * @remarks
+ * `extraBody` comes back as a new object without the `RESERVED_BODY_FIELDS`, each of which is
+ * warned about. An empty one survives as an empty one.
+ */
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (absent(value)) {
     return undefined;
@@ -451,6 +549,18 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   });
 }
 
+/**
+ * Reads the `prompt` array, part by part.
+ *
+ * @param report - Where what is dropped is written.
+ * @param value - The array, already known to be one.
+ * @returns The parts that survived, in the document's order. Empty where none did.
+ *
+ * @remarks
+ * A part goes whole where it is not an object, has no id or an empty one, or has neither a text
+ * nor a usable reference. A malformed `ref` beside a text goes alone. An empty text is kept: it is
+ * how a layer deletes the part below it.
+ */
 function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
   const parts: PromptPart[] = [];
   for (const [index, held] of value.entries()) {
@@ -486,6 +596,19 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
   return parts;
 }
 
+/**
+ * Reads the `tools` section.
+ *
+ * @param report - Where what is dropped is written.
+ * @param value - What the document held under `tools`.
+ * @returns The fields that survived — an empty object where none did — or `undefined` where the
+ * section is absent or is not an object.
+ *
+ * @remarks
+ * `servers` keeps its three answers apart: absent stays absent, and an empty array comes back as
+ * one. An entry that is empty or not a string is left out, and a list that loses every entry is
+ * still a list.
+ */
 function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
   if (absent(value)) {
     return undefined;
@@ -530,6 +653,14 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
   });
 }
 
+/**
+ * Reads the `retry` section.
+ *
+ * @param report - Where what is dropped is written.
+ * @param value - What the document held under `retry`.
+ * @returns The fields that survived, or `undefined` where the section is absent, is not an object
+ * or held nothing usable.
+ */
 function parseRetry(report: Report, value: unknown): RetrySpec | undefined {
   if (absent(value)) {
     return undefined;
@@ -544,6 +675,15 @@ function parseRetry(report: Report, value: unknown): RetrySpec | undefined {
   return said(retry) ? retry : undefined;
 }
 
+/**
+ * Reads the `tasks` record, whatever its keys are.
+ *
+ * @param report - Where what is dropped is written.
+ * @param value - The record, already known to be one.
+ * @returns A new record of the tasks that are objects, under the keys the document used. A task
+ * that said nothing usable comes back as an empty object; one that is `null` or not an object is
+ * left out.
+ */
 function parseTasks(report: Report, value: Record<string, unknown>): Record<string, TaskSpec> {
   const tasks: Record<string, TaskSpec> = {};
   for (const [key, held] of Object.entries(value)) {
@@ -566,6 +706,20 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
   return tasks;
 }
 
+/**
+ * Reads the `hooks` array, hook by hook.
+ *
+ * @param report - Where what is dropped or noted is written.
+ * @param value - The array, already known to be one.
+ * @param events - The events this host fires. A hook bound to any other of `SPEC_EVENTS` is kept
+ * and noted.
+ * @returns The hooks that survived, in the document's order. Empty where none did.
+ *
+ * @remarks
+ * A hook goes whole where it is not an object, lacks a non-empty `id`, `on`, `server` or `tool`,
+ * or is bound to something that is not one of `SPEC_EVENTS`. An `inject: true` or a `veto: true`
+ * its event cannot honour goes alone. `args` is carried unread.
+ */
 function parseHooks(report: Report, value: unknown[], events: readonly string[]): AgentHook[] {
   const hooks: AgentHook[] = [];
   for (const [index, held] of value.entries()) {
@@ -620,6 +774,19 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
   return hooks;
 }
 
+/**
+ * Reads the `bundle` section, which `parseSpec` hands over only once a host has opted in.
+ *
+ * @param report - Where what is dropped is written.
+ * @param value - What the document held under `bundle`.
+ * @returns The servers that survived, possibly none, or `undefined` where the section or its
+ * `mcpServers` is absent or of the wrong kind. Each server is the object the document held, not a
+ * copy, and no other key of `bundle` is carried.
+ *
+ * @remarks
+ * A server goes where it is not an object, has neither a non-empty `slug` nor a non-empty `id`, or
+ * repeats the effective slug of one before it. Nothing else about it is read.
+ */
 function parseBundle(report: Report, value: unknown): SpecBundle | undefined {
   if (absent(value)) {
     return undefined;
@@ -685,6 +852,8 @@ const KNOWN = new Set([
  * form, a file or another host.
  * @param [options] - Whether to parse a bundle, which events this host fires, and which extension
  * keys it understands.
+ * @returns The document that survived — a new object, never the one handed in — or `spec: null`
+ * where `errors` holds anything. `warnings` is filled either way.
  *
  * @remarks
  * Every problem is reported at once, in the `path: what is wrong` shape `validateHooks` already
@@ -807,11 +976,26 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
   };
 }
 
-/** Merges the layers that named a key, last one winning, and leaves it absent if none did. */
+/**
+ * Merges the layers that named a key, last one winning, and leaves it absent if none did.
+ *
+ * @param layers - One section from each document, weakest first. A document without the section
+ * gives `undefined`, which is skipped, and a key holding `undefined` overrides nothing.
+ * @returns A new object, one level deep — empty where no layer said anything.
+ */
 const mergeLayers = <T extends object>(layers: readonly (T | undefined)[]): T =>
   Object.assign({}, ...layers.map((layer) => kept(layer ?? {})));
 
-/** An `Endpoint` as the loop takes one. `apiKey` is always empty; see `resolveAgentSpec`. */
+/**
+ * An `Endpoint` as the loop takes one.
+ *
+ * @param spec - The merged endpoint section. Read, not written to.
+ * @returns A new object: `baseUrl` is `""` where no layer gave one, and a timeout no layer stated
+ * stays absent.
+ *
+ * @remarks
+ * `apiKey` is always empty; see `resolveAgentSpec`.
+ */
 const asEndpoint = (spec: EndpointSpec): Endpoint => ({
   baseUrl: spec.baseUrl ?? '',
   apiKey: '',
@@ -821,7 +1005,13 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
   }),
 });
 
-/** The layers' `model` sections as one, with their `extraBody` merged by top-level key beside it. */
+/**
+ * The layers' `model` sections as one, with their `extraBody` merged by top-level key beside it.
+ *
+ * @param layers - The documents, weakest first. None is written to.
+ * @returns `model`, holding the last stated value of every field but `extraBody`, and `extraBody`
+ * apart from it — empty where no layer had one.
+ */
 function mergeModel(layers: readonly AgentSpec[]) {
   const model: ModelSpec = {};
   const extraBody: Record<string, unknown> = {};
@@ -842,7 +1032,14 @@ function mergeModel(layers: readonly AgentSpec[]) {
 
 /**
  * Items merged by id, ordered by first appearance: different ids stack, and the same id is laid
- * over the one before it. An item `idOf` gives no id for is left out.
+ * over the one before it.
+ *
+ * @param items - Every layer's items in one list, weakest first. None is written to.
+ * @param idOf - What an item merges on. `""` is an id like any other.
+ * @returns A new array of new objects, each the shallow merge of the items that shared its id.
+ *
+ * @remarks
+ * An item `idOf` gives no id for is left out.
  */
 function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => string | undefined) {
   const merged = new Map<string, T>();
@@ -858,6 +1055,11 @@ function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => str
 /**
  * The layers' side tasks as the loop takes them, each on the agent's endpoint with its own laid
  * over it.
+ *
+ * @param layers - The documents, weakest first. None is written to.
+ * @param endpoint - The agent's merged endpoint. Read, not written to.
+ * @returns The tasks whose merged `model` is not empty, keyed as the documents keyed them — one a
+ * layer declined with `model: ""` is not among them.
  */
 function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
   const merged = new Map<string, TaskSpec>();
@@ -892,6 +1094,8 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * Layers documents into the flat object the loop takes, weakest first.
  *
  * @param layers - The documents, weakest first: settings, then the agent, then a task, then a step.
+ * @returns The resolved agent, built new. Always whole: an empty list gives empty strings and
+ * `RESOLVED_DEFAULTS` rather than an error, and `apiKey` is `""` whatever the layers said.
  *
  * @remarks
  * Absent inherits, and nothing else does: `0`, `-1`, `""` and `[]` are values that mean what they
@@ -1007,13 +1211,15 @@ export interface ExportSpecOptions {
  *
  * @param spec - A document, ordinarily one `parseSpec` returned.
  * @param [options] - Whether to keep the secrets.
+ * @returns A copy one level deep, never `spec` itself: what is not redacted is shared with the
+ * original.
  *
  * @remarks
  * The property worth keeping is that **a redacted spec is still a valid spec** — it parses, it
  * resolves, and what comes back is the same agent pointed at the same servers, needing only the
- * credentials the importing host supplies itself. So this removes values rather than keys, and
- * nothing outside `bundle` is touched: the format has no credential field at any depth, which is
- * the reason there is nothing else to strip.
+ * credentials the importing host supplies itself. So a bundled server loses its `env` and its
+ * `headers` and nothing else, and nothing outside `bundle` is touched: the format has no
+ * credential field at any depth, which is the reason there is nothing else to strip.
  */
 export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptions = {}): AgentSpec {
   if (secrets || !spec.bundle?.mcpServers) {

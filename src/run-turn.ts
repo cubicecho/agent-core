@@ -107,6 +107,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
  * What a notice calls the model, where the caller did not say which one it is.
  *
  * @param model - The model's name. Absent reads as "the model", which is all there is to say.
+ * @returns The name as given, an empty one included, or the stand-in.
  */
 export const modelLabel = (model: string | undefined) => model ?? 'the model';
 
@@ -124,6 +125,12 @@ export type RequestBuilder = (
 
 /**
  * Throws `ContextOverflow` for a request that will not fit its window, before it is sent.
+ *
+ * @param body - The request about to go out. Its prompt is estimated, and its reply ceiling read
+ * from `max_completion_tokens`, or failing that `max_tokens`.
+ * @param contextLimit - The model's window, in tokens. A request of exactly that many is let
+ * through.
+ * @param charsPerToken - The ratio the prompt is estimated at.
  *
  * @remarks
  * The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with `n_predict`
@@ -154,6 +161,9 @@ function refuseOversized(
 /**
  * A backoff in whatever unit reads as a number: the first is under a second, and "retrying in
  * 0s" is what rounding it to seconds says.
+ *
+ * @param ms - The wait, in milliseconds.
+ * @returns Whole milliseconds, as `250ms`, under a second, and whole seconds, as `4s`, from there.
  */
 const shownDelay = (ms: number) => (ms < MS_PER_SECOND ? `${Math.round(ms)}ms` : `${Math.round(ms / MS_PER_SECOND)}s`);
 

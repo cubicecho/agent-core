@@ -26,6 +26,11 @@ type Schema = Record<string, unknown>;
 const LOOKAROUND = /\(\?<?[=!]/;
 
 const PRIMITIVES: ReadonlySet<string> = new Set(Object.values(SchemaType));
+/**
+ * An object schema with no properties: what a position that holds no usable schema becomes.
+ *
+ * @returns A new object on every call, so no two callers share one.
+ */
 const EMPTY_OBJECT = () => ({ type: SchemaType.Object, properties: {} });
 
 /** Keys whose value is a schema, or a list of them — several are spelled both ways. */
@@ -52,6 +57,12 @@ const POOL_KEYS = ['definitions', '$defs'] as const;
 /**
  * One keyword's value with `fn` applied wherever it holds a schema, and untouched where it holds
  * data — which is what keeps a walk out of `default`, `enum` and `const`.
+ *
+ * @param key - The keyword the value sits under, which is what says whether it holds schemas.
+ * @param value - What the keyword holds. Not mutated.
+ * @param fn - The rewrite for one schema position. Handed whatever is there, schema or not.
+ * @returns A new array or map of what `fn` gave back, or `fn`'s answer for a single schema. For
+ * any other keyword, and for a map keyword that holds no map, `value` itself.
  */
 const mapChildren = (key: string, value: unknown, fn: (node: unknown) => unknown): unknown => {
   if (SCHEMA_KEYS.has(key)) {
@@ -64,13 +75,26 @@ const mapChildren = (key: string, value: unknown, fn: (node: unknown) => unknown
   return value;
 };
 
-/** The names a schema's `required` lists, without whatever in it is not a name. */
+/**
+ * The names a schema's `required` lists, without whatever in it is not a name.
+ *
+ * @param node - The schema whose `required` is read.
+ * @returns A new array, empty where `required` is missing or is not a list.
+ */
 const requiredOf = (node: Schema): string[] =>
   Array.isArray(node.required) ? node.required.filter((name): name is string => typeof name === 'string') : [];
 
 /**
- * Coerces one schema position. Malformed MCP output sometimes puts a bare type name where a
- * whole schema belongs, which the grammar converter reports as `Unrecognized schema: "object"`.
+ * Coerces one schema position.
+ *
+ * @param node - Whatever sits where a schema belongs. Not mutated.
+ * @returns A boolean schema as it is, and an object normalised into a new one. A bare primitive
+ * type name becomes `{ type }`; `"object"`, any other string and anything else at all become an
+ * object with no properties.
+ *
+ * @remarks
+ * Malformed MCP output sometimes puts a bare type name where a whole schema belongs, which the
+ * grammar converter reports as `Unrecognized schema: "object"`.
  */
 function asSchema(node: unknown): unknown {
   if (typeof node === 'string') {
@@ -85,7 +109,13 @@ function asSchema(node: unknown): unknown {
   return normalize(node);
 }
 
-/** Recursively rewrites the shapes llama.cpp's grammar converter cannot represent. */
+/**
+ * Recursively rewrites the shapes llama.cpp's grammar converter cannot represent.
+ *
+ * @param node - The schema as written. Not mutated.
+ * @returns A new schema, rewritten at every schema position under it. Where it holds a `$ref`,
+ * the reference alone.
+ */
 function normalize(node: Schema): Schema {
   const built: Schema = {};
   for (const [key, value] of Object.entries(node)) {
@@ -134,8 +164,15 @@ function normalize(node: Schema): Schema {
 
 /**
  * `{anyOf: [{type: "string"}, {type: "null"}]}` is how Pydantic-backed MCP servers spell an
- * optional field. Optionality already lives in the parent's `required`, so keep the one real
- * branch. A union with two real branches is meaningful and is left alone.
+ * optional field.
+ *
+ * @param node - The schema whose `anyOf` and `oneOf` are looked at. Not mutated.
+ * @returns `node` itself unless a union is one real branch beside `null` ones. Then a copy without
+ * that union, marked `nullable`, with the real branch's keywords laid over its own.
+ *
+ * @remarks
+ * Optionality already lives in the parent's `required`, so keep the one real branch. A union with
+ * two real branches is meaningful and is left alone.
  */
 function collapseNullableUnion(node: Schema): Schema {
   let out = node;
@@ -161,7 +198,13 @@ const TOP_LEVEL_COMBINATORS = ['allOf', 'anyOf', 'oneOf', 'enum', 'not'] as cons
 /** `#/definitions/Args` or `#/$defs/Args` — a pointer into this schema's own definitions. */
 const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
 
-/** The `definitions` and `$defs` that a local pointer in this schema resolves against. */
+/**
+ * The `definitions` and `$defs` that a local pointer in this schema resolves against.
+ *
+ * @param parameters - The root schema, which is where the pools live.
+ * @returns A new object holding whichever of the two the root has as an object — the pools
+ * themselves, not copies. Empty where it has neither.
+ */
 function poolsOf(parameters: Schema): Schema {
   const defs: Schema = {};
   for (const key of POOL_KEYS) {
@@ -175,11 +218,16 @@ function poolsOf(parameters: Schema): Schema {
 /**
  * Follows a chain of local references to the schema it arrives at, or `undefined` where it
  * arrives at none — a pointer into another document, one that comes back around to itself, or a
- * name the pools do not hold. A node that is not a reference resolves to itself, so a caller can
- * hand this a branch without first asking which spelling it is.
+ * name the pools do not hold.
  *
  * @param node - The schema position to resolve, reference or not.
  * @param defs - The pools to resolve against, as `poolsOf` collects them from the root.
+ * @returns The schema arrived at — the object itself, not a copy — or `undefined`, which is also
+ * the answer where the chain ends on something that is not an object.
+ *
+ * @remarks
+ * An object that is not a reference resolves to itself, so a caller can hand this a branch without
+ * first asking which spelling it is.
  */
 function resolveRef(node: unknown, defs: Schema): Schema | undefined {
   const seen = new Set<string>();
@@ -199,6 +247,11 @@ function resolveRef(node: unknown, defs: Schema): Schema | undefined {
 
 /**
  * Replaces a root-level `$ref` with what it points at.
+ *
+ * @param parameters - The root schema. Not mutated.
+ * @returns `parameters` itself where its `$ref` is not a string. Otherwise a new object: what the
+ * pointer lands on with the root's pools laid over it, or an object with no properties where it
+ * lands nowhere.
  *
  * @remarks
  * Dropping the siblings of a `$ref` is right at a nested position and wrong at this one: the
@@ -221,6 +274,11 @@ function inlineRootRef(parameters: Schema): Schema {
 
 /**
  * Folds a root `allOf` into the root itself.
+ *
+ * @param schema - The root schema. Not mutated.
+ * @returns `schema` itself where `allOf` is not a list, or where neither it nor the root has a
+ * property. Otherwise a copy holding the root's properties with each branch's laid over them and
+ * every `required` name unioned — `allOf` still on it, for `sanitizeSchema` to delete.
  *
  * @remarks
  * It is the other way a generated schema spells "the arguments are this named type", and
@@ -260,6 +318,11 @@ function mergeRootAllOf(schema: Schema): Schema {
 
 /**
  * Folds a root `anyOf` or `oneOf` into the root itself.
+ *
+ * @param schema - The root schema. Not mutated.
+ * @returns `schema` itself where no union's branches hold a property. Otherwise a copy holding the
+ * root's properties with the branches' laid over them, and the root's `required` plus the names
+ * every branch asks for — the union still on it, for `sanitizeSchema` to delete.
  *
  * @remarks
  * The third spelling of "the arguments are this named type", after `$ref` and `allOf`, and the
@@ -315,6 +378,9 @@ function mergeRootUnion(schema: Schema): Schema {
 /**
  * Every `$ref` string anywhere under a node, walked as arbitrary JSON rather than as a schema.
  *
+ * @param node - Anything. A value that is neither an array nor an object holds no pointer.
+ * @param into - Where the pointers go. Written to, which is how the walk hands them back.
+ *
  * @remarks
  * The keyword-aware walk `strip` does is the wrong way round for this one. Missing a pointer
  * here means deleting a definition that something still refers to, which breaks the schema;
@@ -342,6 +408,10 @@ function collectRefs(node: unknown, into: Set<string>) {
 
 /**
  * Drops the `definitions` and `$defs` entries that nothing points at any more.
+ *
+ * @param schema - The root schema, pools and all. Not mutated.
+ * @returns `schema` itself where it has no pool, or every definition is still reached. Otherwise a
+ * copy whose pools hold only what is reached, and that lacks a pool nothing reaches into.
  *
  * @remarks
  * The rewrites above delete whole subtrees — a root combinator once its branches are folded in,
@@ -412,7 +482,14 @@ function pruneDefs(schema: Schema): Schema {
 
 /**
  * A required argument that is not in `properties` is one no caller can supply and no strict
- * validator will accept. Anything the rewrites above removed, `required` may still name.
+ * validator will accept.
+ *
+ * @param schema - The schema whose `required` is checked against its own `properties`. Not mutated.
+ * @returns `schema` itself where `required` is not a list. Otherwise a copy whose `required` names
+ * only what `properties` holds, or that has no `required` where no name is left.
+ *
+ * @remarks
+ * Anything the rewrites above removed, `required` may still name.
  */
 function pruneRequired(schema: Schema): Schema {
   if (!Array.isArray(schema.required)) {
@@ -433,6 +510,8 @@ function pruneRequired(schema: Schema): Schema {
  * @param schema - The schema as written. Never mutated. Its root is held to an object, as a tool's
  * parameters are, and anything that is not a schema at all comes back as an object with no
  * properties.
+ * @returns A new object: `type: "object"` with a `properties` map, no combinator at the root, no
+ * `required` name without a property, and no definition that nothing points at.
  *
  * @remarks
  * What `sanitizeTools` does to each tool, without the tool: a `response_format` schema goes through
@@ -458,7 +537,14 @@ export function sanitizeSchema(schema: unknown): Record<string, unknown> {
   return pruneDefs(pruneRequired(out));
 }
 
-/** Rewrites one tool's parameters, leaving a non-function tool alone. */
+/**
+ * Rewrites one tool's parameters, leaving a non-function tool alone.
+ *
+ * @param tool - The definition. Not mutated.
+ * @param fn - The rewrite. Handed the parameters as they are, a missing one included.
+ * @returns A new definition with what `fn` gave back as its parameters, or `tool` itself where it
+ * is not a function tool.
+ */
 const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => Schema): OpenAI.ChatCompletionTool =>
   tool.type === FUNCTION_TOOL
     ? {
@@ -490,7 +576,16 @@ const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => S
 const sanitized = new WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>();
 const relaxed = new WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>();
 
-/** Looks one up, computing and remembering it on a miss. */
+/**
+ * Looks one up, computing and remembering it on a miss.
+ *
+ * @param cache - The memory of one rewrite, keyed on a definition's identity. Gains an entry for
+ * every tool it did not hold.
+ * @param tools - The definitions to look up. Not mutated.
+ * @param fn - The rewrite the cache remembers, run on a tool's parameters only on a miss.
+ * @returns A new array in the order of `tools`, whose entries are the remembered definitions — the
+ * same object each time the same tool is asked for.
+ */
 const through = (
   cache: WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>,
   tools: OpenAI.ChatCompletionTool[],
@@ -502,6 +597,8 @@ const through = (
  *
  * @param tools - The definitions as the pool hands them over. Never mutated — where a schema
  * changed, a new definition is returned in its place.
+ * @returns A new array in the same order. Each entry is the definition remembered for its tool, so
+ * the same object on every call; a tool that is not a function tool is its own entry.
  *
  * @remarks
  * The first call on a connection's tools does the work and every later one is a lookup, so
@@ -511,11 +608,17 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) => through(san
 
 /**
  * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are keyword
- * names and perfectly ordinary argument names at once. Matching on the key alone deleted a
- * *property* called `format` along with the keyword, leaving the parent's `required` naming an
- * argument that no longer existed — which every strict validator rejects, so the retry produced
- * the failure it was reaching for. The same distinction keeps the walk out of `default`, `enum`
- * and `const`, whose contents are data, not schema.
+ * names and perfectly ordinary argument names at once.
+ *
+ * @param node - A schema position, or a list of them. Not mutated.
+ * @returns A copy without the `pattern` and `format` keywords, here and at every schema position
+ * below. A value that is neither an array nor an object comes back as it is.
+ *
+ * @remarks
+ * Matching on the key alone deleted a *property* called `format` along with the keyword, leaving
+ * the parent's `required` naming an argument that no longer existed — which every strict validator
+ * rejects, so the retry produced the failure it was reaching for. The same distinction keeps the
+ * walk out of `default`, `enum` and `const`, whose contents are data, not schema.
  */
 const strip = (node: unknown): unknown => {
   if (Array.isArray(node)) {
@@ -539,6 +642,7 @@ const strip = (node: unknown): unknown => {
  *
  * @param schema - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeSchema`.
  * Never mutated; anything that is not a schema comes back as an object with no properties.
+ * @returns A new object, the keywords gone from every schema position in it.
  *
  * @remarks
  * The retry `relaxTools` makes, on a bare schema. Only the keywords go: a property that happens to
@@ -555,6 +659,9 @@ export function relaxSchema(schema: unknown): Record<string, unknown> {
  * re-validates anyway.
  *
  * @param tools - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
+ * Never mutated.
+ * @returns A new array in the same order. Each entry is the relaxed definition remembered for its
+ * tool, so the same object on every call; a tool that is not a function tool is its own entry.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) => through(relaxed, tools, relaxSchema);
 
@@ -569,6 +676,8 @@ const NO_USER_QUERY = 'no user query found';
  * Does this failure look like the server could not build a grammar from our tool schemas?
  *
  * @param message - The server's error text. Matched case-insensitively.
+ * @returns `true` for a grammar or schema-conversion failure. `false` for anything else, and
+ * always for a chat template's "no user query found", whatever it is wrapped in.
  *
  * @remarks
  * Every server words this differently — llama-server says "error parsing grammar", Lemonade

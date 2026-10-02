@@ -235,6 +235,7 @@ export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kin
  * @param runId - The run it belongs to. Written after `input`, which gets no say in it.
  * @param seq - Its place in that run, the same.
  * @param at - When, for an input that does not say.
+ * @returns A new event; `input` is not written to.
  *
  * @remarks
  * The one place the defaults are written, so an event the bus stamps, one the loop keeps for its
@@ -263,6 +264,13 @@ interface Stream {
   ended: boolean;
 }
 
+/**
+ * A run's stream on a bus, begun empty where the run has none.
+ *
+ * @param held - The bus to look on. Gains an entry on a miss.
+ * @param runId - The run whose stream is wanted.
+ * @returns The stream the bus holds, not a copy — writing to it is writing to the run.
+ */
 const streamFor = ({ streams }: Bus, runId: string): Stream =>
   getOrCreate(streams, runId, () => ({
     events: [],
@@ -274,6 +282,9 @@ const streamFor = ({ streams }: Bus, runId: string): Stream =>
 
 /**
  * Drops the streams nobody is reading and nothing is writing to.
+ *
+ * @param held - The bus to sweep. Loses each unwatched stream untouched for its retention or
+ * longer, and has its timer cleared and — while any stream is left — set again.
  *
  * @remarks
  * Cleanup used to hang entirely off `done`, which assumed every run reaches it. A run killed by
@@ -300,6 +311,12 @@ function sweep(held: Bus) {
   scheduleSweep(held);
 }
 
+/**
+ * Arms a bus's one sweep timer, unless it is armed already or the bus holds no stream to expire.
+ *
+ * @param held - The bus. Its `sweeping` is set to a timer that fires after `retainMs` as it stands
+ * now, and that does not keep the process alive.
+ */
 function scheduleSweep(held: Bus) {
   if (held.sweeping || held.streams.size === 0) {
     return;
@@ -380,6 +397,9 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
  * Returning the generator is not that way out — parked on the promise at the foot of this
  * function it is suspended at an `await` rather than at a `yield`, and a `return()` there is
  * queued behind a promise only the next event can settle. An abort resolves that promise itself.
+ * @returns The run's events in order, ending after its `done` or at the abort. A watcher that fell
+ * too far behind is given one notice in place of the events it missed. Nothing is subscribed until
+ * the first event is asked for.
  *
  * @remarks
  * The backlog comes first so a watcher that joins halfway through — or after the run finished,
@@ -393,6 +413,12 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
 
 /**
  * The notice a watcher that fell behind is given in place of the events it missed.
+ *
+ * @param runId - The run the watcher is following.
+ * @param gap - How many events were dropped, for the text.
+ * @param next - The event the notice goes ahead of, which gives it its step, its time and — less
+ * one — its seq.
+ * @returns A `notice` event made for that one watcher: it is in no backlog.
  *
  * @remarks
  * One short of the event it precedes, which is the last seq that went missing. Sharing a seq
@@ -413,6 +439,16 @@ const gapNotice = (runId: string, gap: number, next: RunEvent): RunEvent =>
     next.at,
   );
 
+/**
+ * The generator behind `watch`, on a bus already chosen.
+ *
+ * @param held - The bus the run is on, kept for the generator's life whichever runtime resumes it.
+ * @param runId - The run to follow. A stream is begun for one that has none, and dropped on the way
+ * out where this was its last watcher and the run has ended or never emitted.
+ * @param [signal] - Stops following. One already aborted yields nothing, the backlog included.
+ * @returns The backlog as it stood at the first `next()`, then each event as it is emitted, ending
+ * after `done` or at the abort.
+ */
 async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
   const { limits, streams } = held;
   const stream = streamFor(held, runId);
@@ -511,6 +547,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
  * The backlog alone, for a caller that wants a snapshot rather than a subscription.
  *
  * @param runId - The run to read. An unknown or already-swept run gives an empty array.
+ * @returns The events still held, oldest first, in an array of the caller's own.
  *
  * @remarks
  * The array is a copy; the events in it are not. They are the same objects the bus holds and
@@ -547,7 +584,9 @@ export const resetEvents = () => {
 /**
  * Consecutive tokens of one kind are one thing being said, not hundreds of things.
  *
- * @param events - Events in `seq` order, from `history` or collected from `watch`.
+ * @param events - Events in `seq` order, from `history` or collected from `watch`. Not written to.
+ * @returns One event per block, every one a copy. A run of `thinking` or of `output` within one
+ * step is a single block with the texts joined; anything else is a block to itself.
  *
  * @remarks
  * A client that reads a run in snapshots rather than token by token wants it that way: a
@@ -694,7 +733,7 @@ export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
  * @param ok - What the `done` event said. Only `false` is a failure; anything else is read off the turn.
  * @param last - The last turn a `usage` event reported, if any did.
  * @returns `failed` for a `done` that was not ok, `truncated` where the last turn ran into the
- *   reply ceiling, and `answered` otherwise.
+ * reply ceiling, and `answered` otherwise.
  */
 function outcomeOf(ok: boolean | null, last: TurnReport | undefined): RunOutcome {
   if (ok === false) {
@@ -718,6 +757,8 @@ export interface RunMetricsOptions {
  * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
  * that has lost its oldest events to the cap sums what it still has.
  * @param [options] - The served window, for how full the run came to it.
+ * @returns A summary of the caller's own. The counts are zero for an empty list, and `outcome` is
+ * absent for a run that has not reported `done`.
  *
  * @remarks
  * A sibling of `fold` rather than part of it. `fold` hands back events, and a client renders

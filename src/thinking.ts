@@ -117,6 +117,8 @@ export class FenceSplitter {
    * Reads one more piece of content, returning what it settled, in order.
    *
    * @param text - The next delta.
+   * @returns The pieces now settled, neighbours of one kind merged, and added to `output` and
+   * `reasoning` already. Empty where the delta was all markers or all held back as a possible one.
    */
   push(text: string): Split[] {
     const parts: Split[] = [];
@@ -137,7 +139,12 @@ export class FenceSplitter {
     return parts;
   }
 
-  /** Releases whatever was held back as a possible tag, now that no more is coming. */
+  /**
+   * Releases whatever was held back as a possible tag, now that no more is coming.
+   *
+   * @returns The held text as one piece — reasoning where the reply ended inside a fence, output
+   * otherwise — or nothing where none was held.
+   */
   finish(): Split[] {
     const parts: Split[] = [];
     this.#emitInto(parts, this.#held);
@@ -145,12 +152,22 @@ export class FenceSplitter {
     return parts;
   }
 
-  /** The markers worth looking for: only the close inside a fence, every one outside it. */
+  /**
+   * The markers worth looking for: only the close inside a fence, every one outside it.
+   *
+   * @returns Outside a fence, the splitter's own list of opens, closes and framing — not a copy.
+   */
   #candidates(): readonly string[] {
     return this.#inside ? [this.#inside.close] : this.#markers;
   }
 
-  /** The earliest marker that means something in the current state. */
+  /**
+   * The earliest marker that means something in the current state.
+   *
+   * @param text - What is left of this push to read.
+   * @returns The marker and where in `text` it starts — the longer of two that start at one place —
+   * or `undefined` where none is whole in it.
+   */
   #next(text: string): { at: number; marker: string } | undefined {
     let best: { at: number; marker: string } | undefined;
     for (const marker of this.#candidates()) {
@@ -167,7 +184,13 @@ export class FenceSplitter {
     return best;
   }
 
-  /** How much of the end of `text` could be the beginning of a marker. */
+  /**
+   * How much of the end of `text` could be the beginning of a marker.
+   *
+   * @param text - Text with no whole marker in it.
+   * @returns The length of the longest such tail over every marker worth looking for, zero where
+   * there is none. Always short of a whole marker.
+   */
   #partialTail(text: string): number {
     let keep = 0;
     for (const marker of this.#candidates()) {
@@ -181,6 +204,13 @@ export class FenceSplitter {
     return keep;
   }
 
+  /**
+   * Moves the state past a marker just read: out of a fence, into one, or nowhere.
+   *
+   * @param marker - The marker found. Inside a fence any marker leaves it, since only its close is
+   * looked for there. Outside, an open enters its fence, framing changes nothing, and a close met
+   * before any fence was seen moves all of `output` so far into `reasoning`.
+   */
   #take(marker: string) {
     if (this.#inside) {
       this.#inside = undefined;
@@ -204,6 +234,14 @@ export class FenceSplitter {
     }
   }
 
+  /**
+   * Files text under the side the state is on: in `output` or `reasoning`, and in the pieces a call
+   * is returning.
+   *
+   * @param parts - The pieces settled so far. Written to — the text joins the last piece where
+   * that is of the same kind, and is pushed as a new one where it is not.
+   * @param text - What to file. Empty files nothing.
+   */
   #emitInto(parts: Split[], text: string) {
     if (!text) {
       return;
@@ -224,6 +262,8 @@ export class FenceSplitter {
  *
  * @param text - The whole reply.
  * @param [fences] - The fences to read.
+ * @returns The answer alone, untrimmed. A fence left open takes everything after it, and a close
+ * with no open before any other fence takes everything before it.
  */
 export function stripThinking(text: string, fences: readonly Fence[] = ALL_FENCES): string {
   const splitter = new FenceSplitter(fences);

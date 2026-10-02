@@ -20,6 +20,8 @@ import { orderTools, type ToolOrder } from './tool-loading.ts';
  * @param [order] - How to order them before sending. `true` is by name, which keeps the cache
  * when the caller's array is assembled differently from one request to the next. See
  * `orderTools`.
+ * @returns A fresh body, always streaming, around the caller's own `messages` array. `model`,
+ * `messages`, `stream` and `tools` are never `extraBody`'s to set.
  *
  * @remarks
  * Every field that negotiates lives here: the ceiling's two spellings, a temperature only a

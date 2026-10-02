@@ -20,7 +20,13 @@ import { FUNCTION_TOOL, SchemaType } from './wire.ts';
  */
 export const LOAD_TOOLS = 'load_tools';
 
-/** Shallow freezing this one would leave `.function.description` — the part worth editing. */
+/**
+ * Shallow freezing this one would leave `.function.description` — the part worth editing.
+ *
+ * @param value - What to freeze, in place, with every object and array reachable from it. A
+ * primitive passes through. Nothing stops the walk on a value that holds itself.
+ * @returns `value` itself, not a copy.
+ */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object') {
     for (const held of Object.values(value)) {
@@ -68,6 +74,8 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
  * @param catalog - The connected servers. Ones with no tools are dropped.
  * @param [loaded] - Names to mark `(loaded)` rather than remove. Absent marks nothing, which keeps the
  * listing the same text for the whole run.
+ * @returns Each server's label on a line ending in a colon, its tool names indented beneath, one
+ * server straight after another. Empty where no server has a tool.
  *
  * @remarks
  * A server with no tools is dropped rather than titled: a pool hands one over whenever a
@@ -90,6 +98,8 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
  * @param catalog - The connected servers. A catalogue with no tools in it produces an empty string.
  * @param [loaded] - Names to mark `(loaded)`, for a caller that rebuilds its prompt per load and does
  * not mind the cache. Absent marks nothing.
+ * @returns The heading, the instructions and the listing, with no blank line before or after — the
+ * caller separates it from its own prompt. Empty where there is nothing to list.
  *
  * @remarks
  * `runAgentLoop` passes no `loaded`, so the block is the same text on every step. The system
@@ -122,12 +132,20 @@ export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<str
   ].join('\n');
 }
 
+/**
+ * Every tool in the catalogue as one list, server by server.
+ *
+ * @param catalog - The connected servers.
+ * @returns A new array in catalogue order. A name two servers offer is in it twice.
+ */
 const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server.tools);
 
 /**
  * The name a tool definition is called by, or `undefined` for one that is not a function.
  *
  * @param tool - The definition, as a request declares it.
+ * @returns The function's name as the definition spells it — an empty one comes back empty, not
+ * `undefined`.
  *
  * @remarks
  * Undefined rather than empty, so a caller that skips such a tool and one that has to place it
@@ -142,7 +160,9 @@ export const toolName = (tool: OpenAI.ChatCompletionTool) =>
  *
  * @param previous - What the last request declared, `load_tools` included. Not written to.
  * @param matched - The definitions to add. Ones whose name is already declared, here or earlier in
- * this list, are skipped rather than moved.
+ * this list, are skipped rather than moved. One that is not a function has no name to be
+ * skipped by, and is appended.
+ * @returns A new array, `previous` first — a copy even where nothing was added.
  *
  * @remarks
  * Appended and never rebuilt from a set, so what a load adds is decided by the load and not by
@@ -259,6 +279,7 @@ export const MAX_CARRIED = 16;
  * @param [max] - How many to carry. Past it, the earliest names not in
  * `used` go first, then the earliest of all. At least one: a cap of zero is read as one, not as
  * no cap and not as none.
+ * @returns The names to carry, as a new array no longer than the cap.
  *
  * @remarks
  * Nothing carried moves. A template renders the tool array near the head of the prompt, and
@@ -362,7 +383,12 @@ export function expandNames(requested: string[], catalog: CatalogServer[], maxPe
   return { matched: [...matched], unknown, overBroad, deferred, maxPerLoad };
 }
 
-/** Each block's lines on their own, and a blank line between one block and the next. */
+/**
+ * Each block's lines on their own, and a blank line between one block and the next.
+ *
+ * @param blocks - The blocks, each as its lines.
+ * @returns One text, empty where there are no blocks.
+ */
 const joinBlocks = (blocks: string[][]) => blocks.map((block) => block.join('\n')).join('\n\n');
 
 /**
@@ -371,6 +397,9 @@ const joinBlocks = (blocks: string[][]) => blocks.map((block) => block.join('\n'
  * @param expanded - What `expandNames` resolved: the matches, the misses, and the over-broad asks.
  * @param catalog - The servers, read for the descriptions now worth their tokens.
  * @param [loaded] - What was loaded before this call. Absent reports every match as newly loaded.
+ * @returns What the model reads, a blank line between each thing it is told: what was loaded with
+ * its descriptions, what already was, each over-broad ask with its matches, what did not fit this
+ * call, and what is not in the catalogue. `No tool names were given.` where there is none of them.
  *
  * @remarks
  * A name that was loaded before this call is reported as already loaded rather than loaded
@@ -424,6 +453,7 @@ export function loadResult(
  *
  * @param catalog - The connected servers and the tools each one offers.
  * @param name - An exact name. Nothing is prefixed, trimmed or fuzzily matched.
+ * @returns True where any server offers it, which no server of an empty catalogue does.
  */
 export const inCatalog = (catalog: CatalogServer[], name: string) =>
   catalog.some((server) => server.tools.some((tool) => tool.name === name));
@@ -432,6 +462,8 @@ export const inCatalog = (catalog: CatalogServer[], name: string) =>
  * `load_tools` arguments, defensively — a model may send a bare string or a nested object.
  *
  * @param args - The tool call's arguments, exactly as the model sent them.
+ * @returns The names under `names`, or failing that `tools`, or `name`: a string as a list of one,
+ * an array less whatever in it is not a string, and anything else as none. Not trimmed.
  */
 export function requestedNames(args: Record<string, unknown>): string[] {
   const value = args.names ?? args.tools ?? args.name;
@@ -524,6 +556,7 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
  * tool list.
  *
  * @param catalog - The connected servers. A catalogue with no tools in it produces an empty string.
+ * @returns The heading, the instructions and the listing, with no blank line before or after.
  *
  * @remarks
  * `catalogPrompt` tells the model a loaded tool is in its tool list, which proxied is never true —
@@ -555,6 +588,7 @@ const PROXY_LOADED = /^Loaded \d+ tool\(s\)\. Run them with `call_tool`\./;
  * the model has.
  *
  * @param result - The tool message's text. A load that only pointed back or refused is not one.
+ * @returns True where the text opens as `proxyLoadResult` opens a result with a definition in it.
  *
  * @remarks
  * On demand the definitions are in the tool array and a load's result only repeats their
@@ -573,6 +607,9 @@ export const holdsDefinitions = (result: string) => PROXY_LOADED.test(result);
  * @param definitions - The definitions of `resolved.matched`, as many as the host has. Ones that
  * are not functions are skipped.
  * @param [loaded] - What was loaded before this call. Absent reports every match as newly loaded.
+ * @returns What the model reads, a blank line between each part: the count and one line of JSON
+ * per new definition, then what was already loaded, what has no definition, and the refusals.
+ * Never empty.
  *
  * @remarks
  * A name loaded before this call is answered with a pointer back rather than its definition a
@@ -622,6 +659,8 @@ export function proxyLoadResult(
  *
  * @param args - The `call_tool` call's own arguments, parsed. An absent `arguments` is no arguments.
  * @param catalog - What may be called. The name is trimmed and then matched exactly.
+ * @returns The trimmed name, and the arguments as an object: the one the model passed, not a copy,
+ * or the one its JSON string parsed to.
  *
  * @remarks
  * `arguments` arrives as an object when the model follows the schema and as a JSON string when it

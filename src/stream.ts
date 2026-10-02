@@ -140,6 +140,8 @@ export interface TurnUsage {
 /**
  * A usage with nothing counted yet, a fresh object each call since every caller adds into it.
  *
+ * @returns The four counts at zero and no other field.
+ *
  * @remarks
  * Only the four counts every turn has: the optional fields stay absent, which is what says
  * nothing reported them.
@@ -147,11 +149,15 @@ export interface TurnUsage {
 export const noUsage = (): TurnUsage => ({ prompt: 0, completion: 0, total: 0, cached: 0 });
 
 /**
- * The four token counts of two usages, added. Only those: the rest are measurements a sum of
- * would mean nothing, or would mean something only `runMetrics` knows how to weigh.
+ * The four token counts of two usages, added.
  *
  * @param a - One usage. Neither is changed.
  * @param b - The other.
+ * @returns A new usage holding the four sums, and none of the optional fields of either.
+ *
+ * @remarks
+ * Only those: the rest are measurements a sum of would mean nothing, or would mean something only
+ * `runMetrics` knows how to weigh.
  */
 export const addCounts = (a: TurnUsage, b: TurnUsage): TurnUsage => ({
   prompt: a.prompt + b.prompt,
@@ -189,6 +195,12 @@ const TIMINGS: readonly [keyof Timings, CountField][] = [
   ['draft_n_accepted', 'draftAccepted'],
 ];
 
+/**
+ * Whether a value is a finite number, which is what a count or a timing off the wire has to be.
+ *
+ * @param value - Whatever a server put in a numeric field.
+ * @returns True for a number that is neither `NaN` nor infinite. Zero and a negative pass.
+ */
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
 /**
@@ -268,7 +280,14 @@ interface ChunkReport {
   cacheTimings?: number;
 }
 
-/** Reads a chunk's usage block and its `timings`, either of which most chunks carry neither of. */
+/**
+ * Reads a chunk's usage block and its `timings`, either of which most chunks carry neither of.
+ *
+ * @param chunk - One chunk of the stream. Not written to.
+ * @returns Only what this chunk said. `counts` is empty for a chunk with neither block; a usage
+ * block always sets the three token counts, zero for one it left out; and a cache count, a
+ * reasoning count or a timing is there only where the server sent a finite number.
+ */
 function chunkReport(chunk: OpenAI.ChatCompletionChunk): ChunkReport {
   const counts: Partial<TurnUsage> = {};
   const report: ChunkReport = { counts };
@@ -301,12 +320,22 @@ function chunkReport(chunk: OpenAI.ChatCompletionChunk): ChunkReport {
   return report;
 }
 
-/** The position a fragment says its call is at, where the server sent a number. */
+/**
+ * The position a fragment says its call is at, where the server sent a number.
+ *
+ * @param part - One tool-call fragment of a delta.
+ * @returns Its `index`, or `undefined` where the server sent none or something not a number.
+ */
 const fragmentIndex = (part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall) =>
   typeof part.index === 'number' ? part.index : undefined;
 
 /**
  * The call a fragment belongs to, of those begun so far, or none where it opens a new one.
+ *
+ * @param calls - The calls begun so far, in arrival order. Not written to.
+ * @param part - The fragment to place.
+ * @returns The call to add the fragment to — the object in `calls`, not a copy — or `undefined`
+ * where the caller is to begin a new one.
  *
  * @remarks
  * By `index` where the server sent a number, which the SDK types as required and servers have
@@ -337,6 +366,10 @@ function ownerOf(
 /**
  * A turn's calls as they are handed back: in the order their indexes give, arrival order where a
  * server sent none, each under an id of its own.
+ *
+ * @param calls - The calls as the stream left them, in arrival order. Not written to or reordered.
+ * @returns One function call per entry. An id is made up for a call the server gave none, and for
+ * one whose id an earlier call in the result already has.
  */
 function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
   const ordered = calls
@@ -437,6 +470,9 @@ export interface StreamTurnOptions {
  * @param client - The pooled client for this endpoint.
  * @param body - The request, which must set `stream: true`.
  * @param [options] - Cancellation, the idle watchdog, and the token callbacks.
+ * @returns The assembled turn, once the stream has ended. Rejects with `EndpointSilent` where the
+ * endpoint was silent past its allowance, and with whatever the abort raised where `signal`
+ * stopped it — an aborted stream never comes back as a turn.
  *
  * @remarks
  * Streaming buys no speed — nothing waits on the reply but the loop itself. It is what makes a

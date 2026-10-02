@@ -44,6 +44,8 @@ const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>()
  *
  * @param supports - The endpoint, as `capabilitiesFor` hands it over.
  * @param model - The name the endpoint knows the model as, as it goes in the body.
+ * @returns The highest of the readings held for the model in the current runtime, or
+ * `CHARS_PER_TOKEN` where it holds none.
  *
  * @remarks
  * The highest of the model's last few readings rather than their mean. The estimate guards a
@@ -58,7 +60,13 @@ export function charsPerTokenFor(supports: Capabilities, model: string): number 
   return known?.length ? Math.max(...known) : CHARS_PER_TOKEN;
 }
 
-/** Whether any message carries a part whose tokens its characters do not count. */
+/**
+ * Whether any message carries a part whose tokens its characters do not count.
+ *
+ * @param messages - A request's messages.
+ * @returns True where some message's content is an array holding a part that is neither text nor
+ * a refusal. Content that is a string never counts.
+ */
 const hasMedia = (messages: OpenAI.ChatCompletionMessageParam[]) =>
   messages.some(
     ({ content }) =>
