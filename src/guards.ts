@@ -42,12 +42,11 @@ interface Lookup<K, V> {
  *
  * @param map - Where to look. Gains an entry on a miss, which is the point of calling this.
  * @param key - What to look under.
- * @param create - Builds the value on a miss, and is not called on a hit. A stored `undefined`
- * reads as a miss, so one that returns it is called every time.
+ * @param create - Builds the value on a miss, and is not called on a hit.
  * @returns What the map holds under the key afterwards: the held value itself on a hit, what
  * `create` returned on a miss.
  */
-export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V {
+export function getOrCreate<K, V extends {}>(map: Lookup<K, V>, key: K, create: () => V): V {
   const held = map.get(key);
   if (held !== undefined) {
     return held;

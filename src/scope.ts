@@ -8,7 +8,7 @@ import { getOrCreate, isPositive } from './guards.ts';
  * A map rather than a record of named caches, so a module that grows a cache declares it where
  * it is used and `runtime.ts` does not have to hear about it.
  */
-export type Scope = Map<symbol, unknown>;
+export type Scope = Map<symbol, NonNullable<unknown>>;
 
 /**
  * Which scope the code running now belongs to, carried across every `await` beneath a runtime's
@@ -38,7 +38,7 @@ export const currentScope = (): Scope => active.getStore() ?? rootScope;
 export const inScope = <T>(scope: Scope, fn: () => T): T => active.run(scope, fn);
 
 /** One module's state, read from whichever scope is current. See `scoped`. */
-export interface Scoped<T> {
+export interface Scoped<T extends {}> {
   /** The current scope's copy, made on first use. */
   (): T;
   /** Drops the current scope's copy, so the next read makes a fresh one. */
@@ -57,7 +57,7 @@ export interface Scoped<T> {
  * and each use reads `cache()`. The copy is made lazily, so a runtime pays only for the modules
  * it touches.
  */
-export function scoped<T>(create: () => T): Scoped<T> {
+export function scoped<T extends {}>(create: () => T): Scoped<T> {
   const key = Symbol();
   const read = (): T => {
     return getOrCreate(currentScope(), key, create) as T;
