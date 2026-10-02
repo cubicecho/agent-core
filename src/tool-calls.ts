@@ -177,8 +177,11 @@ function readValue(text: string, at: number): { value: unknown; end: number } | 
   return value === undefined ? undefined : { value, end };
 }
 
+/** A call as a template wrote it into the text: the name, and the arguments still serialised. */
+type WrittenCall = { name: string; arguments: string };
+
 /** One call in any of the shapes templates write: `{name, arguments}`, `{name, parameters}`, `{function: {...}}`. */
-function toCall(entry: unknown): { name: string; arguments: string } | undefined {
+function toCall(entry: unknown): WrittenCall | undefined {
   if (!isRecord(entry)) return undefined;
   const inner = isRecord(entry.function) ? entry.function : entry;
   const name = inner.name;
@@ -188,12 +191,10 @@ function toCall(entry: unknown): { name: string; arguments: string } | undefined
 }
 
 /** Every call in a value that is one call or a list of them, or undefined if any entry is not one. */
-function toCalls(value: unknown): { name: string; arguments: string }[] | undefined {
+function toCalls(value: unknown): WrittenCall[] | undefined {
   const entries = Array.isArray(value) ? value : [value];
   const calls = entries.map(toCall);
-  return calls.length && calls.every((call) => call)
-    ? (calls as { name: string; arguments: string }[])
-    : undefined;
+  return calls.length && calls.every((call) => call) ? (calls as WrittenCall[]) : undefined;
 }
 
 /** A value read as text: JSON where it parses, the string where it does not. */
@@ -208,7 +209,7 @@ function scalar(text: string): unknown {
 interface Found {
   start: number;
   end: number;
-  calls: { name: string; arguments: string }[];
+  calls: WrittenCall[];
 }
 
 /** `<tool_call>` blocks: Hermes and Qwen's JSON, and Qwen3-Coder's `<function=…>` markup. */
@@ -272,7 +273,7 @@ function mistralCalls(text: string): Found[] {
 function pythonTagCalls(text: string): Found[] {
   const found: Found[] = [];
   for (const match of text.matchAll(/<\|python_tag\|>/g)) {
-    const calls: { name: string; arguments: string }[] = [];
+    const calls: WrittenCall[] = [];
     let end = match.index + match[0].length;
     for (;;) {
       const read = readValue(text, end);
@@ -297,7 +298,7 @@ function pythonTagCalls(text: string): Found[] {
  */
 function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
   if (!names.size) return [];
-  const known = (calls: { name: string; arguments: string }[] | undefined) =>
+  const known = (calls: WrittenCall[] | undefined) =>
     calls?.every((call) => names.has(call.name)) ? calls : undefined;
   const start = text.search(/\S/);
   if (start >= 0 && (text[start] === "{" || text[start] === "[")) {
