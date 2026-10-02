@@ -4,9 +4,9 @@ import { isGrammarError, relaxSchema, relaxTools, sanitizeSchema, sanitizeTools 
 import { FUNCTION_TOOL, SchemaType } from '../src/wire.ts';
 
 /** One function tool wrapping the parameters under test. */
-const tool = (parameters: unknown): OpenAI.ChatCompletionTool => ({
+const tool = (parameters?: OpenAI.FunctionParameters): OpenAI.ChatCompletionTool => ({
   type: FUNCTION_TOOL,
-  function: { name: 'gmail__search', description: '', parameters: parameters as never },
+  function: { name: 'gmail__search', description: '', parameters },
 });
 
 const paramsOf = (tools: OpenAI.ChatCompletionTool[]) =>
