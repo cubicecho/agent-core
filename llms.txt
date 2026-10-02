@@ -238,7 +238,9 @@ One turn, given as many attempts as the caller allows.
 JSON Schema compatibility for llama.cpp-backed servers.
 
 - `isGrammarError` — Does this failure look like the server could not build a grammar from our tool schemas?
+- `relaxSchema` — One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
 - `relaxTools` — The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in `pattern` and most `format` values, both of which only ever narrowed a string the tool re-validates anyway.
+- `sanitizeSchema` — One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
 - `sanitizeTools` — Tool definitions a strict server will accept, remembered per definition object.
 
 ### side-task

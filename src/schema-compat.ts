@@ -341,9 +341,21 @@ function pruneRequired(out: Schema) {
   else delete out.required;
 }
 
-function sanitizeParameters(parameters: unknown): Schema {
-  if (!isRecord(parameters)) return EMPTY_OBJECT();
-  const out = normalize(inlineRootRef(parameters));
+/**
+ * One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
+ *
+ * What `sanitizeTools` does to each tool, without the tool: a `response_format` schema goes through
+ * the same grammar converter a tool's parameters do, and a caller holding only the schema had to
+ * wrap it in a definition to get here. Nothing is remembered — the cache is keyed on a tool
+ * definition's identity, and a bare schema has no object that stands for it across requests.
+ *
+ * @param schema The schema as written. Never mutated. Its root is held to an object, as a tool's
+ * parameters are, and anything that is not a schema at all comes back as an object with no
+ * properties.
+ */
+export function sanitizeSchema(schema: unknown): Record<string, unknown> {
+  if (!isRecord(schema)) return EMPTY_OBJECT();
+  const out = normalize(inlineRootRef(schema));
 
   mergeRootAllOf(out);
   mergeRootUnion(out);
@@ -413,7 +425,7 @@ const through = (
  * changed, a new definition is returned in its place.
  */
 export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
-  through(sanitized, tools, sanitizeParameters);
+  through(sanitized, tools, sanitizeSchema);
 
 /**
  * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are keyword
@@ -422,9 +434,6 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
  * argument that no longer existed — which every strict validator rejects, so the retry produced
  * the failure it was reaching for. The same distinction keeps the walk out of `default`, `enum`
  * and `const`, whose contents are data, not schema.
- *
- * At module scope rather than inside `relaxTools`, so the closure is made once rather than per
- * call — which, on the path this is on, is per request.
  */
 const strip = (node: unknown): unknown => {
   if (Array.isArray(node)) return node.map(strip);
@@ -438,6 +447,20 @@ const strip = (node: unknown): unknown => {
 };
 
 /**
+ * One schema without its `pattern` and `format` keywords, for a schema that is not a tool's.
+ *
+ * The retry `relaxTools` makes, on a bare schema. Only the keywords go: a property that happens to
+ * be called `format` is an argument name and stays.
+ *
+ * @param schema Already sanitised. Relaxing is the retry, not a substitute for `sanitizeSchema`.
+ * Never mutated; anything that is not a schema comes back as an object with no properties.
+ */
+export function relaxSchema(schema: unknown): Record<string, unknown> {
+  const stripped = strip(schema);
+  return isRecord(stripped) ? stripped : EMPTY_OBJECT();
+}
+
+/**
  * The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in
  * `pattern` and most `format` values, both of which only ever narrowed a string the tool
  * re-validates anyway.
@@ -445,10 +468,7 @@ const strip = (node: unknown): unknown => {
  * @param tools Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) =>
-  through(relaxed, tools, (parameters) => {
-    const stripped = strip(parameters);
-    return isRecord(stripped) ? stripped : EMPTY_OBJECT();
-  });
+  through(relaxed, tools, relaxSchema);
 
 /**
  * Qwen chat templates raise this when the transcript has no user turn. Some servers wrap it

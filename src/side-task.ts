@@ -12,7 +12,7 @@ import { endpointId, getClient } from "./client.ts";
 import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { refusesRequest } from "./retry.ts";
-import { relaxTools, sanitizeTools } from "./schema-compat.ts";
+import { relaxSchema, sanitizeSchema } from "./schema-compat.ts";
 import { scoped } from "./scope.ts";
 import { stripThinking } from "./thinking.ts";
 import { looseJson } from "./tool-calls.ts";
@@ -294,14 +294,8 @@ export async function askJson<T>(
   schema: Record<string, unknown>,
   { name = "answer", strict = true, ...options }: AskJsonOptions = {},
 ): Promise<T | undefined> {
-  const tool = (parameters: Record<string, unknown>): OpenAI.ChatCompletionTool => ({
-    type: "function",
-    function: { name, parameters },
-  });
-  const [sanitized] = sanitizeTools([tool(schema)]);
-  const shapeOf = (definition: OpenAI.ChatCompletionTool | undefined) =>
-    definition?.type === "function" ? (definition.function.parameters ?? {}) : {};
-  const instruction = `${system}\n\nReply with JSON alone, matching this JSON Schema:\n${JSON.stringify(shapeOf(sanitized))}`;
+  const sanitized = sanitizeSchema(schema);
+  const instruction = `${system}\n\nReply with JSON alone, matching this JSON Schema:\n${JSON.stringify(sanitized)}`;
   const reply = await complete(config, model, instruction, user, options, (supports, refused) =>
     refused.structuredOutput
       ? {
@@ -310,7 +304,7 @@ export async function askJson<T>(
             json_schema: {
               name,
               strict,
-              schema: shapeOf(supports.strictSchemas ? sanitized : relaxTools([sanitized])[0]),
+              schema: supports.strictSchemas ? sanitized : relaxSchema(sanitized),
             },
           },
         }

@@ -1,6 +1,12 @@
 import type OpenAI from "openai";
 import { expect, test } from "vitest";
-import { isGrammarError, relaxTools, sanitizeTools } from "../src/schema-compat.ts";
+import {
+  isGrammarError,
+  relaxSchema,
+  relaxTools,
+  sanitizeSchema,
+  sanitizeTools,
+} from "../src/schema-compat.ts";
 
 /** One function tool wrapping the parameters under test. */
 const tool = (parameters: unknown): OpenAI.ChatCompletionTool => ({
@@ -433,4 +439,46 @@ test("neither pass writes back into the tool it was given", () => {
   const before = JSON.stringify(parameters);
   relaxTools(sanitizeTools(declared));
   expect(JSON.stringify(parameters)).toBe(before);
+});
+
+test("a bare schema is sanitised and relaxed exactly as a tool's parameters are", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      when: { type: ["string", "null"], format: "date-time", pattern: "^\\d{4}" },
+      format: { anyOf: [{ type: "string" }, { type: "null" }] },
+    },
+    required: ["when", "gone"],
+  };
+  const before = JSON.stringify(schema);
+  const sanitized = sanitizeSchema(schema);
+  expect(sanitized).toEqual(paramsOf(sanitizeTools([tool(schema)])));
+  expect(sanitized).toEqual({
+    type: "object",
+    properties: {
+      when: { type: "string", nullable: true, format: "date-time", pattern: "^\\d{4}" },
+      format: { nullable: true, type: "string" },
+    },
+    required: ["when"],
+  });
+
+  const relaxed = relaxSchema(sanitized);
+  expect(relaxed).toEqual(paramsOf(relaxTools(sanitizeTools([tool(schema)]))));
+  // The keywords go; the argument that happens to be called `format` stays.
+  expect(relaxed.properties).toEqual({
+    when: { type: "string", nullable: true },
+    format: { nullable: true, type: "string" },
+  });
+  expect(JSON.stringify(schema)).toBe(before);
+});
+
+test("what is not a schema at all comes back as an object taking nothing", () => {
+  expect(sanitizeSchema(undefined)).toEqual({ type: "object", properties: {} });
+  expect(sanitizeSchema("object")).toEqual({ type: "object", properties: {} });
+  expect(relaxSchema(null)).toEqual({ type: "object", properties: {} });
+});
+
+test("a bare schema is not remembered, so two calls give two objects", () => {
+  const schema = { type: "object", properties: { q: { type: "string" } } };
+  expect(sanitizeSchema(schema)).not.toBe(sanitizeSchema(schema));
 });
