@@ -1,3 +1,16 @@
+# [4.0.0](https://github.com/cubicecho/agent-core/compare/v3.0.0...v4.0.0) (2026-10-02)
+
+
+* refactor!: four helpers are no longer exported from the package ([b5b47a3](https://github.com/cubicecho/agent-core/commit/b5b47a352f8b7f43b52f2490ba0e48138dc7355f))
+
+
+### BREAKING CHANGES
+
+* summaryInput, isContinuable, sleep and toolsChars are
+no longer exported. A summariser is handed the text summaryInput built;
+continueTurn already leaves a turn that cannot be continued as it was;
+contextChars(body).tools is what toolsChars returned.
+
 # [3.0.0](https://github.com/cubicecho/agent-core/compare/v2.25.1...v3.0.0) (2026-10-02)
 
 
