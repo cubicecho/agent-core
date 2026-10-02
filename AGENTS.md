@@ -2,7 +2,11 @@
 
 `@cubicecho/agent-core` — the parts of an OpenAI-compatible agent loop that are the same
 everywhere: client pooling, capability negotiation, retry, streaming, tool loading, run events.
-ESM only, Node >= 22, `openai` as a peer dependency.
+Node >= 22, `openai` as a peer dependency.
+
+The generic rules — TypeScript, Biome, doc comments, commits and releases — are in the
+`cubicecho_typescript` skill, and how a refactor is run is in the `refactor` skill. This file
+holds only what is true of this repo.
 
 ## Commands
 
@@ -18,33 +22,8 @@ ESM only, Node >= 22, `openai` as a peer dependency.
 `git diff --exit-code -- llms.txt`, not with `npm run llms:check` (that would compare the file
 against itself). Anything added to `build` runs at publish time too; keep unstable APIs out of it.
 
-`CHANGELOG.md` and the version in `package.json` belong to semantic-release. Do not edit either.
-
 ## Documentation
 
-**Terse prose, plus a description for every parameter.** Both halves are the convention; neither
-substitutes for the other.
-
-Prose explains *why* — the constraint, the failure it came from, the thing about the ecosystem
-that is not visible in the signature. It does not restate the types, which are right there. Lead
-with one sentence that stands alone, because `scripts/llms-txt.mjs` takes it verbatim as the
-index entry for that export. Sentences, em-dashes, no bullet lists, no "This function ...".
-
-`@param` on every exported function that takes one, in signature order, after the prose and a
-blank `*` line. Say what the caller has to decide — what a value means, what an absent one
-defaults to, what happens at the edges — not what its type already says. One line where one line
-does; destructured options get a single `@param options`.
-
-```ts
-/**
- * A delay an abort cuts short, rejecting rather than resolving early.
- *
- * @param ms How long to wait.
- * @param signal Abandons the wait. One already aborted rejects without waiting at all.
- */
-export const sleep = (ms: number, signal?: AbortSignal) =>
-```
-
-Every exported symbol carries a doc comment; `npm run llms` reports the count and names anything
-missing. Claims in a comment are load-bearing — verify each one against the implementation before
-writing it, and fix the comment when the code moves out from under it.
+The first sentence of a doc comment stands alone, because `scripts/llms-txt.mjs` takes it
+verbatim as the index entry for that export. `npm run llms` reports how many exports have one
+and names any that do not.
