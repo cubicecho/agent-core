@@ -232,7 +232,9 @@ tasks and model listings, the same way.
 hold the reply to, so a small model that wraps JSON in prose on its own cannot do so here. The
 schema is normalised the way a tool's parameters are, and relaxed where the endpoint could not
 build a grammar, because llama.cpp reads both with the same converter. It also rides on the system
-prompt, and the reply goes through `parseJson` either way.
+prompt, and the reply goes through `parseJson` either way — which finds the JSON inside prose or a
+fence and repairs what a local model gets nearly right: single quotes, `True` and `None`, bare keys,
+a trailing comma.
 
 ```ts
 const picked = await askJson<{ tools: string[] }>(config, small, system, request, PRESELECT_SCHEMA, {

@@ -39,6 +39,24 @@ describe("parseJson", () => {
   it("gives up rather than throwing", () => {
     expect(parseJson("no json here")).toBeUndefined();
     expect(parseJson("[unterminated")).toBeUndefined();
+    expect(parseJson("[one, two] or {maybe}")).toBeUndefined();
+  });
+
+  it("repairs the almost-JSON a local model writes", () => {
+    expect(parseJson("['a', 'b']")).toEqual(["a", "b"]);
+    expect(parseJson('["a", "b",]')).toEqual(["a", "b"]);
+    expect(parseJson("{tools: ['read'], strict: True, why: None,}")).toEqual({
+      tools: ["read"],
+      strict: true,
+      why: null,
+    });
+    expect(parseJson("Here:\n```json\n{'tools': ['read']}\n```")).toEqual({ tools: ["read"] });
+  });
+
+  it("reads valid JSON as written, leaving what a repair would change alone", () => {
+    expect(parseJson('{"note": "True, None and a, ] are text here"}')).toEqual({
+      note: "True, None and a, ] are text here",
+    });
   });
 });
 

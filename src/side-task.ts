@@ -15,6 +15,7 @@ import { refusesRequest } from "./retry.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
 import { scoped } from "./scope.ts";
 import { stripThinking } from "./thinking.ts";
+import { looseJson } from "./tool-calls.ts";
 
 /**
  * One-shot calls that support a run without being one: picking tools, naming a session,
@@ -346,6 +347,11 @@ export async function tryAsk<T>(
  * Models are asked for JSON and often answer with prose around it, or a fenced block. Pull out
  * the first array or object rather than failing the task over a wrapper.
  *
+ * What is pulled out is read the way a tool call's arguments are: as written where that parses,
+ * and otherwise with the almost-JSON a local model writes repaired — single quotes, `True` and
+ * `None`, bare keys, a trailing comma. A small model asked for a list gets these wrong as often in
+ * a reply as in a call, and a side task that fails over one costs the run a second request.
+ *
  * @param text The reply, fences and prose included. Nothing parseable gives `undefined`.
  */
 export function parseJson<T>(text: string): T | undefined {
@@ -355,11 +361,7 @@ export function parseJson<T>(text: string): T | undefined {
   if (start < 0) return undefined;
   const end = Math.max(body.lastIndexOf("]"), body.lastIndexOf("}"));
   if (end <= start) return undefined;
-  try {
-    return JSON.parse(body.slice(start, end + 1)) as T;
-  } catch {
-    return undefined;
-  }
+  return looseJson(body.slice(start, end + 1)) as T | undefined;
 }
 
 /**

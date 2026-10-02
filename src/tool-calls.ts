@@ -86,8 +86,15 @@ function repairJson(text: string): string {
   return out;
 }
 
-/** JSON as it was written, then repaired, then undefined. A string holding JSON is opened once. */
-function looseJson(text: string): unknown {
+/**
+ * JSON as it was written, then repaired, then undefined. A string holding JSON is opened once.
+ *
+ * Read as written first, so the repair can only ever add to what parses: nothing valid is
+ * reinterpreted on its way through.
+ *
+ * @param text What a model wrote where JSON was asked for, with no prose around it.
+ */
+export function looseJson(text: string): unknown {
   for (const candidate of [text, repairJson(text)]) {
     try {
       const value: unknown = JSON.parse(candidate);
