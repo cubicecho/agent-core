@@ -25,70 +25,43 @@ The canonical way this codebase does things. New code and refactors follow these
 
 ## Refactoring
 
-Approved 2026-10-01: M1–M6, R1–R10, D1, and the sweeps R11–R14.
+Approved 2026-10-01: M1–M6, R1–R10, D1, and the sweeps R11–R14. All done; one commit each.
 
-### R1 [reuse] — one get-or-create helper for Maps
+| ID | What | Commit |
+| --- | --- | --- |
+| R1 | one get-or-create helper for Maps (`getOrCreate` in `guards.ts`) | `dd00948` |
+| R2 | one non-mutating way to add two usages | `b12daa4` |
+| R3 | seconds to milliseconds in one place | `108b9a0` |
+| R4 | `ToolArgumentsError` names itself like the other errors; `Turn.toolCalls` is `ToolCall[]` | `7d90ec9` |
+| R5 | `tool-calls.ts` uses `THINK_FENCE` | `eeb0ae0` |
+| R6 | one list of reserved body keys | `d6efae0` |
+| R7 | a named blank-line separator in `tool-loading.ts` | `6262e5a` |
+| R8 | named callback types for notices and notes; a named options type for `preselect` | `c3bf27c` |
+| R9 | one fallback label for an unnamed model | `51d8ad5` |
+| R10 | long functions split where a piece earned a name | `72be9a2`, `b5cdc58`, `e40f59c`, `bb32c3c`, `62a3549`, `06d909c` |
+| R11 | P8 — parameters are not written into | `d471f02`, `058d840` |
+| R12 | P13 — plain loops where a chain hid a side effect or a long body | `a51a857` |
+| R13 | P1 — conditions that took reading are named | `fd403d7` |
+| R14 | P4 — `@returns` where the lead sentence did not say it | `74c71e0` |
+| M1–M6 | the model's moves (see PR #140) | `d5a9a1b`, `56e9487`, `327555a`, `614c95c`, `916b809`, `ea637ff` |
+| D1 | `config.ts` comment no longer true | `268532f` |
 
-**File:** `capabilities.ts:202`, `capabilities.ts:218`, `calibration.ts:91`, `snapshot.ts`
-Four hand-written "look up, create and store if absent" blocks. Target: one helper in
-`guards.ts`.
+### Left as they are, and why
 
-### R2 [reuse] — one way to add two usages
-
-**File:** `agent-loop.ts` `accumulate`, `continuation.ts` `joinUsage` Two adders for the
-same record, one of which mutates its argument (P8). Target: one non-mutating adder.
-
-### R3 [consistency] — seconds to milliseconds in one place
-
-**File:** `agent-loop.ts` (`loadingTimeoutMs`), `client.ts` `limitMs` The loop multiplies by
-1000 inline where the client has a helper.
-
-### R4 [consistency] — `ToolArgumentsError` names itself like the other errors; `Turn.toolCalls` uses `ToolCall`
-
-**File:** `tool-calls.ts:34`, `stream.ts:168` Variants: `override readonly name` ×4,
-`this.name =` ×1. Majority wins.
-
-### R5 [reuse] — `tool-calls.ts` uses `THINK_FENCE`
-
-**File:** `tool-calls.ts:345-346` The closing fence is spelled out beside the constant that
-owns it.
-
-### R6 [reuse] — one list of reserved body keys
-
-**File:** `agent-loop.ts` `RESERVED`, `spec.ts` `RESERVED_BODY`
-
-### R7 [readability] — a named blank-line separator in `tool-loading.ts`
-
-**File:** `tool-loading.ts` seven copies of `if (lines.length) lines.push("")`.
-
-### R8 [consistency] — named callback types for notices and notes; a named options type for `preselect`
-
-**File:** `capabilities.ts`, `agent-loop.ts`, `side-task.ts`, `run-turn.ts`, `compaction.ts`,
-`hooks.ts` `(message: string) => void` is written out nine times under two names.
-
-### R9 [reuse] — one fallback label for an unnamed model
-
-**File:** `continuation.ts:142`, `run-turn.ts:212`
-
-### R10 [readability] — split the long functions where a piece earns a name
-
-**File:** `runSteps`, `streamTurn`, `runTurn`, `resolveAgentSpec`, `watching`, `complete`
-Stop when the next piece would need most of the function's locals.
-
-### R11 [sweep] — apply P8 (never mutate parameters) across `src`
-
-### R12 [sweep] — apply P13 (plain loops over chains) across `src`
-
-**Hits:** 121 chain calls against 116 `for` loops; 29 chains span several lines.
-
-### R13 [sweep] — apply P1 (name conditions) across `src`
-
-**Hits:** about 250 of 453 `if`s test an inline comparison or compound.
-
-### R14 [sweep] — apply P4 (`@returns`) across the public surface
-
-AGENTS.md says prose does not restate the types, so `@returns` says what the caller has to
-know and is left off where the lead sentence already says it.
+- **R10** — `watching` (`events.ts`), the body of one step in `runSteps` and the bulk of
+  `complete` stay whole: every piece that could be cut out needs most of the function's locals.
+- **R11** — these write into an argument on purpose and say so in their name or their doc:
+  `getOrCreate`, `assignSettings`, `latchInto`, `collectRefs(node, into)`, `#emitInto`; the
+  capability answers `negotiate` latches; the `Calling` a run's calls read and write back into
+  (`run-calls.ts`); the `Produced` box and the `Standing` read (documented out-parameters); the
+  bus's own `held.sweeping`. `Object.assign(turn.usage, …)` in `runTurn` and `runSteps` writes
+  to a local the function just received and owns.
+- **R12** — chains that are one transformation each stay chains: the `map`/`filter`/`join`
+  renderers, the sums by `reduce`, and `flatMap` used as filter-and-map.
+- **R13** — `compaction.ts:397` and `spec.ts:521` keep their inline tests, which are what
+  narrows the types below them and already read as the sentence the error message says.
+- **R14** — everything else on the public surface leads with a noun phrase that is the return
+  value, which AGENTS.md says not to restate.
 
 ---
 
@@ -108,11 +81,23 @@ Surveyed, not approved.
 
 **File:** 19 in 8 files.
 
+### T4 [consistency] — tests that stayed behind when their code moved
+
+**File:** `tests/retry.test.ts` (sizing, moved by M1), `tests/agent-loop.test.ts` (`buildBody`,
+`preview`, `resolveApiKey`, moved by M3), `tests/tool-loading.test.ts` (preselection, moved by
+M4). Only their import paths changed, so that no commit moved a test and the code it pins.
+
 ---
 
 ## Docs
 
-### D1 — `config.ts:106` says nothing in the package asks for a value the package now reads
+D1 is done (above).
+
+### D2 — lead sentences that do not stand alone as an index entry
+
+**File:** `runTurn`, `relaxTools`, `fold`, `timeoutMs`, `tryAsk`, `parseJson`, `compact`,
+`backoffMs`, `isGrammarError` Each opens with the reason rather than what the export is, and
+`llms.txt` takes that sentence verbatim. Surveyed, not approved.
 
 ---
 
