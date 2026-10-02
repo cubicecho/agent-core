@@ -204,9 +204,27 @@ reverse.
 
 ## API changes (need a decision)
 
-### A1 — exports with no user inside the package or its tests (unverified)
+### A1 — exports nothing outside the package uses
 
-To be listed per export before the next breaking release.
+**Tuning constants: done (`bc6bbf9`), a breaking change.** Checked 2026-10-02 against
+every repo under `~/code` that depends on the package (`kanban_server`, `task_server`,
+`min-agent`, `telos`, `engrafo` and their worktrees). Eight defaults no host imports are no
+longer exported: `CHARS_PER_TOKEN`, `FIRST_TOKEN_FACTOR`, `KEYWORD_DROPOFF`,
+`KEYWORD_MIN_SCORE`, `LOADING_POLL_MS`, `LOADING_TIMEOUT_MS`, `MAX_CARRIED`, `MAX_PER_LOAD`.
+
+Kept, and why:
+
+- In use by a host: `COMPACT_AT`, `KEEP_RATIO`, `SUMMARY_PROMPT`, `SUMMARY_LEAD`,
+  `HOOK_CONTEXT_TOKENS`, `SMALLEST_LIKELY_WINDOW`, `PRESELECT_SYSTEM`, `PRESELECT_SCHEMA`,
+  `HOOK_PREFACE`, `NO_KEY`.
+- No host imports them, but they are vocabulary a host builds or compares, which a library
+  exports: `EFFORT_NONE`, `EFFORT_OFF`, `EFFORT_LADDER`, `FUNCTION_TOOL`, `JSON_SCHEMA_FORMAT`,
+  `ARGUMENTS_MALFORMED`, `ARGUMENTS_TRUNCATED`, `SPLIT_OUTPUT`, `SPLIT_REASONING`, `REF_FILE`,
+  `REF_URL`, `PRESELECT_APPEND`, `PRESELECT_EXCLUSIVE`, `AGENT_TASKS`, `SPEC_EVENTS`, the
+  fences (`THINK_FENCE`, `DEFAULT_FENCES`, `ALL_FENCES`), the two version numbers,
+  `RESOLVED_DEFAULTS`, and `UNTRUSTED_PREFACE`, which the README tells a host to use.
+
+Still open: the types and functions no host uses, not yet listed per export.
 
 ### A2 — `prepack` and the skill's tsconfig layout: done (`0c35470`)
 
