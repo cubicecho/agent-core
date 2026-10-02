@@ -2,7 +2,7 @@ import type OpenAI from "openai";
 import { type Capabilities, modelCapabilitiesFor } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
 import { ContextOverflow, refusesRequest } from "./retry.ts";
-import { type RequestBuilder, type RunTurnOptions, runTurn } from "./run-turn.ts";
+import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from "./run-turn.ts";
 import { addCounts, type Turn, type TurnUsage } from "./stream.ts";
 
 /**
@@ -136,7 +136,7 @@ export async function continueTurn(
 ): Promise<Turn> {
   const refused =
     options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
-  const who = options.model ?? "the model";
+  const who = modelLabel(options.model);
   let joined = turn;
   for (let count = 0; count < maxContinuations && isContinuable(joined); count++) {
     if (refused?.assistantPrefill === false) break;

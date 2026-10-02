@@ -97,6 +97,13 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
 }
 
 /**
+ * What a notice calls the model, where the caller did not say which one it is.
+ *
+ * @param model The model's name. Absent reads as "the model", which is all there is to say.
+ */
+export const modelLabel = (model: string | undefined) => model ?? "the model";
+
+/**
  * Builds a turn's request body from what the endpoint and the model have refused so far.
  *
  * A function rather than a body because a downgrade changes what is sent, so it is called again
@@ -209,7 +216,7 @@ export async function runTurn(
         if (loadingSince === undefined) {
           loadingSince = now;
           onNotice?.(
-            `${model ?? "the model"} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`,
+            `${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`,
           );
         }
         if (now - loadingSince < loadingTimeoutMs) {
