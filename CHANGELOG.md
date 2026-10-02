@@ -1,3 +1,16 @@
+# [2.24.0](https://github.com/cubicecho/agent-core/compare/v2.23.0...v2.24.0) (2026-10-02)
+
+
+### Bug Fixes
+
+* compaction reads a multi-part message as the hooks do ([cc319b1](https://github.com/cubicecho/agent-core/commit/cc319b18ca354efc666968f6bf110d6cc05851bc))
+
+
+### Features
+
+* parseJson repairs the almost-JSON a local model writes ([96296d4](https://github.com/cubicecho/agent-core/commit/96296d42b5e583702dbf5dbbf33ff9d22989f888))
+* sanitizeSchema and relaxSchema, for a schema that is not a tool's ([44481e5](https://github.com/cubicecho/agent-core/commit/44481e56ef36d3da5599f45459274d663430d895))
+
 # [2.23.0](https://github.com/cubicecho/agent-core/compare/v2.22.0...v2.23.0) (2026-10-02)
 
 
