@@ -1,4 +1,5 @@
 import type { TokenLedger } from "./ledger.ts";
+import { scoped } from "./scope.ts";
 import type { TurnUsage } from "./stream.ts";
 import { LOAD_TOOLS } from "./tool-loading.ts";
 
@@ -58,15 +59,29 @@ const DEFAULTS: Required<EventBusOptions> = {
   retainUnendedMs: 30 * 60_000,
 };
 
-/** What is in force now. Read where it is used, so a change applies from the next event. */
-let limits: Required<EventBusOptions> = { ...DEFAULTS };
+/**
+ * One runtime's bus, held as a single object so a watcher and the sweep timer keep hold of the
+ * bus they began on — a generator resumes in whatever context asks it for the next event, which
+ * need not be the runtime that opened it.
+ */
+interface Bus {
+  /** What is in force now. Read where it is used, so a change applies from the next event. */
+  limits: Required<EventBusOptions>;
+  streams: Map<string, Stream>;
+  /** The pending sweep, see `sweep`. */
+  sweeping: ReturnType<typeof setTimeout> | null;
+}
+
+const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sweeping: null }));
 
 /**
  * Changes what the bus keeps, for a process whose runs are not shaped like the ones these
  * defaults were chosen for.
  *
- * The bus is one module-level thing rather than an object a caller holds, so this is too: it is
+ * The bus is one thing per runtime rather than an object a caller holds, so this is too: it is
  * a deployment's setting, said once at startup, and not something to move around under a run.
+ * Called at the top level that is the process's bus; a runtime made by `createRuntime` has its
+ * own, set through its options or its own `configureEvents`.
  * What it costs is memory against how much of a run a late or slow watcher can still read —
  * a server with hundreds of concurrent runs wants a smaller backlog, and one whose tool calls
  * take an hour wants a longer `retainUnendedMs` than the thirty minutes assumed here.
@@ -80,6 +95,7 @@ let limits: Required<EventBusOptions> = { ...DEFAULTS };
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
+  const { limits } = bus();
   for (const [name, value] of Object.entries(options)) {
     if (typeof value === "number" && value > 0) limits[name as keyof EventBusOptions] = value;
   }
@@ -210,9 +226,7 @@ interface Stream {
   ended: boolean;
 }
 
-const streams = new Map<string, Stream>();
-
-const streamFor = (runId: string): Stream => {
+const streamFor = ({ streams }: Bus, runId: string): Stream => {
   const existing = streams.get(runId);
   if (existing) return existing;
   const stream: Stream = {
@@ -238,23 +252,22 @@ const streamFor = (runId: string): Stream => {
  *
  * One timer for the whole map, rescheduled only while there is something in it to expire.
  */
-let sweeping: ReturnType<typeof setTimeout> | null = null;
-
-function sweep() {
-  sweeping = null;
+function sweep(held: Bus) {
+  const { limits, streams } = held;
+  held.sweeping = null;
   const now = Date.now();
   for (const [runId, stream] of streams) {
     if (stream.listeners.size) continue;
     if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs))
       streams.delete(runId);
   }
-  scheduleSweep();
+  scheduleSweep(held);
 }
 
-function scheduleSweep() {
-  if (sweeping || streams.size === 0) return;
-  sweeping = setTimeout(sweep, limits.retainMs);
-  sweeping.unref?.();
+function scheduleSweep(held: Bus) {
+  if (held.sweeping || held.streams.size === 0) return;
+  held.sweeping = setTimeout(() => sweep(held), held.limits.retainMs);
+  held.sweeping.unref?.();
 }
 
 /**
@@ -265,6 +278,7 @@ function scheduleSweep() {
  * @param runId The run to forget. An id nothing was emitted under is ignored.
  */
 export function endRun(runId: string) {
+  const { streams } = bus();
   const stream = streams.get(runId);
   if (!stream) return;
   // Watchers are parked on a promise that only an `emit` to *this* stream can resolve, and the
@@ -284,7 +298,9 @@ export function endRun(runId: string) {
  * @param input The event. `kind` is required; `runId` and `seq` are not a caller's to set.
  */
 export function emit(runId: string, input: RunEventInput): RunEvent {
-  const stream = streamFor(runId);
+  const held = bus();
+  const { limits } = held;
+  const stream = streamFor(held, runId);
   // One clock read, used for both the event and the sweep's bookkeeping.
   const at = Date.now();
   const event: RunEvent = {
@@ -307,7 +323,7 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   // Kept for a moment so a watcher that arrives just after the end still sees how it went,
   // then dropped: a finished run's record is the row, not this.
   if (event.kind === "done") stream.ended = true;
-  scheduleSweep();
+  scheduleSweep(held);
 
   for (const listener of stream.listeners) {
     // The guarantee above is the point of this: a listener that throws must not take out the
@@ -333,8 +349,15 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
  * function it is suspended at an `await` rather than at a `yield`, and a `return()` there is
  * queued behind a promise only the next event can settle. An abort resolves that promise itself.
  */
-export async function* watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
-  const stream = streamFor(runId);
+export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
+  // Read here, not in the generator: its body runs when the first event is asked for, and by
+  // then the caller may be outside the runtime whose run this is.
+  return watching(bus(), runId, signal);
+}
+
+async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
+  const { limits, streams } = held;
+  const stream = streamFor(held, runId);
   // A cursor rather than `shift()`. Draining a backlog an event at a time off the front of an
   // array is a copy of the whole array per event, which on the ten-thousand-delta run this bus
   // is built for is the one quadratic left in the file. The prefix behind the cursor is dropped
@@ -449,7 +472,7 @@ export async function* watch(runId: string, signal?: AbortSignal): AsyncGenerato
  *
  * @param runId The run to read. An unknown or already-swept run gives an empty array.
  */
-export const history = (runId: string): RunEvent[] => [...(streams.get(runId)?.events ?? [])];
+export const history = (runId: string): RunEvent[] => [...(bus().streams.get(runId)?.events ?? [])];
 
 /**
  * Test seam: forget every run, so one test's events cannot be read by the next.
@@ -464,10 +487,12 @@ export const history = (runId: string): RunEvent[] => [...(streams.get(runId)?.e
  * teardown configures again, which is the same line it already wrote once.
  */
 export const resetEvents = () => {
-  streams.clear();
-  if (sweeping) clearTimeout(sweeping);
-  sweeping = null;
-  limits = { ...DEFAULTS };
+  const held = bus();
+  held.streams.clear();
+  if (held.sweeping) clearTimeout(held.sweeping);
+  held.sweeping = null;
+  // In place, so a watcher still open reads the defaults too and not the caps it began under.
+  Object.assign(held.limits, DEFAULTS);
 };
 
 /**

@@ -1,6 +1,7 @@
 import { endpointId } from "./client.ts";
 import { errorMessage } from "./errors.ts";
 import { isGrammarError } from "./schema-compat.ts";
+import { scoped } from "./scope.ts";
 import type { Produced } from "./stream.ts";
 
 /**
@@ -143,7 +144,7 @@ export interface ModelCapabilities {
  * behind it, including the `models` map underneath, which is the level where two keys through
  * one host are most likely to differ at all.
  */
-const capabilities = new Map<string, Capabilities>();
+const capabilities = scoped(() => new Map<string, Capabilities>());
 
 /**
  * What this endpoint is known not to support. The same object every time, so what `negotiate`
@@ -191,17 +192,17 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
 }
 
 /** Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`. */
-export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabilities;
+export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabilities();
 
 /**
  * The capabilities of the endpoint with this `endpointId`, created optimistic if unseen — the way
  * `importCapabilities` reaches an endpoint it has only a digest for.
  */
 export function capabilitiesById(id: string): Capabilities {
-  let known = capabilities.get(id);
+  let known = capabilities().get(id);
   if (!known) {
     known = { strictSchemas: true, usageInStream: true, models: new Map(), since: Date.now() };
-    capabilities.set(id, known);
+    capabilities().set(id, known);
   }
   return known;
 }
@@ -221,11 +222,11 @@ export function capabilitiesById(id: string): Capabilities {
  */
 export function resetCapabilities(endpoint?: { baseUrl: string; apiKey?: string }): boolean {
   if (!endpoint) {
-    const held = capabilities.size > 0;
-    capabilities.clear();
+    const held = capabilities().size > 0;
+    capabilities().clear();
     return held;
   }
-  return capabilities.delete(endpointId(endpoint));
+  return capabilities().delete(endpointId(endpoint));
 }
 
 /**
@@ -247,9 +248,9 @@ export function resetCapabilities(endpoint?: { baseUrl: string; apiKey?: string 
  */
 export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
   let dropped = 0;
-  for (const [id, known] of capabilities) {
+  for (const [id, known] of capabilities()) {
     if (now - known.since < maxAgeMs) continue;
-    capabilities.delete(id);
+    capabilities().delete(id);
     dropped++;
   }
   return dropped;

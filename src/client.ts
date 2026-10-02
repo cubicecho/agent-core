@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import type { Endpoint } from "./config.ts";
+import { scoped } from "./scope.ts";
 
 /**
  * The SDK insists on a non-empty key even where the server will not look at it. This is what it
@@ -35,7 +36,7 @@ export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): numb
  * Bounded, because a cache is only a cache while its keys are. Insertion order is the whole of
  * the eviction: a `Map` iterates oldest-first, and `getClient` re-inserts on a hit.
  */
-const clients = new Map<string, OpenAI>();
+const clients = scoped(() => new Map<string, OpenAI>());
 
 /**
  * How many endpoints' clients are kept at once, until `configureClients` moves it.
@@ -75,7 +76,7 @@ const CLIENT_DEFAULTS: Required<ClientPoolOptions> = {
 };
 
 /** What is in force now. Read where it is used, so a change applies from the next call. */
-let poolLimits: Required<ClientPoolOptions> = { ...CLIENT_DEFAULTS };
+const poolLimits = scoped((): Required<ClientPoolOptions> => ({ ...CLIENT_DEFAULTS }));
 
 /**
  * Drops the least recently asked-for clients until the pool fits. Nothing is closed on the way
@@ -84,9 +85,9 @@ let poolLimits: Required<ClientPoolOptions> = { ...CLIENT_DEFAULTS };
  * of the eviction.
  */
 const evict = () => {
-  for (const oldest of clients.keys()) {
-    if (clients.size <= poolLimits.maxClients) break;
-    clients.delete(oldest);
+  for (const oldest of clients().keys()) {
+    if (clients().size <= poolLimits().maxClients) break;
+    clients().delete(oldest);
   }
 };
 
@@ -94,10 +95,11 @@ const evict = () => {
  * Changes what the client pool is held to, for a process whose endpoints are not shaped like the
  * deployments these defaults were chosen for.
  *
- * Module-level for the same reason `configureEvents` is: the pool is one module-level thing, and
- * its size is a deployment's setting, said once at startup. A multi-tenant host keying on a key
- * per user raises `maxClients` so its tenants stop evicting each other's connection pools; a dev
- * box shortens `listingMissMs` so a model it has just pulled is seen sooner.
+ * One setting per runtime for the same reason `configureEvents` is: the pool is one thing per
+ * runtime, and its size is a deployment's setting, said once at startup. A multi-tenant host
+ * keying on a key per user raises `maxClients` so its tenants stop evicting each other's
+ * connection pools, or gives each tenant a `createRuntime` of its own; a dev box shortens
+ * `listingMissMs` so a model it has just pulled is seen sooner.
  *
  * A `maxClients` below the pool's current size evicts down to it at once, least recently asked
  * for first, as the next `getClient` would have. A shorter `listingMissMs` applies to misses
@@ -112,11 +114,11 @@ const evict = () => {
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
   for (const [name, value] of Object.entries(options)) {
     if (typeof value === "number" && value > 0) {
-      poolLimits[name as keyof ClientPoolOptions] = value;
+      poolLimits()[name as keyof ClientPoolOptions] = value;
     }
   }
   evict();
-  return { ...poolLimits };
+  return { ...poolLimits() };
 }
 
 /** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
@@ -158,16 +160,16 @@ export function getClient(config: Endpoint): OpenAI {
   // Stringified rather than joined on a separator: no character is impossible in a URL or a
   // key, and two different endpoints must never resolve to the same cached client.
   const key = JSON.stringify([config.baseUrl, apiKey, timeout]);
-  const existing = clients.get(key);
+  const existing = clients().get(key);
   if (existing) {
     // Re-inserted so it counts as the youngest. A `Map` keeps insertion order and hands the
     // oldest key over first, which is the whole of the LRU below.
-    clients.delete(key);
-    clients.set(key, existing);
+    clients().delete(key);
+    clients().set(key, existing);
     return existing;
   }
   const client = new OpenAI({ baseURL: config.baseUrl, apiKey, timeout, maxRetries: 0 });
-  clients.set(key, client);
+  clients().set(key, client);
   evict();
   return client;
 }
@@ -237,7 +239,7 @@ export interface ModelInfo {
  * It is only ever a cache of something asked for anyway, and a listing that fails leaves
  * whatever was there rather than emptying it.
  */
-const listings = new Map<string, ModelInfo[]>();
+const listings = scoped(() => new Map<string, ModelInfo[]>());
 
 /**
  * The models in each endpoint's last listing whose window is only the trained one, by id.
@@ -245,7 +247,7 @@ const listings = new Map<string, ModelInfo[]>();
  * Kept beside `listings` rather than on `ModelInfo`, so what `listModels` hands back is the shape
  * it has always been. Replaced with each listing that lands, and left alone by one that fails.
  */
-const trainedOnly = new Map<string, Set<string>>();
+const trainedOnly = scoped(() => new Map<string, Set<string>>());
 
 /**
  * When an endpoint was last asked about a model it did not name, keyed on the two together.
@@ -261,7 +263,7 @@ const trainedOnly = new Map<string, Set<string>>();
  * picked up within the minute instead of at the next restart. Bounded by the (endpoint, model)
  * pairs actually asked about, which is the bound the listings themselves have.
  */
-const misses = new Map<string, number>();
+const misses = scoped(() => new Map<string, number>());
 
 /**
  * What counts as one endpoint, everywhere in this package that has to remember something about
@@ -304,10 +306,10 @@ export const endpointId = (config: { baseUrl: string; apiKey?: string }) =>
  * A model's entry stays until `resetClients`, like a listing; a server that answered without one
  * is asked again after `listingMissMs`, like a listing that did not name the model.
  */
-const served = new Map<string, { window: number; at: number }>();
+const served = scoped(() => new Map<string, { window: number; at: number }>());
 
 /** Endpoints with neither native route, which are not asked for either again. */
-const unserved = new Set<string>();
+const unserved = scoped(() => new Set<string>());
 
 /**
  * Endpoints whose `/api/v0/models` answered with an error, and when.
@@ -320,13 +322,13 @@ const unserved = new Set<string>();
  * Per endpoint and on its own, whatever `/props` said: a server whose `/props` answers without a
  * window is never `unserved`, and without this its missing route was asked again with every miss.
  */
-const refusals = new Map<string, { at: number; gone: boolean }>();
+const refusals = scoped(() => new Map<string, { at: number; gone: boolean }>());
 
 /** Whether `/api/v0/models` is to be left alone on this endpoint for now. */
 const refused = (endpoint: string) => {
-  const refusal = refusals.get(endpoint);
+  const refusal = refusals().get(endpoint);
   return (
-    refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits.listingMissMs)
+    refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs)
   );
 };
 
@@ -382,10 +384,10 @@ async function probe(
  */
 export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
   const endpoint = endpointKey(config);
-  if (unserved.has(endpoint)) return 0;
+  if (unserved().has(endpoint)) return 0;
   const key = JSON.stringify([endpoint, config.model]);
-  const known = served.get(key);
-  if (known && (known.window > 0 || Date.now() - known.at < poolLimits.listingMissMs))
+  const known = served().get(key);
+  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs))
     return known.window;
 
   let window = 0;
@@ -398,8 +400,8 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
     if (!window) {
       if (!refused(endpoint)) {
         const lmstudio = await probe(config, "/api/v0/models");
-        if (lmstudio.failed) refusals.set(endpoint, { at: Date.now(), gone: lmstudio.missing });
-        else refusals.delete(endpoint);
+        if (lmstudio.failed) refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
+        else refusals().delete(endpoint);
         const { data } = (lmstudio.body ?? {}) as { data?: unknown };
         const entry = Array.isArray(data)
           ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find(
@@ -408,15 +410,15 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
           : undefined;
         window = positive(entry?.loaded_context_length);
       }
-      if (props.missing && refusals.get(endpoint)?.gone) {
-        unserved.add(endpoint);
+      if (props.missing && refusals().get(endpoint)?.gone) {
+        unserved().add(endpoint);
         return 0;
       }
     }
   } catch {
     return 0;
   }
-  served.set(key, { window, at: Date.now() });
+  served().set(key, { window, at: Date.now() });
   return window;
 }
 
@@ -436,8 +438,8 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
     })
     .sort((a, b) => a.id.localeCompare(b.id));
   const key = endpointKey(config);
-  listings.set(key, models);
-  trainedOnly.set(key, trained);
+  listings().set(key, models);
+  trainedOnly().set(key, trained);
   return models;
 }
 
@@ -471,7 +473,10 @@ export async function contextLimitFor(
 ): Promise<number> {
   if (declared > 0) return declared;
   const key = endpointKey(config);
-  const listed = () => listings.get(key)?.find((model) => model.id === config.model);
+  const listed = () =>
+    listings()
+      .get(key)
+      ?.find((model) => model.id === config.model);
   // The listing is asked for again when it does not name this model, rather than only when
   // there is no listing at all. Models arrive after a process starts — an `ollama pull` on a
   // box that has been up a week, a worker added to a router, a name the operator has only just
@@ -481,11 +486,11 @@ export async function contextLimitFor(
   // the window instead of under it and fails against the endpoint's own refusal.
   if (!listed()) {
     const missKey = JSON.stringify([key, config.model]);
-    const asked = misses.get(missKey);
+    const asked = misses().get(missKey);
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the endpoint is asked, and a caller sizing a window per turn pays a round
     // trip for each of them; `listingMissMs` is how long that answer is allowed to stand.
-    if (asked === undefined || Date.now() - asked >= poolLimits.listingMissMs) {
+    if (asked === undefined || Date.now() - asked >= poolLimits().listingMissMs) {
       // A failure is not remembered: an endpoint that was down when the last run started is not
       // an endpoint with no models, and a window nobody could ask about is not a failed run.
       const answered = await listModels(config).then(
@@ -497,8 +502,8 @@ export async function contextLimitFor(
       // than the interval, which is a memory that never expires rather than one that expires in
       // half a minute.
       if (answered) {
-        if (listed()) misses.delete(missKey);
-        else misses.set(missKey, Date.now());
+        if (listed()) misses().delete(missKey);
+        else misses().set(missKey, Date.now());
       }
     }
   }
@@ -506,7 +511,7 @@ export async function contextLimitFor(
   const fromListing = entry?.contextLength ?? 0;
   // A top-level key settles it. A trained window does not: llama.cpp lists the one the model was
   // built with, and taking it over what `/props` says lets an overflow through the guard.
-  if (fromListing > 0 && !trainedOnly.get(key)?.has(config.model)) return fromListing;
+  if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) return fromListing;
   const window = await servedWindow(config);
   return window > 0 ? window : fromListing;
 }
@@ -516,12 +521,12 @@ export async function contextLimitFor(
  * tests, and for a settings change under test.
  */
 export function resetClients() {
-  poolLimits = { ...CLIENT_DEFAULTS };
-  clients.clear();
-  listings.clear();
-  misses.clear();
-  trainedOnly.clear();
-  served.clear();
-  unserved.clear();
-  refusals.clear();
+  poolLimits.reset();
+  clients().clear();
+  listings().clear();
+  misses().clear();
+  trainedOnly().clear();
+  served().clear();
+  unserved().clear();
+  refusals().clear();
 }
