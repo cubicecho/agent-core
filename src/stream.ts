@@ -225,6 +225,97 @@ interface PartialCall {
   arguments: string;
 }
 
+/** What one chunk says of the turn's usage, with the cache count kept apart by where it came from. */
+interface ChunkReport {
+  /** The fields this chunk reported, to be assigned over what earlier chunks said. */
+  counts: Partial<TurnUsage>;
+  /** The usage block's cache count. */
+  cacheReport?: number;
+  /** llama.cpp's, from `timings`. */
+  cacheTimings?: number;
+}
+
+/** Reads a chunk's usage block and its `timings`, either of which most chunks carry neither of. */
+function chunkReport(chunk: OpenAI.ChatCompletionChunk): ChunkReport {
+  const counts: Partial<TurnUsage> = {};
+  const report: ChunkReport = { counts };
+  if (chunk.usage) {
+    counts.prompt = chunk.usage.prompt_tokens ?? 0;
+    counts.completion = chunk.usage.completion_tokens ?? 0;
+    counts.total = chunk.usage.total_tokens ?? 0;
+    const reported = chunk.usage as CacheUsage;
+    const hit = reported.prompt_tokens_details?.cached_tokens ?? reported.prompt_cache_hit_tokens;
+    if (isCount(hit)) report.cacheReport = hit;
+    const reasoned = reported.completion_tokens_details?.reasoning_tokens;
+    if (isCount(reasoned)) counts.reasoningTokens = reasoned;
+  }
+  const { timings } = chunk as TimedChunk;
+  if (timings) {
+    for (const [from, to] of TIMINGS) {
+      const value = timings[from];
+      if (isCount(value)) (counts as Record<string, number>)[to] = value;
+    }
+    if (isCount(timings.cache_n)) report.cacheTimings = timings.cache_n;
+  }
+  return report;
+}
+
+/** The position a fragment says its call is at, where the server sent a number. */
+const fragmentIndex = (part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall) =>
+  typeof part.index === "number" ? part.index : undefined;
+
+/**
+ * The call a fragment belongs to, of those begun so far, or none where it opens a new one.
+ *
+ * By `index` where the server sent a number, which the SDK types as required and servers have
+ * nonetheless left out: keyed on `undefined`, every call joined into one whose name and
+ * arguments were all of theirs run together. Without one, by `id`; failing that, a fragment
+ * naming a function opens a call and a bare run of arguments continues the latest. A server
+ * that sends whole calls one per chunk at index `0` makes the same mistake the other way, so
+ * a different id, or a name after arguments have begun, opens a new call under that index.
+ */
+function ownerOf(
+  calls: readonly PartialCall[],
+  part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall,
+): PartialCall | undefined {
+  const index = fragmentIndex(part);
+  const name = part.function?.name;
+  const known =
+    index !== undefined
+      ? calls.findLast((call) => call.index === index)
+      : part.id
+        ? calls.find((call) => call.id === part.id)
+        : name
+          ? undefined
+          : calls.at(-1);
+  const another =
+    known && ((part.id && known.id && part.id !== known.id) || (name && known.arguments));
+  return another ? undefined : known;
+}
+
+/**
+ * A turn's calls as they are handed back: in the order their indexes give, arrival order where a
+ * server sent none, each under an id of its own.
+ */
+function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
+  const minted = new Set<string>();
+  return calls
+    .map((call, order) => ({ call, order }))
+    .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order)
+    .map(({ call }, position) => {
+      // A server that streams a call without an id still needs one for the result to answer,
+      // and two calls it put under one index must not be answered as one.
+      let id = call.id || `call_${call.index ?? position}`;
+      if (minted.has(id)) id = `call_${position}_${minted.size}`;
+      minted.add(id);
+      return {
+        id,
+        type: "function" as const,
+        function: { name: call.name, arguments: call.arguments },
+      };
+    });
+}
+
 /** The largest delay a timer takes, which is as close to none as the SDK's timeout option goes. */
 const NO_SDK_TIMEOUT = 2 ** 31 - 1;
 
@@ -391,25 +482,10 @@ export async function streamTurn(
       // and the two agree there, but a server that reports cumulatively per chunk makes a sum
       // of sums out of an accumulator — and a token count wrong by a factor of the chunk count
       // is not a number anyone would attribute to the stream reader.
-      if (chunk.usage) {
-        usage.prompt = chunk.usage.prompt_tokens ?? 0;
-        usage.completion = chunk.usage.completion_tokens ?? 0;
-        usage.total = chunk.usage.total_tokens ?? 0;
-        const reported = chunk.usage as CacheUsage;
-        const hit =
-          reported.prompt_tokens_details?.cached_tokens ?? reported.prompt_cache_hit_tokens;
-        if (isCount(hit)) cacheReport = hit;
-        const reasoned = reported.completion_tokens_details?.reasoning_tokens;
-        if (isCount(reasoned)) usage.reasoningTokens = reasoned;
-      }
-      const { timings } = chunk as TimedChunk;
-      if (timings) {
-        for (const [from, to] of TIMINGS) {
-          const value = timings[from];
-          if (isCount(value)) (usage as unknown as Record<string, number>)[to] = value;
-        }
-        if (isCount(timings.cache_n)) cacheTimings = timings.cache_n;
-      }
+      const reported = chunkReport(chunk);
+      Object.assign(usage, reported.counts);
+      cacheReport = reported.cacheReport ?? cacheReport;
+      cacheTimings = reported.cacheTimings ?? cacheTimings;
       // One choice, because that is what an agent loop asks for. A body with `n` above one
       // keeps only the first; nothing here is built to reassemble several at once.
       const choice = chunk.choices[0];
@@ -442,40 +518,15 @@ export async function streamTurn(
       // Tool calls arrive in pieces, keyed by position: the id in one chunk, the name in
       // another, the arguments spread across the next several.
       for (const part of delta.tool_calls ?? []) {
-        const call = fragmentOf(part);
+        let call = ownerOf(calls, part);
+        if (!call) {
+          call = { index: fragmentIndex(part), id: "", name: "", arguments: "" };
+          calls.push(call);
+        }
         if (part.id) call.id = part.id;
         if (part.function?.name) call.name += part.function.name;
         if (part.function?.arguments) call.arguments += part.function.arguments;
       }
-    }
-
-    /**
-     * The call a fragment belongs to.
-     *
-     * By `index` where the server sent a number, which the SDK types as required and servers have
-     * nonetheless left out: keyed on `undefined`, every call joined into one whose name and
-     * arguments were all of theirs run together. Without one, by `id`; failing that, a fragment
-     * naming a function opens a call and a bare run of arguments continues the latest. A server
-     * that sends whole calls one per chunk at index `0` makes the same mistake the other way, so
-     * a different id, or a name after arguments have begun, opens a new call under that index.
-     */
-    function fragmentOf(part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall): PartialCall {
-      const index = typeof part.index === "number" ? part.index : undefined;
-      const name = part.function?.name;
-      const known =
-        index !== undefined
-          ? calls.findLast((call) => call.index === index)
-          : part.id
-            ? calls.find((call) => call.id === part.id)
-            : name
-              ? undefined
-              : calls.at(-1);
-      const another =
-        known && ((part.id && known.id && part.id !== known.id) || (name && known.arguments));
-      if (known && !another) return known;
-      const call: PartialCall = { index, id: "", name: "", arguments: "" };
-      calls.push(call);
-      return call;
     }
 
     // An aborted stream ends its iteration rather than throwing, so without this a turn cut off
@@ -494,24 +545,9 @@ export async function streamTurn(
       if (usage.prompt > 0) usage.uncached = Math.max(0, usage.prompt - cached);
     }
 
-    const minted = new Set<string>();
     return {
       content: splitter.output,
-      toolCalls: calls
-        .map((call, order) => ({ call, order }))
-        .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order)
-        .map(({ call }, position) => {
-          // A server that streams a call without an id still needs one for the result to answer,
-          // and two calls it put under one index must not be answered as one.
-          let id = call.id || `call_${call.index ?? position}`;
-          if (minted.has(id)) id = `call_${position}_${minted.size}`;
-          minted.add(id);
-          return {
-            id,
-            type: "function" as const,
-            function: { name: call.name, arguments: call.arguments },
-          };
-        }),
+      toolCalls: assembledCalls(calls),
       usage,
       finishReason,
       reasoning: reasoning.join("") + splitter.reasoning,
