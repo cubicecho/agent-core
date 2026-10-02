@@ -656,6 +656,103 @@ const tellAfterTurn = (
   );
 
 /**
+ * The loop's own record of what it emitted, less the token deltas, for `runMetrics` at the end.
+ * Stamped here rather than by the bus, which the loop does not know about.
+ */
+function recorder(heard: AgentLoopOptions["onEvent"]) {
+  const recorded: RunEvent[] = [];
+  const onEvent = (input: RunEventInput) => {
+    if (input.kind !== "thinking" && input.kind !== "output") {
+      recorded.push(stamp(input, "", recorded.length + 1, Date.now()));
+    }
+    heard?.(input);
+  };
+  return { recorded, onEvent };
+}
+
+/**
+ * How this run finds its tools, and what it starts with in hand: the loop's own preselection
+ * where it was asked for and the host has not already decided, and what an earlier question
+ * carried over.
+ */
+async function discovery(options: AgentLoopOptions, notice: OnNotice) {
+  const { config, catalog = [] } = options;
+  // On demand, but with a tool array that never changes: definitions come back as `load_tools`
+  // results and run through `call_tool`. `onDemand` is true of both.
+  const proxied = config.toolDiscovery === "proxy" && catalog.length > 0;
+  const onDemand = proxied || (config.toolDiscovery === "ondemand" && catalog.length > 0);
+  // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
+  const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
+  const chooses = options.preselect && options.preselected === undefined;
+  const preselected = !onDemand
+    ? []
+    : chooses
+      ? await chooseTools(options, notice)
+      : [...(options.preselected ?? [])];
+  if (!proxied) for (const name of preselected) loaded.add(name);
+  return { proxied, onDemand, loaded, preselected };
+}
+
+/** The host's definitions by name, the first kept where two share one. */
+function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
+  const definitions = new Map<string, OpenAI.ChatCompletionTool>();
+  for (const tool of tools) {
+    const name = toolName(tool);
+    if (name !== undefined && !definitions.has(name)) definitions.set(name, tool);
+  }
+  return definitions;
+}
+
+/**
+ * Offers each message written into the transcript to the host. Once `onMessage` has thrown the
+ * run is ending on that, and the results still to be written are not offered to a host that has
+ * just failed to take one.
+ */
+function announcer(onMessage: AgentLoopOptions["onMessage"]) {
+  let heard = true;
+  return async (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn) => {
+    if (!onMessage || !heard) return;
+    try {
+      await onMessage(message, step, turn);
+    } catch (error) {
+      heard = false;
+      throw error;
+    }
+  };
+}
+
+/** The `usage` event a turn ends in: the run's totals so far, and the turn's own report. */
+const usageEvent = (usage: TurnUsage, turn: Turn, ledger: TokenLedger): RunEventInput => ({
+  kind: "usage",
+  usage: {
+    promptTokens: usage.prompt,
+    completionTokens: usage.completion,
+    totalTokens: usage.total,
+    cachedTokens: usage.cached,
+    turn: { ...turn.usage, finishReason: turn.finishReason },
+    ledger,
+  },
+});
+
+/**
+ * The calls a turn made and the answer beside them, with calls the model wrote as text taken out
+ * of the answer and counted as calls. `recoverable` is the names such a call may use, and absent
+ * recovers nothing.
+ */
+function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNotice) {
+  // A call with no name is a fragment the server never finished sending: nothing to run, and
+  // an assistant message naming it would be answered by nothing.
+  const calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
+  if (!recoverable || calls.length || !turn.content) return { calls, content: turn.content };
+  const recovered = recoverToolCalls(turn.content, { names: recoverable });
+  if (!recovered.toolCalls.length) return { calls, content: turn.content };
+  notice(
+    `recovered ${counted(recovered.toolCalls.length, "tool call")} the model wrote as text; the server's tool-call parser does not match this model's template`,
+  );
+  return { calls: recovered.toolCalls, content: recovered.content };
+}
+
+/**
  * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
  * when `maxToolIterations` is spent, and tells `standing` how to read the run either way.
  */
@@ -680,42 +777,16 @@ async function runSteps(
   } = options;
   const dedupable = typeof dedupeToolCalls === "function" ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
-  // What the loop emitted, less the token deltas, for `runMetrics` at the end. Stamped here rather
-  // than by the bus, which the loop does not know about.
-  const recorded: RunEvent[] = [];
-  const record = (input: RunEventInput) => {
-    if (input.kind === "thinking" || input.kind === "output") return;
-    recorded.push(stamp(input, "", recorded.length + 1, Date.now()));
-  };
-  const onEvent = (input: RunEventInput) => {
-    record(input);
-    options.onEvent?.(input);
-  };
+  const { recorded, onEvent } = recorder(options.onEvent);
   const client = getClient(config);
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
   const notice = (text: string) => onEvent({ kind: "notice", text });
 
-  // On demand, but with a tool array that never changes: definitions come back as `load_tools`
-  // results and run through `call_tool`. `onDemand` is true of both.
-  const proxied = config.toolDiscovery === "proxy" && catalog.length > 0;
-  const onDemand = proxied || (config.toolDiscovery === "ondemand" && catalog.length > 0);
-  // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
-  const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
-  // The loop's own preselection, where it was asked for and the host has not already decided.
-  const preselected = !onDemand
-    ? []
-    : options.preselect && options.preselected === undefined
-      ? await chooseTools(options, notice)
-      : [...(options.preselected ?? [])];
-  if (!proxied) for (const name of preselected) loaded.add(name);
+  const { proxied, onDemand, loaded, preselected } = await discovery(options, notice);
   const summarise = ownSummariser(options, notice);
   const used = new Set<string>();
-  const definitions = new Map<string, OpenAI.ChatCompletionTool>();
-  for (const tool of tools) {
-    const name = toolName(tool);
-    if (name !== undefined && !definitions.has(name)) definitions.set(name, tool);
-  }
+  const definitions = definitionsByName(tools);
   // Looked through unless the host has a tool by that name, which is then the host's to answer.
   const proxies = onDemand && !definitions.has(CALL_TOOL);
   // What a call the model wrote as text may name: the host's tools, and the loop's own on demand.
@@ -738,22 +809,7 @@ async function runSteps(
     loaded: proxied ? [] : [...loaded],
     used: [...used],
   });
-  // Once `onMessage` has thrown the run is ending on that, and the results still to be written
-  // into the transcript are not offered to a host that has just failed to take one.
-  let heard = true;
-  const announce = async (
-    message: OpenAI.ChatCompletionMessageParam,
-    step: number,
-    turn?: Turn,
-  ) => {
-    if (!onMessage || !heard) return;
-    try {
-      await onMessage(message, step, turn);
-    } catch (error) {
-      heard = false;
-      throw error;
-    }
-  };
+  const announce = announcer(onMessage);
   // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
   // moves the question without losing it — and one that summarises the question away takes the
   // hooks' context with it, which is right.
@@ -924,34 +980,12 @@ async function runSteps(
       completion: turn.usage.completion,
     };
     usage = addCounts(usage, turn.usage);
-    onEvent({
-      kind: "usage",
-      usage: {
-        promptTokens: usage.prompt,
-        completionTokens: usage.completion,
-        totalTokens: usage.total,
-        cachedTokens: usage.cached,
-        turn: { ...turn.usage, finishReason: turn.finishReason },
-        ledger,
-      },
-    });
+    onEvent(usageEvent(usage, turn, ledger));
     if (turn.finishReason === "length") {
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
-    // A call with no name is a fragment the server never finished sending: nothing to run, and
-    // an assistant message naming it would be answered by nothing.
-    let calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
-    let content = turn.content;
-    if (recover && !calls.length && content && (tools.length > 0 || onDemand)) {
-      const recovered = recoverToolCalls(content, { names: recoverable });
-      if (recovered.toolCalls.length) {
-        calls = recovered.toolCalls;
-        content = recovered.content;
-        notice(
-          `recovered ${counted(calls.length, "tool call")} the model wrote as text; the server's tool-call parser does not match this model's template`,
-        );
-      }
-    }
+    const canRecover = recover && (tools.length > 0 || onDemand);
+    const { calls, content } = turnCalls(turn, canRecover ? recoverable : undefined, notice);
     const shown: Turn = { ...turn, content, toolCalls: calls };
     onTurn?.(shown, step);
 
