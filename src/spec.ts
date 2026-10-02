@@ -378,6 +378,13 @@ function parseEndpoint(report: Report, path: string, value: unknown): EndpointSp
   return said(endpoint) ? endpoint : undefined;
 }
 
+/** The three fields a model and a side task both carry, held to the same bounds in each. */
+const parseSampling = (report: Report, path: string, value: Record<string, unknown>) => ({
+  maxTokens: report.number(`${path}.maxTokens`, value.maxTokens, 0),
+  temperature: report.number(`${path}.temperature`, value.temperature, 0, 2),
+  reasoningEffort: report.string(`${path}.reasoningEffort`, value.reasoningEffort),
+});
+
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (absent(value)) return undefined;
   if (!isRecord(value)) return void report.drop("model", "must be an object");
@@ -395,9 +402,7 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   }
   return kept({
     model: report.string("model.model", value.model),
-    maxTokens: report.number("model.maxTokens", value.maxTokens, 0),
-    temperature: report.number("model.temperature", value.temperature, 0, 2),
-    reasoningEffort: report.string("model.reasoningEffort", value.reasoningEffort),
+    ...parseSampling(report, "model", value),
     contextLength: report.number("model.contextLength", value.contextLength, 0),
     extraBody,
   });
@@ -497,9 +502,7 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
     tasks[key] = kept({
       model: report.string(`${path}.model`, held.model),
       endpoint: parseEndpoint(report, `${path}.endpoint`, held.endpoint),
-      maxTokens: report.number(`${path}.maxTokens`, held.maxTokens, 0),
-      temperature: report.number(`${path}.temperature`, held.temperature, 0, 2),
-      reasoningEffort: report.string(`${path}.reasoningEffort`, held.reasoningEffort),
+      ...parseSampling(report, path, held),
     });
   }
   return tasks;
@@ -724,17 +727,8 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
 }
 
 /** Merges the layers that named a key, last one winning, and leaves it absent if none did. */
-function mergeEndpoints(layers: (EndpointSpec | undefined)[]): EndpointSpec {
-  const out: EndpointSpec = {};
-  for (const layer of layers) {
-    if (!layer) continue;
-    if (layer.baseUrl !== undefined) out.baseUrl = layer.baseUrl;
-    if (layer.requestTimeoutSeconds !== undefined)
-      out.requestTimeoutSeconds = layer.requestTimeoutSeconds;
-    if (layer.firstTokenSeconds !== undefined) out.firstTokenSeconds = layer.firstTokenSeconds;
-  }
-  return out;
-}
+const mergeLayers = <T extends object>(layers: readonly (T | undefined)[]): T =>
+  Object.assign({}, ...layers.map((layer) => kept(layer ?? {})));
 
 /** An `Endpoint` as the loop takes one. `apiKey` is always empty; see `resolveAgentSpec`. */
 const asEndpoint = (spec: EndpointSpec): Endpoint => ({
@@ -767,7 +761,7 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
  * @param layers The documents, weakest first: settings, then the agent, then a task, then a step.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
-  const endpoint = mergeEndpoints(layers.map((layer) => layer.endpoint));
+  const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
 
   const model: ModelSpec = {};
   const extraBody: Record<string, unknown> = {};
@@ -784,21 +778,13 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     for (const part of layer.prompt ?? [])
       parts.set(part.id, { ...(parts.get(part.id) ?? { id: part.id }), ...part });
 
-  const tools: ToolsSpec = {};
-  for (const layer of layers) {
-    if (layer.tools?.discovery !== undefined) tools.discovery = layer.tools.discovery;
-    if (layer.tools?.maxIterations !== undefined) tools.maxIterations = layer.tools.maxIterations;
-    // Replaced whole rather than unioned: a list, an empty list and no list are three answers,
-    // and a union of the first two is the first, which loses the scoping the operator asked for.
-    if (layer.tools?.servers !== undefined) tools.servers = [...layer.tools.servers];
-  }
+  // `servers` is replaced whole rather than unioned: a list, an empty list and no list are three
+  // answers, and a union of the first two is the first, which loses the scoping the operator
+  // asked for. Copied, so the resolved agent does not share an array with the layer it came from.
+  const tools = mergeLayers(layers.map((layer) => layer.tools));
+  if (tools.servers) tools.servers = [...tools.servers];
 
-  const retry: RetrySpec = {};
-  for (const layer of layers) {
-    if (layer.retry?.maxRetries !== undefined) retry.maxRetries = layer.retry.maxRetries;
-    if (layer.retry?.loadingTimeoutSeconds !== undefined)
-      retry.loadingTimeoutSeconds = layer.retry.loadingTimeoutSeconds;
-  }
+  const retry = mergeLayers(layers.map((layer) => layer.retry));
 
   const merged = new Map<string, TaskSpec>();
   for (const layer of layers)
@@ -806,7 +792,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
       merged.set(key, {
         ...(merged.get(key) ?? {}),
         ...task,
-        endpoint: mergeEndpoints([merged.get(key)?.endpoint, task.endpoint]),
+        endpoint: mergeLayers([merged.get(key)?.endpoint, task.endpoint]),
       });
   const tasks: Record<string, ResolvedTask> = {};
   for (const [key, task] of merged) {
@@ -815,7 +801,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     if (!task.model) continue;
     tasks[key] = kept({
       model: task.model,
-      endpoint: asEndpoint(mergeEndpoints([endpoint, task.endpoint])),
+      endpoint: asEndpoint(mergeLayers([endpoint, task.endpoint])),
       maxTokens: task.maxTokens,
       temperature: task.temperature,
       reasoningEffort: task.reasoningEffort,
@@ -840,9 +826,9 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const requires = new Set<string>();
   for (const layer of layers) for (const key of layer.requires ?? []) requires.add(key);
 
-  const id = [...layers].reverse().find((layer) => layer.id)?.id ?? "";
-  const name = [...layers].reverse().find((layer) => layer.name)?.name;
-  const description = [...layers].reverse().find((layer) => layer.description)?.description;
+  const id = layers.findLast((layer) => layer.id)?.id ?? "";
+  const name = layers.findLast((layer) => layer.name)?.name;
+  const description = layers.findLast((layer) => layer.description)?.description;
   const prompt = [...parts.values()];
 
   return {
