@@ -43,6 +43,7 @@ only, Node >=22.
 | `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
 | `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
+| `runtime` | `createRuntime`: a second set of those caches, with the functions that use them as methods — for a host whose tenants must not share a client pool, a latch or an event bus. `defaultRuntime` is the one the top-level functions use. |
 | `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. And what `runAgentLoop` throws, with the run as it stood: `AgentLoopError`, `ToolIterationLimit`, `AgentLoopOverflow`, and `failedRun` to read it off any of them. |
 | `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
@@ -1197,8 +1198,9 @@ const result = await runAgentLoop({ config, preselect: { keywords: true }, compa
 
 Four caches outlive any one run: the `OpenAI` clients, the model listings, the latched
 capabilities, and `side-task`'s no-thinking hints. A fifth, the characters per token each model was
-measured at, is keyed on the endpoint's capabilities object, so it goes with them. All four are module-level and keyed on the same
-notion of an endpoint — its base URL and its API key — and the clients' key carries the request
+measured at, is keyed on the endpoint's capabilities object, so it goes with them. All four are
+held once per runtime — once per process, unless you make another, [below](#a-runtime-of-its-own)
+— and keyed on the same notion of an endpoint — its base URL and its API key — and the clients' key carries the request
 timeout as well, since that changes how a request is sent.
 
 **They are keyed per deployment, not per request.** What belongs in them is an endpoint an
@@ -1209,8 +1211,8 @@ bounding them assumes that, and a consumer that mints an API key per *user* brea
 
 That is bounded rather than unbounded: the client pool is a 32-entry LRU, and an evicted client
 costs its connection pool and nothing else, since the next request through that endpoint builds
-another. But churning connection pools is not sharing them, and at that point a client of your
-own, built and held per tenant, is the better answer than this.
+another. But churning connection pools is not sharing them, and at that point a runtime per
+tenant, [below](#a-runtime-of-its-own), is the better answer than this.
 
 The listings cache also remembers, for half a minute, that an endpoint did not name a model — the
 case where a configured name never matches anything the server serves (a llama.cpp `-a` alias, an
@@ -1283,6 +1285,57 @@ An endpoint's age is when it was first met, not when a flag latched, and `export
 carries it in the snapshot so an imported latch keeps its real age instead of being born again on
 every boot. Importing takes the older of the two ages, and a snapshot written before this field
 existed reads as met now.
+
+### A runtime of its own
+
+Everything above is the *default runtime*: one set of caches, shared by every caller in the
+process. `createRuntime` makes another, with its own clients, listings, latches, hints, measured
+ratios, event bus and hook settings, and the functions that use them as methods of the same names
+and signatures:
+
+```ts
+import { createRuntime } from "@cubicecho/agent-core";
+
+const runtime = createRuntime({ clients: { maxClients: 8 }, events: { maxEvents: 200 } });
+
+const run = await runtime.runAgentLoop({ config, messages, dispatch });
+for await (const event of runtime.watch(runId)) send(event);
+runtime.resetAll();                 // this runtime's caches, and nobody else's
+```
+
+It is for the host the section above warns off — one that mints a key per tenant, where a shared
+pool has tenants evicting each other's clients and a shared bus makes one tenant's run id readable
+by another — and for tests, where a runtime per case needs no `resetAll` between cases and lets
+them run in parallel. A host with one deployment's worth of endpoints needs none: the top-level
+functions are the default runtime's methods, and nothing about them has changed.
+
+The runtime travels by async context (`AsyncLocalStorage`), not by argument. A method runs its
+function with the runtime current, and it stays current across every `await` beneath it — so
+`runtime.runAgentLoop` uses the runtime's clients and latches all the way down, and so does a
+top-level function your code calls from inside it: an `emit` in `onEvent`, an `ask` in `dispatch`,
+a `gather` in a hook. `runtime.run(fn)` does the same for code that calls the top-level functions
+itself:
+
+```ts
+await runtime.run(async () => {
+  const limit = await contextLimitFor(config);   // the runtime's listing cache
+  emit(runId, { kind: "output", text: "…" });    // the runtime's bus
+});
+```
+
+Outside a method or `run`, a top-level function is the default runtime's again. That is the one
+thing to keep straight: a request handler that watches or emits to a run a runtime started is not
+inside it, and calls `runtime.watch` or `runtime.emit`. What a method hands back keeps its runtime
+— the iterator from `runtime.watch`, the function from `runtime.summariser` — wherever it is read.
+
+A new runtime starts from the package's defaults plus what `createRuntime` was given; it does not
+inherit what `configureClients` and the others set on the default one. Nothing needs closing: a
+runtime is garbage once nothing holds it. `defaultRuntime` is the process's own as an object, for
+code that takes a `Runtime` and should be handed the shared one.
+
+The two schema caches (`sanitizeTools`, `relaxTools`) and `requestTokens`' tool-length cache stay
+process-wide. They are memoised pure functions keyed on the caller's own objects, so there is
+nothing in them for one tenant to learn about another.
 
 ## Where the merged behaviour came from
 

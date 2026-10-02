@@ -222,6 +222,13 @@ One turn, given as many attempts as the caller allows.
 - `RunTurnOptions` (type) — A retry is not the same event as a downgrade, but a watcher wants to be told about both.
 - `runTurn` — `request` is a callback rather than a body because the body has to be rebuilt from whatever the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools` has to apply to the schemas that were just sanitised.
 
+### runtime
+
+- `createRuntime` — A runtime of its own: separate clients, listings, capability latches, hints, event bus and hook settings from the process's and from every other runtime's.
+- `defaultRuntime` — The runtime the top-level functions use when no other is running.
+- `Runtime` (type) — One set of the package's caches, with the functions that use them as methods.
+- `RuntimeOptions` (type) — What a runtime starts out configured with.
+
 ### schema-compat
 
 JSON Schema compatibility for llama.cpp-backed servers.

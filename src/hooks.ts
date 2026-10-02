@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type OpenAI from "openai";
 import { errorMessage } from "./errors.ts";
+import { scoped } from "./scope.ts";
 import { estimateTokens } from "./tokens.ts";
 
 /**
@@ -192,14 +193,14 @@ const HOOK_DEFAULTS: Required<HookOptions> = {
 };
 
 /** What is in force now. Read where it is used, so a change applies from the next request. */
-let hookSettings: Required<HookOptions> = { ...HOOK_DEFAULTS };
+const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }));
 
 /**
  * Changes what hooks are held to, for a process whose windows are not the size these defaults
  * were chosen for, or whose host wants its own name above the context.
  *
- * Module-level for the same reason `configureEvents` is: a budget and a preface are a deployment's
- * settings, said once at startup. A caller that sizes the budget per model or per agent — a 128k
+ * One setting per runtime for the same reason `configureEvents` is: a budget and a preface are a
+ * deployment's settings, said once at startup. A caller that sizes the budget per model or per agent — a 128k
  * window can afford more recall than an 8k one — passes `maxTokens` to `gather` instead, and a
  * `preface` passed to `withContext` or `runAgentLoop`'s hooks wins over this one the same way.
  *
@@ -212,10 +213,10 @@ let hookSettings: Required<HookOptions> = { ...HOOK_DEFAULTS };
 export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
   const { contextTokens, preface } = options;
   if (typeof contextTokens === "number" && contextTokens > 0) {
-    hookSettings.contextTokens = contextTokens;
+    hookSettings().contextTokens = contextTokens;
   }
-  if (typeof preface === "string") hookSettings.preface = preface;
-  return { ...hookSettings };
+  if (typeof preface === "string") hookSettings().preface = preface;
+  return { ...hookSettings() };
 }
 
 /**
@@ -224,7 +225,7 @@ export function configureHooks(options: HookOptions = {}): Required<HookOptions>
  * `resetAll` calls it.
  */
 export const resetHooks = () => {
-  hookSettings = { ...HOOK_DEFAULTS };
+  hookSettings.reset();
 };
 
 /**
@@ -233,7 +234,7 @@ export const resetHooks = () => {
  * turn every hook's context off.
  */
 const budget = (given?: number) =>
-  typeof given === "number" && given > 0 ? given : hookSettings.contextTokens;
+  typeof given === "number" && given > 0 ? given : hookSettings().contextTokens;
 
 const attribute = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
@@ -306,7 +307,7 @@ export function withContext(
   history: OpenAI.ChatCompletionMessageParam[],
   index: number,
   context: string,
-  preface = hookSettings.preface,
+  preface = hookSettings().preface,
 ): OpenAI.ChatCompletionMessageParam[] {
   const message = history[index];
   if (!context || message?.role !== "user") return history;

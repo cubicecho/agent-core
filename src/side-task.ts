@@ -12,6 +12,7 @@ import type { Endpoint } from "./config.ts";
 import { errorMessage } from "./errors.ts";
 import { isTransient } from "./retry.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
+import { scoped } from "./scope.ts";
 import { stripThinking } from "./thinking.ts";
 
 /**
@@ -50,16 +51,16 @@ const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
  * Only the `chat_template_kwargs` half is here. `reasoning_effort` is `negotiate`'s to latch, on
  * the same (endpoint, model) pair, where a run on that model can read it too.
  */
-const noHints = new Set<string>();
+const noHints = scoped(() => new Set<string>());
 
 /** An (endpoint, model) pair as `noHints` holds it: `[endpointId, model]`, stringified. */
 export const hintKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
 /** The pairs that refused the hints, the live set, for `exportCapabilities` and `importCapabilities`. */
-export const refusedHints = (): Set<string> => noHints;
+export const refusedHints = (): Set<string> => noHints();
 
 /** Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints. */
-export const resetHints = () => noHints.clear();
+export const resetHints = () => noHints().clear();
 
 /**
  * Whether a failure is the server complaining about the request, rather than failing to answer.
@@ -240,7 +241,7 @@ async function complete(
   const key = hintKey(endpointId(config), model);
   // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
   // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
-  const hints = !level && !noHints.has(key);
+  const hints = !level && !noHints().has(key);
   let response: Awaited<ReturnType<typeof send>>;
   try {
     response = await attempt(hints, true);
@@ -262,7 +263,7 @@ async function complete(
     // hints again. When both went out the refusal cannot say which, so the one `negotiate`
     // cannot latch is blamed; if it was the effort after all, the next call is left with only
     // the effort to drop and latches that instead.
-    if (hints) noHints.add(key);
+    if (hints) noHints().add(key);
     else modelCapabilitiesFor(supports, model).reasoningEffort = false;
   }
 

@@ -27,7 +27,7 @@ const { calibrate, charsPerTokenFor } = await import("../src/calibration.ts");
 const endpoint = { baseUrl: "http://local/v1", apiKey: "", requestTimeoutSeconds: 60 };
 const reply = { choices: [{ message: { content: "ok" } }] };
 /** Whether the no-thinking hints rode along on the nth call. */
-const sentHints = (nth: number) => "reasoning_effort" in create.mock.calls[nth][0];
+const sentHints = (nth: number) => "chat_template_kwargs" in create.mock.calls[nth][0];
 
 /** Teaches the process one latched refusal per module, so there is something to forget. */
 const latchEverything = async () => {

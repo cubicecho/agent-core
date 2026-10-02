@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type { Capabilities } from "./capabilities.ts";
 import { CHARS_PER_TOKEN, requestChars, toolsChars } from "./retry.ts";
+import { scoped } from "./scope.ts";
 
 /**
  * How many characters a token is worth on one model, learned from what its endpoint reports.
@@ -33,7 +34,7 @@ const PLAUSIBLE = { least: 1, most: 8 };
  * `resetCapabilities` takes its readings with it. Replaced rather than cleared by `resetCalibration`,
  * since a `WeakMap` has no `clear`.
  */
-let readings = new WeakMap<Capabilities, Map<string, number[]>>();
+const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>());
 
 /**
  * The characters per token to size a request to this model with, `CHARS_PER_TOKEN` until a turn
@@ -50,7 +51,7 @@ let readings = new WeakMap<Capabilities, Map<string, number[]>>();
  * @param model The name the endpoint knows the model as, as it goes in the body.
  */
 export function charsPerTokenFor(supports: Capabilities, model: string): number {
-  const known = readings.get(supports)?.get(model);
+  const known = readings().get(supports)?.get(model);
   return known?.length ? Math.max(...known) : CHARS_PER_TOKEN;
 }
 
@@ -85,10 +86,10 @@ export function calibrate(
   if (ratio < PLAUSIBLE.least || ratio > PLAUSIBLE.most) {
     return charsPerTokenFor(supports, body.model);
   }
-  let models = readings.get(supports);
+  let models = readings().get(supports);
   if (!models) {
     models = new Map();
-    readings.set(supports, models);
+    readings().set(supports, models);
   }
   const known = models.get(body.model) ?? [];
   known.push(ratio);
@@ -99,5 +100,5 @@ export function calibrate(
 
 /** Forgets every reading, so the next request is sized at `CHARS_PER_TOKEN` again. */
 export function resetCalibration() {
-  readings = new WeakMap();
+  readings.reset();
 }

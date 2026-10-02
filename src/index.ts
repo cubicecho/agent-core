@@ -173,6 +173,7 @@ export {
   toolsChars,
 } from "./retry.ts";
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
+export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from "./runtime.ts";
 export { isGrammarError, relaxTools, sanitizeTools } from "./schema-compat.ts";
 export {
   type AskJsonOptions,
