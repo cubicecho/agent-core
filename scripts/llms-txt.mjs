@@ -19,6 +19,9 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
+/** What opens a doc comment. */
+const DOC_OPEN = '/**';
+
 /**
  * Every doc comment in a file, with the line that follows it.
  *
@@ -31,14 +34,14 @@ function docBlocks(source) {
   const blocks = [];
   const lines = source.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    const open = lines[i].indexOf('/**');
+    const open = lines[i].indexOf(DOC_OPEN);
     if (open === -1) {
       continue;
     }
-    const sameLineClose = lines[i].indexOf('*/', open + 3);
+    const sameLineClose = lines[i].indexOf('*/', open + DOC_OPEN.length);
     if (sameLineClose !== -1) {
       blocks.push({
-        body: [lines[i].slice(open + 3, sameLineClose).trim()],
+        body: [lines[i].slice(open + DOC_OPEN.length, sameLineClose).trim()],
         next: lines[i + 1] ?? '',
       });
       continue;

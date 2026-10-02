@@ -29,6 +29,7 @@
         "noNamespace": "error",
         "noParameterProperties": "error",
         "noNonNullAssertion": "error",
+        "noMagicNumbers": "warn",
         "useFilenamingConvention": { "level": "error", "options": { "filenameCases": ["kebab-case"] } }
       },
       "suspicious": {
@@ -36,6 +37,12 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["tests/**", "bench/**"],
+      "linter": { "rules": { "style": { "noMagicNumbers": "off" } } }
+    }
+  ],
   "javascript": {
     "formatter": { "quoteStyle": "single", "trailingCommas": "all", "semicolons": "always" }
   },
