@@ -229,7 +229,17 @@ Kept, and why:
   fences (`THINK_FENCE`, `DEFAULT_FENCES`, `ALL_FENCES`), the two version numbers,
   `RESOLVED_DEFAULTS`, and `UNTRUSTED_PREFACE`, which the README tells a host to use.
 
-Still open: the types and functions no host uses, not yet listed per export.
+**Types and functions: done, a breaking change.** Listed per export on 2026-10-02 by
+searching every host file that imports the package for each name: of 254 exports, 141 are named
+by no host (57 types, 50 functions, 12 enums and classes, 22 constants).
+
+- The types stay: each is in the signature of something exported. The enums and error classes
+  stay: they are what a host compares and catches.
+- 45 of the 50 functions are described in the README, so they are the API, not yet adopted.
+- Four that the README never mentions are no longer exported: `summaryInput`,
+  `isContinuable`, `sleep`, `toolsChars`.
+- `resetHints` was the fifth and stays: it is one of the six narrower resets and a method on
+  every `Runtime`. The README names it now.
 
 ### A2 — `prepack` and the skill's tsconfig layout: done (`0c35470`)
 
