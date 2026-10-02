@@ -17,16 +17,8 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
 - `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
 - `AgentLoopResult` (type) — What a finished loop hands back.
-- `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
-- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
-- `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
-- `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
-- `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
-- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
-- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
-- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
 
 ### calibration
 
@@ -71,6 +63,7 @@ The contract between whatever holds the tools and the loop that offers them to a
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `resetClients` — Forgets every cached client and listing, and puts `configureClients` back to the defaults.
+- `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
 - `servedWindow` — The window a local server's own API says it is serving a model in, for the servers whose listing does not say.
 - `timeoutMs` — Zero, less, or absent means no limit, which the SDK spells as `undefined`.
 
@@ -190,6 +183,27 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 - `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
 - `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
 
+### preselect
+
+Choosing a run's tools before it starts, from the request and the catalogue's names.
+
+- `KEYWORD_DROPOFF` — How far the best unpicked tool must fall below the last picked one for the cut to count clean.
+- `KEYWORD_MIN_SCORE` — The least a best match may score and still be acted on without a model.
+- `KeywordPreselection` (type) — What `preselectByKeywords` found.
+- `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
+- `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
+- `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
+- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
+- `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
+- `preselectInput` — The user message for a preselection call: the catalogue, then the request.
+- `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
+- `preselectSystem` — The system prompt a preselector is given, holding it to the cap its answer will be held to.
+- `ToolMatch` (type) — One tool's score against a request.
+
+### request-body
+
+- `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
+
 ### reset
 
 - `resetAll` — Forgets everything this package remembers between calls.
@@ -199,25 +213,21 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 Everything about a request failing that is not about what the request said.
 
 - `backoffMs` — Exponential, with jitter so several tasks failing at once do not return in lockstep.
-- `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
-- `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
 - `ContextOverflow` — The request was bigger than the model will read.
-- `compact` — 1234 → "1.2k".
-- `contextChars` — What each part of a request is worth in characters, by the same walk `requestTokens` divides.
-- `contextTokens` — What each part of a request costs the window, in tokens, adding up to the whole.
 - `EndpointSilent` — The endpoint stopped answering mid-request.
 - `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
 - `LOADING_POLL_MS` — How long to wait between asking a loading server again.
 - `LOADING_TIMEOUT_MS` — How long `runTurn` waits for a model to load unless told otherwise.
-- `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
-- `requestChars` — How many characters a request is worth: the walk `requestTokens` divides, without the division.
-- `requestTokens` — What this request will cost the window, in tokens, near enough.
 - `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
 - `sleep` — A delay an abort cuts short, rejecting rather than resolving early.
-- `TokenEstimateOptions` (type) — What the two token estimates below take besides what they measure.
-- `toolsChars` — How many characters a tool array is worth, measured once per array.
+
+### run-calls
+
+The tools between two turns: a step's calls read, run and written into the transcript.
+
+- `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 
 ### run-turn
 
@@ -257,6 +267,7 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
+- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
 - `tryAsk` — A side task is never worth failing the work it supports.
 
 ### snapshot
@@ -324,7 +335,17 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 ### tokens
 
 - `CHARS_PER_TOKEN` — The characters one token is taken to be, where nothing has measured it.
+- `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
+- `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
+- `compact` — 1234 → "1.2k".
+- `contextChars` — What each part of a request is worth in characters, by the same walk `requestTokens` divides.
+- `contextTokens` — What each part of a request costs the window, in tokens, adding up to the whole.
 - `estimateTokens` — Rough token count.
+- `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
+- `requestChars` — How many characters a request is worth: the walk `requestTokens` divides, without the division.
+- `requestTokens` — What this request will cost the window, in tokens, near enough.
+- `TokenEstimateOptions` (type) — What the two token estimates below take besides what they measure.
+- `toolsChars` — How many characters a tool array is worth, measured once per array.
 
 ### tool-calls
 
@@ -334,6 +355,9 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `recoverToolCalls` — Tool calls a model wrote into its reply as text, taken out of it and made into calls.
 - `ToolArgumentsError` — Tool arguments that could not be read as an object, with why.
 - `ToolCall` (type) — A tool call as the loop handles it, recovered or streamed.
+- `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
+- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
+- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
 ### tool-loading
 
@@ -344,10 +368,6 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
 - `holdsDefinitions` — Whether a tool result is a proxied load carrying definitions, which is the only copy of them the model has.
 - `inCatalog` — Whether the catalogue holds a tool by this name.
-- `KEYWORD_DROPOFF` — How far the best unpicked tool must fall below the last picked one for the cut to count clean.
-- `KEYWORD_MIN_SCORE` — The least a best match may score and still be acted on without a model.
-- `KeywordPreselection` (type) — What `preselectByKeywords` found.
-- `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
 - `LOAD_TOOLS` — On-demand tool loading.
 - `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
 - `loadedTools` — A tool array with newly loaded definitions appended, in the order they were loaded.
@@ -355,17 +375,10 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `MAX_CARRIED` — The most a conversation carries between turns.
 - `MAX_PER_LOAD` — The most a single `load_tools` call may pull in.
 - `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
-- `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
-- `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
 - `PROXY_TOOLS` — The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is shared.
-- `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
-- `preselectInput` — The user message for a preselection call: the catalogue, then the request.
-- `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
-- `preselectSystem` — The system prompt a preselector is given, holding it to the cap its answer will be held to.
 - `proxiedCall` — The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
 - `proxyCatalogPrompt` — The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a tool list.
 - `proxyLoadResult` — What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since the result is the only place the model will ever see it.
 - `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
 - `shownCall` — A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it is.
-- `ToolMatch` (type) — One tool's score against a request.
 - `ToolOrder` (type) — How a tool array is ordered before it is sent: `true` by name, `false` as the caller built it, or a comparator over the two names.

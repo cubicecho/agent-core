@@ -13,11 +13,12 @@ vi.mock("../src/client.ts", async (importOriginal) => ({
   },
 }));
 
-const { preselect, runAgentLoop, taskCall } = await import("../src/agent-loop.ts");
+const { runAgentLoop } = await import("../src/agent-loop.ts");
+const { preselect } = await import("../src/preselect.ts");
 const { capabilitiesFor, resetCapabilities } = await import("../src/capabilities.ts");
 const { NO_KEY } = await import("../src/client.ts");
 const { SUMMARY_LEAD, summariser } = await import("../src/compaction.ts");
-const { ask, resetHints } = await import("../src/side-task.ts");
+const { ask, resetHints, taskCall } = await import("../src/side-task.ts");
 const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import("../src/spec.ts");
 
 type Message = OpenAI.ChatCompletionMessageParam;

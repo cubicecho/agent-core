@@ -1,22 +1,26 @@
 import type OpenAI from "openai";
 import { calibrate, charsPerTokenFor } from "./calibration.ts";
-import { type Capabilities, type ModelCapabilities, negotiate } from "./capabilities.ts";
+import {
+  type Capabilities,
+  type ModelCapabilities,
+  negotiate,
+  type OnNotice,
+} from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
 import {
   backoffMs,
   ContextOverflow,
-  compact,
   EndpointSilent,
   isModelLoading,
   isOverflow,
   isTransient,
   LOADING_POLL_MS,
   LOADING_TIMEOUT_MS,
-  requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
 } from "./retry.ts";
 import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./stream.ts";
+import { compact, requestTokens } from "./tokens.ts";
 
 /**
  * One turn, given as many attempts as the caller allows.
@@ -57,7 +61,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
    * Told what was given up on and what is being waited out, for a watcher who would otherwise
    * see an unexplained pause. Carries both the capability notices and the retry notices.
    */
-  onNotice?: (message: string) => void;
+  onNotice?: OnNotice;
   /**
    * What the model will read, in tokens. Zero — the default — sends whatever it is given.
    *
@@ -97,6 +101,13 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
 }
 
 /**
+ * What a notice calls the model, where the caller did not say which one it is.
+ *
+ * @param model The model's name. Absent reads as "the model", which is all there is to say.
+ */
+export const modelLabel = (model: string | undefined) => model ?? "the model";
+
+/**
  * Builds a turn's request body from what the endpoint and the model have refused so far.
  *
  * A function rather than a body because a downgrade changes what is sent, so it is called again
@@ -106,6 +117,39 @@ export type RequestBuilder = (
   supports: Capabilities,
   model: ModelCapabilities | undefined,
 ) => OpenAI.ChatCompletionCreateParamsStreaming;
+
+/**
+ * Throws `ContextOverflow` for a request that will not fit its window, before it is sent.
+ *
+ * The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with `n_predict`
+ * in, OpenAI with the ceiling — so a prompt that fits the window but not the window less the
+ * ceiling was let through here to be refused one round trip later, which is the trip this guard
+ * exists to save. The reserve is read off the body under whichever spelling was chosen, and no
+ * ceiling reserves nothing: the server then gives the reply what is left.
+ */
+function refuseOversized(
+  body: OpenAI.ChatCompletionCreateParamsStreaming,
+  contextLimit: number,
+  charsPerToken: number,
+): void {
+  const needed = requestTokens(body, { charsPerToken });
+  const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
+  if (needed + reserve <= contextLimit) return;
+  // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
+  // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
+  // loops on the first attempt instead of being sent again to be refused again.
+  const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : "";
+  throw new ContextOverflow(
+    `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
+  );
+}
+
+/**
+ * A backoff in whatever unit reads as a number: the first is under a second, and "retrying in
+ * 0s" is what rounding it to seconds says.
+ */
+const shownDelay = (ms: number) =>
+  ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
 
 /**
  * `request` is a callback rather than a body because the body has to be rebuilt from whatever
@@ -119,6 +163,8 @@ export type RequestBuilder = (
  * second argument is what the model named in `options.model` has refused, absent when none was.
  * @param options Retry budget, context limit, the model to negotiate for, notices, and the
  * stream's own callbacks.
+ * @returns The turn the attempt that got through produced, its usage carrying what every attempt
+ * together cost: `wallMs`, `retries` and `timeouts`.
  */
 export async function runTurn(
   client: OpenAI,
@@ -146,24 +192,7 @@ export async function runTurn(
     sent = body;
     if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
       sized = true;
-      const needed = requestTokens(body, {
-        charsPerToken: charsPerTokenFor(supports, body.model),
-      });
-      // The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with
-      // `n_predict` in, OpenAI with the ceiling — so a prompt that fits the window but not the
-      // window less the ceiling was let through here to be refused one round trip later, which
-      // is the trip this guard exists to save. Read off the body under whichever spelling was
-      // chosen. No ceiling reserves nothing: the server then gives the reply what is left.
-      const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
-      // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
-      // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
-      // loops on the first attempt instead of being sent again to be refused again.
-      if (needed + reserve > contextLimit) {
-        const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : "";
-        throw new ContextOverflow(
-          `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
-        );
-      }
+      refuseOversized(body, contextLimit, charsPerTokenFor(supports, body.model));
     }
     return body;
   };
@@ -209,7 +238,7 @@ export async function runTurn(
         if (loadingSince === undefined) {
           loadingSince = now;
           onNotice?.(
-            `${model ?? "the model"} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`,
+            `${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`,
           );
         }
         if (now - loadingSince < loadingTimeoutMs) {
@@ -224,10 +253,9 @@ export async function runTurn(
       retries++;
       if (error instanceof EndpointSilent) timeouts++;
       const wait = backoffMs(attempt);
-      // Reported in whatever unit reads as a number: the first backoff is under a second, and
-      // "retrying in 0s" is what rounding it to seconds says.
-      const delay = wait < 1000 ? `${Math.round(wait)}ms` : `${Math.round(wait / 1000)}s`;
-      onNotice?.(`${errorMessage(error)} — retrying in ${delay} (${attempt + 1}/${maxRetries})`);
+      onNotice?.(
+        `${errorMessage(error)} — retrying in ${shownDelay(wait)} (${attempt + 1}/${maxRetries})`,
+      );
       await sleep(wait, stream.signal);
     }
   }

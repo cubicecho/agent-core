@@ -3,18 +3,20 @@ import { expect, test } from "vitest";
 import {
   backoffMs,
   ContextOverflow,
-  compact,
-  contextChars,
-  contextTokens,
   EndpointSilent,
   isOverflow,
   isTransient,
+  sleep,
+} from "../src/retry.ts";
+import {
+  compact,
+  contextChars,
+  contextTokens,
+  estimateTokens,
   messageTokens,
   requestTokens,
-  sleep,
   toolsChars,
-} from "../src/retry.ts";
-import { estimateTokens } from "../src/tokens.ts";
+} from "../src/tokens.ts";
 
 /** An `APIError` as the SDK raises it, with only the status this cares about set. */
 const apiError = (status: number) =>

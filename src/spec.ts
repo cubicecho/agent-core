@@ -1,4 +1,4 @@
-import type { AgentConfig, Endpoint } from "./config.ts";
+import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS } from "./config.ts";
 import { isRecord } from "./guards.ts";
 import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
 
@@ -43,9 +43,6 @@ export const AGENT_TASKS = ["compaction", "toolSelect", "title", "followups"] as
  * browser can load it.
  */
 export const SPEC_EVENTS: readonly HookEvent[] = HOOK_EVENTS;
-
-/** Body fields the loop owns. `buildBody` would overwrite them anyway; better to say so on import. */
-const RESERVED_BODY = ["model", "messages", "stream", "tools"];
 
 /** One agent, as a document. Every field but `spec` is optional, because a layer says only what it changes. */
 export interface AgentSpec {
@@ -394,7 +391,8 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
     else {
       extraBody = {};
       for (const [key, held] of Object.entries(value.extraBody)) {
-        if (RESERVED_BODY.includes(key))
+        // `buildBody` would overwrite them anyway; better to say so on import.
+        if (RESERVED_BODY_FIELDS.includes(key))
           report.drop(`model.extraBody.${key}`, "is the loop's to set");
         else extraBody[key] = held;
       }
@@ -740,6 +738,62 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
   }),
 });
 
+/** The layers' `model` sections as one, with their `extraBody` merged by top-level key beside it. */
+function mergeModel(layers: readonly AgentSpec[]) {
+  const model: ModelSpec = {};
+  const extraBody: Record<string, unknown> = {};
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer.model ?? {})) {
+      if (value === undefined) continue;
+      if (key === "extraBody") Object.assign(extraBody, value);
+      else (model as Record<string, unknown>)[key] = value;
+    }
+  }
+  return { model, extraBody };
+}
+
+/**
+ * Items merged by id, ordered by first appearance: different ids stack, and the same id is laid
+ * over the one before it. An item `idOf` gives no id for is left out.
+ */
+function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => string | undefined) {
+  const merged = new Map<string, T>();
+  for (const item of items) {
+    const id = idOf(item);
+    if (id !== undefined) merged.set(id, { ...merged.get(id), ...item });
+  }
+  return [...merged.values()];
+}
+
+/**
+ * The layers' side tasks as the loop takes them, each on the agent's endpoint with its own laid
+ * over it.
+ */
+function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
+  const merged = new Map<string, TaskSpec>();
+  for (const layer of layers)
+    for (const [key, task] of Object.entries(layer.tasks ?? {}))
+      merged.set(key, {
+        ...(merged.get(key) ?? {}),
+        ...task,
+        endpoint: mergeLayers([merged.get(key)?.endpoint, task.endpoint]),
+      });
+  const tasks: Record<string, ResolvedTask> = {};
+  for (const [key, task] of merged) {
+    // `model: ""` is how a layer declines a task a layer below it configured, so the entry goes
+    // rather than coming back with an empty model for the host to interpret.
+    if (!task.model) continue;
+    tasks[key] = kept({
+      model: task.model,
+      endpoint: asEndpoint(mergeLayers([endpoint, task.endpoint])),
+      maxTokens: task.maxTokens,
+      temperature: task.temperature,
+      reasoningEffort: task.reasoningEffort,
+    }) as ResolvedTask;
+  }
+  return tasks;
+}
+
 /**
  * Layers documents into the flat object the loop takes, weakest first.
  *
@@ -763,20 +817,7 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
 
-  const model: ModelSpec = {};
-  const extraBody: Record<string, unknown> = {};
-  for (const layer of layers) {
-    for (const [key, value] of Object.entries(layer.model ?? {})) {
-      if (value === undefined) continue;
-      if (key === "extraBody") Object.assign(extraBody, value);
-      else (model as Record<string, unknown>)[key] = value;
-    }
-  }
-
-  const parts = new Map<string, PromptPart>();
-  for (const layer of layers)
-    for (const part of layer.prompt ?? [])
-      parts.set(part.id, { ...(parts.get(part.id) ?? { id: part.id }), ...part });
+  const { model, extraBody } = mergeModel(layers);
 
   // `servers` is replaced whole rather than unioned: a list, an empty list and no list are three
   // answers, and a union of the first two is the first, which loses the scoping the operator
@@ -786,39 +827,19 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
 
   const retry = mergeLayers(layers.map((layer) => layer.retry));
 
-  const merged = new Map<string, TaskSpec>();
-  for (const layer of layers)
-    for (const [key, task] of Object.entries(layer.tasks ?? {}))
-      merged.set(key, {
-        ...(merged.get(key) ?? {}),
-        ...task,
-        endpoint: mergeLayers([merged.get(key)?.endpoint, task.endpoint]),
-      });
-  const tasks: Record<string, ResolvedTask> = {};
-  for (const [key, task] of merged) {
-    // `model: ""` is how a layer declines a task a layer below it configured, so the entry goes
-    // rather than coming back with an empty model for the host to interpret.
-    if (!task.model) continue;
-    tasks[key] = kept({
-      model: task.model,
-      endpoint: asEndpoint(mergeLayers([endpoint, task.endpoint])),
-      maxTokens: task.maxTokens,
-      temperature: task.temperature,
-      reasoningEffort: task.reasoningEffort,
-    }) as ResolvedTask;
-  }
-
-  const hooks = new Map<string, AgentHook>();
-  for (const layer of layers)
-    for (const hook of layer.hooks ?? [])
-      hooks.set(hook.id, { ...(hooks.get(hook.id) ?? hook), ...hook });
-
-  const servers = new Map<string, SpecServer>();
-  for (const layer of layers)
-    for (const server of layer.bundle?.mcpServers ?? []) {
-      const slug = server.slug ?? server.id;
-      if (slug) servers.set(slug, { ...(servers.get(slug) ?? {}), ...server });
-    }
+  const tasks = resolveTasks(layers, endpoint);
+  const prompt = mergeById(
+    layers.flatMap((layer) => layer.prompt ?? []),
+    (part) => part.id,
+  );
+  const hooks = mergeById(
+    layers.flatMap((layer) => layer.hooks ?? []),
+    (hook) => hook.id,
+  );
+  const servers = mergeById(
+    layers.flatMap((layer) => layer.bundle?.mcpServers ?? []),
+    (server) => (server.slug ?? server.id) || undefined,
+  );
 
   const extensions: Record<string, unknown> = {};
   for (const layer of layers) Object.assign(extensions, layer.extensions ?? {});
@@ -829,7 +850,6 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const id = layers.findLast((layer) => layer.id)?.id ?? "";
   const name = layers.findLast((layer) => layer.name)?.name;
   const description = layers.findLast((layer) => layer.description)?.description;
-  const prompt = [...parts.values()];
 
   return {
     id,
@@ -861,8 +881,8 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
       .join("\n\n"),
     prompt,
     tasks,
-    hooks: [...hooks.values()],
-    mcpServers: [...servers.values()],
+    hooks,
+    mcpServers: servers,
     extensions,
     requires: [...requires],
   };

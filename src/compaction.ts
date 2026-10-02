@@ -3,14 +3,14 @@ import type { Endpoint } from "./config.ts";
 import {
   consult,
   type HookContext,
-  type HookNote,
   type HookRunner,
   notify,
+  type OnNote,
   textOf,
   turnMessages,
 } from "./hooks.ts";
-import { messageTokens } from "./retry.ts";
 import { ask, type SideTaskOptions } from "./side-task.ts";
+import { messageTokens } from "./tokens.ts";
 import { holdsDefinitions } from "./tool-loading.ts";
 
 /**
@@ -357,7 +357,7 @@ export interface CompactionRunOptions {
   hooks?: {
     run: HookRunner;
     context: HookContext;
-    onNote?: (note: HookNote) => void;
+    onNote?: OnNote;
     honourVeto?: boolean;
   };
   /**

@@ -1,8 +1,8 @@
 import type OpenAI from "openai";
 import type { Capabilities } from "./capabilities.ts";
-import { requestChars, toolsChars } from "./retry.ts";
+import { getOrCreate } from "./guards.ts";
 import { scoped } from "./scope.ts";
-import { CHARS_PER_TOKEN } from "./tokens.ts";
+import { CHARS_PER_TOKEN, requestChars, toolsChars } from "./tokens.ts";
 
 /**
  * How many characters a token is worth on one model, learned from what its endpoint reports.
@@ -87,15 +87,10 @@ export function calibrate(
   if (ratio < PLAUSIBLE.least || ratio > PLAUSIBLE.most) {
     return charsPerTokenFor(supports, body.model);
   }
-  let models = readings().get(supports);
-  if (!models) {
-    models = new Map();
-    readings().set(supports, models);
-  }
-  const known = models.get(body.model) ?? [];
+  const models = getOrCreate(readings(), supports, () => new Map<string, number[]>());
+  const known = getOrCreate(models, body.model, () => []);
   known.push(ratio);
   if (known.length > READINGS) known.shift();
-  models.set(body.model, known);
   return charsPerTokenFor(supports, body.model);
 }
 

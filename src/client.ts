@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
-import type { Endpoint } from "./config.ts";
+import type { Endpoint, EndpointIdentity, RetryPolicy } from "./config.ts";
 import { isPositive } from "./guards.ts";
-import { scoped } from "./scope.ts";
+import { assignSettings, scoped } from "./scope.ts";
 
 /**
  * The SDK insists on a non-empty key even where the server will not look at it. This is what it
@@ -21,6 +21,22 @@ const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
  */
 export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
+
+/**
+ * How long to wait out a model that is still loading, in milliseconds — `undefined` where the
+ * config has no opinion, and zero where it says not to wait at all.
+ *
+ * Zero rather than the SDK's `undefined` for "no wait", because here absent already means
+ * something else: `runTurn`'s own default.
+ *
+ * @param config Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
+ */
+export const loadingMs = (
+  config: Pick<RetryPolicy, "loadingTimeoutSeconds">,
+): number | undefined =>
+  config.loadingTimeoutSeconds === undefined
+    ? undefined
+    : (limitMs(config.loadingTimeoutSeconds) ?? 0);
 
 /**
  * A client per endpoint, made once and kept.
@@ -114,11 +130,9 @@ const evict = () => {
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
-  for (const [name, value] of Object.entries(options)) {
-    if (isPositive(value)) poolLimits()[name as keyof ClientPoolOptions] = value;
-  }
+  const inForce = assignSettings(poolLimits(), options);
   evict();
-  return { ...poolLimits() };
+  return inForce;
 }
 
 /** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
@@ -284,11 +298,18 @@ const misses = scoped(() => new Map<string, number>());
  * config, and absent and empty already mean the same thing. The timeout is deliberately not in
  * it; see `listings`.
  */
-export const endpointKey = (config: { baseUrl: string; apiKey?: string }) =>
+export const endpointKey = (config: EndpointIdentity) =>
   JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
 
-/** One model on one endpoint, as the caches below key it: stringified, so neither half runs into the other. */
-const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
+/**
+ * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
+ * into the other.
+ *
+ * @param endpoint Whatever the cache names an endpoint by — `endpointKey` here, `endpointId`
+ * where the key may be written down.
+ * @param model The model's name as the endpoint knows it.
+ */
+export const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, model]);
 
 /**
  * `endpointKey` hashed, for the remembered facts that can leave the process.
@@ -300,7 +321,7 @@ const modelKey = (endpoint: string, model: string) => JSON.stringify([endpoint, 
  *
  * @param config Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  */
-export const endpointId = (config: { baseUrl: string; apiKey?: string }) =>
+export const endpointId = (config: EndpointIdentity) =>
   createHash("sha256").update(endpointKey(config)).digest("hex");
 
 /**
@@ -429,17 +450,18 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
  * Asks an endpoint what it serves, and remembers the answer.
  *
  * @param config The endpoint to ask. Remembered per base URL and key, not per model.
+ * @returns The models in order of id, whatever order the endpoint listed them in.
  */
 export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
   const { data } = await getClient(config).models.list();
   const trained = new Set<string>();
-  const models = data
-    .map((model) => {
-      const window = contextLengthOf(model);
-      if (window.trained) trained.add(model.id);
-      return { id: model.id, contextLength: window.contextLength };
-    })
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const models: ModelInfo[] = [];
+  for (const model of data) {
+    const window = contextLengthOf(model);
+    if (window.trained) trained.add(model.id);
+    models.push({ id: model.id, contextLength: window.contextLength });
+  }
+  models.sort((a, b) => a.id.localeCompare(b.id));
   const key = endpointKey(config);
   listings().set(key, models);
   trainedOnly().set(key, trained);
@@ -532,4 +554,35 @@ export function resetClients() {
   served().clear();
   unserved().clear();
   refusals().clear();
+}
+
+/** A base URL as two settings rows would agree on it: trimmed, without the trailing slash. */
+export const sameUrl = (a: string, b: string) =>
+  a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+
+/**
+ * The key to send, where an endpoint may inherit one from the settings it overrides.
+ *
+ * A credential issued for one endpoint has no business being posted to another. A profile that
+ * names its own `baseUrl` and no key of its own is sent `NO_KEY` — not the operator's key, and
+ * not `$OPENAI_API_KEY` — because "I pointed an agent at a friend's server and it sent my OpenAI
+ * key" is not a mistake worth being able to make, and a local server wants no key anyway. One on
+ * the same endpoint inherits the key as it inherits everything else, and the environment is the
+ * last word on the endpoint that was configured rather than overridden.
+ *
+ * @param own The endpoint as the agent or profile states it. Its own key always wins. An empty or
+ * absent `baseUrl` is one that inherits the endpoint too.
+ * @param inherited The settings it overrides. Absent treats `own` as the configured endpoint, so
+ * only its key and the environment's are in play.
+ * @param env Where `OPENAI_API_KEY` is read from, `process.env` by default.
+ */
+export function resolveApiKey(
+  own: { baseUrl?: string; apiKey?: string },
+  inherited?: EndpointIdentity,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (own.apiKey) return own.apiKey;
+  const baseUrl = own.baseUrl?.trim();
+  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) return NO_KEY;
+  return inherited?.apiKey || env.OPENAI_API_KEY || NO_KEY;
 }

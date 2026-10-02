@@ -1,6 +1,6 @@
-import { isPositive } from "./guards.ts";
+import { getOrCreate } from "./guards.ts";
 import type { TokenLedger } from "./ledger.ts";
-import { scoped } from "./scope.ts";
+import { assignSettings, scoped } from "./scope.ts";
 import type { TurnUsage } from "./stream.ts";
 import { LOAD_TOOLS } from "./tool-loading.ts";
 
@@ -96,11 +96,7 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
-  const { limits } = bus();
-  for (const [name, value] of Object.entries(options)) {
-    if (isPositive(value)) limits[name as keyof EventBusOptions] = value;
-  }
-  return { ...limits };
+  return assignSettings(bus().limits, options);
 }
 
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
@@ -251,19 +247,14 @@ interface Stream {
   ended: boolean;
 }
 
-const streamFor = ({ streams }: Bus, runId: string): Stream => {
-  const existing = streams.get(runId);
-  if (existing) return existing;
-  const stream: Stream = {
+const streamFor = ({ streams }: Bus, runId: string): Stream =>
+  getOrCreate(streams, runId, () => ({
     events: [],
     listeners: new Set(),
     seq: 0,
     touched: Date.now(),
     ended: false,
-  };
-  streams.set(runId, stream);
-  return stream;
-};
+  }));
 
 /**
  * Drops the streams nobody is reading and nothing is writing to.
@@ -321,6 +312,8 @@ export function endRun(runId: string) {
  *
  * @param runId The run this belongs to. Created on first use.
  * @param input The event. `kind` is required; `runId` and `seq` are not a caller's to set.
+ * @returns The event as it was recorded: its `seq` in the run, its time, and every unset field
+ * filled in.
  */
 export function emit(runId: string, input: RunEventInput): RunEvent {
   const held = bus();
@@ -368,6 +361,27 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
   // then the caller may be outside the runtime whose run this is.
   return watching(bus(), runId, signal);
 }
+
+/**
+ * The notice a watcher that fell behind is given in place of the events it missed.
+ *
+ * One short of the event it precedes, which is the last seq that went missing. Sharing a seq
+ * with the event behind it made the notice indistinguishable from a duplicate, and de-duplicating
+ * on `seq` is the one thing the sequence is documented for — so a client doing exactly that
+ * dropped either the gap notice or the event it explains. Inside the gap there is nothing to
+ * collide with: those seqs reach no watcher.
+ */
+const gapNotice = (runId: string, gap: number, next: RunEvent): RunEvent =>
+  stamp(
+    {
+      kind: "notice",
+      text: `${gap} event(s) dropped: this watcher fell too far behind`,
+      step: next.step,
+    },
+    runId,
+    next.seq - 1,
+    next.at,
+  );
 
 async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
   const { limits, streams } = held;
@@ -423,24 +437,9 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
         if (dropped > 0) {
           // Said once per gap rather than per event, and before the event that follows it, so a
           // client reading `seq` sees why the numbers jump instead of assuming it lost its place.
-          //
-          // One short of the event it precedes, which is the last seq that went missing. Sharing
-          // a seq with the event behind it made the notice indistinguishable from a duplicate,
-          // and de-duplicating on `seq` is the one thing the sequence is documented for — so a
-          // client doing exactly that dropped either the gap notice or the event it explains.
-          // Inside the gap there is nothing to collide with: those seqs reach no watcher.
           const gap = dropped;
           dropped = 0;
-          yield stamp(
-            {
-              kind: "notice",
-              text: `${gap} event(s) dropped: this watcher fell too far behind`,
-              step: event.step,
-            },
-            runId,
-            event.seq - 1,
-            event.at,
-          );
+          yield gapNotice(runId, gap, event);
         }
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
@@ -465,11 +464,10 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // Against `stream` rather than the id: this generator may have outlived its own entry — a
     // sweep or an `endRun` drops it and a later `emit` files the same run under a new one — and
     // the last watcher of the old stream has no business deleting the new one.
-    if (
-      streams.get(runId) === stream &&
-      stream.listeners.size === 0 &&
-      (stream.ended || stream.events.length === 0)
-    ) {
+    const stillFiled = streams.get(runId) === stream;
+    const unwatched = stream.listeners.size === 0;
+    const nothingMoreToSay = stream.ended || stream.events.length === 0;
+    if (stillFiled && unwatched && nothingMoreToSay) {
       streams.delete(runId);
     }
   }
@@ -534,7 +532,8 @@ export function fold(events: RunEvent[]): RunEvent[] {
   for (const event of events) {
     const last = blocks[blocks.length - 1];
     const mergeable = event.kind === "thinking" || event.kind === "output";
-    if (last && mergeable && last.kind === event.kind && last.step === event.step) {
+    const continuesLast = last && last.kind === event.kind && last.step === event.step;
+    if (mergeable && continuesLast) {
       last.seq = event.seq;
       last.at = event.at;
       parts.push(event.text);
@@ -683,9 +682,7 @@ export function runMetrics(
     if (event.kind === "step") metrics.steps++;
     else if (event.kind === "tool-call") {
       if (event.name === LOAD_TOOLS) metrics.loadCalls++;
-      const waiting = pending.get(event.name) ?? [];
-      waiting.push(event.at);
-      pending.set(event.name, waiting);
+      getOrCreate(pending, event.name, () => []).push(event.at);
     } else if (event.kind === "tool-result") {
       metrics.toolCalls++;
       if (event.ok === false)

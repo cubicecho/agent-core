@@ -5,8 +5,9 @@ import {
   modelCapabilitiesFor,
   OPTIMISTIC_MODEL,
 } from "./capabilities.ts";
+import { modelKey } from "./client.ts";
 import { isRecord } from "./guards.ts";
-import { hintKey, refusedHints } from "./side-task.ts";
+import { refusedHints } from "./side-task.ts";
 
 /**
  * What endpoints and models refused, carried across a restart.
@@ -175,7 +176,7 @@ export function importCapabilities(snapshot: unknown): boolean {
         if (listed.length) refused.supportedEfforts = listed;
       }
       latchInto(refused.refusedFields, model.refusedFields);
-      if (model.thinkingHints === false) refusedHints().add(hintKey(id, name));
+      if (model.thinkingHints === false) refusedHints().add(modelKey(id, name));
     }
   }
   return true;

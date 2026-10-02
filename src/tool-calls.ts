@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { isRecord } from "./guards.ts";
+import { THINK_FENCE } from "./thinking.ts";
 
 /**
  * Reading what a model meant by a tool call when it did not write one cleanly.
@@ -22,6 +23,7 @@ export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
  * and try again.
  */
 export class ToolArgumentsError extends Error {
+  override readonly name = "ToolArgumentsError";
   /** Whether the model ran out of room or wrote something unreadable. */
   readonly kind: "truncated" | "malformed";
 
@@ -31,7 +33,6 @@ export class ToolArgumentsError extends Error {
    */
   constructor(kind: "truncated" | "malformed", message: string) {
     super(message);
-    this.name = "ToolArgumentsError";
     this.kind = kind;
   }
 }
@@ -342,8 +343,8 @@ export function recoverToolCalls(
   content: string,
   { names = [] }: { names?: Iterable<string> } = {},
 ): { content: string; toolCalls: ToolCall[] } {
-  const thought = content.toLowerCase().lastIndexOf("</think>");
-  const from = thought < 0 ? 0 : thought + "</think>".length;
+  const thought = content.toLowerCase().lastIndexOf(THINK_FENCE.close);
+  const from = thought < 0 ? 0 : thought + THINK_FENCE.close.length;
   const tail = content.slice(from);
   let found = [...taggedCalls(tail), ...mistralCalls(tail), ...pythonTagCalls(tail)];
   if (!found.length) found = bareCalls(tail, new Set(names));
@@ -367,4 +368,55 @@ export function recoverToolCalls(
   }
   rest += tail.slice(cursor);
   return { content: `${content.slice(0, from)}${rest}`.trim(), toolCalls };
+}
+
+/**
+ * One call the model made, as `dispatch` and `onToolCall` are handed it.
+ *
+ * A `call_tool` arrives as the tool it names — that tool's name and arguments, under the
+ * `call_tool`'s id — so a dispatcher is the same in every discovery mode.
+ */
+export interface ToolCallRequest {
+  id: string;
+  name: string;
+  /**
+   * Parsed by `parseToolArguments`, repairs and all. Empty for a call whose arguments could not be
+   * read, which only `onToolCall` is ever handed.
+   */
+  args: Record<string, unknown>;
+  /**
+   * The arguments as the model wrote them, before any repair. Through `call_tool`, the inner
+   * arguments as JSON text.
+   */
+  raw: string;
+}
+
+/** What one tool call did, in the order the model asked. */
+export interface ToolCallOutcome {
+  /**
+   * The id the model's reply gave the call, which is what tells two calls to one tool apart.
+   * Distinct within a step — `streamTurn` mints one where the server sent none or repeated one —
+   * but nothing stops a server using the same id again in a later step. `runAgentLoop` always
+   * sets it; optional so an outcome built before it existed still compiles.
+   */
+  id?: string;
+  /** The tool that was called. For a `call_tool`, the tool it named. */
+  name: string;
+  /** False when the arguments did not parse, the tool threw, or `load_tools` loaded nothing. */
+  ok: boolean;
+}
+
+/**
+ * One call's whole answer, as `onToolResult` is handed it.
+ *
+ * The `tool-result` event carries the same answer cut by `preview`, which is right for a readout
+ * and wrong for a host that renders or stores the result: this is the text the model reads.
+ */
+export interface ToolCallResult extends ToolCallOutcome {
+  id: string;
+  /**
+   * What went into the transcript for this call, uncut: what the tool returned, what it threw, the
+   * `load_tools` answer, or why the arguments could not be read.
+   */
+  content: string;
 }

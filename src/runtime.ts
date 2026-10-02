@@ -1,4 +1,4 @@
-import { preselect, runAgentLoop } from "./agent-loop.ts";
+import { runAgentLoop } from "./agent-loop.ts";
 import { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
 import { capabilitiesFor, expireCapabilities, resetCapabilities } from "./capabilities.ts";
 import {
@@ -31,6 +31,7 @@ import {
   resetHooks,
   withContext,
 } from "./hooks.ts";
+import { preselect } from "./preselect.ts";
 import { resetAll } from "./reset.ts";
 import { runTurn } from "./run-turn.ts";
 import { inScope, rootScope, type Scope } from "./scope.ts";

@@ -2,8 +2,8 @@ import type OpenAI from "openai";
 import { type Capabilities, modelCapabilitiesFor } from "./capabilities.ts";
 import { errorMessage } from "./errors.ts";
 import { ContextOverflow, refusesRequest } from "./retry.ts";
-import { type RequestBuilder, type RunTurnOptions, runTurn } from "./run-turn.ts";
-import type { Turn, TurnUsage } from "./stream.ts";
+import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from "./run-turn.ts";
+import { addCounts, type Turn, type TurnUsage } from "./stream.ts";
 
 /**
  * Picking up an answer the token ceiling cut off, instead of keeping half of it.
@@ -79,10 +79,7 @@ const RATES = [
 function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
   const joined: TurnUsage = {
     ...first,
-    prompt: first.prompt + next.prompt,
-    completion: first.completion + next.completion,
-    total: first.total + next.total,
-    cached: first.cached + next.cached,
+    ...addCounts(first, next),
     continuations: (first.continuations ?? 0) + 1,
   };
   for (const field of ADDED) {
@@ -97,8 +94,8 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
     const aMs = first[over];
     const bMs = next[over];
     // Tokens over time for both together, which is each rate weighted by the time it held.
-    if (a !== undefined && b !== undefined && aMs !== undefined && bMs !== undefined && aMs + bMs)
-      joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
+    const bothTimed = a !== undefined && b !== undefined && aMs !== undefined && bMs !== undefined;
+    if (bothTimed && aMs + bMs) joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
     else delete joined[rate];
   }
   return joined;
@@ -139,7 +136,7 @@ export async function continueTurn(
 ): Promise<Turn> {
   const refused =
     options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
-  const who = options.model ?? "the model";
+  const who = modelLabel(options.model);
   let joined = turn;
   for (let count = 0; count < maxContinuations && isContinuable(joined); count++) {
     if (refused?.assistantPrefill === false) break;

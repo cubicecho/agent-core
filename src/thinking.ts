@@ -128,11 +128,11 @@ export class FenceSplitter {
       const found = this.#next(rest);
       if (!found) {
         const keep = this.#partialTail(rest);
-        this.#emit(parts, rest.slice(0, rest.length - keep));
+        this.#emitInto(parts, rest.slice(0, rest.length - keep));
         this.#held = rest.slice(rest.length - keep);
         break;
       }
-      this.#emit(parts, rest.slice(0, found.at));
+      this.#emitInto(parts, rest.slice(0, found.at));
       rest = rest.slice(found.at + found.marker.length);
       this.#take(found.marker);
     }
@@ -142,7 +142,7 @@ export class FenceSplitter {
   /** Releases whatever was held back as a possible tag, now that no more is coming. */
   finish(): Split[] {
     const parts: Split[] = [];
-    this.#emit(parts, this.#held);
+    this.#emitInto(parts, this.#held);
     this.#held = "";
     return parts;
   }
@@ -158,8 +158,9 @@ export class FenceSplitter {
     for (const marker of this.#candidates()) {
       const at = text.indexOf(marker);
       if (at === -1) continue;
-      if (!best || at < best.at || (at === best.at && marker.length > best.marker.length))
-        best = { at, marker };
+      const earlier = !best || at < best.at;
+      const longerAtTheSamePlace = best && at === best.at && marker.length > best.marker.length;
+      if (earlier || longerAtTheSamePlace) best = { at, marker };
     }
     return best;
   }
@@ -197,7 +198,7 @@ export class FenceSplitter {
     if (closes) this.#seenFence = true;
   }
 
-  #emit(parts: Split[], text: string) {
+  #emitInto(parts: Split[], text: string) {
     if (!text) return;
     const kind = this.#inside ? "reasoning" : "output";
     this[kind] += text;

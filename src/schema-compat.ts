@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { isRecord } from "./guards.ts";
+import { getOrCreate, isRecord } from "./guards.ts";
 
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.
@@ -80,22 +80,22 @@ function asSchema(node: unknown): unknown {
 
 /** Recursively rewrites the shapes llama.cpp's grammar converter cannot represent. */
 function normalize(node: Schema): Schema {
-  const out: Schema = {};
+  const built: Schema = {};
   for (const [key, value] of Object.entries(node)) {
     // `type: ["string", "null"]` — the converter only accepts a single string type.
     if (key === "type" && Array.isArray(value)) {
       const names = value.filter((item): item is string => typeof item === "string");
       const concrete = names.filter((name) => name !== "null");
-      if (names.includes("null")) out.nullable = true;
-      if (concrete.length === 1) out.type = concrete[0];
-      else if (concrete.length > 1) out.anyOf = concrete.map((name) => ({ type: name }));
-      else out.type = "null";
+      if (names.includes("null")) built.nullable = true;
+      if (concrete.length === 1) built.type = concrete[0];
+      else if (concrete.length > 1) built.anyOf = concrete.map((name) => ({ type: name }));
+      else built.type = "null";
     } else {
-      out[key] = mapChildren(key, value, asSchema);
+      built[key] = mapChildren(key, value, asSchema);
     }
   }
 
-  collapseNullableUnion(out);
+  const out = collapseNullableUnion(built);
 
   // A grammar is context-free; lookaround is not expressible in one at all, so no converter
   // can accept it. Dropping it costs one advisory constraint on one string field.
@@ -118,16 +118,18 @@ function normalize(node: Schema): Schema {
  * optional field. Optionality already lives in the parent's `required`, so keep the one real
  * branch. A union with two real branches is meaningful and is left alone.
  */
-function collapseNullableUnion(node: Schema) {
+function collapseNullableUnion(node: Schema): Schema {
+  let out = node;
   for (const key of ["anyOf", "oneOf"] as const) {
-    const variants = node[key];
+    const variants = out[key];
     if (!Array.isArray(variants)) continue;
     const concrete = variants.filter((item) => !(isRecord(item) && item.type === "null"));
     if (concrete.length !== 1 || concrete.length === variants.length) continue;
 
-    delete node[key];
-    Object.assign(node, { nullable: true, ...(isRecord(concrete[0]) ? concrete[0] : {}) });
+    const { [key]: _collapsed, ...rest } = out;
+    out = { ...rest, nullable: true, ...(isRecord(concrete[0]) ? concrete[0] : {}) };
   }
+  return out;
 }
 
 /** Combinators at the top level of a parameters schema; strict backends reject them outright. */
@@ -195,13 +197,13 @@ function inlineRootRef(parameters: Schema): Schema {
  * One that resolves nowhere is not something to guess at, and falls through to `pruneRequired`,
  * which at least keeps the result self-consistent.
  */
-function mergeRootAllOf(out: Schema) {
-  const branches = out.allOf;
-  if (!Array.isArray(branches)) return;
+function mergeRootAllOf(schema: Schema): Schema {
+  const branches = schema.allOf;
+  if (!Array.isArray(branches)) return schema;
 
-  const defs = poolsOf(out);
-  const properties: Schema = isRecord(out.properties) ? { ...out.properties } : {};
-  const required = new Set(requiredOf(out));
+  const defs = poolsOf(schema);
+  const properties: Schema = isRecord(schema.properties) ? { ...schema.properties } : {};
+  const required = new Set(requiredOf(schema));
   for (const raw of branches) {
     const branch = resolveRef(raw, defs);
     if (!branch) continue;
@@ -209,9 +211,8 @@ function mergeRootAllOf(out: Schema) {
     for (const name of requiredOf(branch)) required.add(name);
   }
 
-  if (!Object.keys(properties).length) return;
-  out.properties = properties;
-  if (required.size) out.required = [...required];
+  if (!Object.keys(properties).length) return schema;
+  return { ...schema, properties, ...(required.size ? { required: [...required] } : {}) };
 }
 
 /**
@@ -228,8 +229,9 @@ function mergeRootAllOf(out: Schema) {
  * this schema's own pools first. One that resolves nowhere still cannot vouch for a name, so its
  * presence alone empties `required`.
  */
-function mergeRootUnion(out: Schema) {
-  const defs = poolsOf(out);
+function mergeRootUnion(schema: Schema): Schema {
+  const defs = poolsOf(schema);
+  let out = schema;
   for (const key of ["anyOf", "oneOf"] as const) {
     const branches = out[key];
     if (!Array.isArray(branches)) continue;
@@ -251,9 +253,13 @@ function mergeRootUnion(out: Schema) {
     }
 
     if (!Object.keys(properties).length) continue;
-    out.properties = { ...(isRecord(out.properties) ? out.properties : {}), ...properties };
-    if (shared?.size) out.required = [...new Set([...requiredOf(out), ...shared])];
+    out = {
+      ...out,
+      properties: { ...(isRecord(out.properties) ? out.properties : {}), ...properties },
+      ...(shared?.size ? { required: [...new Set([...requiredOf(out), ...shared])] } : {}),
+    };
   }
+  return out;
 }
 
 /**
@@ -289,9 +295,9 @@ function collectRefs(node: unknown, into: Set<string>) {
  * name another; a cycle among them terminates on the `has` check, whether or not anything
  * outside it still refers in.
  */
-function pruneDefs(out: Schema) {
-  const pools = POOL_KEYS.filter((key) => isRecord(out[key]));
-  if (!pools.length) return;
+function pruneDefs(schema: Schema): Schema {
+  const pools = POOL_KEYS.filter((key) => isRecord(schema[key]));
+  if (!pools.length) return schema;
 
   const live: Record<string, Set<string>> = {};
   const visit = (node: unknown) => {
@@ -301,7 +307,7 @@ function pruneDefs(out: Schema) {
       const target = LOCAL_POINTER.exec(pointer);
       if (!target) continue;
       const [, poolKey, name] = target;
-      const pool = out[poolKey];
+      const pool = schema[poolKey];
       if (!isRecord(pool) || !(name in pool)) continue;
       live[poolKey] ??= new Set<string>();
       const names = live[poolKey];
@@ -313,32 +319,37 @@ function pruneDefs(out: Schema) {
 
   // The pools themselves are not roots: a definition is reached from the schema body, or by
   // another definition that was, or not at all.
-  const body = { ...out };
+  const body = { ...schema };
   for (const key of pools) delete body[key];
   visit(body);
 
+  let pruned = schema;
   for (const key of pools) {
     const names = live[key];
     if (!names?.size) {
-      delete out[key];
+      const { [key]: _unreached, ...rest } = pruned;
+      pruned = rest;
       continue;
     }
-    const pool = out[key] as Schema;
+    const pool = schema[key] as Schema;
     if (names.size === Object.keys(pool).length) continue;
-    out[key] = Object.fromEntries(Object.entries(pool).filter(([name]) => names.has(name)));
+    const reached = Object.entries(pool).filter(([name]) => names.has(name));
+    pruned = { ...pruned, [key]: Object.fromEntries(reached) };
   }
+  return pruned;
 }
 
 /**
  * A required argument that is not in `properties` is one no caller can supply and no strict
  * validator will accept. Anything the rewrites above removed, `required` may still name.
  */
-function pruneRequired(out: Schema) {
-  if (!Array.isArray(out.required)) return;
-  const properties = isRecord(out.properties) ? out.properties : {};
-  const kept = out.required.filter((name) => typeof name === "string" && name in properties);
-  if (kept.length) out.required = kept;
-  else delete out.required;
+function pruneRequired(schema: Schema): Schema {
+  if (!Array.isArray(schema.required)) return schema;
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  const kept = schema.required.filter((name) => typeof name === "string" && name in properties);
+  if (kept.length) return { ...schema, required: kept };
+  const { required: _unmet, ...rest } = schema;
+  return rest;
 }
 
 /**
@@ -355,16 +366,12 @@ function pruneRequired(out: Schema) {
  */
 export function sanitizeSchema(schema: unknown): Record<string, unknown> {
   if (!isRecord(schema)) return EMPTY_OBJECT();
-  const out = normalize(inlineRootRef(schema));
-
-  mergeRootAllOf(out);
-  mergeRootUnion(out);
+  // A copy of its own, so what is deleted and set below is this function's and nobody else's.
+  const out = { ...mergeRootUnion(mergeRootAllOf(normalize(inlineRootRef(schema)))) };
   for (const key of TOP_LEVEL_COMBINATORS) delete out[key];
   if (out.type !== "object") out.type = "object";
   if (!isRecord(out.properties)) out.properties = {};
-  pruneRequired(out);
-  pruneDefs(out);
-  return out;
+  return pruneDefs(pruneRequired(out));
 }
 
 /** Rewrites one tool's parameters, leaving a non-function tool alone. */
@@ -406,14 +413,7 @@ const through = (
   cache: WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>,
   tools: OpenAI.ChatCompletionTool[],
   fn: (parameters: unknown) => unknown,
-) =>
-  tools.map((tool) => {
-    const hit = cache.get(tool);
-    if (hit) return hit;
-    const built = mapTool(tool, fn);
-    cache.set(tool, built);
-    return built;
-  });
+) => tools.map((tool) => getOrCreate(cache, tool, () => mapTool(tool, fn)));
 
 /**
  * Tool definitions a strict server will accept, remembered per definition object.

@@ -3,7 +3,7 @@ import type OpenAI from "openai";
 import { errorMessage } from "./errors.ts";
 import { isPositive } from "./guards.ts";
 import { type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
-import { scoped } from "./scope.ts";
+import { assignSettings, scoped } from "./scope.ts";
 import { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
 
 /**
@@ -88,6 +88,9 @@ export interface HookOutcome {
   veto?: boolean;
 }
 
+/** Hears each `HookNote` as it is made, the one signature every function that raises them takes. */
+export type OnNote = (note: HookNote) => void;
+
 /**
  * One hook's line for whoever is watching: the context it added, or why it added none. A hook
  * that worked and added nothing gets no note — a remember that succeeded is not news.
@@ -167,6 +170,10 @@ const HOOK_DEFAULTS: Required<HookOptions> = {
 /** What is in force now. Read where it is used, so a change applies from the next request. */
 const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }));
 
+/** Whether a value may be a hook setting: a budget above zero, or a preface that is a string. */
+const usableHookSetting = (value: unknown, name: string) =>
+  name === "preface" ? typeof value === "string" : name === "contextTokens" && isPositive(value);
+
 /**
  * Changes what hooks are held to, for a process whose windows are not the size these defaults
  * were chosen for, or whose host wants its own name above the context.
@@ -183,10 +190,7 @@ const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }))
  * @returns Everything in force afterwards, including what this call did not change.
  */
 export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
-  const { contextTokens, preface } = options;
-  if (isPositive(contextTokens)) hookSettings().contextTokens = contextTokens;
-  if (typeof preface === "string") hookSettings().preface = preface;
-  return { ...hookSettings() };
+  return assignSettings(hookSettings(), options, usableHookSetting);
 }
 
 /**
@@ -470,11 +474,7 @@ export async function gather(
   run: HookRunner,
   events: readonly HookEvent[],
   context: HookContext,
-  {
-    signal,
-    onNote,
-    maxTokens,
-  }: { signal?: AbortSignal; onNote?: (note: HookNote) => void; maxTokens?: number } = {},
+  { signal, onNote, maxTokens }: { signal?: AbortSignal; onNote?: OnNote; maxTokens?: number } = {},
 ): Promise<Gathered> {
   const outcomes = await Promise.all(events.map((event) => runSafely(run, event, context, signal)));
   const gathered = assembleContext(outcomes.flat(), maxTokens);
@@ -501,7 +501,7 @@ export async function notify(
   run: HookRunner,
   event: HookEvent,
   context: HookContext,
-  onNote?: (note: HookNote) => void,
+  onNote?: OnNote,
 ): Promise<HookNote[]> {
   const outcomes = await runSafely(run, event, context);
   const notes = outcomes.filter((outcome) => !outcome.ok).map(failureNote);
@@ -528,7 +528,7 @@ export async function consult(
   run: HookRunner,
   event: HookEvent,
   context: HookContext,
-  onNote?: (note: HookNote) => void,
+  onNote?: OnNote,
 ): Promise<{ notes: HookNote[]; vetoed: boolean }> {
   const outcomes = await runSafely(run, event, context);
   const notes: HookNote[] = [];

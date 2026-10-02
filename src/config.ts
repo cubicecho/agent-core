@@ -47,6 +47,28 @@ export interface Endpoint {
   firstTokenSeconds?: number;
 }
 
+/**
+ * What makes an endpoint the one it is: where it lives and whose key reaches it.
+ *
+ * The narrow half of `Endpoint`, for everything that only has to tell two endpoints apart — the
+ * client pool, the capability latches, a side task borrowing the agent's key. The timeouts are
+ * not in it, since a different patience is not a different server.
+ */
+export interface EndpointIdentity {
+  /** The base URL as given. Compared as written, so a trailing slash is another endpoint. */
+  baseUrl: string;
+  /** Absent and empty mean the same: no key, which `endpointKey` reads as `NO_KEY`. */
+  apiKey?: string;
+}
+
+/**
+ * The request fields `extraBody` may not set, because the loop's request is built around them.
+ *
+ * Here beside `extraBody` rather than with `buildBody`, which is what enforces it, because `spec`
+ * says so on import as well and has to stay loadable in a browser.
+ */
+export const RESERVED_BODY_FIELDS: readonly string[] = ["model", "messages", "stream", "tools"];
+
 /** What to ask the model for. */
 export interface ModelParams {
   model: string;
@@ -103,9 +125,9 @@ export interface RetryPolicy {
 /**
  * A whole agent configuration — every part, plus the two fields that belong to no group.
  *
- * Provided for callers that want one name for the lot. Nothing in this package asks for it:
- * the functions take the parts, so a caller missing `contextLength` can still use all of them
- * bar the window guard.
+ * Provided for callers that want one name for the lot. No function in this package asks for it:
+ * they take the parts, so a caller missing `contextLength` can still use all of them bar the
+ * window guard. `ResolvedAgent` extends it, which is how a resolved spec satisfies every one.
  */
 export interface AgentConfig extends Endpoint, ModelParams, ToolPolicy, RetryPolicy {
   /** The agent's own standing instruction, if it has one. */

@@ -1,5 +1,7 @@
 import { endpointId } from "./client.ts";
+import type { EndpointIdentity } from "./config.ts";
 import { errorMessage } from "./errors.ts";
+import { getOrCreate } from "./guards.ts";
 import { isGrammarError } from "./schema-compat.ts";
 import { scoped } from "./scope.ts";
 import type { Produced } from "./stream.ts";
@@ -167,6 +169,14 @@ export const MODEL_FLAGS = Object.keys(OPTIMISTIC_MODEL) as ModelFlag[];
  * behind it, including the `models` map underneath, which is the level where two keys through
  * one host are most likely to differ at all.
  */
+/**
+ * Hears one line of operator text: what was given up on, what is being waited out, what was chosen.
+ *
+ * One name for it because the same listener is handed down from the loop through a turn to
+ * `negotiate` and across to every side task, and each had spelled the signature out.
+ */
+export type OnNotice = (message: string) => void;
+
 const capabilities = scoped(() => new Map<string, Capabilities>());
 
 /**
@@ -198,12 +208,11 @@ export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities 
  * since that is the only name the refusal is about.
  */
 export function modelCapabilitiesFor(supports: Capabilities, model: string): ModelCapabilities {
-  let known = supports.models.get(model);
-  if (!known) {
-    known = { ...OPTIMISTIC_MODEL, refusedFields: new Set(), refusedEfforts: new Set() };
-    supports.models.set(model, known);
-  }
-  return known;
+  return getOrCreate(supports.models, model, () => ({
+    ...OPTIMISTIC_MODEL,
+    refusedFields: new Set(),
+    refusedEfforts: new Set(),
+  }));
 }
 
 /** Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`. */
@@ -214,12 +223,12 @@ export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabi
  * `importCapabilities` reaches an endpoint it has only a digest for.
  */
 export function capabilitiesById(id: string): Capabilities {
-  let known = capabilities().get(id);
-  if (!known) {
-    known = { strictSchemas: true, usageInStream: true, models: new Map(), since: Date.now() };
-    capabilities().set(id, known);
-  }
-  return known;
+  return getOrCreate(capabilities(), id, () => ({
+    strictSchemas: true,
+    usageInStream: true,
+    models: new Map(),
+    since: Date.now(),
+  }));
 }
 
 /**
@@ -235,7 +244,7 @@ export function capabilitiesById(id: string): Capabilities {
  * every endpoint, which is what tests and `resetAll` mean by it.
  * @returns Whether there was anything to forget.
  */
-export function resetCapabilities(endpoint?: { baseUrl: string; apiKey?: string }): boolean {
+export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
   if (!endpoint) {
     const held = capabilities().size > 0;
     capabilities().clear();
@@ -570,7 +579,7 @@ export interface NegotiateOptions {
    * line for every model on the endpoint, and the operator who later asks why the setting still
    * reads `high` has no way to tell which one it was about.
    */
-  onNotice?: (message: string) => void;
+  onNotice?: OnNotice;
   /**
    * Which model this request is for, by the name the endpoint knows it as.
    *

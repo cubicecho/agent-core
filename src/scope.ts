@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { getOrCreate, isPositive } from "./guards.ts";
 
 /**
  * Everything one runtime remembers: each module's state, under a key only that module holds.
@@ -50,13 +51,35 @@ export interface Scoped<T> {
 export function scoped<T>(create: () => T): Scoped<T> {
   const key = Symbol();
   const read = (): T => {
-    const scope = currentScope();
-    if (!scope.has(key)) scope.set(key, create());
-    return scope.get(key) as T;
+    return getOrCreate(currentScope(), key, create) as T;
   };
   return Object.assign(read, {
     reset: () => {
       currentScope().delete(key);
     },
   });
+}
+
+/**
+ * Writes what a caller gave onto the settings in force, field by field, skipping what is unusable.
+ *
+ * The body of every `configure*`: a module's settings are one object per runtime, read where they
+ * are used, so writing a field onto it is what makes the change apply from the next read. A field
+ * that fails its check keeps what it had, which is how a half-built config narrows nothing.
+ *
+ * @param held The settings in force. Written to — the same object the module goes on reading.
+ * @param options What to change. A field left out is left alone.
+ * @param usable Whether a value may be written under a name. A number above zero by default,
+ * which is what a limit has to be.
+ * @returns A copy of everything in force afterwards, including what this call did not change.
+ */
+export function assignSettings<T extends object>(
+  held: T,
+  options: Partial<T>,
+  usable: (value: unknown, name: string) => boolean = isPositive,
+): T {
+  for (const [name, value] of Object.entries(options)) {
+    if (usable(value, name)) held[name as keyof T] = value as T[keyof T];
+  }
+  return { ...held };
 }

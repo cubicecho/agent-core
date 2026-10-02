@@ -15,16 +15,8 @@ export {
   type AgentLoopOptions,
   type AgentLoopRequest,
   type AgentLoopResult,
-  buildBody,
-  preselect,
-  preview,
-  resolveApiKey,
   runAgentLoop,
   type StepWindow,
-  type ToolCallOutcome,
-  type ToolCallRequest,
-  type ToolCallResult,
-  taskCall,
 } from "./agent-loop.ts";
 export { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
 export {
@@ -53,6 +45,7 @@ export {
   type ModelInfo,
   NO_KEY,
   resetClients,
+  resolveApiKey,
   servedWindow,
   timeoutMs,
 } from "./client.ts";
@@ -146,29 +139,35 @@ export {
   type TokenLedger,
   tokensBetween,
 } from "./ledger.ts";
+export {
+  KEYWORD_DROPOFF,
+  KEYWORD_MIN_SCORE,
+  type KeywordPreselection,
+  type KeywordPreselectOptions,
+  PRESELECT_SCHEMA,
+  PRESELECT_SYSTEM,
+  preselect,
+  preselectByKeywords,
+  preselectInput,
+  preselection,
+  preselectSystem,
+  type ToolMatch,
+} from "./preselect.ts";
+export { buildBody } from "./request-body.ts";
 export { resetAll } from "./reset.ts";
 export {
   backoffMs,
-  type ContextBreakdown,
-  type ContextBreakdownOptions,
   ContextOverflow,
-  compact,
-  contextChars,
-  contextTokens,
   EndpointSilent,
   isModelLoading,
   isOverflow,
   isTransient,
   LOADING_POLL_MS,
   LOADING_TIMEOUT_MS,
-  messageTokens,
-  requestChars,
-  requestTokens,
   SMALLEST_LIKELY_WINDOW,
   sleep,
-  type TokenEstimateOptions,
-  toolsChars,
 } from "./retry.ts";
+export { preview } from "./run-calls.ts";
 export { type RunTurnOptions, runTurn } from "./run-turn.ts";
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from "./runtime.ts";
 export {
@@ -189,6 +188,7 @@ export {
   type SideTask,
   type SideTaskInput,
   type SideTaskOptions,
+  taskCall,
   tryAsk,
 } from "./side-task.ts";
 export {
@@ -241,12 +241,28 @@ export {
   stripThinking,
   THINK_FENCE,
 } from "./thinking.ts";
-export { CHARS_PER_TOKEN, estimateTokens } from "./tokens.ts";
+export {
+  CHARS_PER_TOKEN,
+  type ContextBreakdown,
+  type ContextBreakdownOptions,
+  compact,
+  contextChars,
+  contextTokens,
+  estimateTokens,
+  messageTokens,
+  requestChars,
+  requestTokens,
+  type TokenEstimateOptions,
+  toolsChars,
+} from "./tokens.ts";
 export {
   parseToolArguments,
   recoverToolCalls,
   ToolArgumentsError,
   type ToolCall,
+  type ToolCallOutcome,
+  type ToolCallRequest,
+  type ToolCallResult,
 } from "./tool-calls.ts";
 export {
   CALL_TOOL,
@@ -256,10 +272,6 @@ export {
   expandNames,
   holdsDefinitions,
   inCatalog,
-  KEYWORD_DROPOFF,
-  KEYWORD_MIN_SCORE,
-  type KeywordPreselection,
-  type KeywordPreselectOptions,
   LOAD_TOOLS,
   LOAD_TOOLS_DEFINITION,
   loadedTools,
@@ -267,18 +279,11 @@ export {
   MAX_CARRIED,
   MAX_PER_LOAD,
   orderTools,
-  PRESELECT_SCHEMA,
-  PRESELECT_SYSTEM,
   PROXY_TOOLS,
-  preselectByKeywords,
-  preselectInput,
-  preselection,
-  preselectSystem,
   proxiedCall,
   proxyCatalogPrompt,
   proxyLoadResult,
   requestedNames,
   shownCall,
-  type ToolMatch,
   type ToolOrder,
 } from "./tool-loading.ts";

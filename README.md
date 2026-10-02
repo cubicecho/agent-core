@@ -23,28 +23,31 @@ only, Node >=22.
 | Module | What it does |
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`, and `sanitizeSchema` and `relaxSchema` for a schema that is not a tool's. |
-| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus `preselectByKeywords`, which picks from it without a model, and the proxied form of the same thing — `PROXY_TOOLS`, `proxyLoadResult`, `proxiedCall` — for a server whose prompt cache a growing tool array throws away. |
+| `tool-loading` | On-demand tool discovery: a name-only catalogue plus a `load_tools` meta-tool, so a run pays for the schemas it asks for instead of all of them. Plus the proxied form of the same thing — `PROXY_TOOLS`, `proxyLoadResult`, `proxiedCall` — for a server whose prompt cache a growing tool array throws away. |
 | `stream` | Reads one streamed turn back into a message: token callbacks, tool-call reassembly, fenced reasoning taken out of the answer, and the idle watchdog that turns a silent endpoint into `EndpointSilent`. |
 | `capabilities` | What an endpoint turned out not to support — and, under it, what one model on that endpoint did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
-| `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can. |
+| `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
-| `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. |
-| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`, `requestTokens`, `contextTokens`. |
+| `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. And `resolveApiKey`, for a caller deciding which key an endpoint gets. |
+| `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its endpoint reports: `charsPerTokenFor`, `calibrate`. |
 | `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
 | `config` | The structural interfaces every function here asks for. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
-| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. Plus the parts it is made of: `buildBody`, `preselect`, `preview`, `resolveApiKey` for a caller deciding which key an endpoint gets, and `taskCall` for running a side task on the settings an agent spec gives it. |
-| `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. |
+| `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. |
+| `request-body` | `buildBody`: the one place a streamed request's body is decided from a config and what the endpoint and the model have refused. |
+| `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher. |
+| `preselect` | Choosing a run's tools before it starts: `preselect` asks a small model, `preselectByKeywords` scores the request's own words against the tool names without one, and `preselectSystem`, `preselectInput` and `preselection` are the prompt and the reading of the reply for a host that makes the call itself. |
+| `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. Plus the shapes a call is handed round in: `ToolCallRequest`, `ToolCallResult`, `ToolCallOutcome`. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `ledger` | What stretches of a transcript cost, read off the prompt counts the server reported rather than estimated: `recordRequest`, `tokensBetween`, `estimateFrom`, `rebaseLedger`. |
 | `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
 | `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `runtime` | `createRuntime`: a second set of those caches, with the functions that use them as methods — for a host whose tenants must not share a client pool, a latch or an event bus. `defaultRuntime` is the one the top-level functions use. |
-| `tokens` | `estimateTokens`: characters over four, deliberately low, for everything here that has to guess at a window. |
+| `tokens` | How big a request is, estimated: `estimateTokens` — characters over four, deliberately low — and what is built on it for everything here that has to guess at a window: `messageTokens`, `requestTokens`, `contextTokens`. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. And what `runAgentLoop` throws, with the run as it stood: `AgentLoopError`, `ToolIterationLimit`, `AgentLoopOverflow`, and `failedRun` to read it off any of them. |
 | `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
 

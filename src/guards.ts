@@ -3,7 +3,9 @@
  *
  * A leaf with no imports, because the modules that need these — a browser-safe `spec`, the schema
  * walk, the tool-call reader, the snapshot importer — otherwise share nothing, and each had grown
- * its own copy.
+ * its own copy. `getOrCreate` and `counted` are here for the same reason and are the two things that
+ * are not checks: every cache in the package fills itself on a miss, and each had written that
+ * out, and a notice that counts something is written in more than one module.
  */
 
 /**
@@ -24,3 +26,30 @@ export const isRecord = (value: unknown): value is Record<string, unknown> =>
  */
 export const isPositive = (value: unknown): value is number =>
   typeof value === "number" && value > 0;
+
+/** What `getOrCreate` needs of a map, so a `WeakMap` serves as well as a `Map`. */
+interface Lookup<K, V> {
+  get(key: K): V | undefined;
+  has(key: K): boolean;
+  set(key: K, value: V): unknown;
+}
+
+/**
+ * What a map holds under a key, made and stored first where it holds nothing.
+ *
+ * @param map Where to look. Gains an entry on a miss, which is the point of calling this.
+ * @param key What to look under.
+ * @param create Builds the value on a miss, and is not called on a hit.
+ */
+export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V {
+  if (!map.has(key)) map.set(key, create());
+  return map.get(key) as V;
+}
+
+/**
+ * A count and its noun, plural unless the count is one: `1 tool`, `3 tools`.
+ *
+ * @param count How many.
+ * @param noun The singular, which takes an `s` and nothing cleverer.
+ */
+export const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
