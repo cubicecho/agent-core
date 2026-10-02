@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { isRecord } from "./guards.ts";
+import { THINK_FENCE } from "./thinking.ts";
 
 /**
  * Reading what a model meant by a tool call when it did not write one cleanly.
@@ -342,8 +343,8 @@ export function recoverToolCalls(
   content: string,
   { names = [] }: { names?: Iterable<string> } = {},
 ): { content: string; toolCalls: ToolCall[] } {
-  const thought = content.toLowerCase().lastIndexOf("</think>");
-  const from = thought < 0 ? 0 : thought + "</think>".length;
+  const thought = content.toLowerCase().lastIndexOf(THINK_FENCE.close);
+  const from = thought < 0 ? 0 : thought + THINK_FENCE.close.length;
   const tail = content.slice(from);
   let found = [...taggedCalls(tail), ...mistralCalls(tail), ...pythonTagCalls(tail)];
   if (!found.length) found = bareCalls(tail, new Set(names));
