@@ -62,6 +62,29 @@ describe('preselect', () => {
     expect(notices).toEqual([expect.stringContaining('by name')]);
   });
 
+  it('holds the words to the ceiling, which their own cap can lower and cannot raise', async () => {
+    const desks = [
+      { id: 's', label: 'S', tools: [{ name: 's__read', description: 'Read a file' }] },
+      { id: 'd', label: 'D', tools: [{ name: 'd__query', description: 'Query the database' }] },
+      { id: 'c', label: 'C', tools: [{ name: 'c__event', description: 'Add a calendar event' }] },
+      { id: 'w', label: 'W', tools: [{ name: 'w__fetch', description: 'Fetch a URL' }] },
+    ];
+    const prompt = 'read the file, query the database and fetch the url';
+    // Sure of itself whatever it finds, so what is counted is the cap and nothing else.
+    const sure = { minScore: 0, dropoff: Number.POSITIVE_INFINITY };
+    const raised = await preselect(config, 'small', desks, prompt, {
+      maxPerLoad: 2,
+      keywords: { ...sure, maxPerLoad: 3 },
+    });
+    expect(raised).toHaveLength(2);
+    const lowered = await preselect(config, 'small', desks, prompt, {
+      maxPerLoad: 2,
+      keywords: { ...sure, maxPerLoad: 1 },
+    });
+    expect(lowered).toHaveLength(1);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('falls through to the model when the words settle nothing', async () => {
     create.mockResolvedValue({ choices: [{ message: { content: '{"tools": ["s__read"]}' } }] });
     expect(await preselect(config, 'small', catalog, 'sing me a song', { keywords: true })).toEqual(['s__read']);
