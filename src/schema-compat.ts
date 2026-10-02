@@ -45,6 +45,27 @@ const SCHEMA_KEYS = new Set([
 /** Keys whose value is a name -> schema map. */
 const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
 
+/** The two spellings of a schema's own pool of named definitions. */
+const POOL_KEYS = ["definitions", "$defs"] as const;
+
+/**
+ * One keyword's value with `fn` applied wherever it holds a schema, and untouched where it holds
+ * data — which is what keeps a walk out of `default`, `enum` and `const`.
+ */
+const mapChildren = (key: string, value: unknown, fn: (node: unknown) => unknown): unknown => {
+  if (SCHEMA_KEYS.has(key)) return Array.isArray(value) ? value.map((sub) => fn(sub)) : fn(value);
+  // The keys here are argument names; only the values are schemas.
+  if (SCHEMA_MAPS.has(key) && isRecord(value))
+    return Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, fn(sub)]));
+  return value;
+};
+
+/** The names a schema's `required` lists, without whatever in it is not a name. */
+const requiredOf = (node: Schema): string[] =>
+  Array.isArray(node.required)
+    ? node.required.filter((name): name is string => typeof name === "string")
+    : [];
+
 /**
  * Coerces one schema position. Malformed MCP output sometimes puts a bare type name where a
  * whole schema belongs, which the grammar converter reports as `Unrecognized schema: "object"`.
@@ -69,14 +90,8 @@ function normalize(node: Schema): Schema {
       if (concrete.length === 1) out.type = concrete[0];
       else if (concrete.length > 1) out.anyOf = concrete.map((name) => ({ type: name }));
       else out.type = "null";
-    } else if (SCHEMA_KEYS.has(key)) {
-      out[key] = Array.isArray(value) ? value.map(asSchema) : asSchema(value);
-    } else if (SCHEMA_MAPS.has(key) && isRecord(value)) {
-      out[key] = Object.fromEntries(
-        Object.entries(value).map(([name, sub]) => [name, asSchema(sub)]),
-      );
     } else {
-      out[key] = value;
+      out[key] = mapChildren(key, value, asSchema);
     }
   }
 
@@ -124,8 +139,7 @@ const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
 /** The `definitions` and `$defs` that a local pointer in this schema resolves against. */
 function poolsOf(parameters: Schema): Schema {
   const defs: Schema = {};
-  for (const key of ["definitions", "$defs"] as const)
-    if (isRecord(parameters[key])) defs[key] = parameters[key];
+  for (const key of POOL_KEYS) if (isRecord(parameters[key])) defs[key] = parameters[key];
   return defs;
 }
 
@@ -187,15 +201,12 @@ function mergeRootAllOf(out: Schema) {
 
   const defs = poolsOf(out);
   const properties: Schema = isRecord(out.properties) ? { ...out.properties } : {};
-  const required = new Set<string>(
-    Array.isArray(out.required) ? out.required.filter((name) => typeof name === "string") : [],
-  );
+  const required = new Set(requiredOf(out));
   for (const raw of branches) {
     const branch = resolveRef(raw, defs);
     if (!branch) continue;
     if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
-    if (Array.isArray(branch.required))
-      for (const name of branch.required) if (typeof name === "string") required.add(name);
+    for (const name of requiredOf(branch)) required.add(name);
   }
 
   if (!Object.keys(properties).length) return;
@@ -235,20 +246,13 @@ function mergeRootUnion(out: Schema) {
         continue;
       }
       if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
-      const names = Array.isArray(branch.required)
-        ? branch.required.filter((name): name is string => typeof name === "string")
-        : [];
+      const names = requiredOf(branch);
       shared = previous === null ? new Set(names) : new Set(names.filter((n) => previous.has(n)));
     }
 
     if (!Object.keys(properties).length) continue;
     out.properties = { ...(isRecord(out.properties) ? out.properties : {}), ...properties };
-    if (shared?.size) {
-      const already = Array.isArray(out.required)
-        ? out.required.filter((name): name is string => typeof name === "string")
-        : [];
-      out.required = [...new Set([...already, ...shared])];
-    }
+    if (shared?.size) out.required = [...new Set([...requiredOf(out), ...shared])];
   }
 }
 
@@ -286,7 +290,7 @@ function collectRefs(node: unknown, into: Set<string>) {
  * outside it still refers in.
  */
 function pruneDefs(out: Schema) {
-  const pools = (["definitions", "$defs"] as const).filter((key) => isRecord(out[key]));
+  const pools = POOL_KEYS.filter((key) => isRecord(out[key]));
   if (!pools.length) return;
 
   const live: Record<string, Set<string>> = {};
@@ -428,11 +432,7 @@ const strip = (node: unknown): unknown => {
   const out: Schema = {};
   for (const [key, value] of Object.entries(node)) {
     if (key === "pattern" || key === "format") continue;
-    if (SCHEMA_KEYS.has(key)) out[key] = Array.isArray(value) ? value.map(strip) : strip(value);
-    else if (SCHEMA_MAPS.has(key) && isRecord(value))
-      // The keys here are argument names; only the values are schemas.
-      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, strip(sub)]));
-    else out[key] = value;
+    out[key] = mapChildren(key, value, strip);
   }
   return out;
 };
