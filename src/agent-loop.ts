@@ -724,7 +724,12 @@ async function discovery(options: AgentLoopOptions, notice: OnNotice) {
   // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
   const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
   const chooses = options.preselect && options.preselected === undefined;
-  const preselected = !onDemand ? [] : chooses ? await chooseTools(options, notice) : [...(options.preselected ?? [])];
+  let preselected: string[] = [];
+  if (onDemand && chooses) {
+    preselected = await chooseTools(options, notice);
+  } else if (onDemand) {
+    preselected = [...(options.preselected ?? [])];
+  }
   if (!proxied) {
     for (const name of preselected) {
       loaded.add(name);
@@ -944,16 +949,15 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
-    const declared = orderTools(
-      routed
-        ? byName(new Set(preselected))
-        : proxied
-          ? [...PROXY_TOOLS]
-          : onDemand
-            ? loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded))
-            : tools,
-      toolOrder,
-    );
+    let offered = tools;
+    if (routed) {
+      offered = byName(new Set(preselected));
+    } else if (proxied) {
+      offered = [...PROXY_TOOLS];
+    } else if (onDemand) {
+      offered = loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded));
+    }
+    const declared = orderTools(offered, toolOrder);
     // Unmarked, so the system prompt is the same text on every step and a load does not throw
     // away the cache for the whole transcript. What is loaded is said in `declared` and in the
     // `load_tools` result instead. The preselected first step is the one exception, by design,

@@ -173,6 +173,27 @@ export function loadedTools(
 export type ToolOrder = boolean | ((a: string, b: string) => number);
 
 /**
+ * Orders two names by code unit.
+ *
+ * @param a - The name on the left.
+ * @param b - The name on the right.
+ * @returns Negative where `a` sorts first, positive where `b` does, zero where they are the same.
+ *
+ * @remarks
+ * Rather than `localeCompare`, whose answer depends on the host's locale — which is the kind of
+ * instability `orderTools` exists to remove.
+ */
+function byCodeUnit(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
+}
+
+/**
  * The tool array in a stable order, so the same set of tools renders the same way twice.
  *
  * @param tools - The definitions to order. Not written to.
@@ -198,9 +219,7 @@ export function orderTools(tools: OpenAI.ChatCompletionTool[], order: ToolOrder 
     return tools;
   }
   const nameOf = (tool: OpenAI.ChatCompletionTool) => toolName(tool) ?? '';
-  // Code-unit order rather than `localeCompare`, whose answer depends on the host's locale —
-  // which is the kind of instability this exists to remove.
-  const compare = typeof order === 'function' ? order : (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  const compare = typeof order === 'function' ? order : byCodeUnit;
   const sorted = [...tools].sort((a, b) => compare(nameOf(a), nameOf(b)));
   return sorted.some((tool, at) => tool !== tools[at]) ? sorted : tools;
 }

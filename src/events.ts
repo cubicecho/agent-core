@@ -688,6 +688,24 @@ export const RunOutcome = {
 /** Any one of the outcomes in `RunOutcome`. */
 export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
 
+/**
+ * How a run that reported `done` ended.
+ *
+ * @param ok - What the `done` event said. Only `false` is a failure; anything else is read off the turn.
+ * @param last - The last turn a `usage` event reported, if any did.
+ * @returns `failed` for a `done` that was not ok, `truncated` where the last turn ran into the
+ *   reply ceiling, and `answered` otherwise.
+ */
+function outcomeOf(ok: boolean | null, last: TurnReport | undefined): RunOutcome {
+  if (ok === false) {
+    return RunOutcome.Failed;
+  }
+  if (last?.finishReason === FinishReason.Length) {
+    return RunOutcome.Truncated;
+  }
+  return RunOutcome.Answered;
+}
+
 /** What `runMetrics` takes besides the events. */
 export interface RunMetricsOptions {
   /** The window the run was served, for `largestPromptShare`. Absent or zero leaves it out. */
@@ -791,12 +809,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
         metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
       }
     } else if (event.kind === RunEventKind.Done) {
-      metrics.outcome =
-        event.ok === false
-          ? RunOutcome.Failed
-          : last?.finishReason === FinishReason.Length
-            ? RunOutcome.Truncated
-            : RunOutcome.Answered;
+      metrics.outcome = outcomeOf(event.ok, last);
     }
   }
 

@@ -482,14 +482,14 @@ export const ceilingAndTemperature = (
   refused: ModelCapabilities | undefined,
   maxTokens: number,
   temperature: number,
-) => ({
-  ...(maxTokens > 0
-    ? refused?.legacyTokenLimit === false
-      ? { max_completion_tokens: maxTokens }
-      : { max_tokens: maxTokens }
-    : {}),
-  ...(refused?.chosenTemperature === false ? {} : { temperature }),
-});
+) => {
+  const ceiling =
+    refused?.legacyTokenLimit === false ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+  return {
+    ...(maxTokens > 0 ? ceiling : {}),
+    ...(refused?.chosenTemperature === false ? {} : { temperature }),
+  };
+};
 
 /** What answering a refused effort *value* would latch, and the rung it would try next. */
 interface EffortStep {
@@ -594,7 +594,12 @@ const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(deta
 function unknownFields(detail: string): string[] {
   const [, listed] = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i) ?? [];
   const [, , quoted] = detail.match(/unknown parameter:\s*(['"`])([^'"`]+)\1/i) ?? [];
-  const names = listed ? listed.split(',') : quoted ? [quoted] : [];
+  let names: string[] = [];
+  if (listed) {
+    names = listed.split(',');
+  } else if (quoted) {
+    names = [quoted];
+  }
   return names
     .map(
       (name) =>

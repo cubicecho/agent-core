@@ -322,14 +322,14 @@ function ownerOf(
 ): PartialCall | undefined {
   const index = fragmentIndex(part);
   const name = part.function?.name;
-  const known =
-    index !== undefined
-      ? calls.findLast((call) => call.index === index)
-      : part.id
-        ? calls.find((call) => call.id === part.id)
-        : name
-          ? undefined
-          : calls.at(-1);
+  let known: PartialCall | undefined;
+  if (index !== undefined) {
+    known = calls.findLast((call) => call.index === index);
+  } else if (part.id) {
+    known = calls.find((call) => call.id === part.id);
+  } else if (!name) {
+    known = calls.at(-1);
+  }
   const another = known && ((part.id && known.id && part.id !== known.id) || (name && known.arguments));
   return another ? undefined : known;
 }
