@@ -389,24 +389,24 @@ export function loadResult(
   const again = matched.filter((name) => loaded?.has(name));
 
   if (fresh.length) {
-    const block = [`Loaded ${fresh.length} tool(s); they are callable on your next step.`, ''];
-    for (const name of fresh) {
-      block.push(`${name}: ${byName.get(name) ?? ''}`.trim());
-    }
-    blocks.push(block);
+    blocks.push([
+      `Loaded ${fresh.length} tool(s); they are callable on your next step.`,
+      '',
+      ...fresh.map((name) => `${name}: ${byName.get(name) ?? ''}`.trim()),
+    ]);
   }
   if (again.length) {
     blocks.push([
       `Already loaded and in your tool list: ${again.join(', ')}. Call them directly; do not load them again.`,
     ]);
   }
-  for (const { name, hits } of overBroad) {
-    blocks.push([
+  blocks.push(
+    ...overBroad.map(({ name, hits }) => [
       `\`${name}\` matches ${hits.length} tools, more than the ${maxPerLoad} one call may load.`,
       'Name the ones you need from:',
       ...hits.map((hit) => `  ${hit}`),
-    ]);
-  }
+    ]),
+  );
   if (deferred.length) {
     blocks.push([
       `This call is full at ${maxPerLoad} tools, so these were not loaded: ${deferred.join(', ')}.`,
@@ -596,9 +596,9 @@ export function proxyLoadResult(
   const missing = resolved.matched.filter((name) => !loaded?.has(name) && !defined.has(name));
   if (fresh.length) {
     blocks.push([`Loaded ${fresh.length} tool(s). Run them with \`${CALL_TOOL}\`.`]);
-    for (const { name, description, parameters } of fresh) {
-      blocks.push([JSON.stringify({ name, description, parameters })]);
-    }
+    blocks.push(
+      ...fresh.map(({ name, description, parameters }) => [JSON.stringify({ name, description, parameters })]),
+    );
   }
   if (again.length) {
     blocks.push([

@@ -64,19 +64,28 @@ export interface ReadCall {
 }
 
 /**
+ * One call with its arguments read, or with why they could not be.
+ *
+ * @param call - The call as the turn carried it.
+ * @param finishReason - Why the turn ended, which tells a call cut off from one written wrongly.
+ * @returns The call beside its arguments and their repaired JSON, or beside the error and `{}`.
+ */
+function readCall(call: ToolCall, finishReason: Turn['finishReason']): ReadCall {
+  try {
+    const args = parseToolArguments(call.function.arguments, { finishReason });
+    return { call, args, normal: JSON.stringify(args) };
+  } catch (error) {
+    return { call, error, normal: '{}' };
+  }
+}
+
+/**
  * A turn's calls with their arguments read. A server that parses replayed arguments refuses the
  * almost-JSON a model wrote, so each is normalised here, and one that could not be read at all is
  * replayed as no arguments.
  */
 export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason']): ReadCall[] =>
-  calls.map((call) => {
-    try {
-      const args = parseToolArguments(call.function.arguments, { finishReason });
-      return { call, args, normal: JSON.stringify(args) };
-    } catch (error) {
-      return { call, error, normal: '{}' };
-    }
-  });
+  calls.map((call) => readCall(call, finishReason));
 
 /** The assistant message a turn is written into the transcript as, its calls' arguments repaired. */
 export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.ChatCompletionAssistantMessageParam => ({
