@@ -48,7 +48,14 @@ import {
   turnMessages,
   withContext,
 } from "./hooks.ts";
-import { type LedgerRequest, rebaseLedger, recordRequest, type TokenLedger } from "./ledger.ts";
+import {
+  breakReason,
+  type LedgerRequest,
+  type RequestShape,
+  rebaseLedger,
+  recordRequest,
+  type TokenLedger,
+} from "./ledger.ts";
 import { ContextOverflow, contextTokens, toolsChars } from "./retry.ts";
 import { runTurn } from "./run-turn.ts";
 import { relaxTools, sanitizeTools } from "./schema-compat.ts";
@@ -721,49 +728,11 @@ export interface AgentLoopResult {
 }
 
 /** What the loop remembers of one request, to explain the next one's cache. */
-interface Sent {
-  messages: OpenAI.ChatCompletionMessageParam[];
-  tools: string[];
+interface Sent extends RequestShape {
   /** The prompt the first request of the turn reported, before any continuation was joined. */
   prompt: number;
   /** The completion across the whole turn, continuations included. */
   completion: number;
-}
-
-/** Whether two messages say the same thing, by identity first since most of a transcript is. */
-const sameMessage = (a: OpenAI.ChatCompletionMessageParam, b: OpenAI.ChatCompletionMessageParam) =>
-  a === b || JSON.stringify(a) === JSON.stringify(b);
-
-/** The system messages a request opens with, which a template renders ahead of the history. */
-const leadingSystem = (messages: OpenAI.ChatCompletionMessageParam[]) => {
-  const end = messages.findIndex((message) => message.role !== "system");
-  return messages.slice(0, end === -1 ? messages.length : end);
-};
-
-/**
- * Where a request stopped matching the one before it, earliest in the rendered prompt first — the
- * tool block, then the system prompt, then the history — or `none-known` where it only appended.
- */
-function breakReason(
-  previous: Sent,
-  messages: OpenAI.ChatCompletionMessageParam[],
-  tools: string[],
-): NonNullable<TurnUsage["cacheBreakReason"]> {
-  if (
-    previous.tools.length !== tools.length ||
-    previous.tools.some((name, at) => name !== tools[at])
-  )
-    return "tools-changed";
-  const before = leadingSystem(previous.messages);
-  const now = leadingSystem(messages);
-  if (before.length !== now.length || before.some((message, at) => !sameMessage(message, now[at])))
-    return "system-changed";
-  if (
-    previous.messages.length > messages.length ||
-    previous.messages.some((message, at) => !sameMessage(message, messages[at]))
-  )
-    return "history-rewritten";
-  return "none-known";
 }
 
 /**
@@ -778,15 +747,14 @@ const CACHE_KEPT = 0.9;
  */
 function cacheDiagnosis(
   previous: Sent | undefined,
-  messages: OpenAI.ChatCompletionMessageParam[],
-  tools: string[],
+  next: RequestShape,
   usage: TurnUsage,
 ): Partial<TurnUsage> {
   if (!previous || !(previous.prompt > 0)) return {};
   const found: Partial<TurnUsage> = { cacheExpected: previous.prompt + previous.completion };
   if (usage.uncached === undefined) return found;
   found.cacheBroken = usage.cached < previous.prompt * CACHE_KEPT;
-  if (found.cacheBroken) found.cacheBreakReason = breakReason(previous, messages, tools);
+  if (found.cacheBroken) found.cacheBreakReason = breakReason(previous, next);
   return found;
 }
 
@@ -1503,14 +1471,18 @@ async function runSteps(
     // The breakdown measures the array `toolSchemaTokens` does, so where no prompt was reported
     // the two give one number for the tool block rather than two.
     const charsPerToken = charsPerTokenFor(supports, config.model);
-    Object.assign(first.usage, cacheDiagnosis(previous, request, names, first.usage), {
-      toolsDeclared: declared.length,
-      toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerToken),
-      context: contextTokens(
-        { model: config.model, stream: true, messages: request, tools: declared },
-        { charsPerToken, promptTokens: first.usage.prompt },
-      ),
-    });
+    Object.assign(
+      first.usage,
+      cacheDiagnosis(previous, { messages: request, tools: names }, first.usage),
+      {
+        toolsDeclared: declared.length,
+        toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerToken),
+        context: contextTokens(
+          { model: config.model, stream: true, messages: request, tools: declared },
+          { charsPerToken, promptTokens: first.usage.prompt },
+        ),
+      },
+    );
     const firstPrompt = first.usage.prompt;
     // Recorded from the first request for the same reason. A cache count above the prompt is a
     // server reporting its prompt net of the cache, whose differences would measure nothing.

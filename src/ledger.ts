@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { messageChars, messageTokens, type TokenEstimateOptions } from "./retry.ts";
+import type { TurnUsage } from "./stream.ts";
 
 /**
  * What stretches of a transcript cost, read off the prompt counts the server already reported.
@@ -44,12 +45,16 @@ export interface LedgerEntry {
 /** A transcript's entries in the order their requests were sent, which is also by `through`. */
 export type TokenLedger = LedgerEntry[];
 
-/** What `recordRequest` needs to know of one request. */
-export interface LedgerRequest {
+/** The part of a request that decides whether the next one only appended to it. */
+export interface RequestShape {
   /** The messages as they were sent, a system prompt and any context a hook added included. */
   messages: Message[];
   /** The names of the tools declared, in the order they were sent. Absent is none. */
   tools?: readonly string[];
+}
+
+/** What `recordRequest` needs to know of one request. */
+export interface LedgerRequest extends RequestShape {
   /** The prompt tokens the endpoint reported. Zero or less is no report, and records nothing. */
   prompt: number;
   /** The index, in the host's transcript, of the last message the request carried. */
@@ -68,17 +73,50 @@ export interface LedgerEstimateOptions extends TokenEstimateOptions {
 /** Whether two messages say the same thing, by identity first since most of a transcript is. */
 const sameMessage = (a: Message, b: Message) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
-/** Whether a request sent everything the one before it did, in the same place, and then more. */
-const appended = (previous: LedgerRequest, next: LedgerRequest) => {
+/** Whether two requests declared the same tools in the same order. */
+const sameTools = (previous: RequestShape, next: RequestShape) => {
   const before = previous.tools ?? [];
   const now = next.tools ?? [];
-  return (
-    before.length === now.length &&
-    before.every((name, at) => name === now[at]) &&
-    previous.messages.length <= next.messages.length &&
-    previous.messages.every((message, at) => sameMessage(message, next.messages[at]))
-  );
+  return before.length === now.length && before.every((name, at) => name === now[at]);
 };
+
+/** Whether a request sent every message the one before it did, in the same place. */
+const keptMessages = (previous: Message[], next: Message[]) =>
+  previous.length <= next.length && previous.every((message, at) => sameMessage(message, next[at]));
+
+/** Whether a request sent everything the one before it did, in the same place, and then more. */
+const appended = (previous: RequestShape, next: RequestShape) =>
+  sameTools(previous, next) && keptMessages(previous.messages, next.messages);
+
+/** The system messages a request opens with, which a template renders ahead of the history. */
+const leadingSystem = (messages: Message[]) => {
+  const end = messages.findIndex((message) => message.role !== "system");
+  return messages.slice(0, end === -1 ? messages.length : end);
+};
+
+/**
+ * Where a request stopped matching the one before it, earliest in the rendered prompt first — the
+ * tool block, then the system prompt, then the history — or `none-known` where it only appended.
+ *
+ * Beside `recordRequest` because it is the same comparison asked for a different reason: that one
+ * wants to know whether two prompts subtract, and this one why a cache that should have held
+ * did not.
+ *
+ * @param previous The request before, as it was sent.
+ * @param next The request being explained.
+ */
+export function breakReason(
+  previous: RequestShape,
+  next: RequestShape,
+): NonNullable<TurnUsage["cacheBreakReason"]> {
+  if (!sameTools(previous, next)) return "tools-changed";
+  const before = leadingSystem(previous.messages);
+  const now = leadingSystem(next.messages);
+  const systemKept = before.length === now.length && keptMessages(before, now);
+  if (!systemKept) return "system-changed";
+  if (!keptMessages(previous.messages, next.messages)) return "history-rewritten";
+  return "none-known";
+}
 
 /**
  * The ledger with one more request on it, in the epoch the request before it says it belongs to.
