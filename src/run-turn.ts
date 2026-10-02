@@ -168,10 +168,8 @@ function refuseOversized(
 const shownDelay = (ms: number) => (ms < MS_PER_SECOND ? `${Math.round(ms)}ms` : `${Math.round(ms / MS_PER_SECOND)}s`);
 
 /**
- * `request` is a callback rather than a body because the body has to be rebuilt from whatever
- * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
- * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
- * object throughout, and a caller that reads those from its own closure can ignore the argument.
+ * One turn seen through to an answer: negotiated with the endpoint, retried where the failure is
+ * transient, and waited for where the model is still loading.
  *
  * @param client - The pooled client for this endpoint.
  * @param supports - What the endpoint has already refused, threaded through the negotiation.
@@ -181,6 +179,12 @@ const shownDelay = (ms: number) => (ms < MS_PER_SECOND ? `${Math.round(ms)}ms` :
  * stream's own callbacks.
  * @returns The turn the attempt that got through produced, its usage carrying what every attempt
  * together cost: `wallMs`, `retries` and `timeouts`.
+ *
+ * @remarks
+ * `request` is a callback rather than a body because the body has to be rebuilt from whatever
+ * the last attempt latched off: the tools it sends depend on `strictSchemas`, and `relaxTools`
+ * has to apply to the schemas that were just sanitised. It is handed the same `Capabilities`
+ * object throughout, and a caller that reads those from its own closure can ignore the argument.
  */
 export async function runTurn(
   client: OpenAI,

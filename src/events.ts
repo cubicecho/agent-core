@@ -582,14 +582,16 @@ export const resetEvents = () => {
 };
 
 /**
- * Consecutive tokens of one kind are one thing being said, not hundreds of things.
+ * A run's events with each stretch of `thinking` or of `output` joined into one block, for a
+ * reader that takes a run in snapshots.
  *
  * @param events - Events in `seq` order, from `history` or collected from `watch`. Not written to.
  * @returns One event per block, every one a copy. A run of `thinking` or of `output` within one
  * step is a single block with the texts joined; anything else is a block to itself.
  *
  * @remarks
- * A client that reads a run in snapshots rather than token by token wants it that way: a
+ * Consecutive tokens of one kind are one thing being said, not hundreds of things. A client that
+ * reads a run in snapshots rather than token by token wants it that way: a
  * reasoning model spends ten thousand deltas on a paragraph, and a paragraph is what it meant.
  * Each block carries the `seq` of its last event, so asking for what came after one block
  * picks up exactly where it left off.

@@ -37,11 +37,14 @@ export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PE
 const THOUSAND = 1000;
 
 /**
- * 1234 → "1.2k". The numbers in an overflow message are large and nobody reads the units digit.
+ * A token count as a message shows it: 1234 → "1.2k".
  *
  * @param tokens - The count to render.
  * @returns The count in thousands to one decimal place with a `k`, or the number as it is below a
  * thousand.
+ *
+ * @remarks
+ * The numbers in an overflow message are large and nobody reads the units digit.
  */
 export const compact = (tokens: number) => (tokens >= THOUSAND ? `${(tokens / THOUSAND).toFixed(1)}k` : String(tokens));
 

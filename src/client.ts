@@ -22,9 +22,9 @@ export const NO_KEY = 'agent-core';
 const limitMs = (seconds: number) => (seconds > 0 ? seconds * MS_PER_SECOND : undefined);
 
 /**
- * Zero, less, or absent means no limit, which the SDK spells as `undefined`.
+ * An endpoint's request timeout in the SDK's spelling: milliseconds, and `undefined` for no limit.
  *
- * @param config - Read for `requestTimeoutSeconds` alone.
+ * @param config - Read for `requestTimeoutSeconds` alone. Zero, less, or absent means no limit.
  * @returns The request timeout in milliseconds, or `undefined` for no limit.
  */
 export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>

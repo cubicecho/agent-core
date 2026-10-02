@@ -382,14 +382,17 @@ export async function askJson<T>(
 }
 
 /**
- * A side task is never worth failing the work it supports. Callers that can carry on without
- * an answer use this and get `undefined` instead of an exception.
+ * Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
  *
  * @param label - Names the task in the notice when it fails.
  * @param run - The call to attempt. Anything it throws becomes `undefined`, an abort excepted.
  * @param [options] - `onNotice`, told what was given up on.
  * @returns What `run` resolved with, or `undefined` when it threw. An `APIUserAbortError` is thrown
  * on and raises no notice.
+ *
+ * @remarks
+ * A side task is never worth failing the work it supports. Callers that can carry on without
+ * an answer use this and get `undefined` instead of an exception.
  */
 export async function tryAsk<T>(
   label: string,
@@ -410,8 +413,7 @@ export async function tryAsk<T>(
 }
 
 /**
- * Models are asked for JSON and often answer with prose around it, or a fenced block. Pull out
- * the first array or object rather than failing the task over a wrapper.
+ * The first array or object in a model's reply, parsed, whatever prose or fence surrounds it.
  *
  * @param text - The reply, fences and prose included. Nothing parseable gives `undefined`.
  * @returns What lies between the first `[` or `{` and the last `]` or `}`, parsed — inside the
@@ -419,6 +421,9 @@ export async function tryAsk<T>(
  * there is no such stretch or it will not parse even repaired.
  *
  * @remarks
+ * Models are asked for JSON and often answer with prose around it, or a fenced block, and a
+ * wrapper is not worth failing the task over.
+ *
  * What is pulled out is read the way a tool call's arguments are: as written where that parses,
  * and otherwise with the almost-JSON a local model writes repaired — single quotes, `True` and
  * `None`, bare keys, a trailing comma. A small model asked for a list gets these wrong as often in

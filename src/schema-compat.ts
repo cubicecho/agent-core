@@ -654,14 +654,17 @@ export function relaxSchema(schema: unknown): Record<string, unknown> {
 }
 
 /**
- * The retry shape: llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in
- * `pattern` and most `format` values, both of which only ever narrowed a string the tool
- * re-validates anyway.
+ * The tool array with every schema's `pattern` and `format` keywords gone — the shape a turn is
+ * retried with.
  *
  * @param tools - Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  * Never mutated.
  * @returns A new array in the same order. Each entry is the relaxed definition remembered for its
  * tool, so the same object on every call; a tool that is not a function tool is its own entry.
+ *
+ * @remarks
+ * llama.cpp's converter rejects regex escape classes (`\d`, `\w`, `\s`) in `pattern` and most
+ * `format` values, both of which only ever narrowed a string the tool re-validates anyway.
  */
 export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) => through(relaxed, tools, relaxSchema);
 
@@ -673,7 +676,7 @@ export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) => through(relaxe
 const NO_USER_QUERY = 'no user query found';
 
 /**
- * Does this failure look like the server could not build a grammar from our tool schemas?
+ * Whether a failure looks like the server could not build a grammar from our tool schemas.
  *
  * @param message - The server's error text. Matched case-insensitively.
  * @returns `true` for a grammar or schema-conversion failure. `false` for anything else, and

@@ -182,7 +182,8 @@ const BACKOFF_CEILING_MS = 8000;
 const JITTER_FLOOR = 0.5;
 
 /**
- * Exponential, with jitter so several tasks failing at once do not return in lockstep.
+ * How long to wait before a retry: exponential, with jitter so several tasks failing at once do
+ * not return in lockstep.
  *
  * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
  * @returns Milliseconds, somewhere between half of that wait and all of it, and not a whole number.
