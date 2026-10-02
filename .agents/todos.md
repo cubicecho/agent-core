@@ -4,7 +4,7 @@ Findings from the refactor workflow. IDs are stable — don't renumber when item
 `(unverified)` marks items inferred from docs or naming rather than confirmed in code.
 Nothing here is implemented until approved.
 
-The model these items come from (M1–M6) lives in the description of PR #140.
+The model these items come from (M1–M6) lives in the description of PR #141.
 
 ## Conventions
 
