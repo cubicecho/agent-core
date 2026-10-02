@@ -953,6 +953,77 @@ async function foldBeforeStep(
   return folded;
 }
 
+/** One of a turn's calls with its arguments read, or with the reason they could not be. */
+interface ReadCall {
+  call: ToolCall;
+  /** Absent where the arguments could not be read. */
+  args?: Record<string, unknown>;
+  /** Why they could not, which is then the call's answer. */
+  error?: unknown;
+  /** The arguments as every later request replays them: the repaired JSON, or `{}` for none. */
+  normal: string;
+}
+
+/**
+ * A turn's calls with their arguments read. A server that parses replayed arguments refuses the
+ * almost-JSON a model wrote, so each is normalised here, and one that could not be read at all is
+ * replayed as no arguments.
+ */
+const readCalls = (calls: ToolCall[], finishReason: Turn["finishReason"]): ReadCall[] =>
+  calls.map((call) => {
+    try {
+      const args = parseToolArguments(call.function.arguments, { finishReason });
+      return { call, args, normal: JSON.stringify(args) };
+    } catch (error) {
+      return { call, error, normal: "{}" };
+    }
+  });
+
+/** The assistant message a turn is written into the transcript as, its calls' arguments repaired. */
+const assistantMessage = (
+  content: string,
+  parsed: ReadCall[],
+): OpenAI.ChatCompletionAssistantMessageParam => ({
+  role: "assistant",
+  content: content || null,
+  ...(parsed.length
+    ? {
+        tool_calls: parsed.map(({ call, normal }) => ({
+          ...call,
+          function: { ...call.function, arguments: normal },
+        })),
+      }
+    : {}),
+});
+
+/**
+ * Tells the `afterTurn` hooks what was answered, with the turn it closed where the question is
+ * still in the transcript. Resolves to their notes — failures only, as `notify` returns them.
+ */
+const tellAfterTurn = (
+  hooks: NonNullable<AgentLoopOptions["hooks"]>,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  at: number,
+  reply: string,
+): Promise<HookNote[]> =>
+  notify(
+    hooks.run,
+    "afterTurn",
+    {
+      ...hooks.context,
+      reply,
+      ...(at >= 0
+        ? {
+            turn: {
+              index: turnIndex(messages, at),
+              messages: turnMessages(hooks.context.session.id, messages, at),
+            },
+          }
+        : {}),
+    },
+    hooks.onNote,
+  );
+
 /**
  * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
  * when `maxToolIterations` is spent, and tells `standing` how to read the run either way.
@@ -1016,6 +1087,11 @@ async function runSteps(
   }
   // Looked through unless the host has a tool by that name, which is then the host's to answer.
   const proxies = onDemand && !definitions.has(CALL_TOOL);
+  // What a call the model wrote as text may name: the host's tools, and the loop's own on demand.
+  const recoverable = [
+    ...tools.map(toolName).filter((name) => name !== undefined),
+    ...(onDemand ? [LOAD_TOOLS, ...(proxies ? [CALL_TOOL] : [])] : []),
+  ];
   // In the order the names are given, not the order of `tools`: `loaded` is a set, which iterates
   // in the order things were added, so a load appends and never reshuffles what went before.
   const byName = (names: Iterable<string>) =>
@@ -1244,10 +1320,7 @@ async function runSteps(
     let calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
     let content = turn.content;
     if (recover && !calls.length && content && (tools.length > 0 || onDemand)) {
-      const callable = tools.map(toolName).filter((name) => name !== undefined);
-      const recovered = recoverToolCalls(content, {
-        names: onDemand ? [...callable, LOAD_TOOLS, ...(proxies ? [CALL_TOOL] : [])] : callable,
-      });
+      const recovered = recoverToolCalls(content, { names: recoverable });
       if (recovered.toolCalls.length) {
         calls = recovered.toolCalls;
         content = recovered.content;
@@ -1260,58 +1333,18 @@ async function runSteps(
     onTurn?.(shown, step);
 
     // Read before the assistant message is written, so what is replayed on every later request
-    // is the repaired JSON: a server that parses replayed arguments refuses the almost-JSON, and
-    // one that could not be read at all is replayed as no arguments.
-    const parsed = calls.map((call) => {
-      try {
-        const args = parseToolArguments(call.function.arguments, {
-          finishReason: turn.finishReason,
-        });
-        return { call, args, normal: JSON.stringify(args) };
-      } catch (error) {
-        return { call, error, normal: "{}" };
-      }
-    });
-
-    const assistant: OpenAI.ChatCompletionAssistantMessageParam = {
-      role: "assistant",
-      content: content || null,
-      ...(parsed.length
-        ? {
-            tool_calls: parsed.map(({ call, normal }) => ({
-              ...call,
-              function: { ...call.function, arguments: normal },
-            })),
-          }
-        : {}),
-    };
+    // is the repaired JSON.
+    const parsed = readCalls(calls, turn.finishReason);
+    const assistant = assistantMessage(content, parsed);
     messages.push(assistant);
     await announce(assistant, step, shown);
 
     if (!calls.length) {
-      let afterTurn: Promise<HookNote[]> = Promise.resolve([]);
-      if (hooks) {
-        const at = questionAt();
-        // Not awaited: the answer is ready, and remembering it is not something to hold it for.
-        // Handed back instead, for a host that wants its notes.
-        afterTurn = notify(
-          hooks.run,
-          "afterTurn",
-          {
-            ...hooks.context,
-            reply: turn.content,
-            ...(at >= 0
-              ? {
-                  turn: {
-                    index: turnIndex(messages, at),
-                    messages: turnMessages(hooks.context.session.id, messages, at),
-                  },
-                }
-              : {}),
-          },
-          hooks.onNote,
-        );
-      }
+      // Not awaited: the answer is ready, and remembering it is not something to hold it for.
+      // Handed back instead, for a host that wants its notes.
+      const afterTurn = hooks
+        ? tellAfterTurn(hooks, messages, questionAt(), turn.content)
+        : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
       return {
         turn: shown,
@@ -1339,11 +1372,11 @@ async function runSteps(
     const answered = new Map<string, Promise<string>>();
     // A `call_tool` is shown, counted and dispatched as the tool it names. Read from the repaired
     // arguments where there are any, since the model's own may be almost-JSON.
-    const named = ({ call, args, normal }: (typeof parsed)[number]) =>
+    const named = ({ call, args, normal }: ReadCall) =>
       proxies && call.function.name === CALL_TOOL
         ? shownCall(CALL_TOOL, args ? normal : call.function.arguments)
         : { name: call.function.name, input: call.function.arguments };
-    const run = async (entry: (typeof parsed)[number]) => {
+    const run = async (entry: ReadCall) => {
       const { call, args, error: unreadable, normal } = entry;
       const proxy = proxies && call.function.name === CALL_TOOL;
       const { name, input: raw } = named(entry);
