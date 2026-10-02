@@ -41,7 +41,9 @@ interface Lookup<K, V> {
  * @param create Builds the value on a miss, and is not called on a hit.
  */
 export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V {
-  if (!map.has(key)) map.set(key, create());
+  if (!map.has(key)) {
+    map.set(key, create());
+  }
   return map.get(key) as V;
 }
 

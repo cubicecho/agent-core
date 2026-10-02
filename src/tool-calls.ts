@@ -74,8 +74,11 @@ function repairJson(text: string): string {
     const word = /[A-Za-z_$]/.test(char) ? text.slice(i).match(/^[A-Za-z_$][\w$]*/)?.[0] : undefined;
     if (word) {
       const python = { True: 'true', False: 'false', None: 'null' }[word];
-      if (/^\s*:/.test(text.slice(i + word.length))) out += `"${word}"`;
-      else out += python ?? word;
+      if (/^\s*:/.test(text.slice(i + word.length))) {
+        out += `"${word}"`;
+      } else {
+        out += python ?? word;
+      }
       i += word.length;
       continue;
     }
@@ -97,9 +100,13 @@ export function looseJson(text: string): unknown {
   for (const candidate of [text, repairJson(text)]) {
     try {
       const value: unknown = JSON.parse(candidate);
-      if (typeof value !== 'string') return value;
+      if (typeof value !== 'string') {
+        return value;
+      }
       const inner = value.trim();
-      if (!/^[[{]/.test(inner)) return value;
+      if (!/^[[{]/.test(inner)) {
+        return value;
+      }
       return looseJson(inner) ?? value;
     } catch {
       // The next candidate.
@@ -126,12 +133,20 @@ export function parseToolArguments(
   raw: unknown,
   { finishReason }: { finishReason?: string | null } = {},
 ): Record<string, unknown> {
-  if (isRecord(raw)) return raw;
-  if (raw === null || raw === undefined) return {};
+  if (isRecord(raw)) {
+    return raw;
+  }
+  if (raw === null || raw === undefined) {
+    return {};
+  }
   const text = typeof raw === 'string' ? raw.trim() : JSON.stringify(raw);
-  if (!text) return {};
+  if (!text) {
+    return {};
+  }
   const parsed = looseJson(text);
-  if (isRecord(parsed)) return parsed;
+  if (isRecord(parsed)) {
+    return parsed;
+  }
   if (finishReason === 'length') {
     throw new ToolArgumentsError(
       'truncated',
@@ -156,15 +171,20 @@ function valueEnd(text: string, start: number): number {
   for (let i = start; i < text.length; i++) {
     const char = text[i];
     if (quote) {
-      if (char === '\\') i++;
-      else if (char === quote) quote = '';
+      if (char === '\\') {
+        i++;
+      } else if (char === quote) {
+        quote = '';
+      }
     } else if (char === '"' || char === "'") {
       quote = char;
     } else if (char === '{' || char === '[') {
       depth++;
     } else if (char === '}' || char === ']') {
       depth--;
-      if (depth === 0) return i + 1;
+      if (depth === 0) {
+        return i + 1;
+      }
     }
   }
   return -1;
@@ -176,7 +196,9 @@ function valueEnd(text: string, start: number): number {
  */
 function readValue(text: string, at: number): { value: unknown; end: number } | undefined {
   const start = at + (text.slice(at).match(/^\s*/)?.[0].length ?? 0);
-  if (text[start] !== '{' && text[start] !== '[') return undefined;
+  if (text[start] !== '{' && text[start] !== '[') {
+    return undefined;
+  }
   const closed = valueEnd(text, start);
   const end = closed < 0 ? text.length : closed;
   const value = looseJson(text.slice(start, end));
@@ -188,10 +210,14 @@ type WrittenCall = { name: string; arguments: string };
 
 /** One call in any of the shapes templates write: `{name, arguments}`, `{name, parameters}`, `{function: {...}}`. */
 function toCall(entry: unknown): WrittenCall | undefined {
-  if (!isRecord(entry)) return undefined;
+  if (!isRecord(entry)) {
+    return undefined;
+  }
   const inner = isRecord(entry.function) ? entry.function : entry;
   const name = inner.name;
-  if (typeof name !== 'string' || !name) return undefined;
+  if (typeof name !== 'string' || !name) {
+    return undefined;
+  }
   const args = inner.arguments ?? inner.parameters ?? inner.args ?? {};
   return { name, arguments: typeof args === 'string' ? args : JSON.stringify(args) };
 }
@@ -241,7 +267,9 @@ function taggedCalls(text: string): Found[] {
     }
     const read = readValue(text, at);
     const calls = read && toCalls(read.value);
-    if (!read || !calls) continue;
+    if (!read || !calls) {
+      continue;
+    }
     closing.lastIndex = read.end;
     found.push({
       start: match.index,
@@ -260,7 +288,9 @@ function mistralCalls(text: string): Found[] {
     const named = text.slice(at).match(/^\s*([\w.-]+)\[ARGS\]/);
     if (named) {
       const read = readValue(text, at + named[0].length);
-      if (!read || !isRecord(read.value)) continue;
+      if (!read || !isRecord(read.value)) {
+        continue;
+      }
       found.push({
         start: match.index,
         end: read.end,
@@ -270,7 +300,9 @@ function mistralCalls(text: string): Found[] {
     }
     const read = readValue(text, at);
     const calls = read && toCalls(read.value);
-    if (read && calls) found.push({ start: match.index, end: read.end, calls });
+    if (read && calls) {
+      found.push({ start: match.index, end: read.end, calls });
+    }
   }
   return found;
 }
@@ -284,16 +316,24 @@ function pythonTagCalls(text: string): Found[] {
     for (;;) {
       const read = readValue(text, end);
       const more = read && toCalls(read.value);
-      if (!read || !more) break;
+      if (!read || !more) {
+        break;
+      }
       calls.push(...more);
       end = read.end;
       const separator = text.slice(end).match(/^\s*;/);
-      if (!separator) break;
+      if (!separator) {
+        break;
+      }
       end += separator[0].length;
     }
     const eom = text.slice(end).match(/^\s*<\|eom_id\|>/);
-    if (eom) end += eom[0].length;
-    if (calls.length) found.push({ start: match.index, end, calls });
+    if (eom) {
+      end += eom[0].length;
+    }
+    if (calls.length) {
+      found.push({ start: match.index, end, calls });
+    }
   }
   return found;
 }
@@ -303,17 +343,23 @@ function pythonTagCalls(text: string): Found[] {
  * Without the names this is too easily an answer that happens to be JSON.
  */
 function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
-  if (!names.size) return [];
+  if (!names.size) {
+    return [];
+  }
   const known = (calls: WrittenCall[] | undefined) =>
     calls?.every((call) => names.has(call.name)) ? calls : undefined;
   const start = text.search(/\S/);
   if (start >= 0 && (text[start] === '{' || text[start] === '[')) {
     const read = readValue(text, start);
     const calls = read && !text.slice(read.end).trim() ? known(toCalls(read.value)) : undefined;
-    if (read && calls) return [{ start, end: read.end, calls }];
+    if (read && calls) {
+      return [{ start, end: read.end, calls }];
+    }
   }
   const fences = [...text.matchAll(/```(?:json)?[ \t]*\n?([\s\S]*?)```/gi)];
-  if (fences.length !== 1) return [];
+  if (fences.length !== 1) {
+    return [];
+  }
   const [fence] = fences;
   const body = fence[1].trim();
   const read = /^[[{]/.test(body) ? readValue(body, 0) : undefined;
@@ -345,15 +391,21 @@ export function recoverToolCalls(
   const from = thought < 0 ? 0 : thought + THINK_FENCE.close.length;
   const tail = content.slice(from);
   let found = [...taggedCalls(tail), ...mistralCalls(tail), ...pythonTagCalls(tail)];
-  if (!found.length) found = bareCalls(tail, new Set(names));
-  if (!found.length) return { content, toolCalls: [] };
+  if (!found.length) {
+    found = bareCalls(tail, new Set(names));
+  }
+  if (!found.length) {
+    return { content, toolCalls: [] };
+  }
 
   found.sort((a, b) => a.start - b.start);
   let rest = '';
   let cursor = 0;
   const toolCalls: ToolCall[] = [];
   for (const span of found) {
-    if (span.start < cursor) continue;
+    if (span.start < cursor) {
+      continue;
+    }
     rest += tail.slice(cursor, span.start);
     cursor = span.end;
     for (const call of span.calls) {

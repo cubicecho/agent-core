@@ -143,9 +143,13 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
   // Proxied, a load is only of what the result could define: a catalogued name the host
   // gave no definition for was not loaded, and is not counted or remembered as though it was.
   const hits = proxied ? resolved.matched.filter((hit) => definitions.has(hit)) : resolved.matched;
-  for (const hit of hits) loads[loaded.has(hit) ? 'redundantLoads' : 'toolsLoaded']++;
+  for (const hit of hits) {
+    loads[loaded.has(hit) ? 'redundantLoads' : 'toolsLoaded']++;
+  }
   loads.unknownToolNames += resolved.unknown.length;
-  for (const hit of hits) loaded.add(hit);
+  for (const hit of hits) {
+    loaded.add(hit);
+  }
   return { content, ok: hits.length > 0 };
 }
 
@@ -156,13 +160,17 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
  */
 async function once(answered: Map<string, Promise<string>>, key: string, make: () => Promise<string>): Promise<string> {
   const previous = answered.get(key);
-  if (previous) return previous;
+  if (previous) {
+    return previous;
+  }
   const pending = make();
   answered.set(key, pending);
   try {
     return await pending;
   } catch (error) {
-    if (answered.get(key) === pending) answered.delete(key);
+    if (answered.get(key) === pending) {
+      answered.delete(key);
+    }
     throw error;
   }
 }
@@ -201,17 +209,23 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
   let content: string;
   let ok = true;
   try {
-    if (!args) throw unreadable;
+    if (!args) {
+      throw unreadable;
+    }
     // By the name the model called, not the one a `call_tool` wraps: `load_tools` is not in
     // the catalogue, and one reached through `call_tool` is refused below like any other.
     if (onDemand && call.function.name === LOAD_TOOLS) {
       ({ content, ok } = answerLoad(run, args));
     } else {
-      if (refused) throw refused.error;
+      if (refused) {
+        throw refused.error;
+      }
       // A model that skips `load_tools` and calls a catalogued tool by name is right about
       // what it wants; load it and run it rather than refusing. Not proxied, where loaded
       // means its definition is in the history, and this call put none there.
-      if (onDemand && !proxied && inCatalog(catalog, name)) run.loaded.add(name);
+      if (onDemand && !proxied && inCatalog(catalog, name)) {
+        run.loaded.add(name);
+      }
       run.used.add(name);
       // Keyed on the inner call, so one made through `call_tool` and one made natively share.
       const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
@@ -220,7 +234,9 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
         : await run.dispatch(request, signal);
     }
   } catch (error) {
-    if (signal?.aborted) throw error;
+    if (signal?.aborted) {
+      throw error;
+    }
     content = errorMessage(error);
     ok = false;
   }
@@ -294,7 +310,9 @@ export async function runCalls(
     // Only a call that was made counts in `toolCalls`.
     for (const [at, entry] of parsed.entries()) {
       const { call } = entry;
-      if (at < kept) continue;
+      if (at < kept) {
+        continue;
+      }
       const outcome = outcomes[at];
       // Under the name it was announced by, which for a `call_tool` is the tool it names.
       if (at < begun) {
@@ -337,7 +355,9 @@ export async function loadShortlist(
   run.onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
   run.toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
   run.loads.toolsLoaded += names.length;
-  for (const name of names) run.loaded.add(name);
+  for (const name of names) {
+    run.loaded.add(name);
+  }
   const exchange: OpenAI.ChatCompletionMessageParam[] = [
     {
       role: 'assistant',
@@ -349,5 +369,7 @@ export async function loadShortlist(
   // Both written before either is announced, so a host that throws on the first leaves a call
   // with its result. Told as step zero's, with no turn: no request was made for them.
   messages.push(...exchange);
-  for (const message of exchange) await run.announce(message, 0);
+  for (const message of exchange) {
+    await run.announce(message, 0);
+  }
 }

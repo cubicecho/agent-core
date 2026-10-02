@@ -129,7 +129,9 @@ function refuseOversized(
 ): void {
   const needed = requestTokens(body, { charsPerToken });
   const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
-  if (needed + reserve <= contextLimit) return;
+  if (needed + reserve <= contextLimit) {
+    return;
+  }
   // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
   // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
   // loops on the first attempt instead of being sent again to be refused again.
@@ -206,14 +208,18 @@ export async function runTurn(
           streamTurn(client, measured(capabilities, forModel), { ...stream, produced: box }),
         { produced, onNotice, model, droppable },
       );
-      if (sent) calibrate(supports, sent, turn.usage.prompt);
+      if (sent) {
+        calibrate(supports, sent, turn.usage.prompt);
+      }
       Object.assign(turn.usage, { wallMs: Date.now() - started, retries, timeouts });
       return turn;
     } catch (error) {
       // The abort is read before the classification, not after. A run stopped by its operator
       // can trip the idle watchdog on the way out, and `EndpointSilent` is transient by the
       // rules in `retry.ts` — so classifying first brings a cancelled run back from the dead.
-      if (produced.any || stream.signal?.aborted) throw error;
+      if (produced.any || stream.signal?.aborted) {
+        throw error;
+      }
       // The endpoint's own refusal, classified here rather than left to the caller. One failure
       // had two error types depending on an option about something else: a caller that gave a
       // `contextLimit` got `ContextOverflow` from the guard above, and one that did not — the
@@ -241,9 +247,13 @@ export async function runTurn(
           continue;
         }
       }
-      if (attempt >= maxRetries || !isTransient(error)) throw error;
+      if (attempt >= maxRetries || !isTransient(error)) {
+        throw error;
+      }
       retries++;
-      if (error instanceof EndpointSilent) timeouts++;
+      if (error instanceof EndpointSilent) {
+        timeouts++;
+      }
       const wait = backoffMs(attempt);
       onNotice?.(`${errorMessage(error)} — retrying in ${shownDelay(wait)} (${attempt + 1}/${maxRetries})`);
       await sleep(wait, stream.signal);

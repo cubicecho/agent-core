@@ -447,11 +447,17 @@ const CACHE_KEPT = 0.9;
  * Nothing before the second request, or where the previous prompt was not reported.
  */
 function cacheDiagnosis(previous: Sent | undefined, next: RequestShape, usage: TurnUsage): Partial<TurnUsage> {
-  if (!previous || !(previous.prompt > 0)) return {};
+  if (!previous || !(previous.prompt > 0)) {
+    return {};
+  }
   const found: Partial<TurnUsage> = { cacheExpected: previous.prompt + previous.completion };
-  if (usage.uncached === undefined) return found;
+  if (usage.uncached === undefined) {
+    return found;
+  }
   found.cacheBroken = usage.cached < previous.prompt * CACHE_KEPT;
-  if (found.cacheBroken) found.cacheBreakReason = breakReason(previous, next);
+  if (found.cacheBroken) {
+    found.cacheBreakReason = breakReason(previous, next);
+  }
   return found;
 }
 
@@ -528,15 +534,21 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       ? new AgentLoopOverflow(error.message, standing.read(), { cause: error })
       : new AgentLoopError(errorMessage(error), standing.read(), { cause: error });
   }
-  if (result) return result;
+  if (result) {
+    return result;
+  }
   throw new ToolIterationLimit(`Stopped after ${options.config.maxToolIterations} tool iterations.`, standing.read());
 }
 
 /** A message's words, as the preselector is asked about them: its string, or its text parts. */
 const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): string => {
   const content = message?.content;
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
   return content.flatMap((part) => (part.type === 'text' ? part.text : [])).join('\n');
 };
 
@@ -548,7 +560,9 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
 async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise<string[]> {
   const { config, catalog = [], signal } = options;
   const prompt = userText(options.messages.findLast((message) => message.role === 'user'));
-  if (!prompt.trim()) return [];
+  if (!prompt.trim()) {
+    return [];
+  }
   const asked = {
     ...(typeof options.preselect === 'object' ? options.preselect : {}),
     signal,
@@ -569,7 +583,9 @@ async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise
 function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
   const { config, signal } = options;
   const compactor = options.compact ? config.tasks?.compaction : undefined;
-  if (!compactor?.model) return undefined;
+  if (!compactor?.model) {
+    return undefined;
+  }
   const call = taskCall(compactor, { signal, onNotice: notice }, config);
   const write = summariser(call.endpoint, call.model, call.options);
   // A summary that fails folds nothing, and the step goes out as it was.
@@ -595,11 +611,15 @@ async function foldBeforeStep(
     charsPerToken,
     ...((compactor?.maxTokens ?? 0) > 0 ? { summaryTokens: compactor?.maxTokens } : {}),
   });
-  if (!plan) return transcript;
+  if (!plan) {
+    return transcript;
+  }
   const folded = await compactTranscript(transcript, plan, summarise, {
     ...(hooks ? { hooks: { run: hooks.run, context: hooks.context, onNote: hooks.onNote } } : {}),
   });
-  if (folded !== transcript) notice(`compacted ${plan.cut - plan.from} messages into a summary`);
+  if (folded !== transcript) {
+    notice(`compacted ${plan.cut - plan.from} messages into a summary`);
+  }
   return folded;
 }
 
@@ -661,7 +681,11 @@ async function discovery(options: AgentLoopOptions, notice: OnNotice) {
   const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
   const chooses = options.preselect && options.preselected === undefined;
   const preselected = !onDemand ? [] : chooses ? await chooseTools(options, notice) : [...(options.preselected ?? [])];
-  if (!proxied) for (const name of preselected) loaded.add(name);
+  if (!proxied) {
+    for (const name of preselected) {
+      loaded.add(name);
+    }
+  }
   return { proxied, onDemand, loaded, preselected };
 }
 
@@ -670,7 +694,9 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
   const definitions = new Map<string, OpenAI.ChatCompletionTool>();
   for (const tool of tools) {
     const name = toolName(tool);
-    if (name !== undefined && !definitions.has(name)) definitions.set(name, tool);
+    if (name !== undefined && !definitions.has(name)) {
+      definitions.set(name, tool);
+    }
   }
   return definitions;
 }
@@ -683,7 +709,9 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
 function announcer(onMessage: AgentLoopOptions['onMessage']) {
   let heard = true;
   return async (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn) => {
-    if (!onMessage || !heard) return;
+    if (!onMessage || !heard) {
+      return;
+    }
     try {
       await onMessage(message, step, turn);
     } catch (error) {
@@ -715,9 +743,13 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
   // A call with no name is a fragment the server never finished sending: nothing to run, and
   // an assistant message naming it would be answered by nothing.
   const calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
-  if (!recoverable || calls.length || !turn.content) return { calls, content: turn.content };
+  if (!recoverable || calls.length || !turn.content) {
+    return { calls, content: turn.content };
+  }
   const recovered = recoverToolCalls(turn.content, { names: recoverable });
-  if (!recovered.toolCalls.length) return { calls, content: turn.content };
+  if (!recovered.toolCalls.length) {
+    return { calls, content: turn.content };
+  }
   notice(
     `recovered ${counted(recovered.toolCalls.length, 'tool call')} the model wrote as text; the server's tool-call parser does not match this model's template`,
   );
@@ -829,7 +861,9 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     announce,
   };
 
-  if (shortlist.length) await loadShortlist(calling, shortlist, messages);
+  if (shortlist.length) {
+    await loadShortlist(calling, shortlist, messages);
+  }
 
   for (let step = 0; step < config.maxToolIterations; step++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
@@ -853,7 +887,9 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
       : given;
     // A rewrite may have folded a definition away, and a load answered "already loaded" would
     // then point at nothing. Forgetting costs a definition sent twice at worst.
-    if (proxied && next !== messages) loaded.clear();
+    if (proxied && next !== messages) {
+      loaded.clear();
+    }
     messages = next;
     ledger = rebaseLedger(ledger, before, messages);
     onEvent({ kind: 'turn', text: `turn ${step + 1}` });
@@ -931,7 +967,9 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
       through: messages.length - 1,
     };
     const entered = recordRequest(ledger, measured, sent);
-    if (entered !== ledger) measured = sent;
+    if (entered !== ledger) {
+      measured = sent;
+    }
     ledger = entered;
     const turn =
       maxContinuations > 0

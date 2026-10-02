@@ -18,7 +18,11 @@ export const LOAD_TOOLS = 'load_tools';
 
 /** Shallow freezing this one would leave `.function.description` — the part worth editing. */
 function deepFreeze<T>(value: T): T {
-  if (value && typeof value === 'object') for (const held of Object.values(value)) deepFreeze(held);
+  if (value && typeof value === 'object') {
+    for (const held of Object.values(value)) {
+      deepFreeze(held);
+    }
+  }
   return Object.freeze(value);
 }
 
@@ -96,7 +100,9 @@ export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<str
   const list = catalogList(catalog, loaded);
   // Not `catalog.length`: a catalogue of nothing but empty servers has no names to offer, and
   // the preamble below would then explain a mechanism against an empty list.
-  if (!list) return '';
+  if (!list) {
+    return '';
+  }
   return [
     '# Tool catalogue',
     '',
@@ -142,7 +148,9 @@ export function loadedTools(
   const tools = [...previous];
   for (const tool of matched) {
     const name = toolName(tool);
-    if (name !== undefined && declared.has(name)) continue;
+    if (name !== undefined && declared.has(name)) {
+      continue;
+    }
     declared.add(name);
     tools.push(tool);
   }
@@ -176,7 +184,9 @@ export type ToolOrder = boolean | ((a: string, b: string) => number);
  * @returns `tools` itself when it is already in that order, so the common case copies nothing.
  */
 export function orderTools(tools: OpenAI.ChatCompletionTool[], order: ToolOrder = true): OpenAI.ChatCompletionTool[] {
-  if (order === false) return tools;
+  if (order === false) {
+    return tools;
+  }
   const nameOf = (tool: OpenAI.ChatCompletionTool) => toolName(tool) ?? '';
   // Code-unit order rather than `localeCompare`, whose answer depends on the host's locale —
   // which is the kind of instability this exists to remove.
@@ -265,17 +275,23 @@ export function expandNames(requested: string[], catalog: CatalogServer[], maxPe
     if (name.endsWith('*')) {
       const stem = name.slice(0, -1);
       const direct = all.filter((tool) => tool.name.startsWith(stem));
-      if (direct.length) return direct.map((tool) => tool.name);
+      if (direct.length) {
+        return direct.map((tool) => tool.name);
+      }
       return all.filter((tool) => tool.name.includes(`__${stem}`)).map((tool) => tool.name);
     }
-    if (known.has(name)) return [name];
+    if (known.has(name)) {
+      return [name];
+    }
     const suffix = all.filter((tool) => tool.name.endsWith(`__${name}`));
     return suffix.length === 1 ? [suffix[0].name] : [];
   };
 
   for (const raw of requested) {
     const name = raw.trim();
-    if (!name) continue;
+    if (!name) {
+      continue;
+    }
     // A bare `*` is not a guess at a name, it is a refusal to choose, and its empty stem
     // prefixes every tool in the catalogue. Answer it the way any other over-broad request is
     // answered: with the names, so the next call can pick from them.
@@ -299,9 +315,15 @@ export function expandNames(requested: string[], catalog: CatalogServer[], maxPe
     // enough already — telling a model that asked for one exact tool that it matches one tool,
     // "more than the twelve one call may load", and to choose from a list holding just that
     // name, leaves it nothing to do but send the identical call again.
-    if (fresh.length > maxPerLoad) overBroad.push({ name, hits });
-    else if (matched.size + fresh.length > maxPerLoad) deferred.push(name);
-    else for (const hit of hits) matched.add(hit);
+    if (fresh.length > maxPerLoad) {
+      overBroad.push({ name, hits });
+    } else if (matched.size + fresh.length > maxPerLoad) {
+      deferred.push(name);
+    } else {
+      for (const hit of hits) {
+        matched.add(hit);
+      }
+    }
   }
 
   return { matched: [...matched], unknown, overBroad, deferred, maxPerLoad };
@@ -334,7 +356,9 @@ export function loadResult(
 
   if (fresh.length) {
     const block = [`Loaded ${fresh.length} tool(s); they are callable on your next step.`, ''];
-    for (const name of fresh) block.push(`${name}: ${byName.get(name) ?? ''}`.trim());
+    for (const name of fresh) {
+      block.push(`${name}: ${byName.get(name) ?? ''}`.trim());
+    }
     blocks.push(block);
   }
   if (again.length) {
@@ -377,8 +401,12 @@ export const inCatalog = (catalog: CatalogServer[], name: string) =>
  */
 export function requestedNames(args: Record<string, unknown>): string[] {
   const value = args.names ?? args.tools ?? args.name;
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
   return [];
 }
 
@@ -467,7 +495,9 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
  */
 export function proxyCatalogPrompt(catalog: CatalogServer[]): string {
   const list = catalogList(catalog);
-  if (!list) return '';
+  if (!list) {
+    return '';
+  }
   return [
     '# Tool catalogue',
     '',
@@ -527,8 +557,9 @@ export function proxyLoadResult(
   const missing = resolved.matched.filter((name) => !loaded?.has(name) && !defined.has(name));
   if (fresh.length) {
     blocks.push([`Loaded ${fresh.length} tool(s). Run them with \`${CALL_TOOL}\`.`]);
-    for (const { name, description, parameters } of fresh)
+    for (const { name, description, parameters } of fresh) {
       blocks.push([JSON.stringify({ name, description, parameters })]);
+    }
   }
   if (again.length) {
     blocks.push([
@@ -541,7 +572,9 @@ export function proxyLoadResult(
   }
   const { overBroad, deferred, unknown, matched } = resolved;
   const hasMoreToSay = overBroad.length || deferred.length || unknown.length || !matched.length;
-  if (hasMoreToSay) blocks.push([loadResult({ ...resolved, matched: [] }, catalog)]);
+  if (hasMoreToSay) {
+    blocks.push([loadResult({ ...resolved, matched: [] }, catalog)]);
+  }
   return joinBlocks(blocks);
 }
 
@@ -561,8 +594,12 @@ export function proxiedCall(
   catalog: CatalogServer[],
 ): { name: string; input: Record<string, unknown> } {
   const name = typeof args.name === 'string' ? args.name.trim() : '';
-  if (!name) throw new Error(`${CALL_TOOL} needs a name; pass one from the tool catalogue.`);
-  if (!inCatalog(catalog, name)) throw new Error(`Not in the catalogue: ${name}. Check the name and try again.`);
+  if (!name) {
+    throw new Error(`${CALL_TOOL} needs a name; pass one from the tool catalogue.`);
+  }
+  if (!inCatalog(catalog, name)) {
+    throw new Error(`Not in the catalogue: ${name}. Check the name and try again.`);
+  }
   let input: unknown = args.arguments ?? {};
   if (typeof input === 'string') {
     const text = input;
@@ -572,8 +609,9 @@ export function proxiedCall(
       throw new Error(`${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, 200)}`);
     }
   }
-  if (!input || typeof input !== 'object' || Array.isArray(input))
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error(`${CALL_TOOL} arguments for ${name} must be an object.`);
+  }
   return { name, input: input as Record<string, unknown> };
 }
 
@@ -591,10 +629,14 @@ export function proxiedCall(
  * passed `arguments` as one.
  */
 export function shownCall(name: string, input: string): { name: string; input: string } {
-  if (name !== CALL_TOOL) return { name, input };
+  if (name !== CALL_TOOL) {
+    return { name, input };
+  }
   try {
     const args = JSON.parse(input) as { name?: unknown; arguments?: unknown };
-    if (typeof args.name !== 'string' || !args.name.trim()) return { name, input };
+    if (typeof args.name !== 'string' || !args.name.trim()) {
+      return { name, input };
+    }
     const inner = args.arguments ?? {};
     return {
       name: args.name.trim(),

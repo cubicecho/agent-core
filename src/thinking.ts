@@ -146,10 +146,14 @@ export class FenceSplitter {
     let best: { at: number; marker: string } | undefined;
     for (const marker of this.#candidates()) {
       const at = text.indexOf(marker);
-      if (at === -1) continue;
+      if (at === -1) {
+        continue;
+      }
       const earlier = !best || at < best.at;
       const longerAtTheSamePlace = best && at === best.at && marker.length > best.marker.length;
-      if (earlier || longerAtTheSamePlace) best = { at, marker };
+      if (earlier || longerAtTheSamePlace) {
+        best = { at, marker };
+      }
     }
     return best;
   }
@@ -157,12 +161,14 @@ export class FenceSplitter {
   /** How much of the end of `text` could be the beginning of a marker. */
   #partialTail(text: string): number {
     let keep = 0;
-    for (const marker of this.#candidates())
-      for (let length = Math.min(marker.length - 1, text.length); length > keep; length--)
+    for (const marker of this.#candidates()) {
+      for (let length = Math.min(marker.length - 1, text.length); length > keep; length--) {
         if (text.endsWith(marker.slice(0, length))) {
           keep = length;
           break;
         }
+      }
+    }
     return keep;
   }
 
@@ -184,16 +190,23 @@ export class FenceSplitter {
       this.reasoning += this.output;
       this.output = '';
     }
-    if (closes) this.#seenFence = true;
+    if (closes) {
+      this.#seenFence = true;
+    }
   }
 
   #emitInto(parts: Split[], text: string) {
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     const kind = this.#inside ? 'reasoning' : 'output';
     this[kind] += text;
     const last = parts.at(-1);
-    if (last?.kind === kind) last.text += text;
-    else parts.push({ kind, text });
+    if (last?.kind === kind) {
+      last.text += text;
+    } else {
+      parts.push({ kind, text });
+    }
   }
 }
 

@@ -272,14 +272,20 @@ function sweep(held: Bus) {
   held.sweeping = null;
   const now = Date.now();
   for (const [runId, stream] of streams) {
-    if (stream.listeners.size) continue;
-    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs)) streams.delete(runId);
+    if (stream.listeners.size) {
+      continue;
+    }
+    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs)) {
+      streams.delete(runId);
+    }
   }
   scheduleSweep(held);
 }
 
 function scheduleSweep(held: Bus) {
-  if (held.sweeping || held.streams.size === 0) return;
+  if (held.sweeping || held.streams.size === 0) {
+    return;
+  }
   held.sweeping = setTimeout(() => sweep(held), held.limits.retainMs);
   held.sweeping.unref?.();
 }
@@ -294,14 +300,18 @@ function scheduleSweep(held: Bus) {
 export function endRun(runId: string) {
   const { streams } = bus();
   const stream = streams.get(runId);
-  if (!stream) return;
+  if (!stream) {
+    return;
+  }
   // Watchers are parked on a promise that only an `emit` to *this* stream can resolve, and the
   // delete below puts it beyond the reach of every later one — the next `emit` builds a fresh
   // stream and wakes nobody. So they are told the run is over first: a watcher that is handed
   // `done` completes, runs its `finally` and lets its consumer go, where one left parked holds
   // an open subscription that can never say anything again. An SSE client on the other end of
   // that is a connection that never closes.
-  if (stream.listeners.size) emit(runId, { kind: 'done', ok: false, text: 'run ended' });
+  if (stream.listeners.size) {
+    emit(runId, { kind: 'done', ok: false, text: 'run ended' });
+  }
   streams.delete(runId);
 }
 
@@ -327,7 +337,9 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   }
   // Kept for a moment so a watcher that arrives just after the end still sees how it went,
   // then dropped: a finished run's record is the row, not this.
-  if (event.kind === 'done') stream.ended = true;
+  if (event.kind === 'done') {
+    stream.ended = true;
+  }
   scheduleSweep(held);
 
   for (const listener of stream.listeners) {
@@ -442,9 +454,13 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
         // than leaving the client holding an open stream that will never say anything again.
-        if (event.kind === 'done') return;
+        if (event.kind === 'done') {
+          return;
+        }
       }
-      if (signal?.aborted) return;
+      if (signal?.aborted) {
+        return;
+      }
       await new Promise<void>((resolve) => {
         wake = resolve;
       });
@@ -498,7 +514,9 @@ export const history = (runId: string): RunEvent[] => [...(bus().streams.get(run
 export const resetEvents = () => {
   const held = bus();
   held.streams.clear();
-  if (held.sweeping) clearTimeout(held.sweeping);
+  if (held.sweeping) {
+    clearTimeout(held.sweeping);
+  }
   held.sweeping = null;
   // In place, so a watcher still open reads the defaults too and not the caps it began under.
   Object.assign(held.limits, DEFAULTS);
@@ -521,9 +539,13 @@ export function fold(events: RunEvent[]): RunEvent[] {
   // built ten thousand times to produce it once.
   let parts: string[] = [];
   const close = () => {
-    if (!parts.length) return;
+    if (!parts.length) {
+      return;
+    }
     const last = blocks[blocks.length - 1];
-    if (parts.length > 1) last.text = parts.join('');
+    if (parts.length > 1) {
+      last.text = parts.join('');
+    }
     parts = [];
   };
 
@@ -542,7 +564,9 @@ export function fold(events: RunEvent[]): RunEvent[] {
       // `fold(history(id))[0].text = ...` rewrite the bus, and every watcher after it read the
       // rewrite.
       blocks.push({ ...event });
-      if (mergeable) parts.push(event.text);
+      if (mergeable) {
+        parts.push(event.text);
+      }
     }
   }
   close();
@@ -662,7 +686,9 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   };
   /** Adds to a field that is absent until something reports it. */
   const add = (field: keyof RunMetrics, value: number | undefined) => {
-    if (value === undefined) return;
+    if (value === undefined) {
+      return;
+    }
     const known = metrics as unknown as Record<string, number | undefined>;
     known[field] = (known[field] ?? 0) + value;
   };
@@ -674,15 +700,22 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   let last: TurnReport | undefined;
 
   for (const event of events) {
-    if (event.kind === 'step') metrics.steps++;
-    else if (event.kind === 'tool-call') {
-      if (event.name === LOAD_TOOLS) metrics.loadCalls++;
+    if (event.kind === 'step') {
+      metrics.steps++;
+    } else if (event.kind === 'tool-call') {
+      if (event.name === LOAD_TOOLS) {
+        metrics.loadCalls++;
+      }
       getOrCreate(pending, event.name, () => []).push(event.at);
     } else if (event.kind === 'tool-result') {
       metrics.toolCalls++;
-      if (event.ok === false) metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
+      if (event.ok === false) {
+        metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
+      }
       const called = pending.get(event.name)?.shift();
-      if (called !== undefined) add('toolMs', event.at - called);
+      if (called !== undefined) {
+        add('toolMs', event.at - called);
+      }
     } else if (event.kind === 'usage' && event.usage?.turn) {
       const turn = event.usage.turn;
       last = turn;
@@ -706,24 +739,38 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
         const reason = turn.cacheBreakReason ?? 'none-known';
         metrics.cacheBreakReasons[reason] = (metrics.cacheBreakReasons[reason] ?? 0) + 1;
       }
-      if (turn.finishReason === 'length') metrics.truncatedTurns++;
-      if (turn.wallMs !== undefined) metrics.slowestTurnMs = Math.max(metrics.slowestTurnMs ?? 0, turn.wallMs);
+      if (turn.finishReason === 'length') {
+        metrics.truncatedTurns++;
+      }
+      if (turn.wallMs !== undefined) {
+        metrics.slowestTurnMs = Math.max(metrics.slowestTurnMs ?? 0, turn.wallMs);
+      }
       if (turn.firstTokenMs !== undefined) {
         add('firstTokenMs', turn.firstTokenMs);
         firstTokens++;
       }
-      if (turn.prompt > 0) metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
+      if (turn.prompt > 0) {
+        metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
+      }
     } else if (event.kind === 'done') {
       metrics.outcome = event.ok === false ? 'failed' : last?.finishReason === 'length' ? 'truncated' : 'answered';
     }
   }
 
-  if (events.length > 1) metrics.wallMs = events[events.length - 1].at - events[0].at;
-  if (reportedPrompt > 0) metrics.cacheHitRatio = reportedCached / reportedPrompt;
-  if (metrics.firstTokenMs !== undefined) metrics.firstTokenMs /= firstTokens;
-  if (metrics.draftTotal && metrics.draftAccepted !== undefined)
+  if (events.length > 1) {
+    metrics.wallMs = events[events.length - 1].at - events[0].at;
+  }
+  if (reportedPrompt > 0) {
+    metrics.cacheHitRatio = reportedCached / reportedPrompt;
+  }
+  if (metrics.firstTokenMs !== undefined) {
+    metrics.firstTokenMs /= firstTokens;
+  }
+  if (metrics.draftTotal && metrics.draftAccepted !== undefined) {
     metrics.draftAcceptance = metrics.draftAccepted / metrics.draftTotal;
-  if (metrics.largestPrompt !== undefined && contextLength && contextLength > 0)
+  }
+  if (metrics.largestPrompt !== undefined && contextLength && contextLength > 0) {
     metrics.largestPromptShare = metrics.largestPrompt / contextLength;
+  }
   return metrics;
 }

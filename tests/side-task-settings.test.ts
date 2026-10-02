@@ -288,7 +288,9 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     await run(onDemand({}), { preselect: true });
     await run({ ...config, toolDiscovery: 'eager' }, { preselect: true });
     expect(create).toHaveBeenCalledTimes(3);
-    for (const nth of [0, 1, 2]) expect(body(nth)).toMatchObject({ model: 'big', stream: true });
+    for (const nth of [0, 1, 2]) {
+      expect(body(nth)).toMatchObject({ model: 'big', stream: true });
+    }
   });
 
   it('reports a failed preselection as a notice and runs without one', async () => {

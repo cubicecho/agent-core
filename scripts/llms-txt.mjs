@@ -31,7 +31,9 @@ function docBlocks(source) {
   const lines = source.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const open = lines[i].indexOf('/**');
-    if (open === -1) continue;
+    if (open === -1) {
+      continue;
+    }
     const sameLineClose = lines[i].indexOf('*/', open + 3);
     if (sameLineClose !== -1) {
       blocks.push({
@@ -42,13 +44,19 @@ function docBlocks(source) {
     }
     const body = [];
     let j = i + 1;
-    for (; j < lines.length && !lines[j].includes('*/'); j++) body.push(lines[j].replace(/^\s*\* ?/, ''));
-    if (j === lines.length) throw new Error('unterminated doc comment');
+    for (; j < lines.length && !lines[j].includes('*/'); j++) {
+      body.push(lines[j].replace(/^\s*\* ?/, ''));
+    }
+    if (j === lines.length) {
+      throw new Error('unterminated doc comment');
+    }
     const tail = lines[j]
       .slice(0, lines[j].indexOf('*/'))
       .replace(/^\s*\* ?/, '')
       .trim();
-    if (tail !== '') body.push(tail);
+    if (tail !== '') {
+      body.push(tail);
+    }
     blocks.push({ body, next: lines[j + 1] ?? '' });
     i = j;
   }
@@ -61,11 +69,17 @@ function paragraphs(body) {
   let current = [];
   for (const line of body) {
     if (line.trim() === '') {
-      if (current.length > 0) out.push(current.join(' ').trim());
+      if (current.length > 0) {
+        out.push(current.join(' ').trim());
+      }
       current = [];
-    } else current.push(line.trim());
+    } else {
+      current.push(line.trim());
+    }
   }
-  if (current.length > 0) out.push(current.join(' ').trim());
+  if (current.length > 0) {
+    out.push(current.join(' ').trim());
+  }
   return out.filter((entry) => entry !== '');
 }
 
@@ -80,15 +94,21 @@ function declaredName(line) {
 /** First sentence of a doc comment, as one line. Abbreviations are not sentence ends. */
 function summarize(body) {
   const text = paragraphs(body)[0] ?? '';
-  if (text === '') return '';
+  if (text === '') {
+    return '';
+  }
   const match = text.match(/^(.*?[.!?])(?:\s|$)/s);
-  if (!match) return text;
+  if (!match) {
+    return text;
+  }
   // `e.g.`/`i.e.`/`vs.` end a clause, not a sentence: keep reading past them.
   let end = match[1];
   let rest = text.slice(end.length);
   while (/(?:^|\s)(?:e\.g|i\.e|vs|etc|cf)\.$/.test(end) && rest.trim() !== '') {
     const more = rest.match(/^(\s*.*?[.!?])(?:\s|$)/s);
-    if (!more) return text;
+    if (!more) {
+      return text;
+    }
     end += more[1];
     rest = rest.slice(more[1].length);
   }
@@ -108,10 +128,14 @@ function reexports(indexSource) {
         const isType = Boolean(blanketType) || entry.startsWith('type ');
         return { name: entry.replace(/^type\s+/, ''), isType };
       });
-    if (names.length === 0) throw new Error(`no names re-exported from ${module}`);
+    if (names.length === 0) {
+      throw new Error(`no names re-exported from ${module}`);
+    }
     found.push({ module, names });
   }
-  if (found.length === 0) throw new Error('no re-exports found in src/index.ts — parser is stale');
+  if (found.length === 0) {
+    throw new Error('no re-exports found in src/index.ts — parser is stale');
+  }
   return found;
 }
 
@@ -120,12 +144,16 @@ const index = read('src/index.ts');
 
 // The block at the top of index.ts, which describes the package rather than any one symbol.
 const intro = docBlocks(index).find((block) => block.next.trim() === '');
-if (!intro) throw new Error('src/index.ts has no leading module comment');
+if (!intro) {
+  throw new Error('src/index.ts has no leading module comment');
+}
 
 const out = [`# ${pkg.name}`, '', `> ${pkg.description}`, ''];
 // The opening paragraph restates the description directly above it; the rest is what a reader
 // does not already have, so the blockquote takes the first and the body takes what follows.
-for (const paragraph of paragraphs(intro.body).slice(1)) out.push(paragraph, '');
+for (const paragraph of paragraphs(intro.body).slice(1)) {
+  out.push(paragraph, '');
+}
 out.push(
   `Requires Node ${pkg.engines.node}, with \`openai\` ${pkg.peerDependencies.openai} as a peer dependency. ESM only.`,
   'Full prose, worked examples and the reasoning behind each seam are in README.md; this file is the index.',
@@ -145,20 +173,27 @@ for (const { module, names } of reexports(index)) {
   const docs = new Map();
   for (const block of blocks) {
     const name = declaredName(block.next);
-    if (name) docs.set(name, summarize(block.body));
+    if (name) {
+      docs.set(name, summarize(block.body));
+    }
   }
   // A block trailed by a blank line documents the file, not the declaration further down.
   const moduleDoc = blocks.find((block) => block.next.trim() === '');
 
   out.push(`### ${module}`, '');
-  if (moduleDoc) out.push(summarize(moduleDoc.body), '');
+  if (moduleDoc) {
+    out.push(summarize(moduleDoc.body), '');
+  }
   for (const { name, isType } of names) {
     const summary = docs.get(name);
     const label = isType ? `\`${name}\` (type)` : `\`${name}\``;
     out.push(summary ? `- ${label} — ${summary}` : `- ${label}`);
     total += 1;
-    if (summary) described += 1;
-    else undocumented.push(`${module}.${name}`);
+    if (summary) {
+      described += 1;
+    } else {
+      undocumented.push(`${module}.${name}`);
+    }
   }
   out.push('');
 }
@@ -185,5 +220,7 @@ if (process.argv.includes('--check')) {
   // Named rather than only counted: an undocumented export is a gap in the source, and the
   // generator is the only thing positioned to notice. Not an error — a missing comment is worth
   // knowing about, not worth failing a build over.
-  if (undocumented.length > 0) console.log(`no doc comment: ${undocumented.join(', ')}`);
+  if (undocumented.length > 0) {
+    console.log(`no doc comment: ${undocumented.join(', ')}`);
+  }
 }

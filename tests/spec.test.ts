@@ -18,7 +18,9 @@ const doc = (extra: Record<string, unknown> = {}) => ({ spec: AGENT_SPEC, ...ext
 function parsed(document: unknown, options?: Parameters<typeof parseSpec>[1]): AgentSpec {
   const result = parseSpec(document, options);
   expect(result.errors).toEqual([]);
-  if (!result.spec) throw new Error('unreachable');
+  if (!result.spec) {
+    throw new Error('unreachable');
+  }
   return result.spec;
 }
 

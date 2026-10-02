@@ -53,10 +53,13 @@ const POOL_KEYS = ['definitions', '$defs'] as const;
  * data — which is what keeps a walk out of `default`, `enum` and `const`.
  */
 const mapChildren = (key: string, value: unknown, fn: (node: unknown) => unknown): unknown => {
-  if (SCHEMA_KEYS.has(key)) return Array.isArray(value) ? value.map((sub) => fn(sub)) : fn(value);
+  if (SCHEMA_KEYS.has(key)) {
+    return Array.isArray(value) ? value.map((sub) => fn(sub)) : fn(value);
+  }
   // The keys here are argument names; only the values are schemas.
-  if (SCHEMA_MAPS.has(key) && isRecord(value))
+  if (SCHEMA_MAPS.has(key) && isRecord(value)) {
     return Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, fn(sub)]));
+  }
   return value;
 };
 
@@ -69,9 +72,15 @@ const requiredOf = (node: Schema): string[] =>
  * whole schema belongs, which the grammar converter reports as `Unrecognized schema: "object"`.
  */
 function asSchema(node: unknown): unknown {
-  if (typeof node === 'string') return PRIMITIVES.has(node) && node !== 'object' ? { type: node } : EMPTY_OBJECT();
-  if (typeof node === 'boolean') return node;
-  if (!isRecord(node)) return EMPTY_OBJECT();
+  if (typeof node === 'string') {
+    return PRIMITIVES.has(node) && node !== 'object' ? { type: node } : EMPTY_OBJECT();
+  }
+  if (typeof node === 'boolean') {
+    return node;
+  }
+  if (!isRecord(node)) {
+    return EMPTY_OBJECT();
+  }
   return normalize(node);
 }
 
@@ -83,10 +92,16 @@ function normalize(node: Schema): Schema {
     if (key === 'type' && Array.isArray(value)) {
       const names = value.filter((item): item is string => typeof item === 'string');
       const concrete = names.filter((name) => name !== 'null');
-      if (names.includes('null')) built.nullable = true;
-      if (concrete.length === 1) built.type = concrete[0];
-      else if (concrete.length > 1) built.anyOf = concrete.map((name) => ({ type: name }));
-      else built.type = 'null';
+      if (names.includes('null')) {
+        built.nullable = true;
+      }
+      if (concrete.length === 1) {
+        built.type = concrete[0];
+      } else if (concrete.length > 1) {
+        built.anyOf = concrete.map((name) => ({ type: name }));
+      } else {
+        built.type = 'null';
+      }
     } else {
       built[key] = mapChildren(key, value, asSchema);
     }
@@ -96,16 +111,22 @@ function normalize(node: Schema): Schema {
 
   // A grammar is context-free; lookaround is not expressible in one at all, so no converter
   // can accept it. Dropping it costs one advisory constraint on one string field.
-  if (typeof out.pattern === 'string' && LOOKAROUND.test(out.pattern)) delete out.pattern;
+  if (typeof out.pattern === 'string' && LOOKAROUND.test(out.pattern)) {
+    delete out.pattern;
+  }
   // `{"type": "object"}` with no properties produces invalid GBNF.
-  if (out.type === 'object' && !isRecord(out.properties)) out.properties = {};
+  if (out.type === 'object' && !isRecord(out.properties)) {
+    out.properties = {};
+  }
   // Strict validators reject any sibling of `$ref`, and draft-07 ignores them, so a reference
   // stands alone or not at all. This is not hypothetical tidying: collapsing `anyOf: [{$ref},
   // {type: "null"}]` — the shape a schema-generated server emits at every optional argument —
   // lands `nullable` right next to the `$ref` that survived. Whatever is dropped here was
   // already unreadable to a conforming consumer; optionality still lives in the parent's
   // `required`.
-  if ('$ref' in out) return { $ref: out.$ref };
+  if ('$ref' in out) {
+    return { $ref: out.$ref };
+  }
 
   return out;
 }
@@ -119,9 +140,13 @@ function collapseNullableUnion(node: Schema): Schema {
   let out = node;
   for (const key of ['anyOf', 'oneOf'] as const) {
     const variants = out[key];
-    if (!Array.isArray(variants)) continue;
+    if (!Array.isArray(variants)) {
+      continue;
+    }
     const concrete = variants.filter((item) => !(isRecord(item) && item.type === 'null'));
-    if (concrete.length !== 1 || concrete.length === variants.length) continue;
+    if (concrete.length !== 1 || concrete.length === variants.length) {
+      continue;
+    }
 
     const { [key]: _collapsed, ...rest } = out;
     out = { ...rest, nullable: true, ...(isRecord(concrete[0]) ? concrete[0] : {}) };
@@ -138,7 +163,11 @@ const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
 /** The `definitions` and `$defs` that a local pointer in this schema resolves against. */
 function poolsOf(parameters: Schema): Schema {
   const defs: Schema = {};
-  for (const key of POOL_KEYS) if (isRecord(parameters[key])) defs[key] = parameters[key];
+  for (const key of POOL_KEYS) {
+    if (isRecord(parameters[key])) {
+      defs[key] = parameters[key];
+    }
+  }
   return defs;
 }
 
@@ -157,7 +186,9 @@ function resolveRef(node: unknown, defs: Schema): Schema | undefined {
   while (isRecord(current) && typeof current.$ref === 'string') {
     const pointer = current.$ref;
     const target = LOCAL_POINTER.exec(pointer);
-    if (!target || seen.has(pointer)) return undefined;
+    if (!target || seen.has(pointer)) {
+      return undefined;
+    }
     seen.add(pointer);
     const pool = defs[target[1]];
     current = isRecord(pool) ? pool[target[2]] : undefined;
@@ -175,7 +206,9 @@ function resolveRef(node: unknown, defs: Schema): Schema | undefined {
  * generator emits this shape whenever the argument object is a named type.
  */
 function inlineRootRef(parameters: Schema): Schema {
-  if (typeof parameters.$ref !== 'string') return parameters;
+  if (typeof parameters.$ref !== 'string') {
+    return parameters;
+  }
   const defs = poolsOf(parameters);
   const resolved = resolveRef(parameters, defs);
   // A pointer that lands nowhere has nothing here to resolve against. An object with no
@@ -196,19 +229,29 @@ function inlineRootRef(parameters: Schema): Schema {
  */
 function mergeRootAllOf(schema: Schema): Schema {
   const branches = schema.allOf;
-  if (!Array.isArray(branches)) return schema;
+  if (!Array.isArray(branches)) {
+    return schema;
+  }
 
   const defs = poolsOf(schema);
   const properties: Schema = isRecord(schema.properties) ? { ...schema.properties } : {};
   const required = new Set(requiredOf(schema));
   for (const raw of branches) {
     const branch = resolveRef(raw, defs);
-    if (!branch) continue;
-    if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
-    for (const name of requiredOf(branch)) required.add(name);
+    if (!branch) {
+      continue;
+    }
+    if (isRecord(branch.properties)) {
+      Object.assign(properties, branch.properties);
+    }
+    for (const name of requiredOf(branch)) {
+      required.add(name);
+    }
   }
 
-  if (!Object.keys(properties).length) return schema;
+  if (!Object.keys(properties).length) {
+    return schema;
+  }
   return { ...schema, properties, ...(required.size ? { required: [...required] } : {}) };
 }
 
@@ -231,7 +274,9 @@ function mergeRootUnion(schema: Schema): Schema {
   let out = schema;
   for (const key of ['anyOf', 'oneOf'] as const) {
     const branches = out[key];
-    if (!Array.isArray(branches)) continue;
+    if (!Array.isArray(branches)) {
+      continue;
+    }
 
     const properties: Schema = {};
     // `null` until a branch has been read, which is what tells "no branches yet" apart from
@@ -244,12 +289,16 @@ function mergeRootUnion(schema: Schema): Schema {
         shared = new Set<string>();
         continue;
       }
-      if (isRecord(branch.properties)) Object.assign(properties, branch.properties);
+      if (isRecord(branch.properties)) {
+        Object.assign(properties, branch.properties);
+      }
       const names = requiredOf(branch);
       shared = previous === null ? new Set(names) : new Set(names.filter((n) => previous.has(n)));
     }
 
-    if (!Object.keys(properties).length) continue;
+    if (!Object.keys(properties).length) {
+      continue;
+    }
     out = {
       ...out,
       properties: { ...(isRecord(out.properties) ? out.properties : {}), ...properties },
@@ -269,13 +318,20 @@ function mergeRootUnion(schema: Schema): Schema {
  */
 function collectRefs(node: unknown, into: Set<string>) {
   if (Array.isArray(node)) {
-    for (const item of node) collectRefs(item, into);
+    for (const item of node) {
+      collectRefs(item, into);
+    }
     return;
   }
-  if (!isRecord(node)) return;
+  if (!isRecord(node)) {
+    return;
+  }
   for (const [key, value] of Object.entries(node)) {
-    if (key === '$ref' && typeof value === 'string') into.add(value);
-    else collectRefs(value, into);
+    if (key === '$ref' && typeof value === 'string') {
+      into.add(value);
+    } else {
+      collectRefs(value, into);
+    }
   }
 }
 
@@ -294,7 +350,9 @@ function collectRefs(node: unknown, into: Set<string>) {
  */
 function pruneDefs(schema: Schema): Schema {
   const pools = POOL_KEYS.filter((key) => isRecord(schema[key]));
-  if (!pools.length) return schema;
+  if (!pools.length) {
+    return schema;
+  }
 
   const live: Record<string, Set<string>> = {};
   const visit = (node: unknown) => {
@@ -302,13 +360,19 @@ function pruneDefs(schema: Schema): Schema {
     collectRefs(node, pointers);
     for (const pointer of pointers) {
       const target = LOCAL_POINTER.exec(pointer);
-      if (!target) continue;
+      if (!target) {
+        continue;
+      }
       const [, poolKey, name] = target;
       const pool = schema[poolKey];
-      if (!isRecord(pool) || !(name in pool)) continue;
+      if (!isRecord(pool) || !(name in pool)) {
+        continue;
+      }
       live[poolKey] ??= new Set<string>();
       const names = live[poolKey];
-      if (names.has(name)) continue;
+      if (names.has(name)) {
+        continue;
+      }
       names.add(name);
       visit(pool[name]);
     }
@@ -317,7 +381,9 @@ function pruneDefs(schema: Schema): Schema {
   // The pools themselves are not roots: a definition is reached from the schema body, or by
   // another definition that was, or not at all.
   const body = { ...schema };
-  for (const key of pools) delete body[key];
+  for (const key of pools) {
+    delete body[key];
+  }
   visit(body);
 
   let pruned = schema;
@@ -329,7 +395,9 @@ function pruneDefs(schema: Schema): Schema {
       continue;
     }
     const pool = schema[key] as Schema;
-    if (names.size === Object.keys(pool).length) continue;
+    if (names.size === Object.keys(pool).length) {
+      continue;
+    }
     const reached = Object.entries(pool).filter(([name]) => names.has(name));
     pruned = { ...pruned, [key]: Object.fromEntries(reached) };
   }
@@ -341,10 +409,14 @@ function pruneDefs(schema: Schema): Schema {
  * validator will accept. Anything the rewrites above removed, `required` may still name.
  */
 function pruneRequired(schema: Schema): Schema {
-  if (!Array.isArray(schema.required)) return schema;
+  if (!Array.isArray(schema.required)) {
+    return schema;
+  }
   const properties = isRecord(schema.properties) ? schema.properties : {};
   const kept = schema.required.filter((name) => typeof name === 'string' && name in properties);
-  if (kept.length) return { ...schema, required: kept };
+  if (kept.length) {
+    return { ...schema, required: kept };
+  }
   const { required: _unmet, ...rest } = schema;
   return rest;
 }
@@ -362,12 +434,20 @@ function pruneRequired(schema: Schema): Schema {
  * properties.
  */
 export function sanitizeSchema(schema: unknown): Record<string, unknown> {
-  if (!isRecord(schema)) return EMPTY_OBJECT();
+  if (!isRecord(schema)) {
+    return EMPTY_OBJECT();
+  }
   // A copy of its own, so what is deleted and set below is this function's and nobody else's.
   const out = { ...mergeRootUnion(mergeRootAllOf(normalize(inlineRootRef(schema)))) };
-  for (const key of TOP_LEVEL_COMBINATORS) delete out[key];
-  if (out.type !== 'object') out.type = 'object';
-  if (!isRecord(out.properties)) out.properties = {};
+  for (const key of TOP_LEVEL_COMBINATORS) {
+    delete out[key];
+  }
+  if (out.type !== 'object') {
+    out.type = 'object';
+  }
+  if (!isRecord(out.properties)) {
+    out.properties = {};
+  }
   return pruneDefs(pruneRequired(out));
 }
 
@@ -429,11 +509,17 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) => through(san
  * and `const`, whose contents are data, not schema.
  */
 const strip = (node: unknown): unknown => {
-  if (Array.isArray(node)) return node.map(strip);
-  if (!isRecord(node)) return node;
+  if (Array.isArray(node)) {
+    return node.map(strip);
+  }
+  if (!isRecord(node)) {
+    return node;
+  }
   const out: Schema = {};
   for (const [key, value] of Object.entries(node)) {
-    if (key === 'pattern' || key === 'format') continue;
+    if (key === 'pattern' || key === 'format') {
+      continue;
+    }
     out[key] = mapChildren(key, value, strip);
   }
   return out;
@@ -481,7 +567,9 @@ const NO_USER_QUERY = 'no user query found';
  */
 export function isGrammarError(message: string): boolean {
   const text = message.toLowerCase();
-  if (text.includes(NO_USER_QUERY)) return false;
+  if (text.includes(NO_USER_QUERY)) {
+    return false;
+  }
   return (
     text.includes('grammar') ||
     text.includes('unrecognized schema') ||

@@ -304,7 +304,9 @@ describe('getClient', () => {
 
   it('keeps a full pool', () => {
     const first = getClient(box(0));
-    for (let n = 1; n < MAX_CLIENTS; n++) getClient(box(n));
+    for (let n = 1; n < MAX_CLIENTS; n++) {
+      getClient(box(n));
+    }
     expect(getClient(box(0))).toBe(first);
   });
 
@@ -313,14 +315,18 @@ describe('getClient', () => {
     // deployment: unbounded, that is one client and one connection pool per tenant, held for the
     // life of the process. Evicted costs a pool and nothing else — the next call builds another.
     const first = getClient(box(0));
-    for (let n = 1; n <= MAX_CLIENTS; n++) getClient(box(n));
+    for (let n = 1; n <= MAX_CLIENTS; n++) {
+      getClient(box(n));
+    }
     expect(getClient(box(0))).not.toBe(first);
   });
 
   it('counts a client asked for again as the youngest', () => {
     const first = getClient(box(0));
     const second = getClient(box(1));
-    for (let n = 2; n < MAX_CLIENTS; n++) getClient(box(n));
+    for (let n = 2; n < MAX_CLIENTS; n++) {
+      getClient(box(n));
+    }
     // The oldest, asked for again — so what the next arrival evicts is the one behind it. Without
     // the re-insertion this is the endpoint a busy consumer uses most and rebuilds most often.
     getClient(box(0));
@@ -367,7 +373,9 @@ describe('configureClients', () => {
   it('keeps more clients once raised', () => {
     configureClients({ maxClients: MAX_CLIENTS * 2 });
     const first = getClient(box(0));
-    for (let n = 1; n < MAX_CLIENTS * 2; n++) getClient(box(n));
+    for (let n = 1; n < MAX_CLIENTS * 2; n++) {
+      getClient(box(n));
+    }
     expect(getClient(box(0))).toBe(first);
   });
 

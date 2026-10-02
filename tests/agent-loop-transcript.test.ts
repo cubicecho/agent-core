@@ -163,7 +163,9 @@ describe('onMessage', () => {
     );
     const full = new Error('disk full');
     const onMessage = vi.fn(async (message: Message) => {
-      if (message.role === 'tool') throw full;
+      if (message.role === 'tool') {
+        throw full;
+      }
     });
     const error = await thrown(
       runAgentLoop({
@@ -319,7 +321,9 @@ describe('a stop while the tools run', () => {
     );
     const stopped = new Error('b was stopped');
     const dispatch = vi.fn(async ({ name }: ToolCallRequest) => {
-      if (name !== 'b') return `${name} ran`;
+      if (name !== 'b') {
+        return `${name} ran`;
+      }
       controller.abort();
       throw stopped;
     });
@@ -369,7 +373,9 @@ describe('a stop while the tools run', () => {
       ]),
     );
     const dispatch = async ({ name }: ToolCallRequest, signal?: AbortSignal) => {
-      if (name === 'a') return 'a ran';
+      if (name === 'a') {
+        return 'a ran';
+      }
       if (name === 'b') {
         // After `a` has come back, and with `c` still out.
         await new Promise((resolve) => setTimeout(resolve, 5));

@@ -30,7 +30,9 @@ test('a lost or refused request is worth sending again; a complaint about it is 
 
 test('backoff grows, stays under the cap, and is never two identical waits', () => {
   const waits = [0, 1, 2, 3, 9].map(backoffMs);
-  for (const wait of waits) expect(wait).toBeLessThanOrEqual(8000);
+  for (const wait of waits) {
+    expect(wait).toBeLessThanOrEqual(8000);
+  }
   // Jittered into the top half of each step, so the steps stay ordered but two tasks failing
   // together do not come back in lockstep.
   expect(backoffMs(0)).toBeGreaterThanOrEqual(250);

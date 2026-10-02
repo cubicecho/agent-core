@@ -65,7 +65,9 @@ const modelThatRefuses = (...refusals: Error[]) => {
       });
     }
     const refusal = refusals.shift();
-    if (refusal) throw refusal;
+    if (refusal) {
+      throw refusal;
+    }
     return 'answered';
   });
   return { send, asked };
@@ -79,7 +81,9 @@ const serverThatRefuses = (...refusals: Error[]) => {
     // assertions are about the endpoint's own.
     asked.push({ strictSchemas: supports.strictSchemas, usageInStream: supports.usageInStream });
     const refusal = refusals.shift();
-    if (refusal) throw refusal;
+    if (refusal) {
+      throw refusal;
+    }
     return 'answered';
   });
   return { send, asked };
@@ -544,7 +548,9 @@ describe('negotiate, for a model', () => {
     const refusals = [NO_USAGE, NO_EFFORT];
     const send = async () => {
       const refusal = refusals.shift();
-      if (refusal) throw refusal;
+      if (refusal) {
+        throw refusal;
+      }
       return 'answered';
     };
     await negotiate(supports, send, {
@@ -628,7 +634,9 @@ describe('two runs on one endpoint', () => {
     // is a fact about the server, not about either run.
     const supports = capabilitiesFor('http://local/v1');
     const send = async (as: { strictSchemas: boolean }) => {
-      if (as.strictSchemas) throw NO_GRAMMAR;
+      if (as.strictSchemas) {
+        throw NO_GRAMMAR;
+      }
       return 'answered';
     };
 
@@ -645,7 +653,9 @@ describe('two runs on one endpoint', () => {
     // the loser finds the flag already latched off and has to send again rather than give up.
     const supports = capabilitiesFor('https://api.openai.com/v1');
     const send = async (_s: Capabilities, _p: Produced, model: ModelCapabilities | undefined) => {
-      if (model?.reasoningEffort) throw NO_EFFORT;
+      if (model?.reasoningEffort) {
+        throw NO_EFFORT;
+      }
       return 'answered';
     };
 

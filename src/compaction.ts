@@ -74,7 +74,9 @@ const systemHead = (messages: Message[]): { from: number; previous?: string } =>
   let from = 0;
   let previous: string | undefined;
   while (from < messages.length && messages[from].role === 'system') {
-    if (isSummary(messages[from])) previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
+    if (isSummary(messages[from])) {
+      previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
+    }
     from++;
   }
   return { from, previous };
@@ -108,13 +110,21 @@ export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars =
   let out: Message[] | undefined;
   for (let at = messages.length - 1; at >= 0; at--) {
     const message = messages[at];
-    if (message.role !== 'tool') continue;
-    if (kept++ < keepLast) continue;
+    if (message.role !== 'tool') {
+      continue;
+    }
+    if (kept++ < keepLast) {
+      continue;
+    }
     const text = textOf(message.content);
-    if (text.length <= maxChars || text.startsWith('[result cleared')) continue;
+    if (text.length <= maxChars || text.startsWith('[result cleared')) {
+      continue;
+    }
     // A proxied load's result is the schema itself; stubbed, the tool is one the model can still
     // name and no longer call correctly.
-    if (holdsDefinitions(text)) continue;
+    if (holdsDefinitions(text)) {
+      continue;
+    }
     out ??= [...messages];
     out[at] = {
       ...message,
@@ -232,9 +242,13 @@ export function planCompaction(
     previous: givenPrevious,
   }: CompactionOptions,
 ): CompactionPlan | undefined {
-  if (!(limit > 0)) return undefined;
+  if (!(limit > 0)) {
+    return undefined;
+  }
   const cost = used ?? messages.reduce((total, message) => total + estimate(message), 0);
-  if (cost < limit * compactAt) return undefined;
+  if (cost < limit * compactAt) {
+    return undefined;
+  }
 
   const head = systemHead(messages);
   const from = clamp(givenFrom ?? head.from, messages.length);
@@ -249,7 +263,9 @@ export function planCompaction(
       if (messages[at].role === 'user') {
         cut = at;
         after = cost - folded + summaryTokens;
-        if (after <= limit * target) break;
+        if (after <= limit * target) {
+          break;
+        }
       }
       folded += estimate(messages[at]);
     }
@@ -258,13 +274,19 @@ export function planCompaction(
     let kept = 0;
     for (let at = messages.length - 1; at > from; at--) {
       kept += estimate(messages[at]);
-      if (kept > budget) break;
+      if (kept > budget) {
+        break;
+      }
       cut = at;
     }
-    while (cut < messages.length && messages[cut].role !== 'user') cut++;
+    while (cut < messages.length && messages[cut].role !== 'user') {
+      cut++;
+    }
   }
 
-  if (cut >= messages.length || cut - from < 2) return undefined;
+  if (cut >= messages.length || cut - from < 2) {
+    return undefined;
+  }
   return {
     from,
     cut,
@@ -376,7 +398,9 @@ export async function runCompaction(
   let summary: string;
   if (hooks && context && hooks.honourVeto && !forced) {
     const { vetoed } = await consult(hooks.run, 'beforeCompact', context, hooks.onNote);
-    if (vetoed) return undefined;
+    if (vetoed) {
+      return undefined;
+    }
     summary = await summarise(summaryInput(plan));
   } else {
     [summary] = await Promise.all([
@@ -384,7 +408,9 @@ export async function runCompaction(
       hooks && context && notify(hooks.run, 'beforeCompact', context, hooks.onNote),
     ]);
   }
-  if (!summary.trim()) return undefined;
+  if (!summary.trim()) {
+    return undefined;
+  }
   return { summary: summary.trim(), through: plan.cut, at: new Date().toISOString() };
 }
 
@@ -409,7 +435,9 @@ export function applyCompaction(
   record?: Pick<CompactionRecord, 'summary' | 'through'>,
   { from }: { from?: number } = {},
 ): Message[] {
-  if (!record?.summary.trim()) return messages;
+  if (!record?.summary.trim()) {
+    return messages;
+  }
   const head = clamp(from ?? systemHead(messages).from, record.through);
   return [
     ...messages.slice(0, head).filter((message) => !isSummary(message)),
@@ -435,7 +463,9 @@ export function applyCompaction(
  * where the summary is the request's first message.
  */
 export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'through'>, head = 0): number => {
-  if (!record) return index;
+  if (!record) {
+    return index;
+  }
   return index < record.through ? head : index - record.through + head + 1;
 };
 
@@ -472,6 +502,8 @@ export async function compactTranscript(
   options: CompactionRunOptions = {},
 ): Promise<Message[]> {
   const record = await runCompaction(messages, plan, summarise, options);
-  if (!record) return messages;
+  if (!record) {
+    return messages;
+  }
   return applyCompaction(messages, record, { from: plan.from });
 }

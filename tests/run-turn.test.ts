@@ -32,7 +32,9 @@ const body = (supports: { usageInStream: boolean }) =>
 
 /** Runs everything the backoff sleeps through, however many attempts it takes. */
 const runOutTheClock = async () => {
-  for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(8000);
+  for (let i = 0; i < 10; i++) {
+    await vi.advanceTimersByTimeAsync(8000);
+  }
 };
 
 afterEach(() => {

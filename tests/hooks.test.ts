@@ -318,7 +318,9 @@ describe('gather', () => {
 
   it("costs a rejecting runner its event's context and nothing else", async () => {
     const run: HookRunner = async (event) => {
-      if (event === 'sessionStart') throw new Error('pool is down');
+      if (event === 'sessionStart') {
+        throw new Error('pool is down');
+      }
       return [outcome({ inject: true, text: 'likes tea' })];
     };
     const gathered = await gather(run, ['sessionStart', 'beforeTurn'], { session: { id: 's1' } });

@@ -150,9 +150,15 @@ function bind(scope: Scope): Runtime {
  */
 export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const runtime = bind(new Map());
-  if (options.clients) runtime.configureClients(options.clients);
-  if (options.events) runtime.configureEvents(options.events);
-  if (options.hooks) runtime.configureHooks(options.hooks);
+  if (options.clients) {
+    runtime.configureClients(options.clients);
+  }
+  if (options.events) {
+    runtime.configureEvents(options.events);
+  }
+  if (options.hooks) {
+    runtime.configureHooks(options.hooks);
+  }
   return runtime;
 }
 

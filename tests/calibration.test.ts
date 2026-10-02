@@ -46,7 +46,9 @@ describe('calibration', () => {
 
   it('takes the highest of the latest four readings, which is the lowest count', () => {
     const body = says('x'.repeat(3000));
-    for (const ratio of [7, 2, 3, 2.5, 3.5]) calibrate(supports(), body, promptAt(body, ratio));
+    for (const ratio of [7, 2, 3, 2.5, 3.5]) {
+      calibrate(supports(), body, promptAt(body, ratio));
+    }
     // The 7 has aged out; of 2, 3, 2.5 and 3.5 the estimate that errs low divides by 3.5.
     expect(charsPerTokenFor(supports(), 'm')).toBeCloseTo(3.5);
   });

@@ -210,7 +210,9 @@ describe("a runtime's context", () => {
     const events = runtime.watch('run');
     const seen: string[] = [];
     const reading = (async () => {
-      for await (const event of events) seen.push(event.text);
+      for await (const event of events) {
+        seen.push(event.text);
+      }
     })();
     await new Promise((resolve) => setTimeout(resolve, 0));
     emit('run', { kind: 'output', text: "the process's" });

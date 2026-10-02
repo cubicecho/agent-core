@@ -4,7 +4,9 @@ import { ALL_FENCES, FenceSplitter, type Split, stripThinking } from '../src/thi
 /** Every piece fed in one at a time, with what came out of each push and of the finish. */
 const split = (pieces: string[], splitter = new FenceSplitter()) => {
   const parts: Split[] = [];
-  for (const piece of pieces) parts.push(...splitter.push(piece));
+  for (const piece of pieces) {
+    parts.push(...splitter.push(piece));
+  }
   parts.push(...splitter.finish());
   return { parts, output: splitter.output, reasoning: splitter.reasoning };
 };

@@ -251,12 +251,20 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
       notes.push(failureNote(outcome));
       continue;
     }
-    if (!outcome.inject || !INJECT_EVENTS.has(outcome.event)) continue;
+    if (!outcome.inject || !INJECT_EVENTS.has(outcome.event)) {
+      continue;
+    }
     let text = outcome.text?.trim();
-    if (!text) continue;
+    if (!text) {
+      continue;
+    }
     const cap = Math.min(outcome.maxTokens, remaining);
-    if (cap <= 0) continue;
-    if (estimateTokens(text) > cap) text = `${text.slice(0, cap * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+    if (cap <= 0) {
+      continue;
+    }
+    if (estimateTokens(text) > cap) {
+      text = `${text.slice(0, cap * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+    }
     const tokens = estimateTokens(text);
     remaining -= tokens;
     blocks.push(`<context source="${attribute(outcome.label)}">\n${text}\n</context>`);
@@ -294,7 +302,9 @@ export function withContext(
   preface = hookSettings().preface,
 ): OpenAI.ChatCompletionMessageParam[] {
   const message = history[index];
-  if (!context || message?.role !== 'user') return history;
+  if (!context || message?.role !== 'user') {
+    return history;
+  }
   const lead = preface ? `${preface}\n\n${context}\n\n` : `${context}\n\n`;
   const content: OpenAI.ChatCompletionUserMessageParam['content'] =
     typeof message.content === 'string'
@@ -352,8 +362,12 @@ export function untrusted(text: string, { source }: { source?: string } = {}): s
  * a string nor a list reads as empty.
  */
 export const textOf = (content: unknown): string => {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
   return content.map((part) => (typeof part?.text === 'string' && part.type !== 'refusal' ? part.text : '')).join('');
 };
 
@@ -398,9 +412,13 @@ export function turnMessages(
   const out: HookMessage[] = [];
   for (let at = Math.max(0, from); at < end; at++) {
     const message = messages[at];
-    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    if (message.role !== 'user' && message.role !== 'assistant') {
+      continue;
+    }
     const text = textOf(message.content).trim();
-    if (!text) continue;
+    if (!text) {
+      continue;
+    }
     const digest = createHash('sha256').update(`${message.role}\0${text}`).digest('hex');
     out.push({
       speaker: message.role,
@@ -472,7 +490,9 @@ export async function gather(
 ): Promise<Gathered> {
   const outcomes = await Promise.all(events.map((event) => runSafely(run, event, context, signal)));
   const gathered = assembleContext(outcomes.flat(), maxTokens);
-  for (const note of gathered.notes) onNote?.(note);
+  for (const note of gathered.notes) {
+    onNote?.(note);
+  }
   return gathered;
 }
 
@@ -499,7 +519,9 @@ export async function notify(
 ): Promise<HookNote[]> {
   const outcomes = await runSafely(run, event, context);
   const notes = outcomes.filter((outcome) => !outcome.ok).map(failureNote);
-  for (const note of notes) onNote?.(note);
+  for (const note of notes) {
+    onNote?.(note);
+  }
   return notes;
 }
 
@@ -527,9 +549,14 @@ export async function consult(
   const outcomes = await runSafely(run, event, context);
   const notes: HookNote[] = [];
   for (const outcome of outcomes) {
-    if (!outcome.ok) notes.push(failureNote(outcome));
-    else if (outcome.veto === true) notes.push({ ...noteOf(outcome), veto: true });
+    if (!outcome.ok) {
+      notes.push(failureNote(outcome));
+    } else if (outcome.veto === true) {
+      notes.push({ ...noteOf(outcome), veto: true });
+    }
   }
-  for (const note of notes) onNote?.(note);
+  for (const note of notes) {
+    onNote?.(note);
+  }
   return { notes, vetoed: notes.some((note) => note.veto) };
 }

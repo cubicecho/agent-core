@@ -51,7 +51,9 @@ describe('emit', () => {
 
   it('trims the backlog in batches, back to the cap', () => {
     // 1000 kept, 256 of slack: the 1257th push is the one that trims.
-    for (let i = 0; i < 1256; i++) emit('chatty', { kind: 'output', text: 'x' });
+    for (let i = 0; i < 1256; i++) {
+      emit('chatty', { kind: 'output', text: 'x' });
+    }
     expect(history('chatty')).toHaveLength(1256);
 
     emit('chatty', { kind: 'output', text: 'x' });
@@ -67,12 +69,16 @@ describe('watch', () => {
   it('delivers a backlog larger than the bus keeps, in order, without dropping any of it', async () => {
     // Bigger than `MAX_EVENTS + TRIM_SLACK`, so the bus has already trimmed by the time this
     // subscribes: what a watcher joining a long reasoning run actually finds waiting for it.
-    for (let i = 0; i < 4000; i++) emit('r', { kind: 'thinking', text: `${i}` });
+    for (let i = 0; i < 4000; i++) {
+      emit('r', { kind: 'thinking', text: `${i}` });
+    }
     emit('r', { kind: 'done', ok: true });
 
     const seen: number[] = [];
     for await (const event of watch('r')) {
-      if (event.kind === 'thinking') seen.push(event.seq);
+      if (event.kind === 'thinking') {
+        seen.push(event.seq);
+      }
     }
     expect(seen.length).toBeGreaterThan(0);
     // In order and contiguous. The cursor drain replaced a `shift()`, and an off-by-one there
@@ -84,13 +90,17 @@ describe('watch', () => {
     const stream = watch('r');
     // Nothing is read until this point, so everything below queues behind the generator.
     const first = stream.next();
-    for (let i = 0; i < 3000; i++) emit('r', { kind: 'thinking', text: `${i}` });
+    for (let i = 0; i < 3000; i++) {
+      emit('r', { kind: 'thinking', text: `${i}` });
+    }
     emit('r', { kind: 'done', ok: true });
 
     const seen = [await first];
     for (;;) {
       const next = await stream.next();
-      if (next.done) break;
+      if (next.done) {
+        break;
+      }
       seen.push(next);
     }
     const notices = seen.filter((step) => step.value?.kind === 'notice');
@@ -128,7 +138,9 @@ describe('watch', () => {
     const track = () => new WeakRef(emit('r', { kind: 'thinking', text: 'first' }));
     const dropped = track();
     // Past both caps, so neither the bus's backlog nor the watcher's queue may still name it.
-    for (let i = 0; i < 3000; i++) emit('r', { kind: 'thinking', text: `${i}` });
+    for (let i = 0; i < 3000; i++) {
+      emit('r', { kind: 'thinking', text: `${i}` });
+    }
 
     // A `WeakRef` holds its target alive for the rest of the job it was made in, so the two
     // below reclaim nothing at all without a turn of the event loop between them and `track`.
@@ -138,7 +150,11 @@ describe('watch', () => {
     expect(dropped.deref()).toBeUndefined();
 
     emit('r', { kind: 'done', ok: true });
-    for (;;) if ((await stream.next()).done) break;
+    for (;;) {
+      if ((await stream.next()).done) {
+        break;
+      }
+    }
   });
 
   it('reads the backlog first, then what happens next, and stops at done', async () => {
@@ -147,7 +163,9 @@ describe('watch', () => {
 
     const seen: string[] = [];
     const reading = (async () => {
-      for await (const event of watch('r')) seen.push(`${event.kind}:${event.text}`);
+      for await (const event of watch('r')) {
+        seen.push(`${event.kind}:${event.text}`);
+      }
     })();
 
     // Let the generator drain the backlog and park on the wait.
@@ -209,12 +227,16 @@ describe('watch, cancelled', () => {
   });
 
   it('stops mid-backlog rather than finishing the queue it already holds', async () => {
-    for (let i = 0; i < 5; i++) emit('r', { kind: 'output', text: `${i}` });
+    for (let i = 0; i < 5; i++) {
+      emit('r', { kind: 'output', text: `${i}` });
+    }
     const stop = new AbortController();
     const seen: string[] = [];
     for await (const event of watch('r', stop.signal)) {
       seen.push(event.text);
-      if (seen.length === 2) stop.abort();
+      if (seen.length === 2) {
+        stop.abort();
+      }
     }
     expect(seen).toEqual(['0', '1']);
   });
@@ -224,7 +246,9 @@ describe('watch, cancelled', () => {
     emit('r', { kind: 'done', ok: true });
     const stop = new AbortController();
     const seen: string[] = [];
-    for await (const event of watch('r', stop.signal)) seen.push(event.kind);
+    for await (const event of watch('r', stop.signal)) {
+      seen.push(event.kind);
+    }
     expect(seen).toEqual(['output', 'done']);
   });
 });
@@ -284,7 +308,9 @@ describe('cleanup', () => {
     const seen: string[] = [];
     let finished = false;
     const drained = (async () => {
-      for await (const event of watch('cut')) seen.push(event.kind);
+      for await (const event of watch('cut')) {
+        seen.push(event.kind);
+      }
       finished = true;
     })();
 
@@ -317,7 +343,9 @@ describe('cleanup', () => {
 describe('configureEvents', () => {
   it("caps a run's backlog at the number it was given", () => {
     configureEvents({ maxEvents: 4, trimSlack: 1 });
-    for (let n = 0; n < 20; n++) emit('chatty', { kind: 'output', text: `${n}` });
+    for (let n = 0; n < 20; n++) {
+      emit('chatty', { kind: 'output', text: `${n}` });
+    }
     // Trimmed in batches, as at the default: the backlog runs to the cap plus the slack and is
     // cut back to the cap, so what is left is the four most recent rather than five.
     expect(history('chatty').map((event) => event.seq)).toEqual([17, 18, 19, 20]);

@@ -83,8 +83,14 @@ const refusedAnything = (model: ModelSnapshot) =>
 
 /** Latches every string in a stored list into a live set, skipping what is not a list of them. */
 const latchInto = (held: Set<string>, stored: unknown) => {
-  if (!Array.isArray(stored)) return;
-  for (const value of stored) if (typeof value === 'string') held.add(value);
+  if (!Array.isArray(stored)) {
+    return;
+  }
+  for (const value of stored) {
+    if (typeof value === 'string') {
+      held.add(value);
+    }
+  }
 };
 
 /**
@@ -100,10 +106,14 @@ export function exportCapabilities(): CapabilitySnapshot {
   const endpoints: Record<string, EndpointSnapshot> = {};
   const entry = (id: string) => {
     const held = endpoints[id];
-    if (held) return held;
+    if (held) {
+      return held;
+    }
     const fresh: EndpointSnapshot = { strictSchemas: true, usageInStream: true, models: {} };
     const since = knownCapabilities().get(id)?.since;
-    if (since !== undefined) fresh.since = since;
+    if (since !== undefined) {
+      fresh.since = since;
+    }
     endpoints[id] = fresh;
     return fresh;
   };
@@ -111,13 +121,19 @@ export function exportCapabilities(): CapabilitySnapshot {
     const models: Record<string, ModelSnapshot> = {};
     for (const [name, refused] of supports.models) {
       const model = optimisticModel();
-      for (const flag of MODEL_FLAGS) model[flag] = refused[flag];
+      for (const flag of MODEL_FLAGS) {
+        model[flag] = refused[flag];
+      }
       model.refusedFields = [...refused.refusedFields].sort();
       model.refusedEfforts = [...refused.refusedEfforts].sort();
       // Only alongside a refusal, since on its own a published list latches nothing: the model
       // named it while refusing a rung, and that rung is in `refusedEfforts`.
-      if (refused.supportedEfforts) model.supportedEfforts = [...refused.supportedEfforts];
-      if (refusedAnything(model)) models[name] = model;
+      if (refused.supportedEfforts) {
+        model.supportedEfforts = [...refused.supportedEfforts];
+      }
+      if (refusedAnything(model)) {
+        models[name] = model;
+      }
     }
     if (!supports.strictSchemas || !supports.usageInStream || Object.keys(models).length) {
       Object.assign(entry(id), {
@@ -151,32 +167,54 @@ export function exportCapabilities(): CapabilitySnapshot {
  * @returns Whether the snapshot was of this version and applied.
  */
 export function importCapabilities(snapshot: unknown): boolean {
-  if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) return false;
-  if (!isRecord(snapshot.endpoints)) return false;
+  if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) {
+    return false;
+  }
+  if (!isRecord(snapshot.endpoints)) {
+    return false;
+  }
   for (const [id, endpoint] of Object.entries(snapshot.endpoints)) {
-    if (!isRecord(endpoint)) continue;
+    if (!isRecord(endpoint)) {
+      continue;
+    }
     const supports = capabilitiesById(id);
-    if (endpoint.strictSchemas === false) supports.strictSchemas = false;
-    if (endpoint.usageInStream === false) supports.usageInStream = false;
+    if (endpoint.strictSchemas === false) {
+      supports.strictSchemas = false;
+    }
+    if (endpoint.usageInStream === false) {
+      supports.usageInStream = false;
+    }
     // Older of the two, so a snapshot ages an entry and never rejuvenates one: importing must not
     // be a way to keep a latch from ever reaching `expireCapabilities`.
     if (typeof endpoint.since === 'number' && endpoint.since < supports.since) {
       supports.since = endpoint.since;
     }
-    if (!isRecord(endpoint.models)) continue;
+    if (!isRecord(endpoint.models)) {
+      continue;
+    }
     for (const [name, model] of Object.entries(endpoint.models)) {
-      if (!isRecord(model)) continue;
+      if (!isRecord(model)) {
+        continue;
+      }
       const refused = modelCapabilitiesFor(supports, name);
-      for (const flag of MODEL_FLAGS) if (model[flag] === false) refused[flag] = false;
+      for (const flag of MODEL_FLAGS) {
+        if (model[flag] === false) {
+          refused[flag] = false;
+        }
+      }
       latchInto(refused.refusedEfforts, model.refusedEfforts);
       // Replaced rather than merged: two lists of what one model takes are two readings of the
       // same fact, and the stored one is at least as recent as an empty absent.
       if (Array.isArray(model.supportedEfforts)) {
         const listed = model.supportedEfforts.filter((value) => typeof value === 'string');
-        if (listed.length) refused.supportedEfforts = listed;
+        if (listed.length) {
+          refused.supportedEfforts = listed;
+        }
       }
       latchInto(refused.refusedFields, model.refusedFields);
-      if (model.thinkingHints === false) refusedHints().add(modelKey(id, name));
+      if (model.thinkingHints === false) {
+        refusedHints().add(modelKey(id, name));
+      }
     }
   }
   return true;

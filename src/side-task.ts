@@ -222,7 +222,9 @@ async function complete(
     // does not offer as `none`. Or a 400 about something else entirely, which is why the
     // notice says what was tried rather than what was wrong.
     const effort = sentEffort;
-    if (!(hints || effort) || !refusesRequest(error)) throw error;
+    if (!(hints || effort) || !refusesRequest(error)) {
+      throw error;
+    }
     onNotice?.(
       level
         ? `${model} rejected a request carrying a reasoning effort; retrying without it`
@@ -234,8 +236,11 @@ async function complete(
     // hints again. When both went out the refusal cannot say which, so the one `negotiate`
     // cannot latch is blamed; if it was the effort after all, the next call is left with only
     // the effort to drop and latches that instead.
-    if (hints) noHints().add(key);
-    else modelCapabilitiesFor(supports, model).reasoningEffort = false;
+    if (hints) {
+      noHints().add(key);
+    } else {
+      modelCapabilitiesFor(supports, model).reasoningEffort = false;
+    }
   }
 
   return answerOf(response.choices[0]?.message);
@@ -250,7 +255,9 @@ async function complete(
  */
 function answerOf(message: OpenAI.ChatCompletionMessage | undefined): string {
   const answer = stripThinking(message?.content ?? '').trim();
-  if (answer) return answer;
+  if (answer) {
+    return answer;
+  }
   // Nothing but scratchpad. Some servers put the deliberation in its own field and leave the
   // content genuinely empty, in which case there is no answer to find anywhere else.
   const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
@@ -332,7 +339,9 @@ export async function tryAsk<T>(
   } catch (error) {
     // A cancelled run is not a failed side task. Swallowing the abort made the two
     // indistinguishable and left the cancellation with nowhere to go.
-    if (error instanceof OpenAI.APIUserAbortError) throw error;
+    if (error instanceof OpenAI.APIUserAbortError) {
+      throw error;
+    }
     onNotice?.(`${label}: ${errorMessage(error)}`);
     return undefined;
   }
@@ -353,9 +362,13 @@ export function parseJson<T>(text: string): T | undefined {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const body = (fenced?.[1] ?? text).trim();
   const start = body.search(/[[{]/);
-  if (start < 0) return undefined;
+  if (start < 0) {
+    return undefined;
+  }
   const end = Math.max(body.lastIndexOf(']'), body.lastIndexOf('}'));
-  if (end <= start) return undefined;
+  if (end <= start) {
+    return undefined;
+  }
   return looseJson(body.slice(start, end + 1)) as T | undefined;
 }
 
@@ -419,9 +432,15 @@ export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   const own = task.endpoint;
   const shared = agent && (!own.baseUrl.trim() || sameUrl(own.baseUrl, agent.baseUrl));
   const stated: SideTaskOptions = {};
-  if (task.maxTokens !== undefined) stated.maxTokens = task.maxTokens;
-  if (task.temperature !== undefined) stated.temperature = task.temperature;
-  if (task.reasoningEffort !== undefined) stated.reasoningEffort = task.reasoningEffort;
+  if (task.maxTokens !== undefined) {
+    stated.maxTokens = task.maxTokens;
+  }
+  if (task.temperature !== undefined) {
+    stated.temperature = task.temperature;
+  }
+  if (task.reasoningEffort !== undefined) {
+    stated.reasoningEffort = task.reasoningEffort;
+  }
   return {
     endpoint: agent
       ? {

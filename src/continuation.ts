@@ -85,8 +85,11 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
   for (const field of ADDED) {
     const a = first[field];
     const b = next[field];
-    if (a !== undefined && b !== undefined) joined[field] = a + b;
-    else delete joined[field];
+    if (a !== undefined && b !== undefined) {
+      joined[field] = a + b;
+    } else {
+      delete joined[field];
+    }
   }
   for (const [rate, over] of RATES) {
     const a = first[rate];
@@ -95,8 +98,11 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
     const bMs = next[over];
     // Tokens over time for both together, which is each rate weighted by the time it held.
     const bothTimed = a !== undefined && b !== undefined && aMs !== undefined && bMs !== undefined;
-    if (bothTimed && aMs + bMs) joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
-    else delete joined[rate];
+    if (bothTimed && aMs + bMs) {
+      joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
+    } else {
+      delete joined[rate];
+    }
   }
   return joined;
 }
@@ -138,7 +144,9 @@ export async function continueTurn(
   const who = modelLabel(options.model);
   let joined = turn;
   for (let count = 0; count < maxContinuations && isContinuable(joined); count++) {
-    if (refused?.assistantPrefill === false) break;
+    if (refused?.assistantPrefill === false) {
+      break;
+    }
     const answer = joined.content;
     let next: Turn;
     try {
@@ -155,11 +163,15 @@ export async function continueTurn(
         { ...options, startInReasoning: false },
       );
     } catch (error) {
-      if (options.signal?.aborted) throw error;
+      if (options.signal?.aborted) {
+        throw error;
+      }
       if (error instanceof ContextOverflow) {
         options.onNotice?.('no room left in the window to continue the cut-off reply');
       } else if (refusesRequest(error)) {
-        if (refused) refused.assistantPrefill = false;
+        if (refused) {
+          refused.assistantPrefill = false;
+        }
         options.onNotice?.(
           `${who} refused a trailing assistant message (${errorMessage(error)}); keeping the cut-off reply`,
         );
@@ -169,7 +181,9 @@ export async function continueTurn(
       break;
     }
     if (restarted(answer, next.content)) {
-      if (refused) refused.assistantPrefill = false;
+      if (refused) {
+        refused.assistantPrefill = false;
+      }
       options.onNotice?.(`${who} answered afresh instead of continuing its reply; keeping the cut-off reply`);
       break;
     }

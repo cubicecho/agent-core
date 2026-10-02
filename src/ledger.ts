@@ -106,12 +106,18 @@ const leadingSystem = (messages: Message[]) => {
  * @param next The request being explained.
  */
 export function breakReason(previous: RequestShape, next: RequestShape): NonNullable<TurnUsage['cacheBreakReason']> {
-  if (!sameTools(previous, next)) return 'tools-changed';
+  if (!sameTools(previous, next)) {
+    return 'tools-changed';
+  }
   const before = leadingSystem(previous.messages);
   const now = leadingSystem(next.messages);
   const systemKept = before.length === now.length && keptMessages(before, now);
-  if (!systemKept) return 'system-changed';
-  if (!keptMessages(previous.messages, next.messages)) return 'history-rewritten';
+  if (!systemKept) {
+    return 'system-changed';
+  }
+  if (!keptMessages(previous.messages, next.messages)) {
+    return 'history-rewritten';
+  }
   return 'none-known';
 }
 
@@ -136,10 +142,14 @@ export function recordRequest(
   previous: LedgerRequest | undefined,
   next: LedgerRequest,
 ): TokenLedger {
-  if (!(next.prompt > 0)) return ledger;
+  if (!(next.prompt > 0)) {
+    return ledger;
+  }
   const last = ledger.at(-1);
   if (last && previous && appended(previous, next)) {
-    if (next.through <= last.through) return ledger;
+    if (next.through <= last.through) {
+      return ledger;
+    }
     return [...ledger, { through: next.through, prompt: next.prompt, epoch: last.epoch }];
   }
   return [...ledger, { through: next.through, prompt: next.prompt, epoch: last ? last.epoch + 1 : 0 }];
@@ -161,22 +171,32 @@ export function recordRequest(
  * array, hands the ledger back as it is.
  */
 export function rebaseLedger(ledger: TokenLedger, before: readonly Message[], after: readonly Message[]): TokenLedger {
-  if (before === after) return ledger;
+  if (before === after) {
+    return ledger;
+  }
   const shortest = Math.min(before.length, after.length);
   let head = 0;
-  while (head < shortest && sameMessage(before[head], after[head])) head++;
-  if (head === before.length) return ledger;
+  while (head < shortest && sameMessage(before[head], after[head])) {
+    head++;
+  }
+  if (head === before.length) {
+    return ledger;
+  }
   let tail = 0;
-  while (tail < shortest - head && sameMessage(before[before.length - 1 - tail], after[after.length - 1 - tail]))
+  while (tail < shortest - head && sameMessage(before[before.length - 1 - tail], after[after.length - 1 - tail])) {
     tail++;
+  }
   // The boundary just ahead of a kept tail stands too: what follows it is all still there. With
   // no tail kept there is nothing left for it to be the start of.
   const start = tail > 0 ? before.length - tail - 1 : before.length;
   const shift = after.length - before.length;
   const rebased: LedgerEntry[] = [];
   for (const entry of ledger) {
-    if (entry.through < head) rebased.push(entry);
-    else if (entry.through >= start) rebased.push({ ...entry, through: entry.through + shift, epoch: entry.epoch + 1 });
+    if (entry.through < head) {
+      rebased.push(entry);
+    } else if (entry.through >= start) {
+      rebased.push({ ...entry, through: entry.through + shift, epoch: entry.epoch + 1 });
+    }
   }
   return rebased;
 }
@@ -196,8 +216,12 @@ function shares(ledger: TokenLedger, messages: readonly Message[]): Map<number, 
     const tokens = to.prompt - from.prompt;
     const start = from.through + 1;
     const end = to.through + 1;
-    if (from.epoch !== to.epoch || !(tokens > 0)) continue;
-    if (start < floor || end <= start || end > messages.length) continue;
+    if (from.epoch !== to.epoch || !(tokens > 0)) {
+      continue;
+    }
+    if (start < floor || end <= start || end > messages.length) {
+      continue;
+    }
     floor = end;
     const chars: number[] = [];
     let total = 0;
@@ -275,6 +299,8 @@ export function estimateFrom(
 ): (message: Message) => number {
   const estimate = fallback(options);
   const measured = new Map<Message, number>();
-  for (const [at, tokens] of shares(ledger, messages)) measured.set(messages[at], tokens);
+  for (const [at, tokens] of shares(ledger, messages)) {
+    measured.set(messages[at], tokens);
+  }
   return (message) => measured.get(message) ?? estimate(message);
 }

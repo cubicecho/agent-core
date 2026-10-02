@@ -23,6 +23,7 @@
       "style": {
         "useImportType": "error",
         "useConst": "error",
+        "useBlockStatements": "error",
         "noCommonJs": "error",
         "noEnum": "error",
         "noNamespace": "error",

@@ -127,7 +127,9 @@ describe('planCompaction', () => {
     ];
     const plan = planCompaction(again, { limit: 100, estimate });
     expect(plan).toMatchObject({ from: 2, previous: 'they like tea' });
-    if (!plan) throw new Error('expected a plan');
+    if (!plan) {
+      throw new Error('expected a plan');
+    }
     expect(summaryInput(plan)).toMatch(/^Notes so far:\nthey like tea\n\nContinue them/);
   });
 
@@ -397,13 +399,17 @@ describe('a stored fold', () => {
     // The two arrays differ by the two system messages at the head, and so do the cuts.
     expect(byScan?.cut).toBe((byHand?.cut ?? 0) + 2);
     expect(byScan?.toSummarise).toEqual(byHand?.toSummarise);
-    if (!byScan || !byHand) throw new Error('expected two plans');
+    if (!byScan || !byHand) {
+      throw new Error('expected two plans');
+    }
     expect(summaryInput(byScan)).toBe(summaryInput(byHand));
   });
 
   it('records the fold compactTranscript would have applied', async () => {
     const plan = planCompaction(stored, { ...window, from: 0 });
-    if (!plan) throw new Error('expected a plan');
+    if (!plan) {
+      throw new Error('expected a plan');
+    }
     const summarise = async () => ' first notes ';
     const record = await runCompaction(stored, plan, summarise);
     expect(record).toMatchObject({ summary: 'first notes', through: plan.cut });
@@ -436,7 +442,9 @@ describe('a stored fold', () => {
     // Cut by hand at six, so the tail is still long enough to need folding a second time.
     const first = { from: 0, cut: 6, toSummarise: stored.slice(0, 6) };
     const record = await runCompaction(stored, first, async () => 'first notes');
-    if (!record) throw new Error('expected a record');
+    if (!record) {
+      throw new Error('expected a record');
+    }
     expect(record.through).toBe(6);
 
     const request = applyCompaction(stored, record);
@@ -455,7 +463,9 @@ describe('a stored fold', () => {
     expect(scanned?.toSummarise).toEqual(byHand?.toSummarise);
     expect(requestIndex(byHand?.cut ?? 0, record)).toBe(scanned?.cut);
     // Continued, not summarised again: the notes lead the summariser's input.
-    if (!byHand) throw new Error('expected a plan');
+    if (!byHand) {
+      throw new Error('expected a plan');
+    }
     expect(summaryInput(byHand)).toMatch(/^Notes so far:\nfirst notes\n\nContinue them/);
   });
 

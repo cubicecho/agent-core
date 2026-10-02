@@ -100,31 +100,45 @@ const divisor = (charsPerToken: number | undefined) =>
 export function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
   let chars = message.role.length + ENVELOPE;
   const { content } = message;
-  if (typeof content === 'string') chars += content.length;
-  else if (Array.isArray(content))
+  if (typeof content === 'string') {
+    chars += content.length;
+  } else if (Array.isArray(content)) {
     for (const part of content) {
       // Text and refusal parts carry their own strings; an image or an audio part carries a URL
       // or a blob, and neither is priced by its length anyway — a vision model does not charge
       // an image by its base64 length, so counting the data URL would overshoot by more than
       // leaving the part out undershoots.
-      if (part.type === 'text') chars += TEXT_PART + part.text.length;
-      else if (part.type === 'refusal') chars += REFUSAL_PART + part.refusal.length;
+      if (part.type === 'text') {
+        chars += TEXT_PART + part.text.length;
+      } else if (part.type === 'refusal') {
+        chars += REFUSAL_PART + part.refusal.length;
+      }
     }
+  }
 
-  if ('name' in message && typeof message.name === 'string') chars += NAME_KEY + message.name.length;
-  if ('tool_call_id' in message && typeof message.tool_call_id === 'string')
+  if ('name' in message && typeof message.name === 'string') {
+    chars += NAME_KEY + message.name.length;
+  }
+  if ('tool_call_id' in message && typeof message.tool_call_id === 'string') {
     chars += TOOL_CALL_ID_KEY + message.tool_call_id.length;
+  }
   const { reasoning_content: reasoning, reasoning: alternate } = message as {
     reasoning_content?: unknown;
     reasoning?: unknown;
   };
-  if (typeof reasoning === 'string') chars += REASONING_KEY + reasoning.length;
-  if (typeof alternate === 'string') chars += REASONING_ALT_KEY + alternate.length;
+  if (typeof reasoning === 'string') {
+    chars += REASONING_KEY + reasoning.length;
+  }
+  if (typeof alternate === 'string') {
+    chars += REASONING_ALT_KEY + alternate.length;
+  }
   if ('tool_calls' in message && Array.isArray(message.tool_calls)) {
     chars += TOOL_CALLS_KEY;
     for (const call of message.tool_calls) {
       chars += CALL_ENVELOPE + call.id.length;
-      if (call.type === 'function') chars += call.function.name.length + call.function.arguments.length;
+      if (call.type === 'function') {
+        chars += call.function.name.length + call.function.arguments.length;
+      }
     }
   }
   return chars;
@@ -155,9 +169,13 @@ const toolLengths = new WeakMap<OpenAI.ChatCompletionTool[], number>();
  * @param tools The tool definitions as they will be sent. An empty array is worth nothing.
  */
 export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
-  if (!tools.length) return 0;
+  if (!tools.length) {
+    return 0;
+  }
   const hit = toolLengths.get(tools);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    return hit;
+  }
   // Schemas are arbitrarily shaped, so this one really is a serialisation — but it happens once
   // per tool array rather than once per turn.
   const length = JSON.stringify(tools).length;
@@ -175,7 +193,9 @@ export function toolsChars(tools: OpenAI.ChatCompletionTool[]): number {
  */
 export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): number {
   let chars = 0;
-  for (const message of body.messages) chars += messageChars(message);
+  for (const message of body.messages) {
+    chars += messageChars(message);
+  }
   return chars;
 }
 
@@ -257,9 +277,13 @@ export function contextChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
     const chars = messageChars(message);
     // Every system message and not just the leading one: a host that appends guidance, or a
     // hook that injects a preface, has put more of the window there and wants to be told so.
-    if (message.role === 'system' || message.role === 'developer') out.system += chars;
-    else if (message.role === 'tool') out.toolResults += chars;
-    else out.history += chars;
+    if (message.role === 'system' || message.role === 'developer') {
+      out.system += chars;
+    } else if (message.role === 'tool') {
+      out.toolResults += chars;
+    } else {
+      out.history += chars;
+    }
   }
   out.total = out.system + out.tools + out.history + out.toolResults;
   return out;
@@ -282,11 +306,15 @@ export interface ContextBreakdownOptions extends TokenEstimateOptions {
 function share(chars: ContextBreakdown, over: readonly (keyof ContextBreakdown)[], total: number): ContextBreakdown {
   const out: ContextBreakdown = { system: 0, tools: 0, history: 0, toolResults: 0, total };
   const measured = over.reduce((sum, part) => sum + chars[part], 0);
-  if (measured <= 0 || total <= 0) return out;
+  if (measured <= 0 || total <= 0) {
+    return out;
+  }
   const absorber = over.reduce((a, b) => (chars[b] > chars[a] ? b : a));
   let assigned = 0;
   for (const part of over) {
-    if (part === absorber) continue;
+    if (part === absorber) {
+      continue;
+    }
     out[part] = Math.round((chars[part] / measured) * total);
     assigned += out[part];
   }
@@ -317,7 +345,9 @@ export function contextTokens(
   { charsPerToken, promptTokens }: ContextBreakdownOptions = {},
 ): ContextBreakdown {
   const chars = contextChars(body);
-  if (promptTokens !== undefined && promptTokens > 0) return share(chars, PARTS, promptTokens);
+  if (promptTokens !== undefined && promptTokens > 0) {
+    return share(chars, PARTS, promptTokens);
+  }
   const per = divisor(charsPerToken);
   const tools = Math.ceil(chars.tools / per);
   const rest = Math.ceil((chars.total - chars.tools) / per);

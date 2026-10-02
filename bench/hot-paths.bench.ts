@@ -46,7 +46,9 @@ describe('events', () => {
   // bulk of what a combined watch bench was measuring. Split out so each is readable.
   bench('emit 10k deltas', () => {
     resetEvents();
-    for (let i = 0; i < 10_000; i++) emit('bench', { kind: 'thinking', text: 'token ' });
+    for (let i = 0; i < 10_000; i++) {
+      emit('bench', { kind: 'thinking', text: 'token ' });
+    }
   });
 
   // The same emits plus a full drain, so the drain is the difference between the two. It cannot
@@ -54,7 +56,9 @@ describe('events', () => {
   // once, and every iteration after the first would find an empty stream and wait on it forever.
   bench('emit and drain 10k deltas', async () => {
     resetEvents();
-    for (let i = 0; i < 10_000; i++) emit('drain', { kind: 'thinking', text: 'token ' });
+    for (let i = 0; i < 10_000; i++) {
+      emit('drain', { kind: 'thinking', text: 'token ' });
+    }
     emit('drain', { kind: 'done', ok: true });
     for await (const _ of watch('drain')) {
     }

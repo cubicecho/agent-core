@@ -100,7 +100,9 @@ const poolLimits = scoped((): Required<ClientPoolOptions> => ({ ...CLIENT_DEFAUL
  */
 const evict = () => {
   for (const oldest of clients().keys()) {
-    if (clients().size <= poolLimits().maxClients) break;
+    if (clients().size <= poolLimits().maxClients) {
+      break;
+    }
     clients().delete(oldest);
   }
 };
@@ -208,7 +210,9 @@ function contextLengthOf(model: object): { contextLength: number; trained: boole
   const record = model as Record<string, unknown>;
   for (const key of CONTEXT_KEYS) {
     const value = positive(record[key]);
-    if (value) return { contextLength: value, trained: false };
+    if (value) {
+      return { contextLength: value, trained: false };
+    }
   }
   // llama.cpp's, and the window the model was trained with rather than the one it is served in:
   // a 256k model started at `-c 16384` lists 262144 here. Better than nothing, and why the
@@ -362,7 +366,9 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
     headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
     signal: AbortSignal.timeout(timeoutMs(config) ?? PROBE_TIMEOUT_MS),
   });
-  if (!response.ok) return { failed: true, missing: NOT_THERE.has(response.status) };
+  if (!response.ok) {
+    return { failed: true, missing: NOT_THERE.has(response.status) };
+  }
   try {
     return { failed: false, missing: false, body: await response.json() };
   } catch {
@@ -391,10 +397,14 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
  */
 export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
   const endpoint = endpointKey(config);
-  if (unserved().has(endpoint)) return 0;
+  if (unserved().has(endpoint)) {
+    return 0;
+  }
   const key = modelKey(endpoint, config.model);
   const known = served().get(key);
-  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs)) return known.window;
+  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs)) {
+    return known.window;
+  }
 
   let window = 0;
   try {
@@ -405,8 +415,11 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
     if (!window) {
       if (!refused(endpoint)) {
         const lmstudio = await probe(config, '/api/v0/models');
-        if (lmstudio.failed) refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
-        else refusals().delete(endpoint);
+        if (lmstudio.failed) {
+          refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
+        } else {
+          refusals().delete(endpoint);
+        }
         const { data } = (lmstudio.body ?? {}) as { data?: unknown };
         const entry = Array.isArray(data)
           ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find((model) => model?.id === config.model)
@@ -437,7 +450,9 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
   const models: ModelInfo[] = [];
   for (const model of data) {
     const window = contextLengthOf(model);
-    if (window.trained) trained.add(model.id);
+    if (window.trained) {
+      trained.add(model.id);
+    }
     models.push({ id: model.id, contextLength: window.contextLength });
   }
   models.sort((a, b) => a.id.localeCompare(b.id));
@@ -472,7 +487,9 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * @param declared The operator's own number. Above zero it wins and the endpoint is not asked.
  */
 export async function contextLimitFor(config: Endpoint & { model: string }, declared = 0): Promise<number> {
-  if (declared > 0) return declared;
+  if (declared > 0) {
+    return declared;
+  }
   const key = endpointKey(config);
   const listed = () =>
     listings()
@@ -503,8 +520,11 @@ export async function contextLimitFor(config: Endpoint & { model: string }, decl
       // than the interval, which is a memory that never expires rather than one that expires in
       // half a minute.
       if (answered) {
-        if (listed()) misses().delete(missKey);
-        else misses().set(missKey, Date.now());
+        if (listed()) {
+          misses().delete(missKey);
+        } else {
+          misses().set(missKey, Date.now());
+        }
       }
     }
   }
@@ -512,7 +532,9 @@ export async function contextLimitFor(config: Endpoint & { model: string }, decl
   const fromListing = entry?.contextLength ?? 0;
   // A top-level key settles it. A trained window does not: llama.cpp lists the one the model was
   // built with, and taking it over what `/props` says lets an overflow through the guard.
-  if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) return fromListing;
+  if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) {
+    return fromListing;
+  }
   const window = await servedWindow(config);
   return window > 0 ? window : fromListing;
 }
@@ -556,8 +578,12 @@ export function resolveApiKey(
   inherited?: EndpointIdentity,
   env: Record<string, string | undefined> = process.env,
 ): string {
-  if (own.apiKey) return own.apiKey;
+  if (own.apiKey) {
+    return own.apiKey;
+  }
   const baseUrl = own.baseUrl?.trim();
-  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) return NO_KEY;
+  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) {
+    return NO_KEY;
+  }
   return inherited?.apiKey || env.OPENAI_API_KEY || NO_KEY;
 }

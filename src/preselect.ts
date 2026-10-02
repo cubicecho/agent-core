@@ -85,7 +85,9 @@ export const preselectInput = (catalog: CatalogServer[], prompt: string, maxProm
  */
 export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD): string[] {
   const list = isRecord(names) ? names.tools : names;
-  if (!Array.isArray(list)) return [];
+  if (!Array.isArray(list)) {
+    return [];
+  }
   const wanted = list.filter((name): name is string => typeof name === 'string');
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
 }
@@ -230,31 +232,45 @@ export function preselectByKeywords(
   // A query term repeated in the request is not worth more than one said once: the request is
   // prose about a task, not a document being matched against another document.
   const query = new Set(terms(prompt.slice(0, maxPromptChars)));
-  if (!docs.length || !query.size) return empty;
+  if (!docs.length || !query.size) {
+    return empty;
+  }
 
   const length = docs.reduce((total, doc) => total + doc.terms.length, 0) / docs.length;
   const documents = new Map<string, number>();
-  for (const doc of docs) for (const term of new Set(doc.terms)) documents.set(term, (documents.get(term) ?? 0) + 1);
+  for (const doc of docs) {
+    for (const term of new Set(doc.terms)) {
+      documents.set(term, (documents.get(term) ?? 0) + 1);
+    }
+  }
 
   const ranked: ToolMatch[] = [];
   for (const doc of docs) {
     const counts = new Map<string, number>();
-    for (const term of doc.terms) counts.set(term, (counts.get(term) ?? 0) + 1);
+    for (const term of doc.terms) {
+      counts.set(term, (counts.get(term) ?? 0) + 1);
+    }
     let score = 0;
     for (const term of query) {
       const found = counts.get(term);
-      if (!found) continue;
+      if (!found) {
+        continue;
+      }
       const held = documents.get(term) ?? 0;
       const idf = Math.log(1 + (docs.length - held + 0.5) / (held + 0.5));
       const norm = BM25_K1 * (1 - BM25_B + (BM25_B * doc.terms.length) / length);
       score += (idf * found * (BM25_K1 + 1)) / (found + norm);
     }
-    if (score > 0) ranked.push({ name: doc.name, score });
+    if (score > 0) {
+      ranked.push({ name: doc.name, score });
+    }
   }
   // Ties break on the name, not on where the tool sat in the catalogue, so reconnecting a
   // server in a different order does not change what a run opens with.
   ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-  if (!ranked.length) return empty;
+  if (!ranked.length) {
+    return empty;
+  }
 
   const names = ranked.slice(0, maxPerLoad).map((hit) => hit.name);
   const cut = ranked[names.length - 1].score;
@@ -322,7 +338,9 @@ export async function preselect(
     keywords,
   }: PreselectOptions = {},
 ): Promise<string[]> {
-  if (!model || !catalog.some((server) => server.tools.length > 0)) return [];
+  if (!model || !catalog.some((server) => server.tools.length > 0)) {
+    return [];
+  }
   if (keywords) {
     const guess = preselectByKeywords(catalog, prompt, {
       maxPerLoad,

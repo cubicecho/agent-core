@@ -20,8 +20,12 @@ const refusesOnce = (words: string[], { after }: { after: number }) => {
     const failing = ++attempt === 1;
     return {
       async *[Symbol.asyncIterator]() {
-        for (const word of words.slice(0, failing ? after : words.length)) yield text(word);
-        if (failing) throw NO_GRAMMAR;
+        for (const word of words.slice(0, failing ? after : words.length)) {
+          yield text(word);
+        }
+        if (failing) {
+          throw NO_GRAMMAR;
+        }
       },
     };
   });

@@ -80,7 +80,9 @@ export function calibrate(
   body: OpenAI.ChatCompletionCreateParamsStreaming,
   promptTokens: number,
 ): number {
-  if (!(promptTokens > 0) || hasMedia(body.messages)) return charsPerTokenFor(supports, body.model);
+  if (!(promptTokens > 0) || hasMedia(body.messages)) {
+    return charsPerTokenFor(supports, body.model);
+  }
   const ratio = (requestChars(body) + toolsChars(body.tools ?? [])) / promptTokens;
   if (ratio < PLAUSIBLE.least || ratio > PLAUSIBLE.most) {
     return charsPerTokenFor(supports, body.model);
@@ -88,7 +90,9 @@ export function calibrate(
   const models = getOrCreate(readings(), supports, () => new Map<string, number[]>());
   const known = getOrCreate(models, body.model, () => []);
   known.push(ratio);
-  if (known.length > READINGS) known.shift();
+  if (known.length > READINGS) {
+    known.shift();
+  }
   return charsPerTokenFor(supports, body.model);
 }
 

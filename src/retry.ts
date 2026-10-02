@@ -90,9 +90,15 @@ export const SMALLEST_LIKELY_WINDOW = 8192;
  * @param error The rejection, as caught. What is not an SDK error is not transient.
  */
 export function isTransient(error: unknown): boolean {
-  if (error instanceof EndpointSilent) return true;
-  if (error instanceof OpenAI.APIConnectionError) return true;
-  if (!(error instanceof OpenAI.APIError)) return false;
+  if (error instanceof EndpointSilent) {
+    return true;
+  }
+  if (error instanceof OpenAI.APIConnectionError) {
+    return true;
+  }
+  if (!(error instanceof OpenAI.APIError)) {
+    return false;
+  }
   const { status } = error;
   return status === 408 || status === 409 || status === 429 || (status ?? 0) >= 500;
 }
@@ -123,7 +129,9 @@ export const refusesRequest = (error: unknown) =>
  * @param error The rejection, as caught.
  */
 export function isModelLoading(error: unknown): boolean {
-  if (!(error instanceof OpenAI.APIError) || error.status !== 503) return false;
+  if (!(error instanceof OpenAI.APIError) || error.status !== 503) {
+    return false;
+  }
   const body = error.error as { type?: unknown; message?: unknown } | undefined;
   return (
     body?.type === 'unavailable_error' ||
@@ -160,6 +168,8 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
       clearTimeout(timer);
       reject(signal?.reason ?? new Error('aborted'));
     };
-    if (signal?.aborted) return onAbort();
+    if (signal?.aborted) {
+      return onAbort();
+    }
     signal?.addEventListener('abort', onAbort, { once: true });
   });

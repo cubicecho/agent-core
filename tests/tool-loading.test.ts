@@ -497,7 +497,9 @@ test('the proxied tool array is load_tools and call_tool, frozen, with open argu
   expect(names).toEqual([LOAD_TOOLS, CALL_TOOL]);
   expect(Object.isFrozen(PROXY_TOOLS)).toBe(true);
   const call = PROXY_TOOLS[1];
-  if (call.type !== 'function') throw new Error('unreachable');
+  if (call.type !== 'function') {
+    throw new Error('unreachable');
+  }
   expect(Object.isFrozen(call.function)).toBe(true);
   expect(call.function.parameters).toMatchObject({
     properties: { arguments: { type: 'object', additionalProperties: true } },

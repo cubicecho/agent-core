@@ -244,17 +244,25 @@ function chunkReport(chunk: OpenAI.ChatCompletionChunk): ChunkReport {
     counts.total = chunk.usage.total_tokens ?? 0;
     const reported = chunk.usage as CacheUsage;
     const hit = reported.prompt_tokens_details?.cached_tokens ?? reported.prompt_cache_hit_tokens;
-    if (isCount(hit)) report.cacheReport = hit;
+    if (isCount(hit)) {
+      report.cacheReport = hit;
+    }
     const reasoned = reported.completion_tokens_details?.reasoning_tokens;
-    if (isCount(reasoned)) counts.reasoningTokens = reasoned;
+    if (isCount(reasoned)) {
+      counts.reasoningTokens = reasoned;
+    }
   }
   const { timings } = chunk as TimedChunk;
   if (timings) {
     for (const [from, to] of TIMINGS) {
       const value = timings[from];
-      if (isCount(value)) (counts as Record<string, number>)[to] = value;
+      if (isCount(value)) {
+        (counts as Record<string, number>)[to] = value;
+      }
     }
-    if (isCount(timings.cache_n)) report.cacheTimings = timings.cache_n;
+    if (isCount(timings.cache_n)) {
+      report.cacheTimings = timings.cache_n;
+    }
   }
   return report;
 }
@@ -306,7 +314,9 @@ function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
     // A server that streams a call without an id still needs one for the result to answer,
     // and two calls it put under one index must not be answered as one.
     let id = call.id || `call_${call.index ?? position}`;
-    if (minted.has(id)) id = `call_${position}_${minted.size}`;
+    if (minted.has(id)) {
+      id = `call_${position}_${minted.size}`;
+    }
     minted.add(id);
     assembled.push({
       id,
@@ -424,7 +434,9 @@ export async function streamTurn(
     talking ||= carried;
     const ms = talking ? idleMs : first;
     clearTimeout(idle);
-    if (ms) idle = setTimeout(() => watchdog.abort(), ms);
+    if (ms) {
+      idle = setTimeout(() => watchdog.abort(), ms);
+    }
   };
 
   try {
@@ -460,7 +472,9 @@ export async function streamTurn(
     const reasoning: string[] = [];
     const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
     const report = (parts: Split[]) => {
-      for (const part of parts) (part.kind === 'reasoning' ? onThinking : onOutput)?.(part.text);
+      for (const part of parts) {
+        (part.kind === 'reasoning' ? onThinking : onOutput)?.(part.text);
+      }
     };
     // In arrival order, sorted by index at the end; a call from a server that sent none keeps
     // its place in the order they arrived.
@@ -491,9 +505,13 @@ export async function streamTurn(
       // Read before the delta guard rather than beside the content. The chunk that carries the
       // reason usually carries an empty delta, and some servers send it with no delta at all —
       // either of which the guard below skips, taking the reason with it.
-      if (choice?.finish_reason) finishReason = choice.finish_reason;
+      if (choice?.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
       const delta = choice?.delta as ReasoningDelta | undefined;
-      if (!delta) continue;
+      if (!delta) {
+        continue;
+      }
 
       const thinking = delta.reasoning_content || delta.reasoning || '';
       // Latched on what the chunk carried, not on its having arrived. Most OpenAI-compatible
@@ -508,12 +526,16 @@ export async function streamTurn(
         rearm(true);
         usage.firstTokenMs = Date.now() - started;
       }
-      if (produced && carried) produced.any = true;
+      if (produced && carried) {
+        produced.any = true;
+      }
       if (thinking) {
         reasoning.push(thinking);
         onThinking?.(thinking);
       }
-      if (delta.content) report(splitter.push(delta.content));
+      if (delta.content) {
+        report(splitter.push(delta.content));
+      }
       // Tool calls arrive in pieces, keyed by position: the id in one chunk, the name in
       // another, the arguments spread across the next several.
       for (const part of delta.tool_calls ?? []) {
@@ -522,9 +544,15 @@ export async function streamTurn(
           call = { index: fragmentIndex(part), id: '', name: '', arguments: '' };
           calls.push(call);
         }
-        if (part.id) call.id = part.id;
-        if (part.function?.name) call.name += part.function.name;
-        if (part.function?.arguments) call.arguments += part.function.arguments;
+        if (part.id) {
+          call.id = part.id;
+        }
+        if (part.function?.name) {
+          call.name += part.function.name;
+        }
+        if (part.function?.arguments) {
+          call.arguments += part.function.arguments;
+        }
       }
     }
 
@@ -541,7 +569,9 @@ export async function streamTurn(
     const cached = cacheReport ?? cacheTimings;
     if (cached !== undefined) {
       usage.cached = cached;
-      if (usage.prompt > 0) usage.uncached = Math.max(0, usage.prompt - cached);
+      if (usage.prompt > 0) {
+        usage.uncached = Math.max(0, usage.prompt - cached);
+      }
     }
 
     return {

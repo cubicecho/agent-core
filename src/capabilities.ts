@@ -273,7 +273,9 @@ export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
 export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
   let dropped = 0;
   for (const [id, known] of capabilities()) {
-    if (now - known.since < maxAgeMs) continue;
+    if (now - known.since < maxAgeMs) {
+      continue;
+    }
     capabilities().delete(id);
     dropped++;
   }
@@ -346,7 +348,9 @@ const rankOf = (effort: string): number => (EFFORT_LADDER as readonly string[]).
  */
 function listedEfforts(detail: string): string[] | undefined {
   const listed = detail.match(/supported values(?:\s+\w+)?\s*(?:are|is|include)?\s*:?\s*([^\n.]+)/i)?.[1];
-  if (!listed) return undefined;
+  if (!listed) {
+    return undefined;
+  }
   const values = listed
     .split(/,|\band\b|\bor\b/)
     .map((value) =>
@@ -389,12 +393,18 @@ function refusedEffortValue(detail: string, supported: readonly string[] = []): 
  */
 function nextEffort(refused: ModelCapabilities, asked: string): string | undefined {
   const rank = rankOf(asked);
-  if (rank < 0) return undefined;
+  if (rank < 0) {
+    return undefined;
+  }
   let best: string | undefined;
   for (const value of refused.supportedEfforts ?? EFFORT_LADDER) {
     const at = rankOf(value);
-    if (at <= rank || refused.refusedEfforts.has(value)) continue;
-    if (best === undefined || at < rankOf(best)) best = value;
+    if (at <= rank || refused.refusedEfforts.has(value)) {
+      continue;
+    }
+    if (best === undefined || at < rankOf(best)) {
+      best = value;
+    }
   }
   return best;
 }
@@ -412,12 +422,20 @@ function nextEffort(refused: ModelCapabilities, asked: string): string | undefin
  * @param asked What the config asks for. `"off"` and absent mean no effort.
  */
 export function effortFor(refused: ModelCapabilities | undefined, asked: string | undefined) {
-  if (!asked || asked === 'off') return '';
-  if (!refused) return asked;
-  if (!refused.reasoningEffort) return '';
+  if (!asked || asked === 'off') {
+    return '';
+  }
+  if (!refused) {
+    return asked;
+  }
+  if (!refused.reasoningEffort) {
+    return '';
+  }
   const known = refused.supportedEfforts;
   const listed = known ? known.includes(asked.toLowerCase()) : true;
-  if (listed && !refused.refusedEfforts.has(asked.toLowerCase())) return asked;
+  if (listed && !refused.refusedEfforts.has(asked.toLowerCase())) {
+    return asked;
+  }
   return nextEffort(refused, asked) ?? asked;
 }
 
@@ -465,15 +483,23 @@ interface EffortStep {
  * answer it, and latch only in the branch it takes.
  */
 function planEffortStep(detail: string, refused: ModelCapabilities): EffortStep | undefined {
-  if (!refused.reasoningEffort) return undefined;
-  if (!/reasoning_effort/i.test(detail) || !REFUSED_VALUE.test(detail)) return undefined;
+  if (!refused.reasoningEffort) {
+    return undefined;
+  }
+  if (!/reasoning_effort/i.test(detail) || !REFUSED_VALUE.test(detail)) {
+    return undefined;
+  }
   const supported = listedEfforts(detail);
   const value = refusedEffortValue(detail, supported);
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
   // Something has to be new, or a server that answers every request by naming an effort nobody
   // sent would have `negotiate` re-send for as long as it kept saying it.
   const fresh = supported?.join() !== refused.supportedEfforts?.join();
-  if (refused.refusedEfforts.has(value) && !fresh) return undefined;
+  if (refused.refusedEfforts.has(value) && !fresh) {
+    return undefined;
+  }
   const next = nextEffort(
     {
       ...refused,
@@ -618,7 +644,9 @@ type Answer = (refusal: Refusal) => string | undefined;
 const endpointAnswer =
   (flag: 'strictSchemas' | 'usageInStream', matches: (detail: string) => boolean, notice: string): Answer =>
   ({ detail, supports }) => {
-    if (!supports[flag] || !matches(detail)) return undefined;
+    if (!supports[flag] || !matches(detail)) {
+      return undefined;
+    }
     supports[flag] = false;
     return notice;
   };
@@ -627,7 +655,9 @@ const endpointAnswer =
 const modelAnswer =
   (flag: ModelFlag, matches: (detail: string) => boolean, notice: (name: string) => string): Answer =>
   ({ detail, named }) => {
-    if (!named?.refused[flag] || !matches(detail)) return undefined;
+    if (!named?.refused[flag] || !matches(detail)) {
+      return undefined;
+    }
     named.refused[flag] = false;
     return notice(named.name);
   };
@@ -635,20 +665,30 @@ const modelAnswer =
 /** An effort refused by value: latched, so `effortFor` sends the next rung down. */
 const effortStepAnswer: Answer = ({ detail, named }) => {
   const stepped = named && planEffortStep(detail, named.refused);
-  if (!named || !stepped) return undefined;
+  if (!named || !stepped) {
+    return undefined;
+  }
   named.refused.refusedEfforts.add(stepped.value);
-  if (stepped.supported) named.refused.supportedEfforts = stepped.supported;
+  if (stepped.supported) {
+    named.refused.supportedEfforts = stepped.supported;
+  }
   return `${named.name} does not reason at ${stepped.value}; retrying at ${stepped.next}`;
 };
 
 /** Fields the endpoint has never heard of, where they are droppable and not refused already. */
 const droppedFieldsAnswer: Answer = ({ detail, named, droppable }) => {
-  if (!named || droppable.size === 0) return undefined;
+  if (!named || droppable.size === 0) {
+    return undefined;
+  }
   const fields = unknownFields(detail).filter(
     (field) => droppable.has(field) && !named.refused.refusedFields.has(field),
   );
-  if (!fields.length) return undefined;
-  for (const field of fields) named.refused.refusedFields.add(field);
+  if (!fields.length) {
+    return undefined;
+  }
+  for (const field of fields) {
+    named.refused.refusedFields.add(field);
+  }
   return `${named.name} does not take ${fields.join(', ')}; retrying without ${fields.length > 1 ? 'them' : 'it'}`;
 };
 
@@ -741,7 +781,9 @@ export async function negotiate<T>(
     try {
       return await send(supports, produced, model);
     } catch (error) {
-      if (produced.any) throw error;
+      if (produced.any) {
+        throw error;
+      }
       const refusal: Refusal = {
         detail: errorMessage(error),
         supports,
@@ -751,10 +793,15 @@ export async function negotiate<T>(
       let notice: string | undefined;
       for (const answer of ANSWERS) {
         notice = answer(refusal);
-        if (notice !== undefined) break;
+        if (notice !== undefined) {
+          break;
+        }
       }
-      if (notice !== undefined) onNotice?.(notice);
-      else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) throw error;
+      if (notice !== undefined) {
+        onNotice?.(notice);
+      } else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) {
+        throw error;
+      }
       // Otherwise the refusal was answered by whoever got there first, and this attempt was
       // built before the answer existed. Two runs opening on a fresh llama.cpp box both get the
       // grammar error; the first latches it off and re-sends, and the second used to find the

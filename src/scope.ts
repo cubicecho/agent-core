@@ -79,7 +79,9 @@ export function assignSettings<T extends object>(
   usable: (value: unknown, name: string) => boolean = isPositive,
 ): T {
   for (const [name, value] of Object.entries(options)) {
-    if (usable(value, name)) held[name as keyof T] = value as T[keyof T];
+    if (usable(value, name)) {
+      held[name as keyof T] = value as T[keyof T];
+    }
   }
   return { ...held };
 }

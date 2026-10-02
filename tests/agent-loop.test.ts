@@ -304,7 +304,9 @@ describe('runAgentLoop', () => {
   it('runs the tools between turns and hands back the transcript', async () => {
     create.mockReturnValueOnce(calls(['a', '{"x":1}'], ['b', ''])).mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async ({ name, args }: { name: string; args: unknown }) => {
-      if (name === 'b') throw new Error('b broke');
+      if (name === 'b') {
+        throw new Error('b broke');
+      }
       return JSON.stringify(args);
     });
     const events: { kind: string }[] = [];
@@ -527,8 +529,11 @@ describe('runAgentLoop', () => {
       tools: [tool('a')],
       parallel: true,
       dispatch: async ({ args }) => {
-        if (args.n === 1) await held;
-        else release();
+        if (args.n === 1) {
+          await held;
+        } else {
+          release();
+        }
         return `answer ${args.n}`;
       },
       onEvent: (event) => events.push(event),
@@ -1988,7 +1993,9 @@ describe('runAgentLoop', () => {
       onEvent: (event) => event.kind === 'usage' && turns.push(event.usage?.turn),
     });
     const [first, second] = turns.map((turn) => {
-      if (!turn?.context) throw new Error('a turn without a breakdown');
+      if (!turn?.context) {
+        throw new Error('a turn without a breakdown');
+      }
       return turn.context;
     });
     // Shares of what the endpoint reported, adding up to it.

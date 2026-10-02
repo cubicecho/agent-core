@@ -22,7 +22,9 @@ const stalls = (signal: AbortSignal, ...list: Chunk[]) => ({
   async *[Symbol.asyncIterator]() {
     yield* list;
     await new Promise<void>((resolve) => {
-      if (signal.aborted) return resolve();
+      if (signal.aborted) {
+        return resolve();
+      }
       signal.addEventListener('abort', () => resolve(), { once: true });
     });
     // An aborted stream ends its iteration rather than throwing — the SDK's own behaviour, and
