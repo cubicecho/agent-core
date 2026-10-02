@@ -320,6 +320,9 @@ export function expandNames(
   return { matched: [...matched], unknown, overBroad, deferred, maxPerLoad };
 }
 
+/** Each block's lines on their own, and a blank line between one block and the next. */
+const joinBlocks = (blocks: string[][]) => blocks.map((block) => block.join("\n")).join("\n\n");
+
 /**
  * What `load_tools` reports back: the descriptions, now that they are worth their tokens.
  *
@@ -337,40 +340,38 @@ export function loadResult(
   loaded?: ReadonlySet<string>,
 ): string {
   const byName = new Map(flatten(catalog).map((tool) => [tool.name, tool.description]));
-  const lines: string[] = [];
+  // One entry per thing the model is told, each a blank line from the next.
+  const blocks: string[][] = [];
   const fresh = matched.filter((name) => !loaded?.has(name));
   const again = matched.filter((name) => loaded?.has(name));
 
   if (fresh.length) {
-    lines.push(`Loaded ${fresh.length} tool(s); they are callable on your next step.`, "");
-    for (const name of fresh) lines.push(`${name}: ${byName.get(name) ?? ""}`.trim());
+    const block = [`Loaded ${fresh.length} tool(s); they are callable on your next step.`, ""];
+    for (const name of fresh) block.push(`${name}: ${byName.get(name) ?? ""}`.trim());
+    blocks.push(block);
   }
   if (again.length) {
-    if (lines.length) lines.push("");
-    lines.push(
+    blocks.push([
       `Already loaded and in your tool list: ${again.join(", ")}. Call them directly; do not load them again.`,
-    );
+    ]);
   }
   for (const { name, hits } of overBroad) {
-    if (lines.length) lines.push("");
-    lines.push(
+    blocks.push([
       `\`${name}\` matches ${hits.length} tools, more than the ${maxPerLoad} one call may load.`,
       "Name the ones you need from:",
       ...hits.map((hit) => `  ${hit}`),
-    );
+    ]);
   }
   if (deferred.length) {
-    if (lines.length) lines.push("");
-    lines.push(
+    blocks.push([
       `This call is full at ${maxPerLoad} tools, so these were not loaded: ${deferred.join(", ")}.`,
       "Ask for them on your next step.",
-    );
+    ]);
   }
   if (unknown.length) {
-    if (lines.length) lines.push("");
-    lines.push(`Not in the catalogue: ${unknown.join(", ")}. Check the names and try again.`);
+    blocks.push([`Not in the catalogue: ${unknown.join(", ")}. Check the names and try again.`]);
   }
-  return lines.join("\n") || "No tool names were given.";
+  return joinBlocks(blocks) || "No tool names were given.";
 }
 
 /**
@@ -530,7 +531,7 @@ export function proxyLoadResult(
   definitions: readonly OpenAI.ChatCompletionTool[],
   loaded?: ReadonlySet<string>,
 ): string {
-  const lines: string[] = [];
+  const blocks: string[][] = [];
   const again = resolved.matched.filter((name) => loaded?.has(name));
   const fresh = definitions.flatMap((tool) =>
     tool.type === "function" && !loaded?.has(tool.function.name) ? [tool.function] : [],
@@ -538,27 +539,23 @@ export function proxyLoadResult(
   const defined = new Set(fresh.map((tool) => tool.name));
   const missing = resolved.matched.filter((name) => !loaded?.has(name) && !defined.has(name));
   if (fresh.length) {
-    lines.push(`Loaded ${fresh.length} tool(s). Run them with \`${CALL_TOOL}\`.`);
+    blocks.push([`Loaded ${fresh.length} tool(s). Run them with \`${CALL_TOOL}\`.`]);
     for (const { name, description, parameters } of fresh)
-      lines.push("", JSON.stringify({ name, description, parameters }));
+      blocks.push([JSON.stringify({ name, description, parameters })]);
   }
   if (again.length) {
-    if (lines.length) lines.push("");
-    lines.push(
+    blocks.push([
       `Already loaded earlier in this conversation: ${again.join(", ")}. Run them with ` +
         `\`${CALL_TOOL}\`; do not load them again.`,
-    );
+    ]);
   }
   if (missing.length) {
-    if (lines.length) lines.push("");
-    lines.push(`No definition is available for: ${missing.join(", ")}.`);
+    blocks.push([`No definition is available for: ${missing.join(", ")}.`]);
   }
   const { overBroad, deferred, unknown, matched } = resolved;
-  if (overBroad.length || deferred.length || unknown.length || !matched.length) {
-    if (lines.length) lines.push("");
-    lines.push(loadResult({ ...resolved, matched: [] }, catalog));
-  }
-  return lines.join("\n");
+  const hasMoreToSay = overBroad.length || deferred.length || unknown.length || !matched.length;
+  if (hasMoreToSay) blocks.push([loadResult({ ...resolved, matched: [] }, catalog)]);
+  return joinBlocks(blocks);
 }
 
 /**
