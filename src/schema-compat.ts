@@ -1,5 +1,5 @@
-import type OpenAI from "openai";
-import { getOrCreate, isRecord } from "./guards.ts";
+import type OpenAI from 'openai';
+import { getOrCreate, isRecord } from './guards.ts';
 
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.
@@ -24,29 +24,29 @@ type Schema = Record<string, unknown>;
 /** Lookahead and lookbehind: `(?=`, `(?!`, `(?<=`, `(?<!`. */
 const LOOKAROUND = /\(\?<?[=!]/;
 
-const PRIMITIVES = new Set(["object", "string", "number", "integer", "boolean", "array", "null"]);
-const EMPTY_OBJECT = () => ({ type: "object", properties: {} });
+const PRIMITIVES = new Set(['object', 'string', 'number', 'integer', 'boolean', 'array', 'null']);
+const EMPTY_OBJECT = () => ({ type: 'object', properties: {} });
 
 /** Keys whose value is a schema, or a list of them — several are spelled both ways. */
 const SCHEMA_KEYS = new Set([
-  "items",
-  "additionalProperties",
-  "not",
-  "if",
-  "then",
-  "else",
-  "contains",
-  "propertyNames",
-  "anyOf",
-  "oneOf",
-  "allOf",
-  "prefixItems",
+  'items',
+  'additionalProperties',
+  'not',
+  'if',
+  'then',
+  'else',
+  'contains',
+  'propertyNames',
+  'anyOf',
+  'oneOf',
+  'allOf',
+  'prefixItems',
 ]);
 /** Keys whose value is a name -> schema map. */
-const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions']);
 
 /** The two spellings of a schema's own pool of named definitions. */
-const POOL_KEYS = ["definitions", "$defs"] as const;
+const POOL_KEYS = ['definitions', '$defs'] as const;
 
 /**
  * One keyword's value with `fn` applied wherever it holds a schema, and untouched where it holds
@@ -62,18 +62,15 @@ const mapChildren = (key: string, value: unknown, fn: (node: unknown) => unknown
 
 /** The names a schema's `required` lists, without whatever in it is not a name. */
 const requiredOf = (node: Schema): string[] =>
-  Array.isArray(node.required)
-    ? node.required.filter((name): name is string => typeof name === "string")
-    : [];
+  Array.isArray(node.required) ? node.required.filter((name): name is string => typeof name === 'string') : [];
 
 /**
  * Coerces one schema position. Malformed MCP output sometimes puts a bare type name where a
  * whole schema belongs, which the grammar converter reports as `Unrecognized schema: "object"`.
  */
 function asSchema(node: unknown): unknown {
-  if (typeof node === "string")
-    return PRIMITIVES.has(node) && node !== "object" ? { type: node } : EMPTY_OBJECT();
-  if (typeof node === "boolean") return node;
+  if (typeof node === 'string') return PRIMITIVES.has(node) && node !== 'object' ? { type: node } : EMPTY_OBJECT();
+  if (typeof node === 'boolean') return node;
   if (!isRecord(node)) return EMPTY_OBJECT();
   return normalize(node);
 }
@@ -83,13 +80,13 @@ function normalize(node: Schema): Schema {
   const built: Schema = {};
   for (const [key, value] of Object.entries(node)) {
     // `type: ["string", "null"]` — the converter only accepts a single string type.
-    if (key === "type" && Array.isArray(value)) {
-      const names = value.filter((item): item is string => typeof item === "string");
-      const concrete = names.filter((name) => name !== "null");
-      if (names.includes("null")) built.nullable = true;
+    if (key === 'type' && Array.isArray(value)) {
+      const names = value.filter((item): item is string => typeof item === 'string');
+      const concrete = names.filter((name) => name !== 'null');
+      if (names.includes('null')) built.nullable = true;
       if (concrete.length === 1) built.type = concrete[0];
       else if (concrete.length > 1) built.anyOf = concrete.map((name) => ({ type: name }));
-      else built.type = "null";
+      else built.type = 'null';
     } else {
       built[key] = mapChildren(key, value, asSchema);
     }
@@ -99,16 +96,16 @@ function normalize(node: Schema): Schema {
 
   // A grammar is context-free; lookaround is not expressible in one at all, so no converter
   // can accept it. Dropping it costs one advisory constraint on one string field.
-  if (typeof out.pattern === "string" && LOOKAROUND.test(out.pattern)) delete out.pattern;
+  if (typeof out.pattern === 'string' && LOOKAROUND.test(out.pattern)) delete out.pattern;
   // `{"type": "object"}` with no properties produces invalid GBNF.
-  if (out.type === "object" && !isRecord(out.properties)) out.properties = {};
+  if (out.type === 'object' && !isRecord(out.properties)) out.properties = {};
   // Strict validators reject any sibling of `$ref`, and draft-07 ignores them, so a reference
   // stands alone or not at all. This is not hypothetical tidying: collapsing `anyOf: [{$ref},
   // {type: "null"}]` — the shape a schema-generated server emits at every optional argument —
   // lands `nullable` right next to the `$ref` that survived. Whatever is dropped here was
   // already unreadable to a conforming consumer; optionality still lives in the parent's
   // `required`.
-  if ("$ref" in out) return { $ref: out.$ref };
+  if ('$ref' in out) return { $ref: out.$ref };
 
   return out;
 }
@@ -120,10 +117,10 @@ function normalize(node: Schema): Schema {
  */
 function collapseNullableUnion(node: Schema): Schema {
   let out = node;
-  for (const key of ["anyOf", "oneOf"] as const) {
+  for (const key of ['anyOf', 'oneOf'] as const) {
     const variants = out[key];
     if (!Array.isArray(variants)) continue;
-    const concrete = variants.filter((item) => !(isRecord(item) && item.type === "null"));
+    const concrete = variants.filter((item) => !(isRecord(item) && item.type === 'null'));
     if (concrete.length !== 1 || concrete.length === variants.length) continue;
 
     const { [key]: _collapsed, ...rest } = out;
@@ -133,7 +130,7 @@ function collapseNullableUnion(node: Schema): Schema {
 }
 
 /** Combinators at the top level of a parameters schema; strict backends reject them outright. */
-const TOP_LEVEL_COMBINATORS = ["allOf", "anyOf", "oneOf", "enum", "not"] as const;
+const TOP_LEVEL_COMBINATORS = ['allOf', 'anyOf', 'oneOf', 'enum', 'not'] as const;
 
 /** `#/definitions/Args` or `#/$defs/Args` — a pointer into this schema's own definitions. */
 const LOCAL_POINTER = /^#\/(definitions|\$defs)\/([^/]+)$/;
@@ -157,7 +154,7 @@ function poolsOf(parameters: Schema): Schema {
 function resolveRef(node: unknown, defs: Schema): Schema | undefined {
   const seen = new Set<string>();
   let current = node;
-  while (isRecord(current) && typeof current.$ref === "string") {
+  while (isRecord(current) && typeof current.$ref === 'string') {
     const pointer = current.$ref;
     const target = LOCAL_POINTER.exec(pointer);
     if (!target || seen.has(pointer)) return undefined;
@@ -178,7 +175,7 @@ function resolveRef(node: unknown, defs: Schema): Schema | undefined {
  * generator emits this shape whenever the argument object is a named type.
  */
 function inlineRootRef(parameters: Schema): Schema {
-  if (typeof parameters.$ref !== "string") return parameters;
+  if (typeof parameters.$ref !== 'string') return parameters;
   const defs = poolsOf(parameters);
   const resolved = resolveRef(parameters, defs);
   // A pointer that lands nowhere has nothing here to resolve against. An object with no
@@ -232,7 +229,7 @@ function mergeRootAllOf(schema: Schema): Schema {
 function mergeRootUnion(schema: Schema): Schema {
   const defs = poolsOf(schema);
   let out = schema;
-  for (const key of ["anyOf", "oneOf"] as const) {
+  for (const key of ['anyOf', 'oneOf'] as const) {
     const branches = out[key];
     if (!Array.isArray(branches)) continue;
 
@@ -277,7 +274,7 @@ function collectRefs(node: unknown, into: Set<string>) {
   }
   if (!isRecord(node)) return;
   for (const [key, value] of Object.entries(node)) {
-    if (key === "$ref" && typeof value === "string") into.add(value);
+    if (key === '$ref' && typeof value === 'string') into.add(value);
     else collectRefs(value, into);
   }
 }
@@ -346,7 +343,7 @@ function pruneDefs(schema: Schema): Schema {
 function pruneRequired(schema: Schema): Schema {
   if (!Array.isArray(schema.required)) return schema;
   const properties = isRecord(schema.properties) ? schema.properties : {};
-  const kept = schema.required.filter((name) => typeof name === "string" && name in properties);
+  const kept = schema.required.filter((name) => typeof name === 'string' && name in properties);
   if (kept.length) return { ...schema, required: kept };
   const { required: _unmet, ...rest } = schema;
   return rest;
@@ -369,17 +366,14 @@ export function sanitizeSchema(schema: unknown): Record<string, unknown> {
   // A copy of its own, so what is deleted and set below is this function's and nobody else's.
   const out = { ...mergeRootUnion(mergeRootAllOf(normalize(inlineRootRef(schema)))) };
   for (const key of TOP_LEVEL_COMBINATORS) delete out[key];
-  if (out.type !== "object") out.type = "object";
+  if (out.type !== 'object') out.type = 'object';
   if (!isRecord(out.properties)) out.properties = {};
   return pruneDefs(pruneRequired(out));
 }
 
 /** Rewrites one tool's parameters, leaving a non-function tool alone. */
-const mapTool = (
-  tool: OpenAI.ChatCompletionTool,
-  fn: (parameters: unknown) => unknown,
-): OpenAI.ChatCompletionTool =>
-  tool.type === "function"
+const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => unknown): OpenAI.ChatCompletionTool =>
+  tool.type === 'function'
     ? {
         ...tool,
         function: { ...tool.function, parameters: fn(tool.function.parameters) as Schema },
@@ -424,8 +418,7 @@ const through = (
  * @param tools The definitions as the pool hands them over. Never mutated — where a schema
  * changed, a new definition is returned in its place.
  */
-export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) =>
-  through(sanitized, tools, sanitizeSchema);
+export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) => through(sanitized, tools, sanitizeSchema);
 
 /**
  * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are keyword
@@ -440,7 +433,7 @@ const strip = (node: unknown): unknown => {
   if (!isRecord(node)) return node;
   const out: Schema = {};
   for (const [key, value] of Object.entries(node)) {
-    if (key === "pattern" || key === "format") continue;
+    if (key === 'pattern' || key === 'format') continue;
     out[key] = mapChildren(key, value, strip);
   }
   return out;
@@ -467,15 +460,14 @@ export function relaxSchema(schema: unknown): Record<string, unknown> {
  *
  * @param tools Already sanitised. Relaxing is the retry, not a substitute for `sanitizeTools`.
  */
-export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) =>
-  through(relaxed, tools, relaxSchema);
+export const relaxTools = (tools: OpenAI.ChatCompletionTool[]) => through(relaxed, tools, relaxSchema);
 
 /**
  * Qwen chat templates raise this when the transcript has no user turn. Some servers wrap it
  * in the same "unable to generate parser" wording as a real schema failure, and stripping
  * keywords would not fix it.
  */
-const NO_USER_QUERY = "no user query found";
+const NO_USER_QUERY = 'no user query found';
 
 /**
  * Does this failure look like the server could not build a grammar from our tool schemas?
@@ -491,9 +483,9 @@ export function isGrammarError(message: string): boolean {
   const text = message.toLowerCase();
   if (text.includes(NO_USER_QUERY)) return false;
   return (
-    text.includes("grammar") ||
-    text.includes("unrecognized schema") ||
-    text.includes("json schema conversion failed") ||
-    (text.includes("unable to generate parser") && text.includes("template"))
+    text.includes('grammar') ||
+    text.includes('unrecognized schema') ||
+    text.includes('json schema conversion failed') ||
+    (text.includes('unable to generate parser') && text.includes('template'))
   );
 }

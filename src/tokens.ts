@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import type OpenAI from 'openai';
 
 /**
  * The characters one token is taken to be, where nothing has measured it.
@@ -33,8 +33,7 @@ export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PE
  *
  * @param tokens The count to render.
  */
-export const compact = (tokens: number) =>
-  tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
+export const compact = (tokens: number) => (tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens));
 
 /** What `{"role":"","content":""},` costs around a message's own text, in characters. */
 const ENVELOPE = 25;
@@ -101,33 +100,31 @@ const divisor = (charsPerToken: number | undefined) =>
 export function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
   let chars = message.role.length + ENVELOPE;
   const { content } = message;
-  if (typeof content === "string") chars += content.length;
+  if (typeof content === 'string') chars += content.length;
   else if (Array.isArray(content))
     for (const part of content) {
       // Text and refusal parts carry their own strings; an image or an audio part carries a URL
       // or a blob, and neither is priced by its length anyway — a vision model does not charge
       // an image by its base64 length, so counting the data URL would overshoot by more than
       // leaving the part out undershoots.
-      if (part.type === "text") chars += TEXT_PART + part.text.length;
-      else if (part.type === "refusal") chars += REFUSAL_PART + part.refusal.length;
+      if (part.type === 'text') chars += TEXT_PART + part.text.length;
+      else if (part.type === 'refusal') chars += REFUSAL_PART + part.refusal.length;
     }
 
-  if ("name" in message && typeof message.name === "string")
-    chars += NAME_KEY + message.name.length;
-  if ("tool_call_id" in message && typeof message.tool_call_id === "string")
+  if ('name' in message && typeof message.name === 'string') chars += NAME_KEY + message.name.length;
+  if ('tool_call_id' in message && typeof message.tool_call_id === 'string')
     chars += TOOL_CALL_ID_KEY + message.tool_call_id.length;
   const { reasoning_content: reasoning, reasoning: alternate } = message as {
     reasoning_content?: unknown;
     reasoning?: unknown;
   };
-  if (typeof reasoning === "string") chars += REASONING_KEY + reasoning.length;
-  if (typeof alternate === "string") chars += REASONING_ALT_KEY + alternate.length;
-  if ("tool_calls" in message && Array.isArray(message.tool_calls)) {
+  if (typeof reasoning === 'string') chars += REASONING_KEY + reasoning.length;
+  if (typeof alternate === 'string') chars += REASONING_ALT_KEY + alternate.length;
+  if ('tool_calls' in message && Array.isArray(message.tool_calls)) {
     chars += TOOL_CALLS_KEY;
     for (const call of message.tool_calls) {
       chars += CALL_ENVELOPE + call.id.length;
-      if (call.type === "function")
-        chars += call.function.name.length + call.function.arguments.length;
+      if (call.type === 'function') chars += call.function.name.length + call.function.arguments.length;
     }
   }
   return chars;
@@ -237,7 +234,7 @@ export interface ContextBreakdown {
 }
 
 /** The parts, in the order a readout reads them. */
-const PARTS = ["system", "tools", "history", "toolResults"] as const;
+const PARTS = ['system', 'tools', 'history', 'toolResults'] as const;
 
 /**
  * What each part of a request is worth in characters, by the same walk `requestTokens` divides.
@@ -260,8 +257,8 @@ export function contextChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
     const chars = messageChars(message);
     // Every system message and not just the leading one: a host that appends guidance, or a
     // hook that injects a preface, has put more of the window there and wants to be told so.
-    if (message.role === "system" || message.role === "developer") out.system += chars;
-    else if (message.role === "tool") out.toolResults += chars;
+    if (message.role === 'system' || message.role === 'developer') out.system += chars;
+    else if (message.role === 'tool') out.toolResults += chars;
     else out.history += chars;
   }
   out.total = out.system + out.tools + out.history + out.toolResults;
@@ -282,11 +279,7 @@ export interface ContextBreakdownOptions extends TokenEstimateOptions {
  * Shares `total` out over these parts by their character counts, the largest absorbing the
  * rounding so they add up to it exactly rather than to within a few tokens of it.
  */
-function share(
-  chars: ContextBreakdown,
-  over: readonly (keyof ContextBreakdown)[],
-  total: number,
-): ContextBreakdown {
+function share(chars: ContextBreakdown, over: readonly (keyof ContextBreakdown)[], total: number): ContextBreakdown {
   const out: ContextBreakdown = { system: 0, tools: 0, history: 0, toolResults: 0, total };
   const measured = over.reduce((sum, part) => sum + chars[part], 0);
   if (measured <= 0 || total <= 0) return out;
@@ -328,7 +321,7 @@ export function contextTokens(
   const per = divisor(charsPerToken);
   const tools = Math.ceil(chars.tools / per);
   const rest = Math.ceil((chars.total - chars.tools) / per);
-  const out = share(chars, ["system", "history", "toolResults"], rest);
+  const out = share(chars, ['system', 'history', 'toolResults'], rest);
   out.tools = tools;
   out.total = rest + tools;
   return out;

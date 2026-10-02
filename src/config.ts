@@ -67,7 +67,7 @@ export interface EndpointIdentity {
  * Here beside `extraBody` rather than with `buildBody`, which is what enforces it, because `spec`
  * says so on import as well and has to stay loadable in a browser.
  */
-export const RESERVED_BODY_FIELDS: readonly string[] = ["model", "messages", "stream", "tools"];
+export const RESERVED_BODY_FIELDS: readonly string[] = ['model', 'messages', 'stream', 'tools'];
 
 /** What to ask the model for. */
 export interface ModelParams {
@@ -104,7 +104,7 @@ export interface ToolPolicy {
    * behind a tool array that never changes — `load_tools` and `call_tool` — for a server whose
    * prompt cache a growing tool array throws away. See `tool-loading.ts`.
    */
-  toolDiscovery: "eager" | "ondemand" | "proxy";
+  toolDiscovery: 'eager' | 'ondemand' | 'proxy';
   /** The model that does the preselection pass. Empty means don't preselect. */
   toolSelectModel: string;
   /** Hard stop on runaway tool loops. */

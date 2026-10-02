@@ -1,10 +1,10 @@
-import { endpointId } from "./client.ts";
-import type { EndpointIdentity } from "./config.ts";
-import { errorMessage } from "./errors.ts";
-import { getOrCreate } from "./guards.ts";
-import { isGrammarError } from "./schema-compat.ts";
-import { scoped } from "./scope.ts";
-import type { Produced } from "./stream.ts";
+import { endpointId } from './client.ts';
+import type { EndpointIdentity } from './config.ts';
+import { errorMessage } from './errors.ts';
+import { getOrCreate } from './guards.ts';
+import { isGrammarError } from './schema-compat.ts';
+import { scoped } from './scope.ts';
+import type { Produced } from './stream.ts';
 
 /**
  * What an endpoint turned out not to support, and answering it when it says so.
@@ -289,10 +289,8 @@ export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
  * set is the same object on both readings and only ever grows.
  */
 const flagsOf = (supports: Capabilities, model: ModelCapabilities | undefined): unknown[] => [
-  ...Object.values(supports).filter((value) => typeof value === "boolean"),
-  ...(model
-    ? Object.values(model).map((value) => (value instanceof Set ? value.size : value))
-    : []),
+  ...Object.values(supports).filter((value) => typeof value === 'boolean'),
+  ...(model ? Object.values(model).map((value) => (value instanceof Set ? value.size : value)) : []),
 ];
 
 /** `stream_options` is named in the refusal by every server that has not heard of it. */
@@ -326,8 +324,7 @@ const REFUSED_VALUE = /unsupported value|invalid value|supported values/i;
  * words a real field refusal as `this model does not support reasoning_effort` has to keep
  * latching.
  */
-const rejectsEffort = (detail: string) =>
-  /reasoning_effort/i.test(detail) && !REFUSED_VALUE.test(detail);
+const rejectsEffort = (detail: string) => /reasoning_effort/i.test(detail) && !REFUSED_VALUE.test(detail);
 
 /**
  * The efforts this package can place, cheapest first. A substitution only ever walks *up* it.
@@ -339,26 +336,23 @@ const rejectsEffort = (detail: string) =>
  * refused `xhigh` to `high` would quietly answer a question with less deliberation than whoever
  * typed it asked for, where stepping up from `none` to `minimal` only costs tokens and says so.
  */
-export const EFFORT_LADDER = ["none", "minimal", "low", "medium", "high"] as const;
+export const EFFORT_LADDER = ['none', 'minimal', 'low', 'medium', 'high'] as const;
 
-const rankOf = (effort: string): number =>
-  (EFFORT_LADDER as readonly string[]).indexOf(effort.toLowerCase());
+const rankOf = (effort: string): number => (EFFORT_LADDER as readonly string[]).indexOf(effort.toLowerCase());
 
 /**
  * The efforts a refusal lists as this model's: `Supported values are: 'minimal', 'low', 'medium',
  * and 'high'.` Quoted or bare, separated by commas and a trailing `and` or `or`.
  */
 function listedEfforts(detail: string): string[] | undefined {
-  const listed = detail.match(
-    /supported values(?:\s+\w+)?\s*(?:are|is|include)?\s*:?\s*([^\n.]+)/i,
-  )?.[1];
+  const listed = detail.match(/supported values(?:\s+\w+)?\s*(?:are|is|include)?\s*:?\s*([^\n.]+)/i)?.[1];
   if (!listed) return undefined;
   const values = listed
     .split(/,|\band\b|\bor\b/)
     .map((value) =>
       value
         .trim()
-        .replace(/^['"`]+|['"`]+$/g, "")
+        .replace(/^['"`]+|['"`]+$/g, '')
         .toLowerCase(),
     )
     .filter((value) => rankOf(value) >= 0);
@@ -418,9 +412,9 @@ function nextEffort(refused: ModelCapabilities, asked: string): string | undefin
  * @param asked What the config asks for. `"off"` and absent mean no effort.
  */
 export function effortFor(refused: ModelCapabilities | undefined, asked: string | undefined) {
-  if (!asked || asked === "off") return "";
+  if (!asked || asked === 'off') return '';
   if (!refused) return asked;
-  if (!refused.reasoningEffort) return "";
+  if (!refused.reasoningEffort) return '';
   const known = refused.supportedEfforts;
   const listed = known ? known.includes(asked.toLowerCase()) : true;
   if (listed && !refused.refusedEfforts.has(asked.toLowerCase())) return asked;
@@ -500,8 +494,7 @@ function planEffortStep(detail: string, refused: ModelCapabilities): EffortStep 
  * is not to send the same number under a different name. It is to let the error out, where
  * whoever typed the number can see it.
  */
-const wantsCompletionLimit = (detail: string) =>
-  /max_tokens/i.test(detail) && /max_completion_tokens/i.test(detail);
+const wantsCompletionLimit = (detail: string) => /max_tokens/i.test(detail) && /max_completion_tokens/i.test(detail);
 
 /**
  * Temperature named as the field being refused, rather than mentioned in passing.
@@ -534,8 +527,7 @@ const NAMES_TEMPERATURE = /(['"`])temperature\1|\btemperature\s+(?:is|does|must|
  * direction this file argues for on `max_tokens` and on `reasoning_effort`: a false negative
  * costs one visible error, and a false positive quietly changes what every later request means.
  */
-const refusesChosenTemperature = (detail: string) =>
-  NAMES_TEMPERATURE.test(detail) && /only the default/i.test(detail);
+const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(detail) && /only the default/i.test(detail);
 
 /**
  * The fields a refusal names as ones the endpoint has never heard of, in the two wordings OpenAI
@@ -546,13 +538,13 @@ const refusesChosenTemperature = (detail: string) =>
 function unknownFields(detail: string): string[] {
   const listed = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i)?.[1];
   const quoted = detail.match(/unknown parameter:\s*(['"`])([^'"`]+)\1/i)?.[2];
-  const names = listed ? listed.split(",") : quoted ? [quoted] : [];
+  const names = listed ? listed.split(',') : quoted ? [quoted] : [];
   return names
     .map(
       (name) =>
         name
           .trim()
-          .replace(/^['"`]|['"`.]+$/g, "")
+          .replace(/^['"`]|['"`.]+$/g, '')
           .split(/[.[]/)[0],
     )
     .filter(Boolean);
@@ -624,11 +616,7 @@ type Answer = (refusal: Refusal) => string | undefined;
 
 /** The answer to a refusal that is the endpoint's: a flag still set, and a wording that clears it. */
 const endpointAnswer =
-  (
-    flag: "strictSchemas" | "usageInStream",
-    matches: (detail: string) => boolean,
-    notice: string,
-  ): Answer =>
+  (flag: 'strictSchemas' | 'usageInStream', matches: (detail: string) => boolean, notice: string): Answer =>
   ({ detail, supports }) => {
     if (!supports[flag] || !matches(detail)) return undefined;
     supports[flag] = false;
@@ -637,11 +625,7 @@ const endpointAnswer =
 
 /** The same for a refusal that is the model's, which only a request that named one can meet. */
 const modelAnswer =
-  (
-    flag: ModelFlag,
-    matches: (detail: string) => boolean,
-    notice: (name: string) => string,
-  ): Answer =>
+  (flag: ModelFlag, matches: (detail: string) => boolean, notice: (name: string) => string): Answer =>
   ({ detail, named }) => {
     if (!named?.refused[flag] || !matches(detail)) return undefined;
     named.refused[flag] = false;
@@ -665,7 +649,7 @@ const droppedFieldsAnswer: Answer = ({ detail, named, droppable }) => {
   );
   if (!fields.length) return undefined;
   for (const field of fields) named.refused.refusedFields.add(field);
-  return `${named.name} does not take ${fields.join(", ")}; retrying without ${fields.length > 1 ? "them" : "it"}`;
+  return `${named.name} does not take ${fields.join(', ')}; retrying without ${fields.length > 1 ? 'them' : 'it'}`;
 };
 
 /**
@@ -676,34 +660,30 @@ const droppedFieldsAnswer: Answer = ({ detail, named, droppable }) => {
  * earlier row is the reading that wins.
  */
 const ANSWERS: readonly Answer[] = [
+  endpointAnswer('strictSchemas', isGrammarError, 'server could not build a grammar; retrying without pattern/format'),
   endpointAnswer(
-    "strictSchemas",
-    isGrammarError,
-    "server could not build a grammar; retrying without pattern/format",
-  ),
-  endpointAnswer(
-    "usageInStream",
+    'usageInStream',
     (detail) => REJECTS_USAGE.test(detail),
-    "server rejected stream_options; token counts unavailable",
+    'server rejected stream_options; token counts unavailable',
   ),
   modelAnswer(
-    "reasoningEffort",
+    'reasoningEffort',
     rejectsEffort,
     (name) => `${name} does not take a reasoning effort; retrying without one`,
   ),
   effortStepAnswer,
   modelAnswer(
-    "legacyTokenLimit",
+    'legacyTokenLimit',
     wantsCompletionLimit,
     (name) => `${name} wants max_completion_tokens; retrying with the limit spelled that way`,
   ),
   modelAnswer(
-    "chosenTemperature",
+    'chosenTemperature',
     refusesChosenTemperature,
     (name) => `${name} takes only its own temperature; retrying without ours`,
   ),
   modelAnswer(
-    "structuredOutput",
+    'structuredOutput',
     rejectsResponseFormat,
     (name) => `${name} does not take response_format; asking for JSON in words instead`,
   ),
@@ -746,16 +726,11 @@ const ANSWERS: readonly Answer[] = [
  */
 export async function negotiate<T>(
   supports: Capabilities,
-  send: (
-    supports: Capabilities,
-    produced: Produced,
-    model: ModelCapabilities | undefined,
-  ) => Promise<T>,
+  send: (supports: Capabilities, produced: Produced, model: ModelCapabilities | undefined) => Promise<T>,
   { produced = { any: false }, onNotice, model: name, droppable }: NegotiateOptions = {},
 ): Promise<T> {
   const optional = new Set(droppable);
-  const named =
-    name === undefined ? undefined : { name, refused: modelCapabilitiesFor(supports, name) };
+  const named = name === undefined ? undefined : { name, refused: modelCapabilitiesFor(supports, name) };
   const model = named?.refused;
   for (;;) {
     // What this attempt was built with. `capabilitiesFor` and `modelCapabilitiesFor` hand one

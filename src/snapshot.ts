@@ -4,10 +4,10 @@ import {
   MODEL_FLAGS,
   modelCapabilitiesFor,
   OPTIMISTIC_MODEL,
-} from "./capabilities.ts";
-import { modelKey } from "./client.ts";
-import { isRecord } from "./guards.ts";
-import { refusedHints } from "./side-task.ts";
+} from './capabilities.ts';
+import { modelKey } from './client.ts';
+import { isRecord } from './guards.ts';
+import { refusedHints } from './side-task.ts';
 
 /**
  * What endpoints and models refused, carried across a restart.
@@ -84,7 +84,7 @@ const refusedAnything = (model: ModelSnapshot) =>
 /** Latches every string in a stored list into a live set, skipping what is not a list of them. */
 const latchInto = (held: Set<string>, stored: unknown) => {
   if (!Array.isArray(stored)) return;
-  for (const value of stored) if (typeof value === "string") held.add(value);
+  for (const value of stored) if (typeof value === 'string') held.add(value);
 };
 
 /**
@@ -160,7 +160,7 @@ export function importCapabilities(snapshot: unknown): boolean {
     if (endpoint.usageInStream === false) supports.usageInStream = false;
     // Older of the two, so a snapshot ages an entry and never rejuvenates one: importing must not
     // be a way to keep a latch from ever reaching `expireCapabilities`.
-    if (typeof endpoint.since === "number" && endpoint.since < supports.since) {
+    if (typeof endpoint.since === 'number' && endpoint.since < supports.since) {
       supports.since = endpoint.since;
     }
     if (!isRecord(endpoint.models)) continue;
@@ -172,7 +172,7 @@ export function importCapabilities(snapshot: unknown): boolean {
       // Replaced rather than merged: two lists of what one model takes are two readings of the
       // same fact, and the stored one is at least as recent as an empty absent.
       if (Array.isArray(model.supportedEfforts)) {
-        const listed = model.supportedEfforts.filter((value) => typeof value === "string");
+        const listed = model.supportedEfforts.filter((value) => typeof value === 'string');
         if (listed.length) refused.supportedEfforts = listed;
       }
       latchInto(refused.refusedFields, model.refusedFields);

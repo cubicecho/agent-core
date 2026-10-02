@@ -1,9 +1,9 @@
-import type OpenAI from "openai";
-import { type Capabilities, modelCapabilitiesFor } from "./capabilities.ts";
-import { errorMessage } from "./errors.ts";
-import { ContextOverflow, refusesRequest } from "./retry.ts";
-import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from "./run-turn.ts";
-import { addCounts, type Turn, type TurnUsage } from "./stream.ts";
+import type OpenAI from 'openai';
+import { type Capabilities, modelCapabilitiesFor } from './capabilities.ts';
+import { errorMessage } from './errors.ts';
+import { ContextOverflow, refusesRequest } from './retry.ts';
+import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from './run-turn.ts';
+import { addCounts, type Turn, type TurnUsage } from './stream.ts';
 
 /**
  * Picking up an answer the token ceiling cut off, instead of keeping half of it.
@@ -35,7 +35,7 @@ export interface ContinueTurnOptions extends RunTurnOptions {
  * @param turn The turn as it came back.
  */
 export const isContinuable = (turn: Turn) =>
-  turn.finishReason === "length" && turn.content.trim() !== "" && turn.toolCalls.length === 0;
+  turn.finishReason === 'length' && turn.content.trim() !== '' && turn.toolCalls.length === 0;
 
 /** How much of the answer's opening a reply has to repeat to have started over. */
 const RESTART_PROBE = 40;
@@ -54,21 +54,21 @@ const restarted = (answer: string, continuation: string) => {
 
 /** The fields of a usage that add across two requests, when both reported them. */
 const ADDED = [
-  "uncached",
-  "reasoningTokens",
-  "promptMs",
-  "predictedMs",
-  "draftTotal",
-  "draftAccepted",
-  "wallMs",
-  "retries",
-  "timeouts",
+  'uncached',
+  'reasoningTokens',
+  'promptMs',
+  'predictedMs',
+  'draftTotal',
+  'draftAccepted',
+  'wallMs',
+  'retries',
+  'timeouts',
 ] as const;
 
 /** A rate, and the duration it was measured over, which is what weights it in a mean. */
 const RATES = [
-  ["promptTokensPerSecond", "promptMs"],
-  ["tokensPerSecond", "predictedMs"],
+  ['promptTokensPerSecond', 'promptMs'],
+  ['tokensPerSecond', 'predictedMs'],
 ] as const;
 
 /**
@@ -134,8 +134,7 @@ export async function continueTurn(
   turn: Turn,
   { maxContinuations = 1, ...options }: ContinueTurnOptions = {},
 ): Promise<Turn> {
-  const refused =
-    options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
+  const refused = options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
   const who = modelLabel(options.model);
   let joined = turn;
   for (let count = 0; count < maxContinuations && isContinuable(joined); count++) {
@@ -150,7 +149,7 @@ export async function continueTurn(
           const body = request(capabilities, forModel);
           return {
             ...body,
-            messages: [...body.messages, { role: "assistant", content: answer }],
+            messages: [...body.messages, { role: 'assistant', content: answer }],
           };
         },
         { ...options, startInReasoning: false },
@@ -158,7 +157,7 @@ export async function continueTurn(
     } catch (error) {
       if (options.signal?.aborted) throw error;
       if (error instanceof ContextOverflow) {
-        options.onNotice?.("no room left in the window to continue the cut-off reply");
+        options.onNotice?.('no room left in the window to continue the cut-off reply');
       } else if (refusesRequest(error)) {
         if (refused) refused.assistantPrefill = false;
         options.onNotice?.(
@@ -171,9 +170,7 @@ export async function continueTurn(
     }
     if (restarted(answer, next.content)) {
       if (refused) refused.assistantPrefill = false;
-      options.onNotice?.(
-        `${who} answered afresh instead of continuing its reply; keeping the cut-off reply`,
-      );
+      options.onNotice?.(`${who} answered afresh instead of continuing its reply; keeping the cut-off reply`);
       break;
     }
     joined = {

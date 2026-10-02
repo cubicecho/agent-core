@@ -1,8 +1,8 @@
-import type OpenAI from "openai";
-import { EndpointSilent } from "./retry.ts";
-import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from "./thinking.ts";
-import type { ContextBreakdown } from "./tokens.ts";
-import type { ToolCall } from "./tool-calls.ts";
+import type OpenAI from 'openai';
+import { EndpointSilent } from './retry.ts';
+import { DEFAULT_FENCES, type Fence, FenceSplitter, type Split } from './thinking.ts';
+import type { ContextBreakdown } from './tokens.ts';
+import type { ToolCall } from './tool-calls.ts';
 
 /**
  * Reading one streamed turn back into a message.
@@ -92,7 +92,7 @@ export interface TurnUsage {
    * since a change there is the one that costs the rest. `none-known` is the server's doing — an
    * eviction, another client on the slot — or a change the loop cannot see. Only on a broken turn.
    */
-  cacheBreakReason?: "tools-changed" | "system-changed" | "history-rewritten" | "none-known";
+  cacheBreakReason?: 'tools-changed' | 'system-changed' | 'history-rewritten' | 'none-known';
   /** How many tools the request declared, filled by `runAgentLoop`. */
   toolsDeclared?: number;
   /**
@@ -150,16 +150,15 @@ interface Timings {
  * not a finite number is left out rather than guessed at.
  */
 const TIMINGS: readonly [keyof Timings, keyof TurnUsage][] = [
-  ["prompt_ms", "promptMs"],
-  ["prompt_per_second", "promptTokensPerSecond"],
-  ["predicted_ms", "predictedMs"],
-  ["predicted_per_second", "tokensPerSecond"],
-  ["draft_n", "draftTotal"],
-  ["draft_n_accepted", "draftAccepted"],
+  ['prompt_ms', 'promptMs'],
+  ['prompt_per_second', 'promptTokensPerSecond'],
+  ['predicted_ms', 'predictedMs'],
+  ['predicted_per_second', 'tokensPerSecond'],
+  ['draft_n', 'draftTotal'],
+  ['draft_n_accepted', 'draftAccepted'],
 ];
 
-const isCount = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value);
+const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
 /**
  * The usage fields a cache report arrives in, none of them in every server's reply.
@@ -262,7 +261,7 @@ function chunkReport(chunk: OpenAI.ChatCompletionChunk): ChunkReport {
 
 /** The position a fragment says its call is at, where the server sent a number. */
 const fragmentIndex = (part: OpenAI.ChatCompletionChunk.Choice.Delta.ToolCall) =>
-  typeof part.index === "number" ? part.index : undefined;
+  typeof part.index === 'number' ? part.index : undefined;
 
 /**
  * The call a fragment belongs to, of those begun so far, or none where it opens a new one.
@@ -288,8 +287,7 @@ function ownerOf(
         : name
           ? undefined
           : calls.at(-1);
-  const another =
-    known && ((part.id && known.id && part.id !== known.id) || (name && known.arguments));
+  const another = known && ((part.id && known.id && part.id !== known.id) || (name && known.arguments));
   return another ? undefined : known;
 }
 
@@ -312,7 +310,7 @@ function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
     minted.add(id);
     assembled.push({
       id,
-      type: "function",
+      type: 'function',
       function: { name: call.name, arguments: call.arguments },
     });
   }
@@ -440,10 +438,8 @@ export async function streamTurn(
     // they read the row and disbelieve it.
     if (watchdog.signal.aborted && !signal?.aborted) {
       const waited = talking ? idleMs : first;
-      const before = talking || first === idleMs ? "" : " before its first token";
-      throw new EndpointSilent(
-        `the model endpoint sent nothing for ${(waited ?? 0) / 1000}s${before}`,
-      );
+      const before = talking || first === idleMs ? '' : ' before its first token';
+      throw new EndpointSilent(`the model endpoint sent nothing for ${(waited ?? 0) / 1000}s${before}`);
     }
     throw error;
   } finally {
@@ -464,7 +460,7 @@ export async function streamTurn(
     const reasoning: string[] = [];
     const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
     const report = (parts: Split[]) => {
-      for (const part of parts) (part.kind === "reasoning" ? onThinking : onOutput)?.(part.text);
+      for (const part of parts) (part.kind === 'reasoning' ? onThinking : onOutput)?.(part.text);
     };
     // In arrival order, sorted by index at the end; a call from a server that sent none keeps
     // its place in the order they arrived.
@@ -474,7 +470,7 @@ export async function streamTurn(
     // servers that send both; kept apart so the order the two arrive in does not decide.
     let cacheReport: number | undefined;
     let cacheTimings: number | undefined;
-    let finishReason = "";
+    let finishReason = '';
 
     for await (const chunk of stream) {
       // Rearmed on every chunk, latched below on only some: a priming chunk is the endpoint
@@ -499,7 +495,7 @@ export async function streamTurn(
       const delta = choice?.delta as ReasoningDelta | undefined;
       if (!delta) continue;
 
-      const thinking = delta.reasoning_content || delta.reasoning || "";
+      const thinking = delta.reasoning_content || delta.reasoning || '';
       // Latched on what the chunk carried, not on its having arrived. Most OpenAI-compatible
       // servers open a stream with a content-free `{"role":"assistant"}` before the first
       // token; latching on that made an endpoint that primes and then wedges unrepeatable,
@@ -523,7 +519,7 @@ export async function streamTurn(
       for (const part of delta.tool_calls ?? []) {
         let call = ownerOf(calls, part);
         if (!call) {
-          call = { index: fragmentIndex(part), id: "", name: "", arguments: "" };
+          call = { index: fragmentIndex(part), id: '', name: '', arguments: '' };
           calls.push(call);
         }
         if (part.id) call.id = part.id;
@@ -553,7 +549,7 @@ export async function streamTurn(
       toolCalls: assembledCalls(calls),
       usage,
       finishReason,
-      reasoning: reasoning.join("") + splitter.reasoning,
+      reasoning: reasoning.join('') + splitter.reasoning,
     };
   }
 }

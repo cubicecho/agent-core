@@ -1,5 +1,5 @@
-import type OpenAI from "openai";
-import type { CatalogServer } from "./catalog.ts";
+import type OpenAI from 'openai';
+import type { CatalogServer } from './catalog.ts';
 
 /**
  * On-demand tool loading.
@@ -14,11 +14,11 @@ import type { CatalogServer } from "./catalog.ts";
  * Names alone cost roughly a fortieth of what the schemas cost, so a run that needs no tools
  * pays almost nothing, and a run that needs three pays for three.
  */
-export const LOAD_TOOLS = "load_tools";
+export const LOAD_TOOLS = 'load_tools';
 
 /** Shallow freezing this one would leave `.function.description` — the part worth editing. */
 function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object") for (const held of Object.values(value)) deepFreeze(held);
+  if (value && typeof value === 'object') for (const held of Object.values(value)) deepFreeze(held);
   return Object.freeze(value);
 }
 
@@ -30,24 +30,24 @@ function deepFreeze<T>(value: T): T {
  * nobody would think to look for the change.
  */
 export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
-  type: "function",
+  type: 'function',
   function: {
     name: LOAD_TOOLS,
     description:
-      "Load the full definitions of tools listed in the tool catalogue so you can call them. " +
-      "Pass the exact names you need, or a trailing wildcard like `server__group__*` for a " +
-      "whole group. The tools become callable on your next step — load them, then call them. " +
-      "Load only what the task actually needs.",
+      'Load the full definitions of tools listed in the tool catalogue so you can call them. ' +
+      'Pass the exact names you need, or a trailing wildcard like `server__group__*` for a ' +
+      'whole group. The tools become callable on your next step — load them, then call them. ' +
+      'Load only what the task actually needs.',
     parameters: {
-      type: "object",
+      type: 'object',
       properties: {
         names: {
-          type: "array",
-          items: { type: "string" },
-          description: "Tool names from the catalogue. Wildcards may end with `*`.",
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tool names from the catalogue. Wildcards may end with `*`.',
         },
       },
-      required: ["names"],
+      required: ['names'],
       additionalProperties: false,
     },
   },
@@ -68,12 +68,10 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
   return catalog
     .filter((server) => server.tools.length > 0)
     .map((server) => {
-      const names = server.tools.map(
-        (tool) => `  ${tool.name}${loaded?.has(tool.name) ? " (loaded)" : ""}`,
-      );
-      return `${server.label}:\n${names.join("\n")}`;
+      const names = server.tools.map((tool) => `  ${tool.name}${loaded?.has(tool.name) ? ' (loaded)' : ''}`);
+      return `${server.label}:\n${names.join('\n')}`;
     })
-    .join("\n");
+    .join('\n');
 }
 
 /**
@@ -98,17 +96,17 @@ export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<str
   const list = catalogList(catalog, loaded);
   // Not `catalog.length`: a catalogue of nothing but empty servers has no names to offer, and
   // the preamble below would then explain a mechanism against an empty list.
-  if (!list) return "";
+  if (!list) return '';
   return [
-    "# Tool catalogue",
-    "",
-    "These tools exist but are not loaded. Call `load_tools` with the names you need, then call",
-    "them on the step after. Names are descriptive; load a tool to see its parameters. A tool",
-    "already in your tool list is loaded — call it directly, do not load it again. Do not load",
-    "tools the task does not need, and do not mention this mechanism in your answer.",
-    "",
+    '# Tool catalogue',
+    '',
+    'These tools exist but are not loaded. Call `load_tools` with the names you need, then call',
+    'them on the step after. Names are descriptive; load a tool to see its parameters. A tool',
+    'already in your tool list is loaded — call it directly, do not load it again. Do not load',
+    'tools the task does not need, and do not mention this mechanism in your answer.',
+    '',
     list,
-  ].join("\n");
+  ].join('\n');
 }
 
 const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server.tools);
@@ -123,7 +121,7 @@ const flatten = (catalog: CatalogServer[]) => catalog.flatMap((server) => server
  * @param tool The definition, as a request declares it.
  */
 export const toolName = (tool: OpenAI.ChatCompletionTool) =>
-  tool.type === "function" ? tool.function.name : undefined;
+  tool.type === 'function' ? tool.function.name : undefined;
 
 /**
  * A tool array with newly loaded definitions appended, in the order they were loaded.
@@ -177,16 +175,12 @@ export type ToolOrder = boolean | ((a: string, b: string) => number);
  * A tool that is not a function orders as the empty name.
  * @returns `tools` itself when it is already in that order, so the common case copies nothing.
  */
-export function orderTools(
-  tools: OpenAI.ChatCompletionTool[],
-  order: ToolOrder = true,
-): OpenAI.ChatCompletionTool[] {
+export function orderTools(tools: OpenAI.ChatCompletionTool[], order: ToolOrder = true): OpenAI.ChatCompletionTool[] {
   if (order === false) return tools;
-  const nameOf = (tool: OpenAI.ChatCompletionTool) => toolName(tool) ?? "";
+  const nameOf = (tool: OpenAI.ChatCompletionTool) => toolName(tool) ?? '';
   // Code-unit order rather than `localeCompare`, whose answer depends on the host's locale —
   // which is the kind of instability this exists to remove.
-  const compare =
-    typeof order === "function" ? order : (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  const compare = typeof order === 'function' ? order : (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   const sorted = [...tools].sort((a, b) => compare(nameOf(a), nameOf(b)));
   return sorted.some((tool, at) => tool !== tools[at]) ? sorted : tools;
 }
@@ -232,11 +226,7 @@ export const MAX_CARRIED = 16;
  * `used` go first, then the earliest of all. At least one: a cap of zero is read as one, not as
  * no cap and not as none.
  */
-export function carryOver(
-  previous: readonly string[],
-  used: ReadonlySet<string>,
-  max = MAX_CARRIED,
-): string[] {
+export function carryOver(previous: readonly string[], used: ReadonlySet<string>, max = MAX_CARRIED): string[] {
   const next = [...previous, ...[...used].filter((name) => !previous.includes(name))];
   const cap = Math.max(1, max);
   while (next.length > cap) {
@@ -262,11 +252,7 @@ export function carryOver(
  * @returns The names that resolved, each once; the ones nothing matched; the asks too broad for
  * any call, with what they matched; and the ones that only did not fit this call.
  */
-export function expandNames(
-  requested: string[],
-  catalog: CatalogServer[],
-  maxPerLoad = MAX_PER_LOAD,
-) {
+export function expandNames(requested: string[], catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD) {
   const all = flatten(catalog);
   const matched = new Set<string>();
   const unknown: string[] = [];
@@ -276,7 +262,7 @@ export function expandNames(
   const known = new Set(all.map((tool) => tool.name));
 
   const resolve = (name: string): string[] => {
-    if (name.endsWith("*")) {
+    if (name.endsWith('*')) {
       const stem = name.slice(0, -1);
       const direct = all.filter((tool) => tool.name.startsWith(stem));
       if (direct.length) return direct.map((tool) => tool.name);
@@ -293,7 +279,7 @@ export function expandNames(
     // A bare `*` is not a guess at a name, it is a refusal to choose, and its empty stem
     // prefixes every tool in the catalogue. Answer it the way any other over-broad request is
     // answered: with the names, so the next call can pick from them.
-    if (name === "*") {
+    if (name === '*') {
       overBroad.push({ name, hits: all.map((tool) => tool.name) });
       continue;
     }
@@ -322,7 +308,7 @@ export function expandNames(
 }
 
 /** Each block's lines on their own, and a blank line between one block and the next. */
-const joinBlocks = (blocks: string[][]) => blocks.map((block) => block.join("\n")).join("\n\n");
+const joinBlocks = (blocks: string[][]) => blocks.map((block) => block.join('\n')).join('\n\n');
 
 /**
  * What `load_tools` reports back: the descriptions, now that they are worth their tokens.
@@ -347,32 +333,32 @@ export function loadResult(
   const again = matched.filter((name) => loaded?.has(name));
 
   if (fresh.length) {
-    const block = [`Loaded ${fresh.length} tool(s); they are callable on your next step.`, ""];
-    for (const name of fresh) block.push(`${name}: ${byName.get(name) ?? ""}`.trim());
+    const block = [`Loaded ${fresh.length} tool(s); they are callable on your next step.`, ''];
+    for (const name of fresh) block.push(`${name}: ${byName.get(name) ?? ''}`.trim());
     blocks.push(block);
   }
   if (again.length) {
     blocks.push([
-      `Already loaded and in your tool list: ${again.join(", ")}. Call them directly; do not load them again.`,
+      `Already loaded and in your tool list: ${again.join(', ')}. Call them directly; do not load them again.`,
     ]);
   }
   for (const { name, hits } of overBroad) {
     blocks.push([
       `\`${name}\` matches ${hits.length} tools, more than the ${maxPerLoad} one call may load.`,
-      "Name the ones you need from:",
+      'Name the ones you need from:',
       ...hits.map((hit) => `  ${hit}`),
     ]);
   }
   if (deferred.length) {
     blocks.push([
-      `This call is full at ${maxPerLoad} tools, so these were not loaded: ${deferred.join(", ")}.`,
-      "Ask for them on your next step.",
+      `This call is full at ${maxPerLoad} tools, so these were not loaded: ${deferred.join(', ')}.`,
+      'Ask for them on your next step.',
     ]);
   }
   if (unknown.length) {
-    blocks.push([`Not in the catalogue: ${unknown.join(", ")}. Check the names and try again.`]);
+    blocks.push([`Not in the catalogue: ${unknown.join(', ')}. Check the names and try again.`]);
   }
-  return joinBlocks(blocks) || "No tool names were given.";
+  return joinBlocks(blocks) || 'No tool names were given.';
 }
 
 /**
@@ -391,8 +377,8 @@ export const inCatalog = (catalog: CatalogServer[], name: string) =>
  */
 export function requestedNames(args: Record<string, unknown>): string[] {
   const value = args.names ?? args.tools ?? args.name;
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
   return [];
 }
 
@@ -409,7 +395,7 @@ export function requestedNames(args: Record<string, unknown>): string[] {
  * this one. The price is a level of indirection the model has to get right, which a small model
  * does less reliably than a native call.
  */
-export const CALL_TOOL = "call_tool";
+export const CALL_TOOL = 'call_tool';
 
 /**
  * The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is
@@ -424,46 +410,46 @@ export const CALL_TOOL = "call_tool";
  */
 export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
   {
-    type: "function",
+    type: 'function',
     function: {
       name: LOAD_TOOLS,
       description:
-        "Get the full definitions of tools listed in the tool catalogue: what each does and the " +
-        "arguments it takes. Pass the exact names you need, or a trailing wildcard like " +
-        "`server__group__*` for a whole group. Then run them with `call_tool`. Load only what " +
-        "the task actually needs.",
+        'Get the full definitions of tools listed in the tool catalogue: what each does and the ' +
+        'arguments it takes. Pass the exact names you need, or a trailing wildcard like ' +
+        '`server__group__*` for a whole group. Then run them with `call_tool`. Load only what ' +
+        'the task actually needs.',
       parameters: {
-        type: "object",
+        type: 'object',
         properties: {
           names: {
-            type: "array",
-            items: { type: "string" },
-            description: "Tool names from the catalogue. Wildcards may end with `*`.",
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Tool names from the catalogue. Wildcards may end with `*`.',
           },
         },
-        required: ["names"],
+        required: ['names'],
         additionalProperties: false,
       },
     },
   },
   {
-    type: "function",
+    type: 'function',
     function: {
       name: CALL_TOOL,
       description:
-        "Run a tool from the catalogue. Load it with `load_tools` first to learn its arguments, " +
-        "then pass its exact name and an arguments object matching its parameters.",
+        'Run a tool from the catalogue. Load it with `load_tools` first to learn its arguments, ' +
+        'then pass its exact name and an arguments object matching its parameters.',
       parameters: {
-        type: "object",
+        type: 'object',
         properties: {
-          name: { type: "string", description: "The tool's exact name from the catalogue." },
+          name: { type: 'string', description: "The tool's exact name from the catalogue." },
           arguments: {
-            type: "object",
+            type: 'object',
             description: "The tool's arguments, as its definition describes them.",
             additionalProperties: true,
           },
         },
-        required: ["name", "arguments"],
+        required: ['name', 'arguments'],
       },
     },
   },
@@ -481,17 +467,17 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
  */
 export function proxyCatalogPrompt(catalog: CatalogServer[]): string {
   const list = catalogList(catalog);
-  if (!list) return "";
+  if (!list) return '';
   return [
-    "# Tool catalogue",
-    "",
-    "These tools exist. Call `load_tools` with the names you need to get their definitions, then",
-    "run them with `call_tool`. Names are descriptive; load a tool to see its parameters. A tool",
-    "whose definition is already in this conversation does not need loading again. Do not load",
-    "tools the task does not need, and do not mention this mechanism in your answer.",
-    "",
+    '# Tool catalogue',
+    '',
+    'These tools exist. Call `load_tools` with the names you need to get their definitions, then',
+    'run them with `call_tool`. Names are descriptive; load a tool to see its parameters. A tool',
+    'whose definition is already in this conversation does not need loading again. Do not load',
+    'tools the task does not need, and do not mention this mechanism in your answer.',
+    '',
     list,
-  ].join("\n");
+  ].join('\n');
 }
 
 /** How a proxied load result that carries definitions opens, with the count left open. */
@@ -535,7 +521,7 @@ export function proxyLoadResult(
   const blocks: string[][] = [];
   const again = resolved.matched.filter((name) => loaded?.has(name));
   const fresh = definitions.flatMap((tool) =>
-    tool.type === "function" && !loaded?.has(tool.function.name) ? [tool.function] : [],
+    tool.type === 'function' && !loaded?.has(tool.function.name) ? [tool.function] : [],
   );
   const defined = new Set(fresh.map((tool) => tool.name));
   const missing = resolved.matched.filter((name) => !loaded?.has(name) && !defined.has(name));
@@ -546,12 +532,12 @@ export function proxyLoadResult(
   }
   if (again.length) {
     blocks.push([
-      `Already loaded earlier in this conversation: ${again.join(", ")}. Run them with ` +
+      `Already loaded earlier in this conversation: ${again.join(', ')}. Run them with ` +
         `\`${CALL_TOOL}\`; do not load them again.`,
     ]);
   }
   if (missing.length) {
-    blocks.push([`No definition is available for: ${missing.join(", ")}.`]);
+    blocks.push([`No definition is available for: ${missing.join(', ')}.`]);
   }
   const { overBroad, deferred, unknown, matched } = resolved;
   const hasMoreToSay = overBroad.length || deferred.length || unknown.length || !matched.length;
@@ -574,22 +560,19 @@ export function proxiedCall(
   args: Record<string, unknown>,
   catalog: CatalogServer[],
 ): { name: string; input: Record<string, unknown> } {
-  const name = typeof args.name === "string" ? args.name.trim() : "";
+  const name = typeof args.name === 'string' ? args.name.trim() : '';
   if (!name) throw new Error(`${CALL_TOOL} needs a name; pass one from the tool catalogue.`);
-  if (!inCatalog(catalog, name))
-    throw new Error(`Not in the catalogue: ${name}. Check the name and try again.`);
+  if (!inCatalog(catalog, name)) throw new Error(`Not in the catalogue: ${name}. Check the name and try again.`);
   let input: unknown = args.arguments ?? {};
-  if (typeof input === "string") {
+  if (typeof input === 'string') {
     const text = input;
     try {
       input = text.trim() ? JSON.parse(text) : {};
     } catch {
-      throw new Error(
-        `${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, 200)}`,
-      );
+      throw new Error(`${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, 200)}`);
     }
   }
-  if (!input || typeof input !== "object" || Array.isArray(input))
+  if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new Error(`${CALL_TOOL} arguments for ${name} must be an object.`);
   return { name, input: input as Record<string, unknown> };
 }
@@ -611,11 +594,11 @@ export function shownCall(name: string, input: string): { name: string; input: s
   if (name !== CALL_TOOL) return { name, input };
   try {
     const args = JSON.parse(input) as { name?: unknown; arguments?: unknown };
-    if (typeof args.name !== "string" || !args.name.trim()) return { name, input };
+    if (typeof args.name !== 'string' || !args.name.trim()) return { name, input };
     const inner = args.arguments ?? {};
     return {
       name: args.name.trim(),
-      input: typeof inner === "string" ? inner : JSON.stringify(inner),
+      input: typeof inner === 'string' ? inner : JSON.stringify(inner),
     };
   } catch {
     return { name, input };

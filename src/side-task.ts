@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI from 'openai';
 import {
   type Capabilities,
   capabilitiesFor,
@@ -8,15 +8,15 @@ import {
   modelCapabilitiesFor,
   negotiate,
   type OnNotice,
-} from "./capabilities.ts";
-import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from "./client.ts";
-import type { Endpoint, EndpointIdentity } from "./config.ts";
-import { errorMessage } from "./errors.ts";
-import { refusesRequest } from "./retry.ts";
-import { relaxSchema, sanitizeSchema } from "./schema-compat.ts";
-import { scoped } from "./scope.ts";
-import { stripThinking } from "./thinking.ts";
-import { looseJson } from "./tool-calls.ts";
+} from './capabilities.ts';
+import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from './client.ts';
+import type { Endpoint, EndpointIdentity } from './config.ts';
+import { errorMessage } from './errors.ts';
+import { refusesRequest } from './retry.ts';
+import { relaxSchema, sanitizeSchema } from './schema-compat.ts';
+import { scoped } from './scope.ts';
+import { stripThinking } from './thinking.ts';
+import { looseJson } from './tool-calls.ts';
 
 /**
  * One-shot calls that support a run without being one: picking tools, naming a session,
@@ -169,18 +169,13 @@ async function complete(
   const level = effortFor(undefined, reasoningEffort);
   // Whether the last request carried an effort, which `negotiate` decides and not this function.
   let sentEffort = false;
-  const send = (
-    hints: boolean,
-    effort: boolean,
-    supports: Capabilities,
-    refused: ModelCapabilities | undefined,
-  ) => {
+  const send = (hints: boolean, effort: boolean, supports: Capabilities, refused: ModelCapabilities | undefined) => {
     // `none` is what a side task wants and not always what the model offers: OpenAI's reasoning
     // models refuse it by value and list `minimal` as their floor. `effortFor` answers with the
     // cheapest rung this one takes, which `negotiate` has been stepping up as it was refused.
     // A level the caller chose goes through the same ladder, which only ever steps up from it.
-    const asked = effort ? effortFor(refused, level || "none") : "";
-    sentEffort = asked !== "";
+    const asked = effort ? effortFor(refused, level || 'none') : '';
+    sentEffort = asked !== '';
     return getClient(config).chat.completions.create(
       {
         model,
@@ -190,8 +185,8 @@ async function complete(
         // model is as close as it gets.
         ...ceilingAndTemperature(refused, maxTokens, temperature),
         messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
+          { role: 'system', content: system },
+          { role: 'user', content: user },
         ],
         ...(hints ? NO_THINKING : {}),
         // Not gated on `hints`: a model that refuses `chat_template_kwargs` may still read the
@@ -254,12 +249,12 @@ async function complete(
  * leaves only the close; either way the deliberation used to come back as the answer.
  */
 function answerOf(message: OpenAI.ChatCompletionMessage | undefined): string {
-  const answer = stripThinking(message?.content ?? "").trim();
+  const answer = stripThinking(message?.content ?? '').trim();
   if (answer) return answer;
   // Nothing but scratchpad. Some servers put the deliberation in its own field and leave the
   // content genuinely empty, in which case there is no answer to find anywhere else.
   const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
-  return typeof reasoning === "string" ? stripThinking(reasoning).trim() : "";
+  return typeof reasoning === 'string' ? stripThinking(reasoning).trim() : '';
 }
 
 /** What `askJson` takes besides a side task's options. */
@@ -298,7 +293,7 @@ export async function askJson<T>(
   system: string,
   user: SideTaskInput,
   schema: Record<string, unknown>,
-  { name = "answer", strict = true, ...options }: AskJsonOptions = {},
+  { name = 'answer', strict = true, ...options }: AskJsonOptions = {},
 ): Promise<T | undefined> {
   const sanitized = sanitizeSchema(schema);
   const instruction = `${system}\n\nReply with JSON alone, matching this JSON Schema:\n${JSON.stringify(sanitized)}`;
@@ -306,7 +301,7 @@ export async function askJson<T>(
     refused.structuredOutput
       ? {
           response_format: {
-            type: "json_schema",
+            type: 'json_schema',
             json_schema: {
               name,
               strict,
@@ -330,7 +325,7 @@ export async function askJson<T>(
 export async function tryAsk<T>(
   label: string,
   run: () => Promise<T>,
-  { onNotice }: Pick<SideTaskOptions, "onNotice"> = {},
+  { onNotice }: Pick<SideTaskOptions, 'onNotice'> = {},
 ): Promise<T | undefined> {
   try {
     return await run();
@@ -359,7 +354,7 @@ export function parseJson<T>(text: string): T | undefined {
   const body = (fenced?.[1] ?? text).trim();
   const start = body.search(/[[{]/);
   if (start < 0) return undefined;
-  const end = Math.max(body.lastIndexOf("]"), body.lastIndexOf("}"));
+  const end = Math.max(body.lastIndexOf(']'), body.lastIndexOf('}'));
   if (end <= start) return undefined;
   return looseJson(body.slice(start, end + 1)) as T | undefined;
 }
@@ -372,8 +367,8 @@ export function parseJson<T>(text: string): T | undefined {
 export const clean = (line: string) =>
   line
     .trim()
-    .replace(/^(?:[-*•]|\d+[.)])\s*/, "")
-    .replace(/^["'`]+|["'`.]+$/g, "")
+    .replace(/^(?:[-*•]|\d+[.)])\s*/, '')
+    .replace(/^["'`]+|["'`.]+$/g, '')
     .trim();
 
 /**
@@ -387,7 +382,7 @@ export const clean = (line: string) =>
  */
 export const listLines = (text: string, max: number, maxChars: number) =>
   text
-    .split("\n")
+    .split('\n')
     .map(clean)
     .filter((line) => line.length > 0 && line.length <= maxChars)
     .slice(0, max);

@@ -1,6 +1,6 @@
-import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS } from "./config.ts";
-import { isRecord } from "./guards.ts";
-import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
+import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS } from './config.ts';
+import { isRecord } from './guards.ts';
+import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from './hook-events.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
@@ -21,7 +21,7 @@ import { HOOK_EVENTS, type HookEvent, INJECT_EVENTS } from "./hook-events.ts";
  */
 
 /** The token a document declares itself with. A loader refuses anything else. */
-export const AGENT_SPEC = "cubicecho.agent/1";
+export const AGENT_SPEC = 'cubicecho.agent/1';
 
 /** The major version `AGENT_SPEC` pins. Raised only when a field changes meaning. */
 export const AGENT_SPEC_VERSION = 1;
@@ -33,7 +33,7 @@ export const AGENT_SPEC_VERSION = 1;
  * `tasks` is an open record on purpose — a host may run tasks this package has never heard of,
  * and an unknown key is carried through untouched rather than warned about.
  */
-export const AGENT_TASKS = ["compaction", "toolSelect", "title", "followups"] as const;
+export const AGENT_TASKS = ['compaction', 'toolSelect', 'title', 'followups'] as const;
 
 /**
  * Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
@@ -113,7 +113,7 @@ export interface PromptPart {
   /** The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given. */
   text?: string;
   /** Where the text lives instead. The shape is validated; the reference is never resolved. */
-  ref?: { type: "file" | "url"; value: string };
+  ref?: { type: 'file' | 'url'; value: string };
 }
 
 /** How tools reach the model, and which servers this agent may reach at all. */
@@ -122,7 +122,7 @@ export interface ToolsSpec {
    * How tool definitions reach the model: all of them on every request, a name-only catalogue
    * the model loads from, or that catalogue behind a fixed `load_tools` and `call_tool`.
    */
-  discovery?: "eager" | "ondemand" | "proxy";
+  discovery?: 'eager' | 'ondemand' | 'proxy';
   /** The hard stop on a tool loop. At least one. */
   maxIterations?: number;
   /**
@@ -259,7 +259,7 @@ export const RESOLVED_DEFAULTS = {
   temperature: 0.7,
   maxTokens: 0,
   contextLength: 0,
-  toolDiscovery: "eager",
+  toolDiscovery: 'eager',
   maxToolIterations: 20,
   maxRetries: 0,
 } as const;
@@ -320,16 +320,14 @@ class Report {
    */
   string(path: string, value: unknown): string | undefined {
     if (absent(value)) return undefined;
-    if (typeof value !== "string") return void this.drop(path, "must be a string");
-    if (VARIABLE.test(value))
-      this.note(path, "looks like a variable reference, which is never expanded");
+    if (typeof value !== 'string') return void this.drop(path, 'must be a string');
+    if (VARIABLE.test(value)) this.note(path, 'looks like a variable reference, which is never expanded');
     return value;
   }
 
   number(path: string, value: unknown, least: number, most = Infinity): number | undefined {
     if (absent(value)) return undefined;
-    if (typeof value !== "number" || !Number.isFinite(value))
-      return void this.drop(path, "must be a number");
+    if (typeof value !== 'number' || !Number.isFinite(value)) return void this.drop(path, 'must be a number');
     // Dropped, never clamped: a clamp invents a number the author did not write, while dropping
     // falls back to one somebody did — the layer below, or nothing.
     if (value < least || value > most)
@@ -342,7 +340,7 @@ class Report {
 
   boolean(path: string, value: unknown): boolean | undefined {
     if (absent(value)) return undefined;
-    if (typeof value !== "boolean") return void this.drop(path, "must be true or false");
+    if (typeof value !== 'boolean') return void this.drop(path, 'must be true or false');
     return value;
   }
 }
@@ -360,18 +358,14 @@ const said = (value: object) => Object.keys(value).length > 0;
 
 function parseEndpoint(report: Report, path: string, value: unknown): EndpointSpec | undefined {
   if (absent(value)) return undefined;
-  if (!isRecord(value)) return void report.drop(path, "must be an object");
+  if (!isRecord(value)) return void report.drop(path, 'must be an object');
   const endpoint = kept({
     baseUrl: report.string(`${path}.baseUrl`, value.baseUrl),
-    requestTimeoutSeconds: report.number(
-      `${path}.requestTimeoutSeconds`,
-      value.requestTimeoutSeconds,
-      0,
-    ),
+    requestTimeoutSeconds: report.number(`${path}.requestTimeoutSeconds`, value.requestTimeoutSeconds, 0),
     firstTokenSeconds: report.number(`${path}.firstTokenSeconds`, value.firstTokenSeconds, 0),
   });
   if (!absent(value.apiKey) || !absent(value.api_key))
-    report.drop(`${path}.apiKey`, "is not part of this format — a document carries no credentials");
+    report.drop(`${path}.apiKey`, 'is not part of this format — a document carries no credentials');
   return said(endpoint) ? endpoint : undefined;
 }
 
@@ -384,24 +378,23 @@ const parseSampling = (report: Report, path: string, value: Record<string, unkno
 
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (absent(value)) return undefined;
-  if (!isRecord(value)) return void report.drop("model", "must be an object");
+  if (!isRecord(value)) return void report.drop('model', 'must be an object');
   let extraBody: Record<string, unknown> | undefined;
   if (!absent(value.extraBody)) {
-    if (!isRecord(value.extraBody)) report.drop("model.extraBody", "must be an object");
+    if (!isRecord(value.extraBody)) report.drop('model.extraBody', 'must be an object');
     else {
       extraBody = {};
       for (const [key, held] of Object.entries(value.extraBody)) {
         // `buildBody` would overwrite them anyway; better to say so on import.
-        if (RESERVED_BODY_FIELDS.includes(key))
-          report.drop(`model.extraBody.${key}`, "is the loop's to set");
+        if (RESERVED_BODY_FIELDS.includes(key)) report.drop(`model.extraBody.${key}`, "is the loop's to set");
         else extraBody[key] = held;
       }
     }
   }
   return kept({
-    model: report.string("model.model", value.model),
-    ...parseSampling(report, "model", value),
-    contextLength: report.number("model.contextLength", value.contextLength, 0),
+    model: report.string('model.model', value.model),
+    ...parseSampling(report, 'model', value),
+    contextLength: report.number('model.contextLength', value.contextLength, 0),
     extraBody,
   });
 }
@@ -411,26 +404,26 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
   for (const [index, held] of value.entries()) {
     const path = `prompt[${index}]`;
     if (!isRecord(held)) {
-      report.drop(path, "must be an object");
+      report.drop(path, 'must be an object');
       continue;
     }
     const id = report.string(`${path}.id`, held.id);
     if (!id) {
-      report.drop(path, "has no id, and merging happens on the id");
+      report.drop(path, 'has no id, and merging happens on the id');
       continue;
     }
     const text = report.string(`${path}.text`, held.text);
-    let ref: PromptPart["ref"];
+    let ref: PromptPart['ref'];
     if (!absent(held.ref)) {
       const raw = held.ref;
       const type = isRecord(raw) ? raw.type : undefined;
       const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
-      if ((type === "file" || type === "url") && value) ref = { type, value };
+      if ((type === 'file' || type === 'url') && value) ref = { type, value };
       else report.drop(`${path}.ref`, 'must be { type: "file" | "url", value }');
     }
     // An empty text is how a layer deletes the part below it, so it is not the same as neither.
     if (text === undefined && !ref) {
-      report.drop(path, "has neither text nor a reference");
+      report.drop(path, 'has neither text nor a reference');
       continue;
     }
     parts.push(kept({ id, text, ref }) as PromptPart);
@@ -440,20 +433,16 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
 
 function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
   if (absent(value)) return undefined;
-  if (!isRecord(value)) return void report.drop("tools", "must be an object");
-  let discovery: ToolsSpec["discovery"];
+  if (!isRecord(value)) return void report.drop('tools', 'must be an object');
+  let discovery: ToolsSpec['discovery'];
   if (!absent(value.discovery)) {
-    if (
-      value.discovery === "eager" ||
-      value.discovery === "ondemand" ||
-      value.discovery === "proxy"
-    )
+    if (value.discovery === 'eager' || value.discovery === 'ondemand' || value.discovery === 'proxy')
       discovery = value.discovery;
-    else report.drop("tools.discovery", 'must be "eager", "ondemand" or "proxy"');
+    else report.drop('tools.discovery', 'must be "eager", "ondemand" or "proxy"');
   }
   let servers: string[] | undefined;
   if (!absent(value.servers)) {
-    if (!Array.isArray(value.servers)) report.drop("tools.servers", "must be an array of slugs");
+    if (!Array.isArray(value.servers)) report.drop('tools.servers', 'must be an array of slugs');
     else {
       // The empty array survives on purpose: it is "no servers", and collapsing it into absent
       // would turn a scoped agent into one holding every tool on the box.
@@ -461,27 +450,23 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
       for (const [index, slug] of value.servers.entries()) {
         const name = report.string(`tools.servers[${index}]`, slug);
         if (name) servers.push(name);
-        else if (name === "") report.drop(`tools.servers[${index}]`, "is empty");
+        else if (name === '') report.drop(`tools.servers[${index}]`, 'is empty');
       }
     }
   }
   return kept({
     discovery,
-    maxIterations: report.number("tools.maxIterations", value.maxIterations, 1),
+    maxIterations: report.number('tools.maxIterations', value.maxIterations, 1),
     servers,
   });
 }
 
 function parseRetry(report: Report, value: unknown): RetrySpec | undefined {
   if (absent(value)) return undefined;
-  if (!isRecord(value)) return void report.drop("retry", "must be an object");
+  if (!isRecord(value)) return void report.drop('retry', 'must be an object');
   const retry = kept({
-    maxRetries: report.number("retry.maxRetries", value.maxRetries, 0),
-    loadingTimeoutSeconds: report.number(
-      "retry.loadingTimeoutSeconds",
-      value.loadingTimeoutSeconds,
-      0,
-    ),
+    maxRetries: report.number('retry.maxRetries', value.maxRetries, 0),
+    loadingTimeoutSeconds: report.number('retry.loadingTimeoutSeconds', value.loadingTimeoutSeconds, 0),
   });
   return said(retry) ? retry : undefined;
 }
@@ -492,7 +477,7 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
     const path = `tasks.${key}`;
     if (absent(held)) continue;
     if (!isRecord(held)) {
-      report.drop(path, "must be an object");
+      report.drop(path, 'must be an object');
       continue;
     }
     // An unknown key is not warned about: a host may run side tasks this package has never
@@ -511,7 +496,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
   for (const [index, held] of value.entries()) {
     const path = `hooks[${index}]`;
     if (!isRecord(held)) {
-      report.drop(path, "must be an object");
+      report.drop(path, 'must be an object');
       continue;
     }
     const id = report.string(`${path}.id`, held.id);
@@ -519,7 +504,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
     const tool = report.string(`${path}.tool`, held.tool);
     const on = report.string(`${path}.on`, held.on);
     if (!id || !server || !tool || !on) {
-      report.drop(path, "needs an id, an event, a server and a tool");
+      report.drop(path, 'needs an id, an event, a server and a tool');
       continue;
     }
     if (!SPEC_EVENTS.includes(on as HookEvent)) {
@@ -535,7 +520,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
       inject = undefined;
     }
     let veto = report.boolean(`${path}.veto`, held.veto);
-    if (veto && on !== "beforeCompact") {
+    if (veto && on !== 'beforeCompact') {
       report.drop(`${path}.veto`, `"${on}" announces nothing a hook can decline`);
       veto = undefined;
     }
@@ -559,23 +544,22 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
 
 function parseBundle(report: Report, value: unknown): SpecBundle | undefined {
   if (absent(value)) return undefined;
-  if (!isRecord(value)) return void report.drop("bundle", "must be an object");
+  if (!isRecord(value)) return void report.drop('bundle', 'must be an object');
   if (absent(value.mcpServers)) return undefined;
-  if (!Array.isArray(value.mcpServers))
-    return void report.drop("bundle.mcpServers", "must be an array");
+  if (!Array.isArray(value.mcpServers)) return void report.drop('bundle.mcpServers', 'must be an array');
   const seen = new Set<string>();
   const servers: SpecServer[] = [];
   for (const [index, held] of value.mcpServers.entries()) {
     const path = `bundle.mcpServers[${index}]`;
     if (!isRecord(held)) {
-      report.drop(path, "must be an object");
+      report.drop(path, 'must be an object');
       continue;
     }
-    const slug = typeof held.slug === "string" && held.slug ? held.slug : undefined;
-    const id = typeof held.id === "string" && held.id ? held.id : undefined;
+    const slug = typeof held.slug === 'string' && held.slug ? held.slug : undefined;
+    const id = typeof held.id === 'string' && held.id ? held.id : undefined;
     const effective = slug ?? id;
     if (!effective) {
-      report.drop(path, "needs an id or a slug");
+      report.drop(path, 'needs an id or a slug');
       continue;
     }
     if (seen.has(effective)) {
@@ -591,21 +575,21 @@ function parseBundle(report: Report, value: unknown): SpecBundle | undefined {
 
 /** The keys this version names. Anything else is a later 1.x, and is carried rather than erased. */
 const KNOWN = new Set([
-  "spec",
-  "$schema",
-  "id",
-  "name",
-  "description",
-  "endpoint",
-  "model",
-  "prompt",
-  "tools",
-  "retry",
-  "tasks",
-  "hooks",
-  "bundle",
-  "extensions",
-  "requires",
+  'spec',
+  '$schema',
+  'id',
+  'name',
+  'description',
+  'endpoint',
+  'model',
+  'prompt',
+  'tools',
+  'retry',
+  'tasks',
+  'hooks',
+  'bundle',
+  'extensions',
+  'requires',
 ]);
 
 /**
@@ -636,39 +620,34 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
   const report = new Report();
   const events = options.events ?? SPEC_EVENTS;
   if (!isRecord(document)) {
-    report.fail("spec", "must be an object");
+    report.fail('spec', 'must be an object');
     return { spec: null, errors: report.errors, warnings: report.warnings };
   }
 
   const token = document.spec;
-  if (typeof token !== "string") report.fail("spec", `must be "${AGENT_SPEC}"`);
+  if (typeof token !== 'string') report.fail('spec', `must be "${AGENT_SPEC}"`);
   else if (token !== AGENT_SPEC) {
-    const major = Number(token.split("/")[1]);
-    const named = token.startsWith("cubicecho.agent/") && Number.isInteger(major);
+    const major = Number(token.split('/')[1]);
+    const named = token.startsWith('cubicecho.agent/') && Number.isInteger(major);
     report.fail(
-      "spec",
-      named
-        ? `is version ${major}, and this build reads version ${AGENT_SPEC_VERSION}`
-        : `must be "${AGENT_SPEC}"`,
+      'spec',
+      named ? `is version ${major}, and this build reads version ${AGENT_SPEC_VERSION}` : `must be "${AGENT_SPEC}"`,
     );
   }
 
   // Containers are checked before their contents: "prompt must be an array" is a different
   // mistake from "this prompt part has no id", and only the first is worth refusing over.
-  if (!absent(document.prompt) && !Array.isArray(document.prompt))
-    report.fail("prompt", "must be an array");
-  if (!absent(document.tasks) && !isRecord(document.tasks))
-    report.fail("tasks", "must be an object");
-  if (!absent(document.hooks) && !Array.isArray(document.hooks))
-    report.fail("hooks", "must be an array");
+  if (!absent(document.prompt) && !Array.isArray(document.prompt)) report.fail('prompt', 'must be an array');
+  if (!absent(document.tasks) && !isRecord(document.tasks)) report.fail('tasks', 'must be an object');
+  if (!absent(document.hooks) && !Array.isArray(document.hooks)) report.fail('hooks', 'must be an array');
 
   const requires: string[] = [];
   if (!absent(document.requires)) {
-    if (!Array.isArray(document.requires)) report.fail("requires", "must be an array");
+    if (!Array.isArray(document.requires)) report.fail('requires', 'must be an array');
     else
       for (const [index, key] of document.requires.entries()) {
-        if (typeof key !== "string") {
-          report.fail(`requires[${index}]`, "must be a string");
+        if (typeof key !== 'string') {
+          report.fail(`requires[${index}]`, 'must be a string');
           continue;
         }
         // Fails closed: an agent that must not run without its sandbox extension can say so.
@@ -680,23 +659,23 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
 
   let extensions: Record<string, unknown> | undefined;
   if (!absent(document.extensions)) {
-    if (!isRecord(document.extensions)) report.drop("extensions", "must be an object");
+    if (!isRecord(document.extensions)) report.drop('extensions', 'must be an object');
     // Never validated beyond being an object. It is the escape hatch, and the one place a host
     // can put what this package has no name for without being told about it.
     else extensions = document.extensions;
   }
 
   if (!absent(document.bundle) && !options.bundle)
-    report.drop("bundle", "carries a command line, so it is only read with { bundle: true }");
+    report.drop('bundle', 'carries a command line, so it is only read with { bundle: true }');
 
   const spec: AgentSpec = {
     spec: AGENT_SPEC,
     ...kept({
-      $schema: report.string("$schema", document.$schema),
-      id: report.string("id", document.id),
-      name: report.string("name", document.name),
-      description: report.string("description", document.description),
-      endpoint: parseEndpoint(report, "endpoint", document.endpoint),
+      $schema: report.string('$schema', document.$schema),
+      id: report.string('id', document.id),
+      name: report.string('name', document.name),
+      description: report.string('description', document.description),
+      endpoint: parseEndpoint(report, 'endpoint', document.endpoint),
       model: parseModel(report, document.model),
       prompt: Array.isArray(document.prompt) ? parsePrompt(report, document.prompt) : undefined,
       tools: parseTools(report, document.tools),
@@ -713,7 +692,7 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
     if (KNOWN.has(key)) continue;
     // Kept, not erased: a host stores what it was given and resolves on read, so a key from a
     // later 1.x survives an edit-and-export cycle instead of dying at the first host to open it.
-    report.note(key, "is not a key this version names, and was carried through unread");
+    report.note(key, 'is not a key this version names, and was carried through unread');
     spec[key] = held;
   }
 
@@ -730,8 +709,8 @@ const mergeLayers = <T extends object>(layers: readonly (T | undefined)[]): T =>
 
 /** An `Endpoint` as the loop takes one. `apiKey` is always empty; see `resolveAgentSpec`. */
 const asEndpoint = (spec: EndpointSpec): Endpoint => ({
-  baseUrl: spec.baseUrl ?? "",
-  apiKey: "",
+  baseUrl: spec.baseUrl ?? '',
+  apiKey: '',
   ...kept({
     requestTimeoutSeconds: spec.requestTimeoutSeconds,
     firstTokenSeconds: spec.firstTokenSeconds,
@@ -745,7 +724,7 @@ function mergeModel(layers: readonly AgentSpec[]) {
   for (const layer of layers) {
     for (const [key, value] of Object.entries(layer.model ?? {})) {
       if (value === undefined) continue;
-      if (key === "extraBody") Object.assign(extraBody, value);
+      if (key === 'extraBody') Object.assign(extraBody, value);
       else (model as Record<string, unknown>)[key] = value;
     }
   }
@@ -847,16 +826,16 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const requires = new Set<string>();
   for (const layer of layers) for (const key of layer.requires ?? []) requires.add(key);
 
-  const id = layers.findLast((layer) => layer.id)?.id ?? "";
+  const id = layers.findLast((layer) => layer.id)?.id ?? '';
   const name = layers.findLast((layer) => layer.name)?.name;
   const description = layers.findLast((layer) => layer.description)?.description;
 
   return {
     id,
     name: name ?? id,
-    description: description ?? "",
-    baseUrl: endpoint.baseUrl ?? "",
-    apiKey: "",
+    description: description ?? '',
+    baseUrl: endpoint.baseUrl ?? '',
+    apiKey: '',
     ...kept({
       requestTimeoutSeconds: endpoint.requestTimeoutSeconds,
       firstTokenSeconds: endpoint.firstTokenSeconds,
@@ -865,20 +844,20 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
       extraBody: said(extraBody) ? extraBody : undefined,
       servers: tools.servers,
     }),
-    model: model.model ?? "",
+    model: model.model ?? '',
     maxTokens: model.maxTokens ?? RESOLVED_DEFAULTS.maxTokens,
     temperature: model.temperature ?? RESOLVED_DEFAULTS.temperature,
     contextLength: model.contextLength ?? RESOLVED_DEFAULTS.contextLength,
     toolDiscovery: tools.discovery ?? RESOLVED_DEFAULTS.toolDiscovery,
-    toolSelectModel: tasks.toolSelect?.model ?? "",
+    toolSelectModel: tasks.toolSelect?.model ?? '',
     maxToolIterations: tools.maxIterations ?? RESOLVED_DEFAULTS.maxToolIterations,
     maxRetries: retry.maxRetries ?? RESOLVED_DEFAULTS.maxRetries,
     // Byte-identical to what a consumer's `systemPromptFor` produces today, so four sources
     // survive a round trip instead of flattening into one blob nobody can edit a third of.
     systemPrompt: prompt
-      .map((part) => part.text?.trim() ?? "")
+      .map((part) => part.text?.trim() ?? '')
       .filter(Boolean)
-      .join("\n\n"),
+      .join('\n\n'),
     prompt,
     tasks,
     hooks,
@@ -909,10 +888,7 @@ export interface ExportSpecOptions {
  * @param spec A document, ordinarily one `parseSpec` returned.
  * @param options Whether to keep the secrets. The default is not to.
  */
-export function exportSpec(
-  spec: AgentSpec,
-  { secrets = false }: ExportSpecOptions = {},
-): AgentSpec {
+export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptions = {}): AgentSpec {
   if (secrets || !spec.bundle?.mcpServers) return { ...spec };
   return {
     ...spec,

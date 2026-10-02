@@ -1,15 +1,15 @@
-import type OpenAI from "openai";
-import type { CatalogServer } from "./catalog.ts";
-import { errorMessage } from "./errors.ts";
-import type { RunEventInput } from "./events.ts";
-import type { Turn } from "./stream.ts";
+import type OpenAI from 'openai';
+import type { CatalogServer } from './catalog.ts';
+import { errorMessage } from './errors.ts';
+import type { RunEventInput } from './events.ts';
+import type { Turn } from './stream.ts';
 import {
   parseToolArguments,
   type ToolCall,
   type ToolCallOutcome,
   type ToolCallRequest,
   type ToolCallResult,
-} from "./tool-calls.ts";
+} from './tool-calls.ts';
 import {
   CALL_TOOL,
   expandNames,
@@ -21,7 +21,7 @@ import {
   requestedNames,
   shownCall,
   toolName,
-} from "./tool-loading.ts";
+} from './tool-loading.ts';
 
 /**
  * The tools between two turns: a step's calls read, run and written into the transcript.
@@ -44,10 +44,10 @@ export const preview = (text: string, limit = 2000) =>
   text.length > limit ? `${text.slice(0, limit)}… (${text.length} chars)` : text;
 
 /** What a tool call the run was stopped during is answered with, in place of a result. */
-const STOPPED_CALL = "Stopped before this call finished.";
+const STOPPED_CALL = 'Stopped before this call finished.';
 
 /** The same for a call of that step the loop never got to. */
-const UNRUN_CALL = "Not run: the run stopped first.";
+const UNRUN_CALL = 'Not run: the run stopped first.';
 
 /** One of a turn's calls with its arguments read, or with the reason they could not be. */
 export interface ReadCall {
@@ -65,22 +65,19 @@ export interface ReadCall {
  * almost-JSON a model wrote, so each is normalised here, and one that could not be read at all is
  * replayed as no arguments.
  */
-export const readCalls = (calls: ToolCall[], finishReason: Turn["finishReason"]): ReadCall[] =>
+export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason']): ReadCall[] =>
   calls.map((call) => {
     try {
       const args = parseToolArguments(call.function.arguments, { finishReason });
       return { call, args, normal: JSON.stringify(args) };
     } catch (error) {
-      return { call, error, normal: "{}" };
+      return { call, error, normal: '{}' };
     }
   });
 
 /** The assistant message a turn is written into the transcript as, its calls' arguments repaired. */
-export const assistantMessage = (
-  content: string,
-  parsed: ReadCall[],
-): OpenAI.ChatCompletionAssistantMessageParam => ({
-  role: "assistant",
+export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.ChatCompletionAssistantMessageParam => ({
+  role: 'assistant',
   content: content || null,
   ...(parsed.length
     ? {
@@ -93,10 +90,8 @@ export const assistantMessage = (
 });
 
 /** The definitions the host gave for these names, in the order the names are given. */
-export const definedAs = (
-  definitions: ReadonlyMap<string, OpenAI.ChatCompletionTool>,
-  names: Iterable<string>,
-) => [...names].flatMap((name) => definitions.get(name) ?? []);
+export const definedAs = (definitions: ReadonlyMap<string, OpenAI.ChatCompletionTool>, names: Iterable<string>) =>
+  [...names].flatMap((name) => definitions.get(name) ?? []);
 
 /** Runs one tool call and resolves to what the model reads; what it throws, the model reads too. */
 export type ToolDispatch = (call: ToolCallRequest, signal?: AbortSignal) => Promise<string>;
@@ -148,7 +143,7 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
   // Proxied, a load is only of what the result could define: a catalogued name the host
   // gave no definition for was not loaded, and is not counted or remembered as though it was.
   const hits = proxied ? resolved.matched.filter((hit) => definitions.has(hit)) : resolved.matched;
-  for (const hit of hits) loads[loaded.has(hit) ? "redundantLoads" : "toolsLoaded"]++;
+  for (const hit of hits) loads[loaded.has(hit) ? 'redundantLoads' : 'toolsLoaded']++;
   loads.unknownToolNames += resolved.unknown.length;
   for (const hit of hits) loaded.add(hit);
   return { content, ok: hits.length > 0 };
@@ -159,11 +154,7 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
  * step make one request between them whether they run together or one after the other. A call
  * that rejected is forgotten, so asking again is a real retry rather than a replayed failure.
  */
-async function once(
-  answered: Map<string, Promise<string>>,
-  key: string,
-  make: () => Promise<string>,
-): Promise<string> {
+async function once(answered: Map<string, Promise<string>>, key: string, make: () => Promise<string>): Promise<string> {
   const previous = answered.get(key);
   if (previous) return previous;
   const pending = make();
@@ -205,7 +196,7 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
   // Built for every call rather than only the dispatched ones, so a host hears of the calls
   // the loop answers itself in the same shape. Arguments that could not be read are none.
   const request: ToolCallRequest = { id: call.id, name, args: inner, raw };
-  run.onEvent({ kind: "tool-call", id: call.id, name, text: preview(raw) });
+  run.onEvent({ kind: 'tool-call', id: call.id, name, text: preview(raw) });
   run.onToolCall?.(request);
   let content: string;
   let ok = true;
@@ -233,7 +224,7 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
     content = errorMessage(error);
     ok = false;
   }
-  run.onEvent({ kind: "tool-result", id: call.id, name, ok, text: preview(content) });
+  run.onEvent({ kind: 'tool-result', id: call.id, name, ok, text: preview(content) });
   const result = { id: call.id, name, ok, content };
   run.onToolResult?.(result);
   return result;
@@ -269,7 +260,7 @@ export async function runCalls(
   let kept = 0;
   const keep = async (id: string, content: string) => {
     const result: OpenAI.ChatCompletionToolMessageParam = {
-      role: "tool",
+      role: 'tool',
       tool_call_id: id,
       content,
     };
@@ -311,9 +302,7 @@ export async function runCalls(
       }
       // The run is already ending on `error`; a host that cannot take this result does not
       // get to replace it.
-      await keep(call.id, outcome?.content ?? (at < begun ? STOPPED_CALL : UNRUN_CALL)).catch(
-        () => {},
-      );
+      await keep(call.id, outcome?.content ?? (at < begun ? STOPPED_CALL : UNRUN_CALL)).catch(() => {});
     }
     throw error;
   }
@@ -335,27 +324,27 @@ export async function loadShortlist(
   messages: OpenAI.ChatCompletionMessageParam[],
 ): Promise<void> {
   const { catalog } = run;
-  const names = shortlist.map((tool) => toolName(tool) ?? "");
+  const names = shortlist.map((tool) => toolName(tool) ?? '');
   // Numbered by where the call lands, so two questions in one transcript do not share an id.
   const id = `preselect-${messages.length}`;
   const args = JSON.stringify({ names });
   // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and a
   // host that shortlisted more has already chosen.
   const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
-  run.onEvent({ kind: "tool-call", id, name: LOAD_TOOLS, text: preview(args) });
+  run.onEvent({ kind: 'tool-call', id, name: LOAD_TOOLS, text: preview(args) });
   run.onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
-  run.onEvent({ kind: "tool-result", id, name: LOAD_TOOLS, ok: true, text: preview(content) });
+  run.onEvent({ kind: 'tool-result', id, name: LOAD_TOOLS, ok: true, text: preview(content) });
   run.onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
   run.toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
   run.loads.toolsLoaded += names.length;
   for (const name of names) run.loaded.add(name);
   const exchange: OpenAI.ChatCompletionMessageParam[] = [
     {
-      role: "assistant",
+      role: 'assistant',
       content: null,
-      tool_calls: [{ id, type: "function", function: { name: LOAD_TOOLS, arguments: args } }],
+      tool_calls: [{ id, type: 'function', function: { name: LOAD_TOOLS, arguments: args } }],
     },
-    { role: "tool", tool_call_id: id, content },
+    { role: 'tool', tool_call_id: id, content },
   ];
   // Both written before either is announced, so a host that throws on the first leaves a call
   // with its result. Told as step zero's, with no turn: no request was made for them.

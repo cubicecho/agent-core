@@ -1,7 +1,7 @@
-import type OpenAI from "openai";
-import { ContextOverflow } from "./retry.ts";
-import type { TurnUsage } from "./stream.ts";
-import type { ToolCallOutcome } from "./tool-calls.ts";
+import type OpenAI from 'openai';
+import { ContextOverflow } from './retry.ts';
+import type { TurnUsage } from './stream.ts';
+import type { ToolCallOutcome } from './tool-calls.ts';
 
 /**
  * What went wrong, as a string.
@@ -12,8 +12,7 @@ import type { ToolCallOutcome } from "./tool-calls.ts";
  *
  * @param error Whatever a `catch` bound. Anything that is not an `Error` is stringified.
  */
-export const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /**
  * A run as it stood when `runAgentLoop` gave up on it.
@@ -48,7 +47,7 @@ export interface AgentLoopFailure {
  * the way it was before — by the signal the host aborted, not by the class of what came out.
  */
 export class AgentLoopError extends Error implements AgentLoopFailure {
-  override readonly name: string = "AgentLoopError";
+  override readonly name: string = 'AgentLoopError';
   readonly messages: OpenAI.ChatCompletionMessageParam[];
   readonly usage: TurnUsage;
   readonly toolCalls: ToolCallOutcome[];
@@ -77,7 +76,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
  * sentence it has always been. There is no `cause`: nothing was caught, the loop stopped itself.
  */
 export class ToolIterationLimit extends AgentLoopError {
-  override readonly name: string = "ToolIterationLimit";
+  override readonly name: string = 'ToolIterationLimit';
 }
 
 /**

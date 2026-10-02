@@ -13,26 +13,20 @@
  * `beforeCompact` (PreCompact), `sessionEnd` (SessionEnd) — plus `sessionDelete`, for when the host
  * deletes a session's record.
  */
-export type HookEvent =
-  | "sessionStart"
-  | "beforeTurn"
-  | "afterTurn"
-  | "beforeCompact"
-  | "sessionEnd"
-  | "sessionDelete";
+export type HookEvent = 'sessionStart' | 'beforeTurn' | 'afterTurn' | 'beforeCompact' | 'sessionEnd' | 'sessionDelete';
 
 /** Every event a hook can be bound to, in the order a session meets them. */
 export const HOOK_EVENTS: readonly HookEvent[] = [
-  "sessionStart",
-  "beforeTurn",
-  "afterTurn",
-  "beforeCompact",
-  "sessionEnd",
-  "sessionDelete",
+  'sessionStart',
+  'beforeTurn',
+  'afterTurn',
+  'beforeCompact',
+  'sessionEnd',
+  'sessionDelete',
 ];
 
 /**
  * The events whose hooks run before a request, and so the only ones whose output can reach it.
  * Anything later runs once the model has already answered.
  */
-export const INJECT_EVENTS: ReadonlySet<HookEvent> = new Set(["sessionStart", "beforeTurn"]);
+export const INJECT_EVENTS: ReadonlySet<HookEvent> = new Set(['sessionStart', 'beforeTurn']);

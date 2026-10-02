@@ -1,13 +1,8 @@
-import type OpenAI from "openai";
-import {
-  type Capabilities,
-  ceilingAndTemperature,
-  effortFor,
-  type ModelCapabilities,
-} from "./capabilities.ts";
-import { type ModelParams, RESERVED_BODY_FIELDS } from "./config.ts";
-import { relaxTools, sanitizeTools } from "./schema-compat.ts";
-import { orderTools, type ToolOrder } from "./tool-loading.ts";
+import type OpenAI from 'openai';
+import { type Capabilities, ceilingAndTemperature, effortFor, type ModelCapabilities } from './capabilities.ts';
+import { type ModelParams, RESERVED_BODY_FIELDS } from './config.ts';
+import { relaxTools, sanitizeTools } from './schema-compat.ts';
+import { orderTools, type ToolOrder } from './tool-loading.ts';
 
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and
@@ -42,9 +37,7 @@ export function buildBody(
   order: ToolOrder = true,
 ): OpenAI.ChatCompletionCreateParamsStreaming {
   const sorted = orderTools(tools, order);
-  const declared = supports.strictSchemas
-    ? sanitizeTools(sorted)
-    : relaxTools(sanitizeTools(sorted));
+  const declared = supports.strictSchemas ? sanitizeTools(sorted) : relaxTools(sanitizeTools(sorted));
   const effort = effortFor(refused, config.reasoningEffort);
   const extra = Object.entries(config.extraBody ?? {}).filter(
     ([field]) => !RESERVED_BODY_FIELDS.includes(field) && !refused?.refusedFields.has(field),

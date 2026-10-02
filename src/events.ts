@@ -1,8 +1,8 @@
-import { getOrCreate } from "./guards.ts";
-import type { TokenLedger } from "./ledger.ts";
-import { assignSettings, scoped } from "./scope.ts";
-import type { TurnUsage } from "./stream.ts";
-import { LOAD_TOOLS } from "./tool-loading.ts";
+import { getOrCreate } from './guards.ts';
+import type { TokenLedger } from './ledger.ts';
+import { assignSettings, scoped } from './scope.ts';
+import type { TurnUsage } from './stream.ts';
+import { LOAD_TOOLS } from './tool-loading.ts';
 
 /**
  * What a run is doing, while it is doing it.
@@ -102,29 +102,29 @@ export function configureEvents(options: EventBusOptions = {}): Required<EventBu
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export type RunEventKind =
   /** A step of a caller's own flow began. `name` is the step, `text` its kind. */
-  | "step"
+  | 'step'
   /** A decision step chose an arm. `text` is the arm it took. */
-  | "decision"
+  | 'decision'
   /** A new turn of the agent loop began, inside whichever step is running. */
-  | "turn"
+  | 'turn'
   /** Reasoning tokens, as they arrive. */
-  | "thinking"
+  | 'thinking'
   /** Reply tokens, as they arrive. */
-  | "output"
+  | 'output'
   /** The model asked for a tool, with the arguments it chose. `id` is the call's. */
-  | "tool-call"
+  | 'tool-call'
   /** A tool came back, with what it said. `id` is the id of the call it answers. */
-  | "tool-result"
+  | 'tool-result'
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
-  | "notice"
+  | 'notice'
   /**
    * What the run has cost so far, at the end of every turn, and what that one turn did. Sent
    * whether or not the endpoint reported tokens, since the timings and the cache comparison are
    * measured either way.
    */
-  | "usage"
+  | 'usage'
   /** The run ended. Always last, and always sent. */
-  | "done";
+  | 'done';
 
 /**
  * What a run has spent, counted from the start of the run rather than for the turn that
@@ -210,8 +210,7 @@ export interface RunEvent {
  * `emit` overwrite them — a caller could file an event under another run and hand every watcher
  * a duplicate `seq`, which is the one thing the sequence is for.
  */
-export type RunEventInput = Pick<RunEvent, "kind"> &
-  Partial<Omit<RunEvent, "kind" | "runId" | "seq">>;
+export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kind' | 'runId' | 'seq'>>;
 
 /**
  * A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
@@ -227,9 +226,9 @@ export type RunEventInput = Pick<RunEvent, "kind"> &
  */
 export const stamp = (input: RunEventInput, runId: string, seq: number, at: number): RunEvent => ({
   at,
-  text: "",
-  name: "",
-  step: "",
+  text: '',
+  name: '',
+  step: '',
   ok: null,
   usage: null,
   ...input,
@@ -274,8 +273,7 @@ function sweep(held: Bus) {
   const now = Date.now();
   for (const [runId, stream] of streams) {
     if (stream.listeners.size) continue;
-    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs))
-      streams.delete(runId);
+    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs)) streams.delete(runId);
   }
   scheduleSweep(held);
 }
@@ -303,7 +301,7 @@ export function endRun(runId: string) {
   // `done` completes, runs its `finally` and lets its consumer go, where one left parked holds
   // an open subscription that can never say anything again. An SSE client on the other end of
   // that is a connection that never closes.
-  if (stream.listeners.size) emit(runId, { kind: "done", ok: false, text: "run ended" });
+  if (stream.listeners.size) emit(runId, { kind: 'done', ok: false, text: 'run ended' });
   streams.delete(runId);
 }
 
@@ -329,7 +327,7 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   }
   // Kept for a moment so a watcher that arrives just after the end still sees how it went,
   // then dropped: a finished run's record is the row, not this.
-  if (event.kind === "done") stream.ended = true;
+  if (event.kind === 'done') stream.ended = true;
   scheduleSweep(held);
 
   for (const listener of stream.listeners) {
@@ -374,7 +372,7 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
 const gapNotice = (runId: string, gap: number, next: RunEvent): RunEvent =>
   stamp(
     {
-      kind: "notice",
+      kind: 'notice',
       text: `${gap} event(s) dropped: this watcher fell too far behind`,
       step: next.step,
     },
@@ -416,7 +414,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
   // The same wake the listener uses: an abort is another reason to stop waiting, and what the
   // loop does about it is decided in one place below rather than here.
   const onAbort = () => wake?.();
-  signal?.addEventListener("abort", onAbort, { once: true });
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
     for (;;) {
       // Guarding the drain rather than sitting after it, so an already-aborted signal leaves
@@ -444,7 +442,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
         // than leaving the client holding an open stream that will never say anything again.
-        if (event.kind === "done") return;
+        if (event.kind === 'done') return;
       }
       if (signal?.aborted) return;
       await new Promise<void>((resolve) => {
@@ -456,7 +454,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // `once` covers the abort that fired; this is for the one that never did, which would
     // otherwise hold this generator and its queue alive for as long as the caller holds the
     // signal — a run's whole backlog kept by a watcher that finished on `done`.
-    signal?.removeEventListener("abort", onAbort);
+    signal?.removeEventListener('abort', onAbort);
     stream.listeners.delete(listener);
     // A watcher can name a run that has not started, or will never start. Nothing was recorded
     // under it, so nothing is left behind either — and a run that has ended has nothing more to
@@ -525,13 +523,13 @@ export function fold(events: RunEvent[]): RunEvent[] {
   const close = () => {
     if (!parts.length) return;
     const last = blocks[blocks.length - 1];
-    if (parts.length > 1) last.text = parts.join("");
+    if (parts.length > 1) last.text = parts.join('');
     parts = [];
   };
 
   for (const event of events) {
     const last = blocks[blocks.length - 1];
-    const mergeable = event.kind === "thinking" || event.kind === "output";
+    const mergeable = event.kind === 'thinking' || event.kind === 'output';
     const continuesLast = last && last.kind === event.kind && last.step === event.step;
     if (mergeable && continuesLast) {
       last.seq = event.seq;
@@ -552,7 +550,7 @@ export function fold(events: RunEvent[]): RunEvent[] {
 }
 
 /** Why a turn's cache broke, as `TurnUsage.cacheBreakReason` names it. */
-type CacheBreakReason = NonNullable<TurnUsage["cacheBreakReason"]>;
+type CacheBreakReason = NonNullable<TurnUsage['cacheBreakReason']>;
 
 /**
  * A run summed and derived from its events: what it cost, where the time went, and why.
@@ -625,7 +623,7 @@ export interface RunMetrics {
    * A failure does not say whether it was an error, a stop or the tool budget — that is in the
    * host's own `done` text.
    */
-  outcome?: "answered" | "truncated" | "failed";
+  outcome?: 'answered' | 'truncated' | 'failed';
 }
 
 /** What `runMetrics` takes besides the events. */
@@ -647,10 +645,7 @@ export interface RunMetricsOptions {
  * that has lost its oldest events to the cap sums what it still has.
  * @param options The served window, for how full the run came to it.
  */
-export function runMetrics(
-  events: RunEvent[],
-  { contextLength }: RunMetricsOptions = {},
-): RunMetrics {
+export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOptions = {}): RunMetrics {
   const metrics: RunMetrics = {
     steps: 0,
     turns: 0,
@@ -679,17 +674,16 @@ export function runMetrics(
   let last: TurnReport | undefined;
 
   for (const event of events) {
-    if (event.kind === "step") metrics.steps++;
-    else if (event.kind === "tool-call") {
+    if (event.kind === 'step') metrics.steps++;
+    else if (event.kind === 'tool-call') {
       if (event.name === LOAD_TOOLS) metrics.loadCalls++;
       getOrCreate(pending, event.name, () => []).push(event.at);
-    } else if (event.kind === "tool-result") {
+    } else if (event.kind === 'tool-result') {
       metrics.toolCalls++;
-      if (event.ok === false)
-        metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
+      if (event.ok === false) metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
       const called = pending.get(event.name)?.shift();
-      if (called !== undefined) add("toolMs", event.at - called);
-    } else if (event.kind === "usage" && event.usage?.turn) {
+      if (called !== undefined) add('toolMs', event.at - called);
+    } else if (event.kind === 'usage' && event.usage?.turn) {
       const turn = event.usage.turn;
       last = turn;
       metrics.turns++;
@@ -698,32 +692,29 @@ export function runMetrics(
       metrics.completionTokens += turn.completion;
       metrics.cachedTokens += turn.cached;
       if (turn.uncached !== undefined) {
-        add("uncachedTokens", turn.uncached);
+        add('uncachedTokens', turn.uncached);
         reportedPrompt += turn.prompt;
         reportedCached += turn.cached;
       }
-      add("reasoningTokens", turn.reasoningTokens);
-      add("promptMs", turn.promptMs);
-      add("predictedMs", turn.predictedMs);
-      add("draftTotal", turn.draftTotal);
-      add("draftAccepted", turn.draftAccepted);
+      add('reasoningTokens', turn.reasoningTokens);
+      add('promptMs', turn.promptMs);
+      add('predictedMs', turn.predictedMs);
+      add('draftTotal', turn.draftTotal);
+      add('draftAccepted', turn.draftAccepted);
       if (turn.cacheBroken) {
         metrics.cacheBreaks++;
-        const reason = turn.cacheBreakReason ?? "none-known";
+        const reason = turn.cacheBreakReason ?? 'none-known';
         metrics.cacheBreakReasons[reason] = (metrics.cacheBreakReasons[reason] ?? 0) + 1;
       }
-      if (turn.finishReason === "length") metrics.truncatedTurns++;
-      if (turn.wallMs !== undefined)
-        metrics.slowestTurnMs = Math.max(metrics.slowestTurnMs ?? 0, turn.wallMs);
+      if (turn.finishReason === 'length') metrics.truncatedTurns++;
+      if (turn.wallMs !== undefined) metrics.slowestTurnMs = Math.max(metrics.slowestTurnMs ?? 0, turn.wallMs);
       if (turn.firstTokenMs !== undefined) {
-        add("firstTokenMs", turn.firstTokenMs);
+        add('firstTokenMs', turn.firstTokenMs);
         firstTokens++;
       }
-      if (turn.prompt > 0)
-        metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
-    } else if (event.kind === "done") {
-      metrics.outcome =
-        event.ok === false ? "failed" : last?.finishReason === "length" ? "truncated" : "answered";
+      if (turn.prompt > 0) metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
+    } else if (event.kind === 'done') {
+      metrics.outcome = event.ok === false ? 'failed' : last?.finishReason === 'length' ? 'truncated' : 'answered';
     }
   }
 

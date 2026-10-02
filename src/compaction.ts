@@ -1,17 +1,9 @@
-import type OpenAI from "openai";
-import type { Endpoint } from "./config.ts";
-import {
-  consult,
-  type HookContext,
-  type HookRunner,
-  notify,
-  type OnNote,
-  textOf,
-  turnMessages,
-} from "./hooks.ts";
-import { ask, type SideTaskOptions } from "./side-task.ts";
-import { messageTokens } from "./tokens.ts";
-import { holdsDefinitions } from "./tool-loading.ts";
+import type OpenAI from 'openai';
+import type { Endpoint } from './config.ts';
+import { consult, type HookContext, type HookRunner, notify, type OnNote, textOf, turnMessages } from './hooks.ts';
+import { ask, type SideTaskOptions } from './side-task.ts';
+import { messageTokens } from './tokens.ts';
+import { holdsDefinitions } from './tool-loading.ts';
 
 /**
  * Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded
@@ -45,36 +37,32 @@ const SUMMARY_SLICE = 4000;
  * record of what was decided, and a narrative spends its words on the order things happened in.
  */
 export const SUMMARY_PROMPT =
-  "You maintain the running memory of a long conversation. Rewrite the exchange below as " +
-  "notes the assistant can rely on after the original messages are gone. Keep decisions, " +
-  "facts, file paths, names, numbers, and anything still unresolved. Drop pleasantries and " +
-  "anything already superseded. Write compact prose or bullets — no preamble, no sign-off.";
+  'You maintain the running memory of a long conversation. Rewrite the exchange below as ' +
+  'notes the assistant can rely on after the original messages are gone. Keep decisions, ' +
+  'facts, file paths, names, numbers, and anything still unresolved. Drop pleasantries and ' +
+  'anything already superseded. Write compact prose or bullets — no preamble, no sign-off.';
 
 /**
  * How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
  */
-export const SUMMARY_LEAD =
-  "Summary of the earlier part of this conversation, which is no longer shown in full:\n\n";
+export const SUMMARY_LEAD = 'Summary of the earlier part of this conversation, which is no longer shown in full:\n\n';
 
 /** What the summariser reads for one message: its text and the calls it made. */
 const messageText = (message: Message): string => {
   const calls =
-    "tool_calls" in message && message.tool_calls
+    'tool_calls' in message && message.tool_calls
       ? message.tool_calls
-          .map((call) =>
-            call.type === "function" ? `${call.function.name}(${call.function.arguments})` : "",
-          )
-          .join(" ")
-      : "";
+          .map((call) => (call.type === 'function' ? `${call.function.name}(${call.function.arguments})` : ''))
+          .join(' ')
+      : '';
   return `${textOf(message.content)} ${calls}`.trim();
 };
 
-const isSummary = (message: Message) =>
-  message.role === "system" && textOf(message.content).startsWith(SUMMARY_LEAD);
+const isSummary = (message: Message) => message.role === 'system' && textOf(message.content).startsWith(SUMMARY_LEAD);
 
 /** The summary as it sits in a transcript, which is the one shape `isSummary` recognises again. */
 const summaryMessage = (summary: string): Message => ({
-  role: "system",
+  role: 'system',
   content: `${SUMMARY_LEAD}${summary.trim()}`,
 });
 
@@ -85,9 +73,8 @@ const summaryMessage = (summary: string): Message => ({
 const systemHead = (messages: Message[]): { from: number; previous?: string } => {
   let from = 0;
   let previous: string | undefined;
-  while (from < messages.length && messages[from].role === "system") {
-    if (isSummary(messages[from]))
-      previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
+  while (from < messages.length && messages[from].role === 'system') {
+    if (isSummary(messages[from])) previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
     from++;
   }
   return { from, previous };
@@ -116,25 +103,22 @@ export interface PruneOptions {
  * @param messages The transcript. Not written to.
  * @param options How many results to keep and how long one must be to clear.
  */
-export function pruneToolResults(
-  messages: Message[],
-  { keepLast = 5, maxChars = 256 }: PruneOptions = {},
-): Message[] {
+export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars = 256 }: PruneOptions = {}): Message[] {
   let kept = 0;
   let out: Message[] | undefined;
   for (let at = messages.length - 1; at >= 0; at--) {
     const message = messages[at];
-    if (message.role !== "tool") continue;
+    if (message.role !== 'tool') continue;
     if (kept++ < keepLast) continue;
     const text = textOf(message.content);
-    if (text.length <= maxChars || text.startsWith("[result cleared")) continue;
+    if (text.length <= maxChars || text.startsWith('[result cleared')) continue;
     // A proxied load's result is the schema itself; stubbed, the tool is one the model can still
     // name and no longer call correctly.
     if (holdsDefinitions(text)) continue;
     out ??= [...messages];
     out[at] = {
       ...message,
-      content: `[result cleared, ${text.length.toLocaleString("en-US")} chars]`,
+      content: `[result cleared, ${text.length.toLocaleString('en-US')} chars]`,
     };
   }
   return out ?? messages;
@@ -262,7 +246,7 @@ export function planCompaction(
     // Forward from the head, so the first cut that reaches the target is the one that folds least.
     let folded = 0;
     for (let at = from; at < messages.length; at++) {
-      if (messages[at].role === "user") {
+      if (messages[at].role === 'user') {
         cut = at;
         after = cost - folded + summaryTokens;
         if (after <= limit * target) break;
@@ -277,7 +261,7 @@ export function planCompaction(
       if (kept > budget) break;
       cut = at;
     }
-    while (cut < messages.length && messages[cut].role !== "user") cut++;
+    while (cut < messages.length && messages[cut].role !== 'user') cut++;
   }
 
   if (cut >= messages.length || cut - from < 2) return undefined;
@@ -300,10 +284,10 @@ export function summaryInput(plan: CompactionPlan): string {
   const transcript = plan.toSummarise
     .map((message) => {
       const text = messageText(message);
-      return text ? `${message.role}: ${text.slice(0, SUMMARY_SLICE)}` : "";
+      return text ? `${message.role}: ${text.slice(0, SUMMARY_SLICE)}` : '';
     })
     .filter(Boolean)
-    .join("\n\n");
+    .join('\n\n');
   return plan.previous
     ? `Notes so far:\n${plan.previous}\n\nContinue them with this exchange:\n\n${transcript}`
     : transcript;
@@ -321,11 +305,7 @@ export const summariser =
   (
     config: Endpoint,
     model: string,
-    {
-      system = SUMMARY_PROMPT,
-      maxTokens = SUMMARY_TOKENS,
-      ...options
-    }: SideTaskOptions & { system?: string } = {},
+    { system = SUMMARY_PROMPT, maxTokens = SUMMARY_TOKENS, ...options }: SideTaskOptions & { system?: string } = {},
   ) =>
   (text: string) =>
     ask(config, model, system, text, { maxTokens, ...options });
@@ -395,13 +375,13 @@ export async function runCompaction(
   };
   let summary: string;
   if (hooks && context && hooks.honourVeto && !forced) {
-    const { vetoed } = await consult(hooks.run, "beforeCompact", context, hooks.onNote);
+    const { vetoed } = await consult(hooks.run, 'beforeCompact', context, hooks.onNote);
     if (vetoed) return undefined;
     summary = await summarise(summaryInput(plan));
   } else {
     [summary] = await Promise.all([
       summarise(summaryInput(plan)),
-      hooks && context && notify(hooks.run, "beforeCompact", context, hooks.onNote),
+      hooks && context && notify(hooks.run, 'beforeCompact', context, hooks.onNote),
     ]);
   }
   if (!summary.trim()) return undefined;
@@ -426,7 +406,7 @@ export async function runCompaction(
  */
 export function applyCompaction(
   messages: Message[],
-  record?: Pick<CompactionRecord, "summary" | "through">,
+  record?: Pick<CompactionRecord, 'summary' | 'through'>,
   { from }: { from?: number } = {},
 ): Message[] {
   if (!record?.summary.trim()) return messages;
@@ -454,11 +434,7 @@ export function applyCompaction(
  * prompts, when the host keeps them in the array. Zero, the default, is the stored-fold case,
  * where the summary is the request's first message.
  */
-export const requestIndex = (
-  index: number,
-  record?: Pick<CompactionRecord, "through">,
-  head = 0,
-): number => {
+export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'through'>, head = 0): number => {
   if (!record) return index;
   return index < record.through ? head : index - record.through + head + 1;
 };

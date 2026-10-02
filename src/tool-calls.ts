@@ -1,6 +1,6 @@
-import type OpenAI from "openai";
-import { isRecord } from "./guards.ts";
-import { THINK_FENCE } from "./thinking.ts";
+import type OpenAI from 'openai';
+import { isRecord } from './guards.ts';
+import { THINK_FENCE } from './thinking.ts';
 
 /**
  * Reading what a model meant by a tool call when it did not write one cleanly.
@@ -23,15 +23,15 @@ export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
  * and try again.
  */
 export class ToolArgumentsError extends Error {
-  override readonly name = "ToolArgumentsError";
+  override readonly name = 'ToolArgumentsError';
   /** Whether the model ran out of room or wrote something unreadable. */
-  readonly kind: "truncated" | "malformed";
+  readonly kind: 'truncated' | 'malformed';
 
   /**
    * @param kind Why the arguments could not be read.
    * @param message What the model is handed back as the tool's result.
    */
-  constructor(kind: "truncated" | "malformed", message: string) {
+  constructor(kind: 'truncated' | 'malformed', message: string) {
     super(message);
     this.kind = kind;
   }
@@ -45,14 +45,14 @@ export class ToolArgumentsError extends Error {
  * a string is touched, so an argument that happens to say `True` or `a, }` survives.
  */
 function repairJson(text: string): string {
-  let out = "";
+  let out = '';
   for (let i = 0; i < text.length; ) {
     const char = text[i];
     if (char === '"' || char === "'") {
-      let body = "";
+      let body = '';
       let j = i + 1;
       for (; j < text.length && text[j] !== char; j++) {
-        if (text[j] === "\\" && j + 1 < text.length) {
+        if (text[j] === '\\' && j + 1 < text.length) {
           // `\'` means nothing in JSON; a quote that needed escaping in single quotes does not.
           body += char === "'" && text[j + 1] === "'" ? "'" : text[j] + text[j + 1];
           j++;
@@ -64,18 +64,16 @@ function repairJson(text: string): string {
       i = j + 1;
       continue;
     }
-    if (char === ",") {
+    if (char === ',') {
       const next = text.slice(i + 1).match(/^\s*([\]}])?/);
       if (next?.[1]) {
         i++;
         continue;
       }
     }
-    const word = /[A-Za-z_$]/.test(char)
-      ? text.slice(i).match(/^[A-Za-z_$][\w$]*/)?.[0]
-      : undefined;
+    const word = /[A-Za-z_$]/.test(char) ? text.slice(i).match(/^[A-Za-z_$][\w$]*/)?.[0] : undefined;
     if (word) {
-      const python = { True: "true", False: "false", None: "null" }[word];
+      const python = { True: 'true', False: 'false', None: 'null' }[word];
       if (/^\s*:/.test(text.slice(i + word.length))) out += `"${word}"`;
       else out += python ?? word;
       i += word.length;
@@ -99,7 +97,7 @@ export function looseJson(text: string): unknown {
   for (const candidate of [text, repairJson(text)]) {
     try {
       const value: unknown = JSON.parse(candidate);
-      if (typeof value !== "string") return value;
+      if (typeof value !== 'string') return value;
       const inner = value.trim();
       if (!/^[[{]/.test(inner)) return value;
       return looseJson(inner) ?? value;
@@ -130,18 +128,18 @@ export function parseToolArguments(
 ): Record<string, unknown> {
   if (isRecord(raw)) return raw;
   if (raw === null || raw === undefined) return {};
-  const text = typeof raw === "string" ? raw.trim() : JSON.stringify(raw);
+  const text = typeof raw === 'string' ? raw.trim() : JSON.stringify(raw);
   if (!text) return {};
   const parsed = looseJson(text);
   if (isRecord(parsed)) return parsed;
-  if (finishReason === "length") {
+  if (finishReason === 'length') {
     throw new ToolArgumentsError(
-      "truncated",
+      'truncated',
       `the tool call was cut off at the reply ceiling before its arguments were complete; raise maxTokens: ${text.slice(0, 200)}`,
     );
   }
   throw new ToolArgumentsError(
-    "malformed",
+    'malformed',
     parsed === undefined
       ? `model produced invalid tool arguments: ${text.slice(0, 200)}`
       : `model produced tool arguments that are not an object: ${text.slice(0, 200)}`,
@@ -154,17 +152,17 @@ export function parseToolArguments(
  */
 function valueEnd(text: string, start: number): number {
   let depth = 0;
-  let quote = "";
+  let quote = '';
   for (let i = start; i < text.length; i++) {
     const char = text[i];
     if (quote) {
-      if (char === "\\") i++;
-      else if (char === quote) quote = "";
+      if (char === '\\') i++;
+      else if (char === quote) quote = '';
     } else if (char === '"' || char === "'") {
       quote = char;
-    } else if (char === "{" || char === "[") {
+    } else if (char === '{' || char === '[') {
       depth++;
-    } else if (char === "}" || char === "]") {
+    } else if (char === '}' || char === ']') {
       depth--;
       if (depth === 0) return i + 1;
     }
@@ -178,7 +176,7 @@ function valueEnd(text: string, start: number): number {
  */
 function readValue(text: string, at: number): { value: unknown; end: number } | undefined {
   const start = at + (text.slice(at).match(/^\s*/)?.[0].length ?? 0);
-  if (text[start] !== "{" && text[start] !== "[") return undefined;
+  if (text[start] !== '{' && text[start] !== '[') return undefined;
   const closed = valueEnd(text, start);
   const end = closed < 0 ? text.length : closed;
   const value = looseJson(text.slice(start, end));
@@ -193,9 +191,9 @@ function toCall(entry: unknown): WrittenCall | undefined {
   if (!isRecord(entry)) return undefined;
   const inner = isRecord(entry.function) ? entry.function : entry;
   const name = inner.name;
-  if (typeof name !== "string" || !name) return undefined;
+  if (typeof name !== 'string' || !name) return undefined;
   const args = inner.arguments ?? inner.parameters ?? inner.args ?? {};
-  return { name, arguments: typeof args === "string" ? args : JSON.stringify(args) };
+  return { name, arguments: typeof args === 'string' ? args : JSON.stringify(args) };
 }
 
 /** Every call in a value that is one call or a list of them, or undefined if any entry is not one. */
@@ -309,7 +307,7 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
   const known = (calls: WrittenCall[] | undefined) =>
     calls?.every((call) => names.has(call.name)) ? calls : undefined;
   const start = text.search(/\S/);
-  if (start >= 0 && (text[start] === "{" || text[start] === "[")) {
+  if (start >= 0 && (text[start] === '{' || text[start] === '[')) {
     const read = readValue(text, start);
     const calls = read && !text.slice(read.end).trim() ? known(toCalls(read.value)) : undefined;
     if (read && calls) return [{ start, end: read.end, calls }];
@@ -351,7 +349,7 @@ export function recoverToolCalls(
   if (!found.length) return { content, toolCalls: [] };
 
   found.sort((a, b) => a.start - b.start);
-  let rest = "";
+  let rest = '';
   let cursor = 0;
   const toolCalls: ToolCall[] = [];
   for (const span of found) {
@@ -361,7 +359,7 @@ export function recoverToolCalls(
     for (const call of span.calls) {
       toolCalls.push({
         id: `call_recovered_${toolCalls.length}`,
-        type: "function",
+        type: 'function',
         function: call,
       });
     }

@@ -1,15 +1,15 @@
-import { createHash } from "node:crypto";
-import OpenAI from "openai";
-import type { Endpoint, EndpointIdentity, RetryPolicy } from "./config.ts";
-import { isPositive } from "./guards.ts";
-import { assignSettings, scoped } from "./scope.ts";
+import { createHash } from 'node:crypto';
+import OpenAI from 'openai';
+import type { Endpoint, EndpointIdentity, RetryPolicy } from './config.ts';
+import { isPositive } from './guards.ts';
+import { assignSettings, scoped } from './scope.ts';
 
 /**
  * The SDK insists on a non-empty key even where the server will not look at it. This is what it
  * gets. It also reads as "this endpoint has no key" at a call site, which an empty string does
  * not — a caller must not let a local endpoint silently borrow the key meant for a paid one.
  */
-export const NO_KEY = "agent-core";
+export const NO_KEY = 'agent-core';
 
 /** A wait in the SDK's spelling: milliseconds, and `undefined` where zero or less means no limit. */
 const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
@@ -19,7 +19,7 @@ const limitMs = (seconds: number) => (seconds > 0 ? seconds * 1000 : undefined);
  *
  * @param config Read for `requestTimeoutSeconds` alone.
  */
-export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): number | undefined =>
+export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
 
 /**
@@ -31,12 +31,8 @@ export const timeoutMs = (config: Pick<Endpoint, "requestTimeoutSeconds">): numb
  *
  * @param config Read for `loadingTimeoutSeconds` alone. Zero or less is no wait.
  */
-export const loadingMs = (
-  config: Pick<RetryPolicy, "loadingTimeoutSeconds">,
-): number | undefined =>
-  config.loadingTimeoutSeconds === undefined
-    ? undefined
-    : (limitMs(config.loadingTimeoutSeconds) ?? 0);
+export const loadingMs = (config: Pick<RetryPolicy, 'loadingTimeoutSeconds'>): number | undefined =>
+  config.loadingTimeoutSeconds === undefined ? undefined : (limitMs(config.loadingTimeoutSeconds) ?? 0);
 
 /**
  * A client per endpoint, made once and kept.
@@ -144,7 +140,7 @@ export const FIRST_TOKEN_FACTOR = 5;
  * @param config Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
  */
 export const firstTokenMs = (
-  config: Pick<Endpoint, "requestTimeoutSeconds" | "firstTokenSeconds">,
+  config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,
 ): number | undefined => {
   if (config.firstTokenSeconds === undefined) {
     const idle = timeoutMs(config);
@@ -197,13 +193,7 @@ export function getClient(config: Endpoint): OpenAI {
  * reporting the same number twice. llama.cpp puts its number under `meta` instead, and LM Studio
  * and Ollama put none on this route at all; see `servedWindow`.
  */
-const CONTEXT_KEYS = [
-  "context_length",
-  "max_context_window",
-  "max_model_len",
-  "context_window",
-  "n_ctx",
-];
+const CONTEXT_KEYS = ['context_length', 'max_context_window', 'max_model_len', 'context_window', 'n_ctx'];
 
 const positive = (value: unknown) => (isPositive(value) ? value : 0);
 
@@ -298,8 +288,7 @@ const misses = scoped(() => new Map<string, number>());
  * config, and absent and empty already mean the same thing. The timeout is deliberately not in
  * it; see `listings`.
  */
-export const endpointKey = (config: EndpointIdentity) =>
-  JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
+export const endpointKey = (config: EndpointIdentity) => JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
 
 /**
  * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
@@ -321,8 +310,7 @@ export const modelKey = (endpoint: string, model: string) => JSON.stringify([end
  *
  * @param config Read for `baseUrl` and `apiKey` alone, as `endpointKey` reads it.
  */
-export const endpointId = (config: EndpointIdentity) =>
-  createHash("sha256").update(endpointKey(config)).digest("hex");
+export const endpointId = (config: EndpointIdentity) => createHash('sha256').update(endpointKey(config)).digest('hex');
 
 /**
  * Served windows found by asking a server's own API, keyed on endpoint and model together.
@@ -351,16 +339,14 @@ const refusals = scoped(() => new Map<string, { at: number; gone: boolean }>());
 /** Whether `/api/v0/models` is to be left alone on this endpoint for now. */
 const refused = (endpoint: string) => {
   const refusal = refusals().get(endpoint);
-  return (
-    refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs)
-  );
+  return refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs);
 };
 
 /** How long a probe may take before the window is taken from the listing instead. */
 const PROBE_TIMEOUT_MS = 10_000;
 
 /** The server root behind an OpenAI-compatible base URL, which is where the native APIs live. */
-const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+const rootOf = (baseUrl: string) => baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
 
 /** A route this server does not have, rather than one that failed to answer. */
 const NOT_THERE = new Set([404, 405, 501]);
@@ -370,10 +356,7 @@ const NOT_THERE = new Set([404, 405, 501]);
  * them that mean a server without the route; `body` is absent for both, and for a 2xx that was not
  * JSON. A server that could not be reached throws.
  */
-async function probe(
-  config: Endpoint,
-  path: string,
-): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
+async function probe(config: Endpoint, path: string): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
   const apiKey = config.apiKey || undefined;
   const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
     headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
@@ -411,26 +394,22 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
   if (unserved().has(endpoint)) return 0;
   const key = modelKey(endpoint, config.model);
   const known = served().get(key);
-  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs))
-    return known.window;
+  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs)) return known.window;
 
   let window = 0;
   try {
     // Named, for a llama.cpp router serving several models; a single-model server ignores it.
     const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`);
-    const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })
-      ?.default_generation_settings;
+    const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })?.default_generation_settings;
     window = positive(settings?.n_ctx);
     if (!window) {
       if (!refused(endpoint)) {
-        const lmstudio = await probe(config, "/api/v0/models");
+        const lmstudio = await probe(config, '/api/v0/models');
         if (lmstudio.failed) refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
         else refusals().delete(endpoint);
         const { data } = (lmstudio.body ?? {}) as { data?: unknown };
         const entry = Array.isArray(data)
-          ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find(
-              (model) => model?.id === config.model,
-            )
+          ? (data as { id?: unknown; loaded_context_length?: unknown }[]).find((model) => model?.id === config.model)
           : undefined;
         window = positive(entry?.loaded_context_length);
       }
@@ -492,10 +471,7 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * @param config The endpoint, plus the model whose window is wanted.
  * @param declared The operator's own number. Above zero it wins and the endpoint is not asked.
  */
-export async function contextLimitFor(
-  config: Endpoint & { model: string },
-  declared = 0,
-): Promise<number> {
+export async function contextLimitFor(config: Endpoint & { model: string }, declared = 0): Promise<number> {
   if (declared > 0) return declared;
   const key = endpointKey(config);
   const listed = () =>
@@ -557,8 +533,7 @@ export function resetClients() {
 }
 
 /** A base URL as two settings rows would agree on it: trimmed, without the trailing slash. */
-export const sameUrl = (a: string, b: string) =>
-  a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '');
 
 /**
  * The key to send, where an endpoint may inherit one from the settings it overrides.

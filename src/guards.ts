@@ -14,7 +14,7 @@
  * @param value Anything, usually just parsed. An array is an object to `typeof` and not to this.
  */
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
  * Whether a value is a number above zero, which is what a limit has to be to be one.
@@ -24,8 +24,7 @@ export const isRecord = (value: unknown): value is Record<string, unknown> =>
  *
  * @param value Anything, usually a setting that may be absent, zero or mistyped.
  */
-export const isPositive = (value: unknown): value is number =>
-  typeof value === "number" && value > 0;
+export const isPositive = (value: unknown): value is number => typeof value === 'number' && value > 0;
 
 /** What `getOrCreate` needs of a map, so a `WeakMap` serves as well as a `Map`. */
 interface Lookup<K, V> {
@@ -52,4 +51,4 @@ export function getOrCreate<K, V>(map: Lookup<K, V>, key: K, create: () => V): V
  * @param count How many.
  * @param noun The singular, which takes an `s` and nothing cleverer.
  */
-export const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+export const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;

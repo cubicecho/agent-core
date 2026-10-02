@@ -1,5 +1,5 @@
-import type OpenAI from "openai";
-import type { RunEvent } from "../src/events.ts";
+import type OpenAI from 'openai';
+import type { RunEvent } from '../src/events.ts';
 
 /**
  * Shapes big enough for the costs to show.
@@ -12,30 +12,30 @@ import type { RunEvent } from "../src/events.ts";
 
 /** One MCP-shaped tool: nested objects, a nullable union, a pattern, a format. */
 export const mcpTool = (index: number): OpenAI.ChatCompletionTool => ({
-  type: "function",
+  type: 'function',
   function: {
     name: `server_${index % 4}__group__tool_${index}`,
     description: `Does the ${index}th thing, at some length, the way an MCP server describes it.`,
     parameters: {
-      type: "object",
+      type: 'object',
       properties: {
-        path: { type: "string", pattern: "^[\\w/.-]+$", description: "Where to look." },
-        mode: { type: ["string", "null"], enum: ["read", "write"] },
-        when: { type: "string", format: "date-time" },
+        path: { type: 'string', pattern: '^[\\w/.-]+$', description: 'Where to look.' },
+        mode: { type: ['string', 'null'], enum: ['read', 'write'] },
+        when: { type: 'string', format: 'date-time' },
         filter: {
-          type: "object",
+          type: 'object',
           properties: {
-            match: { anyOf: [{ type: "string", pattern: "\\d+" }, { type: "null" }] },
-            limit: { type: "integer" },
+            match: { anyOf: [{ type: 'string', pattern: '\\d+' }, { type: 'null' }] },
+            limit: { type: 'integer' },
             nested: {
-              type: "object",
-              properties: { deep: { type: "string", format: "uri" } },
+              type: 'object',
+              properties: { deep: { type: 'string', format: 'uri' } },
             },
           },
         },
-        tags: { type: "array", items: { type: "string", pattern: "^[a-z]+$" } },
+        tags: { type: 'array', items: { type: 'string', pattern: '^[a-z]+$' } },
       },
-      required: ["path"],
+      required: ['path'],
     },
   },
 });
@@ -44,23 +44,21 @@ export const mcpTools = (count = 25) => Array.from({ length: count }, (_, i) => 
 
 /** A transcript after a dozen tool iterations — a few hundred kilobytes of messages. */
 export function transcript(turns = 40): OpenAI.ChatCompletionMessageParam[] {
-  const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: "system", content: "You are an agent. ".repeat(60) },
-  ];
+  const messages: OpenAI.ChatCompletionMessageParam[] = [{ role: 'system', content: 'You are an agent. '.repeat(60) }];
   for (let i = 0; i < turns; i++) {
-    messages.push({ role: "user", content: `Request ${i}. ${"context ".repeat(120)}` });
+    messages.push({ role: 'user', content: `Request ${i}. ${'context '.repeat(120)}` });
     messages.push({
-      role: "assistant",
+      role: 'assistant',
       content: null,
       tool_calls: [
         {
           id: `call_${i}`,
-          type: "function",
-          function: { name: "read_file", arguments: JSON.stringify({ path: `/f/${i}`, n: i }) },
+          type: 'function',
+          function: { name: 'read_file', arguments: JSON.stringify({ path: `/f/${i}`, n: i }) },
         },
       ],
     });
-    messages.push({ role: "tool", tool_call_id: `call_${i}`, content: "result ".repeat(200) });
+    messages.push({ role: 'tool', tool_call_id: `call_${i}`, content: 'result '.repeat(200) });
   }
   return messages;
 }
@@ -68,18 +66,18 @@ export function transcript(turns = 40): OpenAI.ChatCompletionMessageParam[] {
 export const streamingBody = (
   messages: OpenAI.ChatCompletionMessageParam[],
   tools: OpenAI.ChatCompletionTool[],
-): OpenAI.ChatCompletionCreateParamsStreaming => ({ model: "m", stream: true, messages, tools });
+): OpenAI.ChatCompletionCreateParamsStreaming => ({ model: 'm', stream: true, messages, tools });
 
 /** A reasoning turn's worth of deltas, as the bus stores them. */
 export const deltas = (count = 20_000): RunEvent[] =>
   Array.from({ length: count }, (_, i) => ({
-    runId: "bench",
+    runId: 'bench',
     seq: i + 1,
     at: Date.now(),
-    kind: i % 2000 === 1999 ? ("output" as const) : ("thinking" as const),
-    text: "token ",
-    name: "",
-    step: i < count / 2 ? "plan" : "act",
+    kind: i % 2000 === 1999 ? ('output' as const) : ('thinking' as const),
+    text: 'token ',
+    name: '',
+    step: i < count / 2 ? 'plan' : 'act',
     ok: null,
     usage: null,
   }));

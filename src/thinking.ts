@@ -15,7 +15,7 @@ export interface Fence {
 }
 
 /** DeepSeek, Qwen3, QwQ and most distills. */
-export const THINK_FENCE: Fence = { open: "<think>", close: "</think>" };
+export const THINK_FENCE: Fence = { open: '<think>', close: '</think>' };
 
 /**
  * The fences nobody writes by accident, and so the ones `streamTurn` reads by default.
@@ -25,8 +25,8 @@ export const THINK_FENCE: Fence = { open: "<think>", close: "</think>" };
  */
 export const DEFAULT_FENCES: readonly Fence[] = [
   THINK_FENCE,
-  { open: "<|channel|>analysis<|message|>", close: "<|end|>" },
-  { open: "◁think▷", close: "◁/think▷" },
+  { open: '<|channel|>analysis<|message|>', close: '<|end|>' },
+  { open: '◁think▷', close: '◁/think▷' },
 ];
 
 /**
@@ -36,8 +36,8 @@ export const DEFAULT_FENCES: readonly Fence[] = [
  */
 export const ALL_FENCES: readonly Fence[] = [
   ...DEFAULT_FENCES,
-  { open: "<thinking>", close: "</thinking>" },
-  { open: "<reasoning>", close: "</reasoning>" },
+  { open: '<thinking>', close: '</thinking>' },
+  { open: '<reasoning>', close: '</reasoning>' },
 ];
 
 /**
@@ -47,16 +47,12 @@ export const ALL_FENCES: readonly Fence[] = [
  * channel before the answer and ends with a return token.
  */
 const FRAMING: Readonly<Record<string, readonly string[]>> = {
-  "<|channel|>analysis<|message|>": [
-    "<|start|>assistant",
-    "<|channel|>final<|message|>",
-    "<|return|>",
-  ],
+  '<|channel|>analysis<|message|>': ['<|start|>assistant', '<|channel|>final<|message|>', '<|return|>'],
 };
 
 /** A piece of `content`, said to be one or the other. */
 export interface Split {
-  kind: "reasoning" | "output";
+  kind: 'reasoning' | 'output';
   text: string;
 }
 
@@ -86,31 +82,24 @@ export interface FenceSplitterOptions {
  */
 export class FenceSplitter {
   /** The answer so far, with every fence taken out. */
-  output = "";
+  output = '';
   /** Everything that was inside a fence so far. */
-  reasoning = "";
+  reasoning = '';
 
   readonly #fences: readonly Fence[];
   readonly #markers: string[];
   #inside: Fence | undefined;
   #seenFence: boolean;
-  #held = "";
+  #held = '';
 
   /**
    * @param fences The fences to read, `DEFAULT_FENCES` unless given; an empty list passes
    *   everything through as output.
    * @param options Whether the reply starts inside the first fence.
    */
-  constructor(
-    fences: readonly Fence[] = DEFAULT_FENCES,
-    { startInside }: FenceSplitterOptions = {},
-  ) {
+  constructor(fences: readonly Fence[] = DEFAULT_FENCES, { startInside }: FenceSplitterOptions = {}) {
     this.#fences = fences;
-    this.#markers = fences.flatMap((fence) => [
-      fence.open,
-      fence.close,
-      ...(FRAMING[fence.open] ?? []),
-    ]);
+    this.#markers = fences.flatMap((fence) => [fence.open, fence.close, ...(FRAMING[fence.open] ?? [])]);
     this.#inside = startInside ? fences[0] : undefined;
     this.#seenFence = this.#inside !== undefined;
   }
@@ -123,7 +112,7 @@ export class FenceSplitter {
   push(text: string): Split[] {
     const parts: Split[] = [];
     let rest = this.#held + text;
-    this.#held = "";
+    this.#held = '';
     while (rest) {
       const found = this.#next(rest);
       if (!found) {
@@ -143,7 +132,7 @@ export class FenceSplitter {
   finish(): Split[] {
     const parts: Split[] = [];
     this.#emitInto(parts, this.#held);
-    this.#held = "";
+    this.#held = '';
     return parts;
   }
 
@@ -193,14 +182,14 @@ export class FenceSplitter {
     const closes = this.#fences.some((fence) => fence.close === marker);
     if (closes && !this.#seenFence) {
       this.reasoning += this.output;
-      this.output = "";
+      this.output = '';
     }
     if (closes) this.#seenFence = true;
   }
 
   #emitInto(parts: Split[], text: string) {
     if (!text) return;
-    const kind = this.#inside ? "reasoning" : "output";
+    const kind = this.#inside ? 'reasoning' : 'output';
     this[kind] += text;
     const last = parts.at(-1);
     if (last?.kind === kind) last.text += text;

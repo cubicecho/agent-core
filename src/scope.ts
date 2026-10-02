@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import { getOrCreate, isPositive } from "./guards.ts";
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { getOrCreate, isPositive } from './guards.ts';
 
 /**
  * Everything one runtime remembers: each module's state, under a key only that module holds.

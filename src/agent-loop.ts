@@ -1,32 +1,27 @@
-import type OpenAI from "openai";
-import { charsPerTokenFor } from "./calibration.ts";
+import type OpenAI from 'openai';
+import { charsPerTokenFor } from './calibration.ts';
 import {
   type Capabilities,
   capabilitiesFor,
   type ModelCapabilities,
   modelCapabilitiesFor,
   type OnNotice,
-} from "./capabilities.ts";
-import type { CatalogServer } from "./catalog.ts";
-import { firstTokenMs, getClient, loadingMs, timeoutMs } from "./client.ts";
-import {
-  type CompactionOptions,
-  compactTranscript,
-  planCompaction,
-  summariser,
-} from "./compaction.ts";
-import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from "./config.ts";
-import { continueTurn } from "./continuation.ts";
+} from './capabilities.ts';
+import type { CatalogServer } from './catalog.ts';
+import { firstTokenMs, getClient, loadingMs, timeoutMs } from './client.ts';
+import { type CompactionOptions, compactTranscript, planCompaction, summariser } from './compaction.ts';
+import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from './config.ts';
+import { continueTurn } from './continuation.ts';
 import {
   AgentLoopError,
   type AgentLoopFailure,
   AgentLoopOverflow,
   errorMessage,
   ToolIterationLimit,
-} from "./errors.ts";
-import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics, stamp } from "./events.ts";
-import { counted } from "./guards.ts";
-import type { HookEvent } from "./hook-events.ts";
+} from './errors.ts';
+import { type RunEvent, type RunEventInput, type RunMetrics, runMetrics, stamp } from './events.ts';
+import { counted } from './guards.ts';
+import type { HookEvent } from './hook-events.ts';
 import {
   configureHooks,
   type Gathered,
@@ -39,7 +34,7 @@ import {
   turnIndex,
   turnMessages,
   withContext,
-} from "./hooks.ts";
+} from './hooks.ts';
 import {
   breakReason,
   type LedgerRequest,
@@ -47,10 +42,10 @@ import {
   rebaseLedger,
   recordRequest,
   type TokenLedger,
-} from "./ledger.ts";
-import { type KeywordPreselectOptions, preselect } from "./preselect.ts";
-import { buildBody } from "./request-body.ts";
-import { ContextOverflow } from "./retry.ts";
+} from './ledger.ts';
+import { type KeywordPreselectOptions, preselect } from './preselect.ts';
+import { buildBody } from './request-body.ts';
+import { ContextOverflow } from './retry.ts';
 import {
   assistantMessage,
   type Calling,
@@ -59,18 +54,18 @@ import {
   readCalls,
   runCalls,
   type ToolDispatch,
-} from "./run-calls.ts";
-import { runTurn } from "./run-turn.ts";
-import { type SideTask, taskCall, tryAsk } from "./side-task.ts";
-import { addCounts, noUsage, type Turn, type TurnUsage } from "./stream.ts";
-import { contextTokens, toolsChars } from "./tokens.ts";
+} from './run-calls.ts';
+import { runTurn } from './run-turn.ts';
+import { type SideTask, taskCall, tryAsk } from './side-task.ts';
+import { addCounts, noUsage, type Turn, type TurnUsage } from './stream.ts';
+import { contextTokens, toolsChars } from './tokens.ts';
 import {
   recoverToolCalls,
   type ToolCall,
   type ToolCallOutcome,
   type ToolCallRequest,
   type ToolCallResult,
-} from "./tool-calls.ts";
+} from './tool-calls.ts';
 import {
   CALL_TOOL,
   catalogPrompt,
@@ -83,7 +78,7 @@ import {
   proxyCatalogPrompt,
   type ToolOrder,
   toolName,
-} from "./tool-loading.ts";
+} from './tool-loading.ts';
 
 /**
  * The loop above a turn: send, run the tools the model asked for, send again, until it stops
@@ -162,8 +157,8 @@ export interface AgentLoopOptions {
    */
   config: Endpoint &
     ModelParams &
-    Pick<ToolPolicy, "maxToolIterations"> &
-    Partial<Pick<ToolPolicy, "toolDiscovery" | "toolSelectModel">> &
+    Pick<ToolPolicy, 'maxToolIterations'> &
+    Partial<Pick<ToolPolicy, 'toolDiscovery' | 'toolSelectModel'>> &
     Partial<RetryPolicy> & {
       contextLength?: number;
       tasks?: Readonly<Record<string, SideTask>>;
@@ -221,7 +216,7 @@ export interface AgentLoopOptions {
    * tool array until something else is loaded. Nothing to do without a preselection, in eager
    * mode, or proxied, where no step is routed either way.
    */
-  preselectRouting?: "exclusive" | "append";
+  preselectRouting?: 'exclusive' | 'append';
   /**
    * Has the loop make the preselection itself, before its first request, with the preselector
    * the config names. Off by default: a host that passes a resolved agent and calls `preselect`
@@ -255,7 +250,7 @@ export interface AgentLoopOptions {
    * that keeps its transcript append-only wants `runCompaction` and a stored fold instead. `true`
    * plans by `planCompaction`'s defaults; an object moves its thresholds.
    */
-  compact?: boolean | Pick<CompactionOptions, "compactAt" | "keepRatio" | "target">;
+  compact?: boolean | Pick<CompactionOptions, 'compactAt' | 'keepRatio' | 'target'>;
   /**
    * Tools already loaded, carried from an earlier question. See `carryOver`. Not read in proxied
    * mode, where a tool is loaded only while its definition is in the history.
@@ -323,10 +318,7 @@ export interface AgentLoopOptions {
     messages: readonly OpenAI.ChatCompletionMessageParam[],
     step: number,
     window: StepWindow,
-  ) =>
-    | OpenAI.ChatCompletionMessageParam[]
-    | undefined
-    | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
+  ) => OpenAI.ChatCompletionMessageParam[] | undefined | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
   /**
    * The ledger an earlier run handed back for this transcript, to be continued. Its indexes have
    * to be into `messages` as given here — see `rebaseLedger` for a transcript rewritten since.
@@ -369,11 +361,7 @@ export interface AgentLoopOptions {
    * What it returns is ignored: `beforeStep` is the one way to rewrite the transcript. What it
    * throws ends the run, and it is not called again for that run.
    */
-  onMessage?: (
-    message: OpenAI.ChatCompletionMessageParam,
-    step: number,
-    turn?: Turn,
-  ) => void | Promise<void>;
+  onMessage?: (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn) => void | Promise<void>;
   /**
    * How many times an answer cut off at `maxTokens` is continued, zero — the default — for never.
    * Opt-in because it spends another request, and on a server that does not continue a trailing
@@ -458,11 +446,7 @@ const CACHE_KEPT = 0.9;
  * What one turn's cache should have been and whether it was, against the request before it.
  * Nothing before the second request, or where the previous prompt was not reported.
  */
-function cacheDiagnosis(
-  previous: Sent | undefined,
-  next: RequestShape,
-  usage: TurnUsage,
-): Partial<TurnUsage> {
+function cacheDiagnosis(previous: Sent | undefined, next: RequestShape, usage: TurnUsage): Partial<TurnUsage> {
   if (!previous || !(previous.prompt > 0)) return {};
   const found: Partial<TurnUsage> = { cacheExpected: previous.prompt + previous.completion };
   if (usage.uncached === undefined) return found;
@@ -545,18 +529,15 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       : new AgentLoopError(errorMessage(error), standing.read(), { cause: error });
   }
   if (result) return result;
-  throw new ToolIterationLimit(
-    `Stopped after ${options.config.maxToolIterations} tool iterations.`,
-    standing.read(),
-  );
+  throw new ToolIterationLimit(`Stopped after ${options.config.maxToolIterations} tool iterations.`, standing.read());
 }
 
 /** A message's words, as the preselector is asked about them: its string, or its text parts. */
 const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): string => {
   const content = message?.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.flatMap((part) => (part.type === "text" ? part.text : [])).join("\n");
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.flatMap((part) => (part.type === 'text' ? part.text : [])).join('\n');
 };
 
 /**
@@ -566,16 +547,16 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
  */
 async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise<string[]> {
   const { config, catalog = [], signal } = options;
-  const prompt = userText(options.messages.findLast((message) => message.role === "user"));
+  const prompt = userText(options.messages.findLast((message) => message.role === 'user'));
   if (!prompt.trim()) return [];
   const asked = {
-    ...(typeof options.preselect === "object" ? options.preselect : {}),
+    ...(typeof options.preselect === 'object' ? options.preselect : {}),
     signal,
     onNotice: notice,
   };
   const selector = config.tasks?.toolSelect;
   if (!selector?.model) {
-    return preselect(config, config.toolSelectModel ?? "", catalog, prompt, asked);
+    return preselect(config, config.toolSelectModel ?? '', catalog, prompt, asked);
   }
   const call = taskCall(selector, asked, config);
   return preselect(call.endpoint, call.model, catalog, prompt, call.options);
@@ -592,8 +573,7 @@ function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
   const call = taskCall(compactor, { signal, onNotice: notice }, config);
   const write = summariser(call.endpoint, call.model, call.options);
   // A summary that fails folds nothing, and the step goes out as it was.
-  return async (text: string) =>
-    (await tryAsk("compaction", () => write(text), { onNotice: notice })) ?? "";
+  return async (text: string) => (await tryAsk('compaction', () => write(text), { onNotice: notice })) ?? '';
 }
 
 /**
@@ -604,16 +584,12 @@ async function foldBeforeStep(
   transcript: OpenAI.ChatCompletionMessageParam[],
   reported: { used?: number },
   summarise: (text: string) => Promise<string>,
-  {
-    options,
-    charsPerToken,
-    notice,
-  }: { options: AgentLoopOptions; charsPerToken: number; notice: OnNotice },
+  { options, charsPerToken, notice }: { options: AgentLoopOptions; charsPerToken: number; notice: OnNotice },
 ): Promise<OpenAI.ChatCompletionMessageParam[]> {
   const { config, hooks } = options;
   const compactor = config.tasks?.compaction;
   const plan = planCompaction(transcript, {
-    ...(typeof options.compact === "object" ? options.compact : {}),
+    ...(typeof options.compact === 'object' ? options.compact : {}),
     limit: config.contextLength ?? 0,
     ...reported,
     charsPerToken,
@@ -632,14 +608,14 @@ async function foldBeforeStep(
  * still in the transcript. Resolves to their notes — failures only, as `notify` returns them.
  */
 const tellAfterTurn = (
-  hooks: NonNullable<AgentLoopOptions["hooks"]>,
+  hooks: NonNullable<AgentLoopOptions['hooks']>,
   messages: OpenAI.ChatCompletionMessageParam[],
   at: number,
   reply: string,
 ): Promise<HookNote[]> =>
   notify(
     hooks.run,
-    "afterTurn",
+    'afterTurn',
     {
       ...hooks.context,
       reply,
@@ -659,11 +635,11 @@ const tellAfterTurn = (
  * The loop's own record of what it emitted, less the token deltas, for `runMetrics` at the end.
  * Stamped here rather than by the bus, which the loop does not know about.
  */
-function recorder(heard: AgentLoopOptions["onEvent"]) {
+function recorder(heard: AgentLoopOptions['onEvent']) {
   const recorded: RunEvent[] = [];
   const onEvent = (input: RunEventInput) => {
-    if (input.kind !== "thinking" && input.kind !== "output") {
-      recorded.push(stamp(input, "", recorded.length + 1, Date.now()));
+    if (input.kind !== 'thinking' && input.kind !== 'output') {
+      recorded.push(stamp(input, '', recorded.length + 1, Date.now()));
     }
     heard?.(input);
   };
@@ -679,16 +655,12 @@ async function discovery(options: AgentLoopOptions, notice: OnNotice) {
   const { config, catalog = [] } = options;
   // On demand, but with a tool array that never changes: definitions come back as `load_tools`
   // results and run through `call_tool`. `onDemand` is true of both.
-  const proxied = config.toolDiscovery === "proxy" && catalog.length > 0;
-  const onDemand = proxied || (config.toolDiscovery === "ondemand" && catalog.length > 0);
+  const proxied = config.toolDiscovery === 'proxy' && catalog.length > 0;
+  const onDemand = proxied || (config.toolDiscovery === 'ondemand' && catalog.length > 0);
   // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
   const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
   const chooses = options.preselect && options.preselected === undefined;
-  const preselected = !onDemand
-    ? []
-    : chooses
-      ? await chooseTools(options, notice)
-      : [...(options.preselected ?? [])];
+  const preselected = !onDemand ? [] : chooses ? await chooseTools(options, notice) : [...(options.preselected ?? [])];
   if (!proxied) for (const name of preselected) loaded.add(name);
   return { proxied, onDemand, loaded, preselected };
 }
@@ -708,7 +680,7 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
  * run is ending on that, and the results still to be written are not offered to a host that has
  * just failed to take one.
  */
-function announcer(onMessage: AgentLoopOptions["onMessage"]) {
+function announcer(onMessage: AgentLoopOptions['onMessage']) {
   let heard = true;
   return async (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn) => {
     if (!onMessage || !heard) return;
@@ -723,7 +695,7 @@ function announcer(onMessage: AgentLoopOptions["onMessage"]) {
 
 /** The `usage` event a turn ends in: the run's totals so far, and the turn's own report. */
 const usageEvent = (usage: TurnUsage, turn: Turn, ledger: TokenLedger): RunEventInput => ({
-  kind: "usage",
+  kind: 'usage',
   usage: {
     promptTokens: usage.prompt,
     completionTokens: usage.completion,
@@ -747,7 +719,7 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
   const recovered = recoverToolCalls(turn.content, { names: recoverable });
   if (!recovered.toolCalls.length) return { calls, content: turn.content };
   notice(
-    `recovered ${counted(recovered.toolCalls.length, "tool call")} the model wrote as text; the server's tool-call parser does not match this model's template`,
+    `recovered ${counted(recovered.toolCalls.length, 'tool call')} the model wrote as text; the server's tool-call parser does not match this model's template`,
   );
   return { calls: recovered.toolCalls, content: recovered.content };
 }
@@ -756,11 +728,8 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
  * The steps of `runAgentLoop`, throwing what they caught as it was caught. Resolves to nothing
  * when `maxToolIterations` is spent, and tells `standing` how to read the run either way.
  */
-async function runSteps(
-  options: AgentLoopOptions,
-  standing: Standing,
-): Promise<AgentLoopResult | undefined> {
-  const { config, system = "", tools = [], catalog = [], dispatch, hooks, signal } = options;
+async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<AgentLoopResult | undefined> {
+  const { config, system = '', tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
     onRequest,
     onTurn,
@@ -773,15 +742,15 @@ async function runSteps(
     maxContinuations = 0,
     toolOrder = true,
     dedupeToolCalls = true,
-    preselectRouting = "exclusive",
+    preselectRouting = 'exclusive',
   } = options;
-  const dedupable = typeof dedupeToolCalls === "function" ? dedupeToolCalls : () => dedupeToolCalls;
+  const dedupable = typeof dedupeToolCalls === 'function' ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
   const { recorded, onEvent } = recorder(options.onEvent);
   const client = getClient(config);
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
-  const notice = (text: string) => onEvent({ kind: "notice", text });
+  const notice = (text: string) => onEvent({ kind: 'notice', text });
 
   const { proxied, onDemand, loaded, preselected } = await discovery(options, notice);
   const summarise = ownSummariser(options, notice);
@@ -813,15 +782,15 @@ async function runSteps(
   // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
   // moves the question without losing it — and one that summarises the question away takes the
   // hooks' context with it, which is right.
-  const question = messages.findLast((message) => message.role === "user");
+  const question = messages.findLast((message) => message.role === 'user');
   const questionAt = () => (question ? messages.indexOf(question) : -1);
   const gathered: Gathered = hooks
-    ? await gather(hooks.run, hooks.events ?? ["beforeTurn"], hooks.context, {
+    ? await gather(hooks.run, hooks.events ?? ['beforeTurn'], hooks.context, {
         signal,
         onNote: hooks.onNote,
         maxTokens: hooks.maxTokens,
       })
-    : { context: "", notes: [] };
+    : { context: '', notes: [] };
   // Read once, so what the result hands back is what every step of this run said.
   const preface = hooks?.preface ?? configureHooks().preface;
 
@@ -887,12 +856,11 @@ async function runSteps(
     if (proxied && next !== messages) loaded.clear();
     messages = next;
     ledger = rebaseLedger(ledger, before, messages);
-    onEvent({ kind: "turn", text: `turn ${step + 1}` });
+    onEvent({ kind: 'turn', text: `turn ${step + 1}` });
 
     // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
     // first step needs nothing of its own. Proxied, it is in the history.
-    const routed =
-      !proxied && preselectRouting !== "append" && preselected.length > 0 && step === 0;
+    const routed = !proxied && preselectRouting !== 'append' && preselected.length > 0 && step === 0;
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
@@ -913,7 +881,7 @@ async function runSteps(
     const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
     const prompt = onDemand && !routed ? `${system}\n\n${catalogue}`.trim() : system;
     const request: OpenAI.ChatCompletionMessageParam[] = [
-      ...(prompt ? [{ role: "system" as const, content: prompt }] : []),
+      ...(prompt ? [{ role: 'system' as const, content: prompt }] : []),
       ...withContext(messages, questionAt(), gathered.context, preface),
     ];
 
@@ -929,8 +897,8 @@ async function runSteps(
       idleMs: timeoutMs(config),
       firstChunkMs: firstTokenMs(config) ?? 0,
       onNotice: notice,
-      onThinking: (text: string) => onEvent({ kind: "thinking", text }),
-      onOutput: (text: string) => onEvent({ kind: "output", text }),
+      onThinking: (text: string) => onEvent({ kind: 'thinking', text }),
+      onOutput: (text: string) => onEvent({ kind: 'output', text }),
     };
     // Built the way `negotiate` is about to build the first attempt — the same flags, the same
     // model's refusals — so what the host is told is what is sent unless something is refused.
@@ -939,24 +907,20 @@ async function runSteps(
       onRequest({ messages: opening.messages, tools: opening.tools ?? [], step });
     }
     const first = await runTurn(client, supports, build, turnOptions);
-    const names = declared.map((tool) => toolName(tool) ?? "");
+    const names = declared.map((tool) => toolName(tool) ?? '');
     // Compared before any continuation is joined on: the cache a request meets is the one its own
     // prompt found, and a continuation's prompt is this request's plus the reply so far.
     // The breakdown measures the array `toolSchemaTokens` does, so where no prompt was reported
     // the two give one number for the tool block rather than two.
     const charsPerToken = charsPerTokenFor(supports, config.model);
-    Object.assign(
-      first.usage,
-      cacheDiagnosis(previous, { messages: request, tools: names }, first.usage),
-      {
-        toolsDeclared: declared.length,
-        toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerToken),
-        context: contextTokens(
-          { model: config.model, stream: true, messages: request, tools: declared },
-          { charsPerToken, promptTokens: first.usage.prompt },
-        ),
-      },
-    );
+    Object.assign(first.usage, cacheDiagnosis(previous, { messages: request, tools: names }, first.usage), {
+      toolsDeclared: declared.length,
+      toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerToken),
+      context: contextTokens(
+        { model: config.model, stream: true, messages: request, tools: declared },
+        { charsPerToken, promptTokens: first.usage.prompt },
+      ),
+    });
     const firstPrompt = first.usage.prompt;
     // Recorded from the first request for the same reason. A cache count above the prompt is a
     // server reporting its prompt net of the cache, whose differences would measure nothing.
@@ -981,7 +945,7 @@ async function runSteps(
     };
     usage = addCounts(usage, turn.usage);
     onEvent(usageEvent(usage, turn, ledger));
-    if (turn.finishReason === "length") {
+    if (turn.finishReason === 'length') {
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
     const canRecover = recover && (tools.length > 0 || onDemand);
@@ -999,9 +963,7 @@ async function runSteps(
     if (!calls.length) {
       // Not awaited: the answer is ready, and remembering it is not something to hold it for.
       // Handed back instead, for a host that wants its notes.
-      const afterTurn = hooks
-        ? tellAfterTurn(hooks, messages, questionAt(), turn.content)
-        : Promise.resolve([]);
+      const afterTurn = hooks ? tellAfterTurn(hooks, messages, questionAt(), turn.content) : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
       return {
         turn: shown,
@@ -1018,7 +980,7 @@ async function runSteps(
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
-          outcome: turn.finishReason === "length" ? "truncated" : "answered",
+          outcome: turn.finishReason === 'length' ? 'truncated' : 'answered',
         },
         ledger,
       };

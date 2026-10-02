@@ -1,9 +1,9 @@
-import type { OnNotice } from "./capabilities.ts";
-import type { CatalogServer } from "./catalog.ts";
-import type { Endpoint } from "./config.ts";
-import { counted, isRecord } from "./guards.ts";
-import { askJson, tryAsk } from "./side-task.ts";
-import { catalogList, expandNames, MAX_PER_LOAD } from "./tool-loading.ts";
+import type { OnNotice } from './capabilities.ts';
+import type { CatalogServer } from './catalog.ts';
+import type { Endpoint } from './config.ts';
+import { counted, isRecord } from './guards.ts';
+import { askJson, tryAsk } from './side-task.ts';
+import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
 
 /**
  * Choosing a run's tools before it starts, from the request and the catalogue's names.
@@ -38,11 +38,11 @@ const PRESELECT_PROMPT_CHARS = 2000;
  * same number: this one is what the preselector is told, and that one is what it is held to.
  */
 export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
-  "You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON " +
+  'You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON ' +
   'object whose "tools" array holds the names the request is likely to need — exact names from ' +
   `the catalogue, at most ${maxPerLoad}, and as few as could do the job. Reply with ` +
   '`{"tools": []}` if the request can be answered without tools. Reply with the object alone — ' +
-  "no prose, no explanation.";
+  'no prose, no explanation.';
 
 /**
  * The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
@@ -51,9 +51,9 @@ export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
  * an object — OpenAI's strict mode and every tool-schema normaliser insist.
  */
 export const PRESELECT_SCHEMA = {
-  type: "object",
-  properties: { tools: { type: "array", items: { type: "string" } } },
-  required: ["tools"],
+  type: 'object',
+  properties: { tools: { type: 'array', items: { type: 'string' } } },
+  required: ['tools'],
   additionalProperties: false,
 };
 
@@ -70,11 +70,7 @@ export const PRESELECT_SYSTEM = preselectSystem();
  * carry the part that names the work at the end wants a larger one, and pays for it in the
  * preselector's prompt.
  */
-export const preselectInput = (
-  catalog: CatalogServer[],
-  prompt: string,
-  maxPromptChars = PRESELECT_PROMPT_CHARS,
-) =>
+export const preselectInput = (catalog: CatalogServer[], prompt: string, maxPromptChars = PRESELECT_PROMPT_CHARS) =>
   `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, maxPromptChars)}`;
 
 /**
@@ -87,14 +83,10 @@ export const preselectInput = (
  * @param maxPerLoad The most to keep, defaulting to `MAX_PER_LOAD`. The same number
  * `preselectSystem` was given, or the model is being held to a cap it was never told about.
  */
-export function preselection(
-  names: unknown,
-  catalog: CatalogServer[],
-  maxPerLoad = MAX_PER_LOAD,
-): string[] {
+export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD): string[] {
   const list = isRecord(names) ? names.tools : names;
   if (!Array.isArray(list)) return [];
-  const wanted = list.filter((name): name is string => typeof name === "string");
+  const wanted = list.filter((name): name is string => typeof name === 'string');
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
 }
 
@@ -142,11 +134,11 @@ export const KEYWORD_DROPOFF = 0.5;
  */
 const NOISE = new Set(
   (
-    "about all also am an and any are as at be been being but by can could do does for from had " +
-    "has have how if in into is it its just me more most my no not of on or other our out over " +
-    "please should so some such than that the their them then there these they this to too up us " +
-    "very was we were what when where which who will with would you your"
-  ).split(" "),
+    'about all also am an and any are as at be been being but by can could do does for from had ' +
+    'has have how if in into is it its just me more most my no not of on or other our out over ' +
+    'please should so some such than that the their them then there these they this to too up us ' +
+    'very was we were what when where which who will with would you your'
+  ).split(' '),
 );
 
 /**
@@ -158,13 +150,11 @@ const NOISE = new Set(
  */
 const terms = (text: string): string[] =>
   text
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((word) => word.length > 1 && !NOISE.has(word))
-    .map((word) =>
-      word.length > 3 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word,
-    );
+    .map((word) => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word));
 
 /** One tool's score against a request. */
 export interface ToolMatch {
@@ -244,8 +234,7 @@ export function preselectByKeywords(
 
   const length = docs.reduce((total, doc) => total + doc.terms.length, 0) / docs.length;
   const documents = new Map<string, number>();
-  for (const doc of docs)
-    for (const term of new Set(doc.terms)) documents.set(term, (documents.get(term) ?? 0) + 1);
+  for (const doc of docs) for (const term of new Set(doc.terms)) documents.set(term, (documents.get(term) ?? 0) + 1);
 
   const ranked: ToolMatch[] = [];
   for (const doc of docs) {
@@ -340,21 +329,21 @@ export async function preselect(
       ...(keywords === true ? {} : keywords),
     });
     if (guess.confident) {
-      onNotice?.(`chose ${counted(guess.names.length, "tool")} by name`);
+      onNotice?.(`chose ${counted(guess.names.length, 'tool')} by name`);
       return guess.names;
     }
   }
   const reply = await tryAsk(
-    "preselect",
+    'preselect',
     () =>
-      askJson<unknown>(
-        config,
-        model,
-        preselectSystem(maxPerLoad),
-        preselectInput(catalog, prompt),
-        PRESELECT_SCHEMA,
-        { name: "preselection", maxTokens, temperature, reasoningEffort, signal, onNotice },
-      ),
+      askJson<unknown>(config, model, preselectSystem(maxPerLoad), preselectInput(catalog, prompt), PRESELECT_SCHEMA, {
+        name: 'preselection',
+        maxTokens,
+        temperature,
+        reasoningEffort,
+        signal,
+        onNotice,
+      }),
     { onNotice },
   );
   return preselection(reply, catalog, maxPerLoad);

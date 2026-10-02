@@ -1,12 +1,7 @@
-import type OpenAI from "openai";
-import { calibrate, charsPerTokenFor } from "./calibration.ts";
-import {
-  type Capabilities,
-  type ModelCapabilities,
-  negotiate,
-  type OnNotice,
-} from "./capabilities.ts";
-import { errorMessage } from "./errors.ts";
+import type OpenAI from 'openai';
+import { calibrate, charsPerTokenFor } from './calibration.ts';
+import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from './capabilities.ts';
+import { errorMessage } from './errors.ts';
 import {
   backoffMs,
   ContextOverflow,
@@ -18,9 +13,9 @@ import {
   LOADING_TIMEOUT_MS,
   SMALLEST_LIKELY_WINDOW,
   sleep,
-} from "./retry.ts";
-import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from "./stream.ts";
-import { compact, requestTokens } from "./tokens.ts";
+} from './retry.ts';
+import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from './stream.ts';
+import { compact, requestTokens } from './tokens.ts';
 
 /**
  * One turn, given as many attempts as the caller allows.
@@ -50,7 +45,7 @@ import { compact, requestTokens } from "./tokens.ts";
  */
 
 /** A retry is not the same event as a downgrade, but a watcher wants to be told about both. */
-export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
+export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
   /**
    * How many times a lost request is worth sending again. Zero is one attempt, which is the
    * default because a caller with no retry budget in its settings should not inherit one.
@@ -105,7 +100,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, "produced"> {
  *
  * @param model The model's name. Absent reads as "the model", which is all there is to say.
  */
-export const modelLabel = (model: string | undefined) => model ?? "the model";
+export const modelLabel = (model: string | undefined) => model ?? 'the model';
 
 /**
  * Builds a turn's request body from what the endpoint and the model have refused so far.
@@ -138,7 +133,7 @@ function refuseOversized(
   // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
   // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
   // loops on the first attempt instead of being sent again to be refused again.
-  const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : "";
+  const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : '';
   throw new ContextOverflow(
     `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
   );
@@ -148,8 +143,7 @@ function refuseOversized(
  * A backoff in whatever unit reads as a number: the first is under a second, and "retrying in
  * 0s" is what rounding it to seconds says.
  */
-const shownDelay = (ms: number) =>
-  ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
+const shownDelay = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`);
 
 /**
  * `request` is a callback rather than a body because the body has to be rebuilt from whatever
@@ -237,9 +231,7 @@ export async function runTurn(
         const now = Date.now();
         if (loadingSince === undefined) {
           loadingSince = now;
-          onNotice?.(
-            `${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`,
-          );
+          onNotice?.(`${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / 1000)}s`);
         }
         if (now - loadingSince < loadingTimeoutMs) {
           // Not an attempt: the request was never looked at, and a two-minute load would
@@ -253,9 +245,7 @@ export async function runTurn(
       retries++;
       if (error instanceof EndpointSilent) timeouts++;
       const wait = backoffMs(attempt);
-      onNotice?.(
-        `${errorMessage(error)} — retrying in ${shownDelay(wait)} (${attempt + 1}/${maxRetries})`,
-      );
+      onNotice?.(`${errorMessage(error)} — retrying in ${shownDelay(wait)} (${attempt + 1}/${maxRetries})`);
       await sleep(wait, stream.signal);
     }
   }

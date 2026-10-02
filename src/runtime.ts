@@ -1,6 +1,6 @@
-import { runAgentLoop } from "./agent-loop.ts";
-import { calibrate, charsPerTokenFor, resetCalibration } from "./calibration.ts";
-import { capabilitiesFor, expireCapabilities, resetCapabilities } from "./capabilities.ts";
+import { runAgentLoop } from './agent-loop.ts';
+import { calibrate, charsPerTokenFor, resetCalibration } from './calibration.ts';
+import { capabilitiesFor, expireCapabilities, resetCapabilities } from './capabilities.ts';
 import {
   type ClientPoolOptions,
   configureClients,
@@ -9,18 +9,10 @@ import {
   listModels,
   resetClients,
   servedWindow,
-} from "./client.ts";
-import { compactTranscript, runCompaction, summariser } from "./compaction.ts";
-import { continueTurn } from "./continuation.ts";
-import {
-  configureEvents,
-  type EventBusOptions,
-  emit,
-  endRun,
-  history,
-  resetEvents,
-  watch,
-} from "./events.ts";
+} from './client.ts';
+import { compactTranscript, runCompaction, summariser } from './compaction.ts';
+import { continueTurn } from './continuation.ts';
+import { configureEvents, type EventBusOptions, emit, endRun, history, resetEvents, watch } from './events.ts';
 import {
   assembleContext,
   configureHooks,
@@ -30,13 +22,13 @@ import {
   notify,
   resetHooks,
   withContext,
-} from "./hooks.ts";
-import { preselect } from "./preselect.ts";
-import { resetAll } from "./reset.ts";
-import { runTurn } from "./run-turn.ts";
-import { inScope, rootScope, type Scope } from "./scope.ts";
-import { ask, askJson, resetHints, tryAsk } from "./side-task.ts";
-import { exportCapabilities, importCapabilities } from "./snapshot.ts";
+} from './hooks.ts';
+import { preselect } from './preselect.ts';
+import { resetAll } from './reset.ts';
+import { runTurn } from './run-turn.ts';
+import { inScope, rootScope, type Scope } from './scope.ts';
+import { ask, askJson, resetHints, tryAsk } from './side-task.ts';
+import { exportCapabilities, importCapabilities } from './snapshot.ts';
 
 /**
  * Every exported function that reads or writes what a runtime remembers, itself or through what
@@ -124,10 +116,7 @@ function bind(scope: Scope): Runtime {
     (...args: A): R =>
       inScope(scope, () => fn(...args));
   const methods = Object.fromEntries(
-    Object.entries(STATEFUL).map(([name, fn]) => [
-      name,
-      within(fn as (...args: unknown[]) => unknown),
-    ]),
+    Object.entries(STATEFUL).map(([name, fn]) => [name, within(fn as (...args: unknown[]) => unknown)]),
   ) as typeof STATEFUL;
   return {
     ...methods,

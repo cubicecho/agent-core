@@ -1,6 +1,6 @@
-import type OpenAI from "openai";
-import type { TurnUsage } from "./stream.ts";
-import { messageChars, messageTokens, type TokenEstimateOptions } from "./tokens.ts";
+import type OpenAI from 'openai';
+import type { TurnUsage } from './stream.ts';
+import { messageChars, messageTokens, type TokenEstimateOptions } from './tokens.ts';
 
 /**
  * What stretches of a transcript cost, read off the prompt counts the server already reported.
@@ -90,7 +90,7 @@ const appended = (previous: RequestShape, next: RequestShape) =>
 
 /** The system messages a request opens with, which a template renders ahead of the history. */
 const leadingSystem = (messages: Message[]) => {
-  const end = messages.findIndex((message) => message.role !== "system");
+  const end = messages.findIndex((message) => message.role !== 'system');
   return messages.slice(0, end === -1 ? messages.length : end);
 };
 
@@ -105,17 +105,14 @@ const leadingSystem = (messages: Message[]) => {
  * @param previous The request before, as it was sent.
  * @param next The request being explained.
  */
-export function breakReason(
-  previous: RequestShape,
-  next: RequestShape,
-): NonNullable<TurnUsage["cacheBreakReason"]> {
-  if (!sameTools(previous, next)) return "tools-changed";
+export function breakReason(previous: RequestShape, next: RequestShape): NonNullable<TurnUsage['cacheBreakReason']> {
+  if (!sameTools(previous, next)) return 'tools-changed';
   const before = leadingSystem(previous.messages);
   const now = leadingSystem(next.messages);
   const systemKept = before.length === now.length && keptMessages(before, now);
-  if (!systemKept) return "system-changed";
-  if (!keptMessages(previous.messages, next.messages)) return "history-rewritten";
-  return "none-known";
+  if (!systemKept) return 'system-changed';
+  if (!keptMessages(previous.messages, next.messages)) return 'history-rewritten';
+  return 'none-known';
 }
 
 /**
@@ -145,10 +142,7 @@ export function recordRequest(
     if (next.through <= last.through) return ledger;
     return [...ledger, { through: next.through, prompt: next.prompt, epoch: last.epoch }];
   }
-  return [
-    ...ledger,
-    { through: next.through, prompt: next.prompt, epoch: last ? last.epoch + 1 : 0 },
-  ];
+  return [...ledger, { through: next.through, prompt: next.prompt, epoch: last ? last.epoch + 1 : 0 }];
 }
 
 /**
@@ -166,21 +160,14 @@ export function recordRequest(
  * @param after The transcript that replaces it. One that only appended to `before`, or is the same
  * array, hands the ledger back as it is.
  */
-export function rebaseLedger(
-  ledger: TokenLedger,
-  before: readonly Message[],
-  after: readonly Message[],
-): TokenLedger {
+export function rebaseLedger(ledger: TokenLedger, before: readonly Message[], after: readonly Message[]): TokenLedger {
   if (before === after) return ledger;
   const shortest = Math.min(before.length, after.length);
   let head = 0;
   while (head < shortest && sameMessage(before[head], after[head])) head++;
   if (head === before.length) return ledger;
   let tail = 0;
-  while (
-    tail < shortest - head &&
-    sameMessage(before[before.length - 1 - tail], after[after.length - 1 - tail])
-  )
+  while (tail < shortest - head && sameMessage(before[before.length - 1 - tail], after[after.length - 1 - tail]))
     tail++;
   // The boundary just ahead of a kept tail stands too: what follows it is all still there. With
   // no tail kept there is nothing left for it to be the start of.
@@ -189,8 +176,7 @@ export function rebaseLedger(
   const rebased: LedgerEntry[] = [];
   for (const entry of ledger) {
     if (entry.through < head) rebased.push(entry);
-    else if (entry.through >= start)
-      rebased.push({ ...entry, through: entry.through + shift, epoch: entry.epoch + 1 });
+    else if (entry.through >= start) rebased.push({ ...entry, through: entry.through + shift, epoch: entry.epoch + 1 });
   }
   return rebased;
 }

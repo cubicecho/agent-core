@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI from 'openai';
 
 /**
  * Everything about a request failing that is not about what the request said.
@@ -11,7 +11,7 @@ import OpenAI from "openai";
 
 /** The endpoint stopped answering mid-request. Its own class so the retry can recognise it. */
 export class EndpointSilent extends Error {
-  override readonly name = "EndpointSilent";
+  override readonly name = 'EndpointSilent';
 }
 
 /**
@@ -24,7 +24,7 @@ export class EndpointSilent extends Error {
  * it was built from as `cause`.
  */
 export class ContextOverflow extends Error {
-  override readonly name = "ContextOverflow";
+  override readonly name = 'ContextOverflow';
 }
 
 /**
@@ -59,9 +59,7 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
  * @param detail The endpoint's own message.
  */
 export const isOverflow = (detail: string) =>
-  !RATE_LIMITED.test(detail) &&
-  OVERFLOW.some((pattern) => pattern.test(detail)) &&
-  /token|context/i.test(detail);
+  !RATE_LIMITED.test(detail) && OVERFLOW.some((pattern) => pattern.test(detail)) && /token|context/i.test(detail);
 
 /**
  * The smallest window worth believing in, and the floor under `runTurn`'s guard.
@@ -128,10 +126,8 @@ export function isModelLoading(error: unknown): boolean {
   if (!(error instanceof OpenAI.APIError) || error.status !== 503) return false;
   const body = error.error as { type?: unknown; message?: unknown } | undefined;
   return (
-    body?.type === "unavailable_error" ||
-    /loading model|model is loading|unavailable_error/i.test(
-      `${error.message} ${body?.message ?? ""}`,
-    )
+    body?.type === 'unavailable_error' ||
+    /loading model|model is loading|unavailable_error/i.test(`${error.message} ${body?.message ?? ''}`)
   );
 }
 
@@ -146,8 +142,7 @@ export const LOADING_TIMEOUT_MS = 120_000;
  *
  * @param attempt Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
  */
-export const backoffMs = (attempt: number) =>
-  Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
+export const backoffMs = (attempt: number) => Math.min(8000, 2 ** attempt * 500) * (0.5 + Math.random() / 2);
 
 /**
  * A delay an abort cuts short, rejecting rather than resolving early.
@@ -158,13 +153,13 @@ export const backoffMs = (attempt: number) =>
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
+      signal?.removeEventListener('abort', onAbort);
       resolve();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
-      reject(signal?.reason ?? new Error("aborted"));
+      reject(signal?.reason ?? new Error('aborted'));
     };
     if (signal?.aborted) return onAbort();
-    signal?.addEventListener("abort", onAbort, { once: true });
+    signal?.addEventListener('abort', onAbort, { once: true });
   });

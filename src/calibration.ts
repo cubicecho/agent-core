@@ -1,8 +1,8 @@
-import type OpenAI from "openai";
-import type { Capabilities } from "./capabilities.ts";
-import { getOrCreate } from "./guards.ts";
-import { scoped } from "./scope.ts";
-import { CHARS_PER_TOKEN, requestChars, toolsChars } from "./tokens.ts";
+import type OpenAI from 'openai';
+import type { Capabilities } from './capabilities.ts';
+import { getOrCreate } from './guards.ts';
+import { scoped } from './scope.ts';
+import { CHARS_PER_TOKEN, requestChars, toolsChars } from './tokens.ts';
 
 /**
  * How many characters a token is worth on one model, learned from what its endpoint reports.
@@ -59,9 +59,7 @@ export function charsPerTokenFor(supports: Capabilities, model: string): number 
 /** Whether any message carries a part whose tokens its characters do not count. */
 const hasMedia = (messages: OpenAI.ChatCompletionMessageParam[]) =>
   messages.some(
-    ({ content }) =>
-      Array.isArray(content) &&
-      content.some((part) => part.type !== "text" && part.type !== "refusal"),
+    ({ content }) => Array.isArray(content) && content.some((part) => part.type !== 'text' && part.type !== 'refusal'),
   );
 
 /**
