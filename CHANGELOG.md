@@ -1,3 +1,10 @@
+# [2.22.0](https://github.com/cubicecho/agent-core/compare/v2.21.1...v2.22.0) (2026-10-02)
+
+
+### Features
+
+* honour a side task's own settings from the agent spec ([5eb6ac9](https://github.com/cubicecho/agent-core/commit/5eb6ac932da0502aa54b42f5393ef982fec8056a))
+
 ## [2.21.1](https://github.com/cubicecho/agent-core/compare/v2.21.0...v2.21.1) (2026-10-01)
 
 
