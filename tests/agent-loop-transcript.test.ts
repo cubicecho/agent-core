@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../src/config.ts';
-import { FinishReason, HttpStatus, Role } from '../src/wire.ts';
-import { type Body, chunks, config, type Message, says, tool } from './helpers.ts';
+import { FinishReason, Role } from '../src/wire.ts';
+import { apiError, type Body, chunks, config, type Message, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -200,7 +200,7 @@ describe('a run that throws', () => {
   });
 
   it('wraps what a request threw, keeping its message and the steps before it', async () => {
-    const refused = Object.assign(new Error('401 no such key'), { status: HttpStatus.Unauthorized });
+    const refused = apiError(401, 'no such key');
     create.mockReturnValueOnce(calls([['a', '{}']])).mockRejectedValueOnce(refused);
     const error = await thrown(
       runAgentLoop({
@@ -249,7 +249,7 @@ describe('a run that throws', () => {
     create
       .mockReturnValueOnce(calls([[LOAD_TOOLS, '{"names":["s__read"]}']]))
       .mockReturnValueOnce(calls([['s__read', '{}']]))
-      .mockRejectedValueOnce(Object.assign(new Error('401 no such key'), { status: HttpStatus.Unauthorized }));
+      .mockRejectedValueOnce(apiError(401, 'no such key'));
     const error = await thrown(
       runAgentLoop({
         config: { ...config, toolDiscovery: ToolDiscovery.OnDemand },
@@ -268,7 +268,7 @@ describe('a run that throws', () => {
   });
 
   it('hands back the transcript it was given when it fails before the first reply', async () => {
-    const down = Object.assign(new Error('401 no such key'), { status: HttpStatus.Unauthorized });
+    const down = apiError(401, 'no such key');
     create.mockRejectedValueOnce(down);
     const error = await thrown(runAgentLoop({ config, messages: question, dispatch: async () => '' }));
     const run = failedRun(error);

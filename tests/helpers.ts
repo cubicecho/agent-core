@@ -82,15 +82,16 @@ export const reply = answer('ok');
  * An `APIError` as the SDK raises it for a response with this status.
  *
  * @param status - The HTTP status.
- * @param [message] - The server's own words, which the SDK reads out of the body.
- * @returns The error.
+ * @param [message] - The server's own words.
+ * @returns The error, whose message reads `400 rejected`: the status, then the words.
  *
  * @remarks
- * The SDK builds the message from the body, not from its own `message` argument, so that argument
- * is left out.
+ * The SDK hands the constructor the body's `error` object, already unwrapped, and builds the
+ * message from that rather than from its own `message` argument, which is left out. Wrapped once
+ * more, the message would be the JSON of the body, which no server sends.
  */
 export const apiError = (status: number, message = 'rejected') =>
-  new OpenAI.APIError(status, { error: { message } }, undefined, undefined);
+  new OpenAI.APIError(status, { message }, undefined, undefined);
 
 /**
  * A tool definition that takes no arguments.

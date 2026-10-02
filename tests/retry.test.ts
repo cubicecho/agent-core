@@ -4,7 +4,7 @@ import { backoffMs, ContextOverflow, EndpointSilent, isAbort, isOverflow, isTran
 import { apiError } from './helpers.ts';
 
 describe('isTransient', () => {
-  it('a lost or refused request is worth sending again; a complaint about it is not', () => {
+  it('calls a lost or refused request worth sending again, and a complaint about it not', () => {
     expect(isTransient(new EndpointSilent('went quiet'))).toBe(true);
     expect(isTransient(new OpenAI.APIConnectionError({ message: 'ECONNREFUSED' }))).toBe(true);
     expect(isTransient(apiError(429))).toBe(true);
@@ -31,7 +31,7 @@ describe('isAbort', () => {
 });
 
 describe('backoffMs', () => {
-  it('backoff grows, stays under the cap, and is never two identical waits', () => {
+  it('grows, stays under the cap, and never waits the same time twice', () => {
     const waits = [0, 1, 2, 3, 9].map(backoffMs);
     for (const wait of waits) {
       expect(wait).toBeLessThanOrEqual(8000);
@@ -44,7 +44,7 @@ describe('backoffMs', () => {
 });
 
 describe('sleep', () => {
-  it('sleeping is cut short by an abort rather than run out', async () => {
+  it('is cut short by an abort rather than run out', async () => {
     const controller = new AbortController();
     const waited = sleep(60_000, controller.signal);
     controller.abort(new Error('stopped'));
@@ -53,7 +53,7 @@ describe('sleep', () => {
 });
 
 describe('isOverflow', () => {
-  it("a server's own words for an over-long request are read as one", () => {
+  it("reads a server's own words for an over-long request as one", () => {
     expect(isOverflow("This model's maximum context length is 8192 tokens")).toBe(true);
     expect(isOverflow('the request exceeds the available context size (2000 tokens)')).toBe(true);
     // "Too long" about anything but the window is somebody else's error.
@@ -61,7 +61,7 @@ describe('isOverflow', () => {
     expect(isOverflow('rate limit exceeded')).toBe(false);
   });
 
-  it('a rate limit is not read as an overflow, however it is worded', () => {
+  it('does not read a rate limit as an overflow, however it is worded', () => {
     // OpenAI's real one: "too large for" beside "tokens", which is both halves of the test
     // above, on a 429 that `isTransient` accepts and that succeeds on the next attempt.
     expect(

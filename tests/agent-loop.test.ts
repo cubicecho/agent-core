@@ -5,8 +5,8 @@ import { ToolDiscovery } from '../src/config.ts';
 import { RunEventKind, RunOutcome } from '../src/events.ts';
 import { HookEvent } from '../src/hook-events.ts';
 import type { HookOutcome, HookRunner } from '../src/hooks.ts';
-import { FinishReason, FUNCTION_TOOL, HttpStatus, PartType, Role, SchemaType } from '../src/wire.ts';
-import { type Body, chunks, config, type Message, outcome, says, tool } from './helpers.ts';
+import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../src/wire.ts';
+import { apiError, type Body, chunks, config, type Message, outcome, says, tool } from './helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -1821,9 +1821,7 @@ describe('runAgentLoop', () => {
   });
 
   it('drops an extraBody field the model refuses, and keeps it dropped', async () => {
-    const refusal = Object.assign(new Error('400 Unrecognized request argument supplied: id_slot'), {
-      status: HttpStatus.BadRequest,
-    });
+    const refusal = apiError(400, 'Unrecognized request argument supplied: id_slot');
     create.mockRejectedValueOnce(refusal).mockReturnValueOnce(says('done')).mockReturnValueOnce(says('again'));
     const withSlot = { ...config, extraBody: { id_slot: 1 } };
     await runAgentLoop({ config: withSlot, messages: question, dispatch: async () => '' });
