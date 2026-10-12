@@ -720,7 +720,7 @@ try {
       store.add(sessionId, turn?.reasoning ? { ...message, reasoning_content: turn.reasoning } : message),
   });
 } catch (error) {
-  const run = failedRun(error); // messages, usage, toolCalls, loaded, used — or undefined
+  const run = failedRun(error); // messages, usage, toolCalls, loaded, used, preselected — or undefined
   if (run) await store.keep(sessionId, { usage: run.usage, loaded: run.loaded });
   if (signal.aborted) return; // a stop, told by the signal as it always was
   if (error instanceof ContextOverflow) return compactAndRetry(run?.messages);
@@ -1211,6 +1211,18 @@ fold the transcript before a step, once `planCompaction` says a `contextLength` 
 with `tasks.compaction` writing the summary and no falling back to the main model without it. Both
 are off by default: a host that already calls `preselect` or compacts in `beforeStep` is not sent
 a second request.
+
+What the loop picked it says twice. A `notice` event names the tools before the first `turn` event
+— `PRESELECTED_NOTICE` and then the names, comma-separated — and the result's `preselected` is the
+shortlist the run opened with, the host's own where it gave one and empty where nothing was picked.
+A run that fails carries it too, beside `loaded` and `used`.
+
+An empty `toolSelectModel` means no preselection, and says nothing about it. A host whose settings
+read `""` as "use the run's model" has to say so in the config it builds:
+
+```ts
+const config = { ...settings, toolSelectModel: settings.toolSelectModel || settings.model };
+```
 
 ```ts
 const result = await runAgentLoop({ config, preselect: { keywords: true }, compact: true, ... });

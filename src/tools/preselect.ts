@@ -366,8 +366,9 @@ export interface PreselectOptions {
  * The tools a request is likely to need, picked by a small model before the run starts, or none.
  *
  * @param config - The endpoint the preselector is reached through.
- * @param model - The preselector. An empty name picks nothing, which is what `toolSelectModel`
- * means by empty.
+ * @param model - The preselector. An empty name picks nothing, silently, which is what
+ * `toolSelectModel` means by empty: a host whose settings read `""` as "the run's model" passes
+ * `toolSelectModel: settings.toolSelectModel || settings.model`.
  * @param catalog - The servers to choose from.
  * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
  * @param [options] - Cancellation, notices, the reply ceiling, the temperature and reasoning effort

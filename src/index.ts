@@ -115,6 +115,7 @@ export {
   type AgentLoopResult,
   PRESELECT_APPEND,
   PRESELECT_EXCLUSIVE,
+  PRESELECTED_NOTICE,
   runAgentLoop,
   type StepWindow,
 } from './run/agent-loop.ts';
