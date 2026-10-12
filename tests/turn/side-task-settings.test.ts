@@ -17,7 +17,8 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   },
 }));
 
-const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
+const { PRESELECTED_NOTICE, runAgentLoop } = await import('../../src/run/agent-loop.ts');
+const { failedRun } = await import('../../src/wire/errors.ts');
 const { preselect } = await import('../../src/tools/preselect.ts');
 const { capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { NO_KEY } = await import('../../src/endpoint/client.ts');
@@ -290,6 +291,78 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text)).toEqual([
       expect.stringContaining('boom'),
     ]);
+  });
+
+  /** The text of every notice among `events`, in order. */
+  const notices = (events: RunEventInput[]) =>
+    events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text);
+
+  it('names what it picked in a notice before the first turn, and in the result', async () => {
+    const events: RunEventInput[] = [];
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    const result = await run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      onEvent: (event: RunEventInput) => events.push(event),
+    });
+    expect(result.preselected).toEqual(['s__read']);
+    expect(notices(events)).toEqual([`${PRESELECTED_NOTICE}s__read`]);
+    const kinds = events.map((event) => event.kind);
+    expect(kinds.indexOf(RunEventKind.Notice)).toBeLessThan(kinds.indexOf(RunEventKind.Turn));
+  });
+
+  it("gives back the host's own shortlist without a notice of it", async () => {
+    const events: RunEventInput[] = [];
+    create.mockResolvedValueOnce(says('hello'));
+    const result = await run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      preselected: ['s__read'],
+      onEvent: (event: RunEventInput) => events.push(event),
+    });
+    expect(result.preselected).toEqual(['s__read']);
+    expect(notices(events)).toEqual([]);
+  });
+
+  it('says it opened with nothing where nothing was picked', async () => {
+    const events: RunEventInput[] = [];
+    const onEvent = (event: RunEventInput) => events.push(event);
+    const config = onDemand({ toolSelect: { model: 'tiny' } });
+    create.mockResolvedValue(says('hello'));
+    // No preselector is named, so none is asked.
+    const unnamed = await run(onDemand({}), { preselect: true, onEvent });
+    // Eager mode shows every tool, and a shortlist means nothing to it.
+    const eager = await run({ ...config, toolDiscovery: ToolDiscovery.Eager }, { preselected: ['s__read'], onEvent });
+    const unasked = await run(config, { onEvent });
+    expect([unnamed.preselected, eager.preselected, unasked.preselected]).toEqual([[], [], []]);
+    expect(notices(events)).toEqual([]);
+  });
+
+  it("picks nothing for an empty toolSelectModel, and for the run's model once the host names it", async () => {
+    const settings = {
+      baseUrl: 'http://local/v1',
+      apiKey: '',
+      model: 'm',
+      maxTokens: 100,
+      temperature: 0.9,
+      maxToolIterations: 4,
+      toolDiscovery: ToolDiscovery.OnDemand,
+      toolSelectModel: '',
+    };
+    create.mockResolvedValueOnce(says('hello'));
+    expect((await run(settings, { preselect: true })).preselected).toEqual([]);
+    expect(create).toHaveBeenCalledTimes(1);
+
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    const named = { ...settings, toolSelectModel: settings.toolSelectModel || settings.model };
+    expect((await run(named, { preselect: true })).preselected).toEqual(['s__read']);
+    expect(body(1)).toMatchObject({ model: 'm' });
+  });
+
+  it('says what it opened with when the run fails', async () => {
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockRejectedValueOnce(new Error('boom'));
+    const error = await run(onDemand({ toolSelect: { model: 'tiny' } }), { preselect: true }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(failedRun(error)?.preselected).toEqual(['s__read']);
   });
 
   /** A transcript long enough to fill a 1000-token window, with a second question to cut at. */
