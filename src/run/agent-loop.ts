@@ -269,7 +269,9 @@ export interface AgentLoopOptions {
    *
    * `true` takes `preselect`'s defaults; an object passes `keywords` and `maxPerLoad` through.
    * Its notices arrive as `notice` events, and a preselection that fails picks nothing rather
-   * than ending the run. It runs before the hooks gather, not beside them.
+   * than ending the run. What it picked is a notice too, `PRESELECTED_NOTICE` and the names,
+   * before the first `turn` event, and is the result's `preselected`. It runs before the hooks
+   * gather, not beside them.
    */
   preselect?: boolean | { keywords?: boolean | KeywordPreselectOptions; maxPerLoad?: number };
   /**
@@ -442,6 +444,11 @@ export interface AgentLoopResult {
   loaded: string[];
   /** The tools the model actually called, `load_tools` excluded and `call_tool` looked through. */
   used: string[];
+  /**
+   * The shortlist the run opened with, as the host's `preselected` gave it or the loop's own
+   * preselection picked it. Empty in eager mode, and where nothing was picked.
+   */
+  preselected: string[];
   /** The hooks' notes from before the first request. */
   notes: HookNote[];
   /**
@@ -540,10 +547,10 @@ interface Standing {
  * and the ledger. See `AgentLoopResult`.
  *
  * @remarks
- * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded` and
- * `used` — because the steps before a failure were real and a host that stores its transcript
- * has nothing else to store them from. A spent budget is a `ToolIterationLimit`, an overflow is
- * an `AgentLoopOverflow`, which is still a `ContextOverflow`, and anything else is an
+ * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded`, `used`
+ * and `preselected` — because the steps before a failure were real and a host that stores its
+ * transcript has nothing else to store them from. A spent budget is a `ToolIterationLimit`, an
+ * overflow is an `AgentLoopOverflow`, which is still a `ContextOverflow`, and anything else is an
  * `AgentLoopError` with what was caught as its `cause` and its message as its own; `failedRun`
  * reads the run off any of the three. A failure while a step's tools run leaves the transcript
  * well-formed: the results that came back are kept, and each call without one is answered with a
@@ -587,6 +594,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       toolCalls: [],
       loaded: [],
       used: [],
+      preselected: [],
     }),
   };
   let result: AgentLoopResult | undefined;
@@ -776,6 +784,9 @@ function recorder(heard: AgentLoopOptions['onEvent']) {
   return { recorded, onEvent };
 }
 
+/** What opens the notice naming the loop's own picks, ahead of the names. */
+export const PRESELECTED_NOTICE = 'tools picked before the run: ';
+
 /**
  * How this run finds its tools, and what it starts with in hand: the loop's own preselection
  * where it was asked for and the host has not already decided, and what an earlier question
@@ -783,7 +794,8 @@ function recorder(heard: AgentLoopOptions['onEvent']) {
  *
  * @param options - The run's options. Read for the discovery mode, the catalogue, `loaded`,
  * `preselected` and `preselect`.
- * @param notice - Hears what the loop's own preselection has to say.
+ * @param notice - Hears what the loop's own preselection has to say, and then what it picked,
+ * by name. A shortlist the host gave is not told back to it.
  * @returns `proxied` and `onDemand`, the second true of both modes and both false where `catalog`
  * is empty; `preselected`, the shortlist, empty in eager mode; and `loaded`, a new set of what was
  * carried and then the shortlist — empty when eager or proxied.
@@ -800,6 +812,9 @@ async function discovery(options: AgentLoopOptions, notice: OnNotice) {
   let preselected: string[] = [];
   if (onDemand && chooses) {
     preselected = await chooseTools(options, notice);
+    if (preselected.length > 0) {
+      notice(`${PRESELECTED_NOTICE}${preselected.join(', ')}`);
+    }
   } else if (onDemand) {
     preselected = [...(options.preselected ?? [])];
   }
@@ -961,6 +976,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     // As the result would have said it: proxied, nothing is loaded that the history does not hold.
     loaded: proxied ? [] : [...loaded],
     used: [...used],
+    preselected: [...preselected],
   });
   const announce = announcer(onMessage);
   // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
@@ -1161,6 +1177,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
         toolCalls,
         loaded: proxied ? [] : [...loaded],
         used: [...used],
+        preselected: [...preselected],
         notes: gathered.notes,
         context: gathered.context,
         preface,

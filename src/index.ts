@@ -69,6 +69,7 @@ export {
   endpointKey,
   firstTokenMs,
   getClient,
+  type LookupOptions,
   listModels,
   type ModelInfo,
   NO_KEY,
@@ -114,6 +115,7 @@ export {
   type AgentLoopResult,
   PRESELECT_APPEND,
   PRESELECT_EXCLUSIVE,
+  PRESELECTED_NOTICE,
   runAgentLoop,
   type StepWindow,
 } from './run/agent-loop.ts';

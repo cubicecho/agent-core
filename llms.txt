@@ -88,6 +88,7 @@ What an endpoint turned out not to support, and answering it when it says so.
 - `endpointKey` — What counts as one endpoint, everywhere in this package that has to remember something about one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
 - `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for an endpoint, built once and kept.
+- `LookupOptions` (type) — What a lookup takes besides the endpoint: `listModels`, `servedWindow` and `contextLimitFor`.
 - `listModels` — Asks an endpoint what it serves, and remembers the answer.
 - `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
@@ -149,6 +150,7 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `AgentLoopResult` (type) — What a finished loop hands back.
 - `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
 - `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
+- `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 

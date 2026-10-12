@@ -103,7 +103,7 @@ describe('createRuntime', () => {
       hooks: { contextTokens: 50 },
     });
     // Not inherited from the default runtime: the part left out is the package's default.
-    expect(runtime.configureClients()).toEqual({ maxClients: 7, listingMissMs: 30_000 });
+    expect(runtime.configureClients()).toEqual({ maxClients: 7, listingMissMs: 30_000, lookupTimeoutMs: 10_000 });
     expect(runtime.configureEvents().maxEvents).toBe(1000);
     expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_PREFACE });
     // And nothing it was given reached the process.

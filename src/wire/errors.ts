@@ -40,6 +40,8 @@ export interface AgentLoopFailure {
   loaded: string[];
   /** The tools the model had called, `load_tools` excluded. */
   used: string[];
+  /** The shortlist the run opened with, as the result's `preselected` would have said it. */
+  preselected: string[];
 }
 
 /**
@@ -58,6 +60,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
   readonly toolCalls: ToolCallOutcome[];
   readonly loaded: string[];
   readonly used: string[];
+  readonly preselected: string[];
 
   /**
    * @param message - What went wrong — the cause's own message, where there is a cause.
@@ -71,6 +74,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
     this.toolCalls = run.toolCalls;
     this.loaded = run.loaded;
     this.used = run.used;
+    this.preselected = run.preselected;
   }
 }
 
@@ -100,6 +104,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
   readonly toolCalls: ToolCallOutcome[];
   readonly loaded: string[];
   readonly used: string[];
+  readonly preselected: string[];
 
   /**
    * @param message - The overflow's own message.
@@ -113,6 +118,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
     this.toolCalls = run.toolCalls;
     this.loaded = run.loaded;
     this.used = run.used;
+    this.preselected = run.preselected;
   }
 }
 

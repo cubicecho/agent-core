@@ -92,9 +92,9 @@ describe('resetAll', () => {
   });
 
   it("puts the client pool's bounds back", () => {
-    configureClients({ maxClients: 1, listingMissMs: 1 });
+    configureClients({ maxClients: 1, listingMissMs: 1, lookupTimeoutMs: 1 });
     resetAll();
-    expect(configureClients()).toEqual({ maxClients: 32, listingMissMs: 30_000 });
+    expect(configureClients()).toEqual({ maxClients: 32, listingMissMs: 30_000, lookupTimeoutMs: 10_000 });
   });
 
   it("puts the hooks' budget and preface back", () => {
