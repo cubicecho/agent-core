@@ -1,3 +1,16 @@
+# [4.1.0](https://github.com/cubicecho/agent-core/compare/v4.0.0...v4.1.0) (2026-10-12)
+
+
+### Bug Fixes
+
+* **endpoint:** bound the window lookup on its own, not by the request timeout ([0ce3402](https://github.com/cubicecho/agent-core/commit/0ce34025d3a3795507171ac4044715f041e85375)), closes [#151](https://github.com/cubicecho/agent-core/issues/151)
+
+
+### Features
+
+* **endpoint:** the window lookup takes an abort signal ([1cbcac2](https://github.com/cubicecho/agent-core/commit/1cbcac29e257af643766f96e3565829493bfc86a)), closes [#151](https://github.com/cubicecho/agent-core/issues/151)
+* **run:** say what the loop preselected ([933c056](https://github.com/cubicecho/agent-core/commit/933c056eaeec36bbcc4db341a79df2b7b4e19a24)), closes [#150](https://github.com/cubicecho/agent-core/issues/150)
+
 # [4.0.0](https://github.com/cubicecho/agent-core/compare/v3.0.0...v4.0.0) (2026-10-02)
 
 
