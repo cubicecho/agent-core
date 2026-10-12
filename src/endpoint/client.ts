@@ -84,6 +84,15 @@ const MAX_CLIENTS = 32;
 /** How long a model an endpoint did not list stays unlisted before it is asked about again. */
 const LISTING_MISS_MS = 30_000;
 
+/**
+ * How long a window lookup may take in all, until `configureClients` moves it.
+ *
+ * @remarks
+ * Its own number because `requestTimeoutSeconds` is how long to wait for a model to speak, and a
+ * listing that has not answered in ten seconds is not going to.
+ */
+const LOOKUP_TIMEOUT_MS = 10_000;
+
 /** What the client pool is held to across a process. Every field optional; see `configureClients`. */
 export interface ClientPoolOptions {
   /** How many endpoints' clients are kept at once. The least recently asked for goes first. */
@@ -94,12 +103,18 @@ export interface ClientPoolOptions {
    * missing route — is taken at its word before the endpoint is asked again.
    */
   listingMissMs?: number;
+  /**
+   * How long, in milliseconds, one `contextLimitFor`, `servedWindow` or `listModels` may take over
+   * all of its requests. An endpoint's own request timeout still applies where it is shorter.
+   */
+  lookupTimeoutMs?: number;
 }
 
 /** The numbers this module was written with. */
 const CLIENT_DEFAULTS: Required<ClientPoolOptions> = {
   maxClients: MAX_CLIENTS,
   listingMissMs: LISTING_MISS_MS,
+  lookupTimeoutMs: LOOKUP_TIMEOUT_MS,
 };
 
 /** What is in force now. Read where it is used, so a change applies from the next call. */
@@ -126,8 +141,8 @@ const evict = () => {
  *
  * @param [options] - The bounds to change. A field left out — or given anything that is not a number
  * above zero — keeps what it has, so a half-built config narrows nothing. `Infinity` is a number
- * above zero: as `maxClients` it lifts the bound, and as `listingMissMs` a miss is never asked
- * about again until `resetClients`.
+ * above zero: as `maxClients` it lifts the bound, as `listingMissMs` a miss is never asked about
+ * again until `resetClients`, and as `lookupTimeoutMs` a lookup waits out the request timeout.
  * @returns Everything in force afterwards, including what this call did not change.
  *
  * @remarks
@@ -396,8 +411,20 @@ const refused = (endpoint: string) => {
   return refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs);
 };
 
-/** How long a probe may take before the window is taken from the listing instead. */
-const PROBE_TIMEOUT_MS = 10_000;
+/**
+ * The signal every request of one lookup is made under, so the lookup is bounded as a whole.
+ *
+ * @param config - Read for `requestTimeoutSeconds`, which bounds the lookup where it is shorter
+ * than `lookupTimeoutMs`.
+ * @param [signal] - The caller's own, which aborts the lookup with its reason.
+ * @returns A signal that fires with a `TimeoutError` at the bound or with the caller's reason,
+ * whichever is first. Never fires where neither is set.
+ */
+const lookupSignal = (config: Pick<Endpoint, 'requestTimeoutSeconds'>, signal?: AbortSignal): AbortSignal => {
+  const boundMs = Math.min(timeoutMs(config) ?? Number.POSITIVE_INFINITY, poolLimits().lookupTimeoutMs);
+  const bound = Number.isFinite(boundMs) ? [AbortSignal.timeout(boundMs)] : [];
+  return AbortSignal.any([...bound, ...(signal ? [signal] : [])]);
+};
 
 /**
  * The server root behind an OpenAI-compatible base URL, which is where the native APIs live.
@@ -418,10 +445,9 @@ const NOT_THERE: ReadonlySet<number> = new Set([
 /**
  * Asks one native endpoint.
  *
- * @param config - The endpoint. Its key goes as a bearer token where it has one, and its request
- * timeout bounds the wait — `PROBE_TIMEOUT_MS` where it has none.
+ * @param config - The endpoint. Its key goes as a bearer token where it has one.
  * @param path - The route and its query, from the server root rather than from the base URL.
- * @param [signal] - Abandons the request, which then throws as an unreachable server does.
+ * @param within - The lookup's signal. Fired, the request throws as an unreachable server does.
  * @returns How the server answered, with `body` only for a 2xx that parsed as JSON.
  *
  * @remarks
@@ -432,13 +458,12 @@ const NOT_THERE: ReadonlySet<number> = new Set([
 async function probe(
   config: Endpoint,
   path: string,
-  signal?: AbortSignal,
+  within: AbortSignal,
 ): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
   const apiKey = config.apiKey || undefined;
-  const timeout = AbortSignal.timeout(timeoutMs(config) ?? PROBE_TIMEOUT_MS);
   const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
     headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
-    signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+    signal: within,
   });
   if (!response.ok) {
     return { failed: true, missing: NOT_THERE.has(response.status) };
@@ -483,6 +508,19 @@ export async function servedWindow(
   config: Endpoint & { model: string },
   { signal }: LookupOptions = {},
 ): Promise<number> {
+  const window = await readServed(config, lookupSignal(config, signal));
+  signal?.throwIfAborted();
+  return window;
+}
+
+/**
+ * `servedWindow` under a lookup's signal, which `contextLimitFor` shares with its listing.
+ *
+ * @param config - The endpoint, plus the model whose window is wanted.
+ * @param within - The lookup's signal. Fired, the answer is zero and nothing is remembered.
+ * @returns The window in tokens, or zero where none was found. Never rejects.
+ */
+async function readServed(config: Endpoint & { model: string }, within: AbortSignal): Promise<number> {
   const endpoint = endpointKey(config);
   if (unserved().has(endpoint)) {
     return 0;
@@ -496,12 +534,12 @@ export async function servedWindow(
   let window = 0;
   try {
     // Named, for a llama.cpp router serving several models; a single-model server ignores it.
-    const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`, signal);
+    const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`, within);
     const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })?.default_generation_settings;
     window = positive(settings?.n_ctx);
     if (!window) {
       if (!refused(endpoint)) {
-        const lmstudio = await probe(config, '/api/v0/models', signal);
+        const lmstudio = await probe(config, '/api/v0/models', within);
         if (lmstudio.failed) {
           refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
         } else {
@@ -519,7 +557,6 @@ export async function servedWindow(
       }
     }
   } catch {
-    signal?.throwIfAborted();
     return 0;
   }
   served().set(key, { window, at: Date.now() });
@@ -532,14 +569,26 @@ export async function servedWindow(
  * @param config - The endpoint to ask. Remembered per base URL and key, not per model.
  * @param [options] - Cancellation. See `LookupOptions`.
  * @returns The models in order of id, whatever order the endpoint listed them in. Rejects with the
- * reason of `options.signal` where that is what stopped it, and with the request's own error otherwise.
+ * reason of `options.signal` where that stopped it, a `TimeoutError` at `lookupTimeoutMs`, and the
+ * request's own error otherwise.
  */
-export async function listModels(config: Endpoint, { signal }: LookupOptions = {}): Promise<ModelInfo[]> {
+export function listModels(config: Endpoint, { signal }: LookupOptions = {}): Promise<ModelInfo[]> {
+  return readListing(config, lookupSignal(config, signal));
+}
+
+/**
+ * `listModels` under a lookup's signal, which `contextLimitFor` shares with the native routes.
+ *
+ * @param config - The endpoint to ask.
+ * @param within - The lookup's signal. Fired, the listing rejects with its reason.
+ * @returns The models in order of id. A listing that fails leaves the last one remembered.
+ */
+async function readListing(config: Endpoint, within: AbortSignal): Promise<ModelInfo[]> {
   const { data } = await getClient(config)
-    .models.list({ signal })
+    .models.list({ signal: within })
     .catch((error: unknown) => {
-      // The SDK throws an abort error of its own, and a caller asks its signal what happened.
-      signal?.throwIfAborted();
+      // The SDK throws an abort error of its own, whatever the signal's reason was.
+      within.throwIfAborted();
       throw error;
     });
   const trained = new Set<string>();
@@ -565,7 +614,8 @@ export async function listModels(config: Endpoint, { signal }: LookupOptions = {
  * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
  * @param [options] - Cancellation. See `LookupOptions`.
  * @returns The window in tokens, or zero. Rejects only with the reason of `options.signal`: a
- * listing or a native route that failed is an unknown window.
+ * listing or a native route that failed, or the lookup running out of `lookupTimeoutMs`, is an
+ * unknown window.
  *
  * @remarks
  * `declared` is the operator's own number, and it wins outright: an endpoint can report the
@@ -595,6 +645,8 @@ export async function contextLimitFor(
     return declared;
   }
   const key = endpointKey(config);
+  // One signal for the listing and the native routes, so three silent requests wait once.
+  const within = lookupSignal(config, signal);
   const listed = () =>
     listings()
       .get(key)
@@ -615,7 +667,7 @@ export async function contextLimitFor(
     if (asked === undefined || Date.now() - asked >= poolLimits().listingMissMs) {
       // A failure is not remembered: an endpoint that was down when the last run started is not
       // an endpoint with no models, and a window nobody could ask about is not a failed run.
-      const answered = await listModels(config, { signal }).then(
+      const answered = await readListing(config, within).then(
         () => true,
         () => false,
       );
@@ -640,7 +692,8 @@ export async function contextLimitFor(
   if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) {
     return fromListing;
   }
-  const window = await servedWindow(config, { signal });
+  const window = await readServed(config, within);
+  signal?.throwIfAborted();
   return window > 0 ? window : fromListing;
 }
 

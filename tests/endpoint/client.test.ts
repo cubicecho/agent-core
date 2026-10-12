@@ -41,6 +41,8 @@ const routes = (answers: Record<string, unknown>) =>
 const MAX_CLIENTS = 32;
 /** `LISTING_MISS_MS`, likewise. A miss expires *at* it, not after it. */
 const LISTING_MISS_MS = 30_000;
+/** `LOOKUP_TIMEOUT_MS`, likewise. */
+const LOOKUP_TIMEOUT_MS = 10_000;
 
 describe('contextLimitFor', () => {
   beforeEach(() => {
@@ -291,8 +293,63 @@ describe('contextLimitFor', () => {
   /** A request that never answers, and rejects as `fetch` does once its signal fires. */
   const silent = (signal: AbortSignal | null | undefined) =>
     new Promise<never>((_resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+      }
       signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
     });
+
+  /** An endpoint that accepts every request and answers none. */
+  const silence = () => {
+    list.mockImplementation(({ signal }: { signal?: AbortSignal }) => silent(signal));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => silent(init?.signal)),
+    );
+  };
+
+  it('answers zero for a silent endpoint once the lookup bound has passed', async () => {
+    // `AbortSignal.timeout` is not one of the timers faked above, so this is twenty real ms.
+    configureClients({ lookupTimeoutMs: 20 });
+    silence();
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+  });
+
+  it('bounds the whole lookup, not each of its requests', async () => {
+    configureClients({ lookupTimeoutMs: 40 });
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    // llama.cpp's `/props` answering without a window, and an LM Studio route that never answers.
+    const fetch = vi.fn((url: string, init?: RequestInit) =>
+      new URL(url).pathname === '/props'
+        ? Promise.resolve(new Response('{}', { status: HttpStatus.Ok }))
+        : silent(init?.signal),
+    );
+    vi.stubGlobal('fetch', fetch);
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    const signals = fetch.mock.calls.map(([, init]) => init?.signal);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBe(signals[1]);
+    expect(list.mock.calls[0][0].signal).toBe(signals[0]);
+  });
+
+  it('is bounded by the request timeout where that is the shorter', async () => {
+    silence();
+    const started = performance.now();
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen', requestTimeoutSeconds: 0.02 })).resolves.toBe(0);
+    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS);
+  });
+
+  it('does not remember a lookup that ran out of time as a server without a window', async () => {
+    configureClients({ lookupTimeoutMs: 20 });
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => silent(init?.signal)),
+    );
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    vi.stubGlobal('fetch', routes({ '/props': { default_generation_settings: { n_ctx: 16384 } } }));
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(16384);
+  });
 
   it('rejects with the reason of a signal that fires while the listing is out', async () => {
     list.mockImplementation(({ signal }: { signal?: AbortSignal }) => silent(signal));
@@ -357,6 +414,17 @@ describe('listModels', () => {
     list.mockRejectedValue(new Error('Request was aborted.'));
     const reason = new Error('run stopped');
     await expect(listModels(endpoint, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
+  });
+
+  it('rejects with a TimeoutError when the endpoint is silent past the lookup bound', async () => {
+    configureClients({ lookupTimeoutMs: 20 });
+    list.mockImplementation(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('Request was aborted.')), { once: true });
+        }),
+    );
+    await expect(listModels(endpoint)).rejects.toMatchObject({ name: 'TimeoutError' });
   });
 
   it("rejects with the request's own error under a signal that has not fired", async () => {
@@ -438,21 +506,19 @@ describe('configureClients', () => {
 
   const box = (n: number) => ({ ...endpoint, baseUrl: `http://box-${n}/v1` });
 
+  /** What `configureClients` starts from and `resetClients` goes back to. */
+  const DEFAULTS = { maxClients: MAX_CLIENTS, listingMissMs: LISTING_MISS_MS, lookupTimeoutMs: LOOKUP_TIMEOUT_MS };
+
   it('starts from the defaults and says what is in force', () => {
-    expect(configureClients()).toEqual({ maxClients: MAX_CLIENTS, listingMissMs: LISTING_MISS_MS });
-    expect(configureClients({ maxClients: 64 })).toEqual({
-      maxClients: 64,
-      listingMissMs: LISTING_MISS_MS,
-    });
+    expect(configureClients()).toEqual(DEFAULTS);
+    expect(configureClients({ maxClients: 64 })).toEqual({ ...DEFAULTS, maxClients: 64 });
   });
 
   it('ignores anything that is not a number above zero', () => {
-    configureClients({ maxClients: 4, listingMissMs: 1000 });
+    const set = { maxClients: 4, listingMissMs: 1000, lookupTimeoutMs: 500 };
+    configureClients(set);
     for (const bad of [0, -1, Number.NaN, '8' as never, undefined]) {
-      expect(configureClients({ maxClients: bad, listingMissMs: bad })).toEqual({
-        maxClients: 4,
-        listingMissMs: 1000,
-      });
+      expect(configureClients({ maxClients: bad, listingMissMs: bad, lookupTimeoutMs: bad })).toEqual(set);
     }
   });
 
@@ -487,10 +553,23 @@ describe('configureClients', () => {
     expect(list).toHaveBeenCalledTimes(2);
   });
 
+  it('waits out the request timeout once the lookup bound is lifted', async () => {
+    configureClients({ lookupTimeoutMs: Number.POSITIVE_INFINITY });
+    list.mockImplementation(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    );
+    await expect(listModels({ ...endpoint, requestTimeoutSeconds: 0.02 })).rejects.toMatchObject({
+      name: 'TimeoutError',
+    });
+  });
+
   it('goes back to the defaults on resetClients', () => {
-    configureClients({ maxClients: 1, listingMissMs: 1 });
+    configureClients({ maxClients: 1, listingMissMs: 1, lookupTimeoutMs: 1 });
     resetClients();
-    expect(configureClients()).toEqual({ maxClients: MAX_CLIENTS, listingMissMs: LISTING_MISS_MS });
+    expect(configureClients()).toEqual(DEFAULTS);
   });
 });
 
