@@ -12,32 +12,73 @@
  * being shareable.
  */
 
+/*
+ * The palette is cubeui's — tokens/palette.mjs there is the source, and these
+ * are its default light and dark values under its names, as dist/tokens.web.css
+ * emits them. A token is named for what the colour means, and nothing is a
+ * quieter copy of another: muted text is `foreground` at 60%, a border is
+ * `foreground` at 10%, written as a color-mix() where cubeui writes
+ * `text-foreground/60`. Change a value there first, then here.
+ *
+ * Dark follows the system. cubeui's web build keys it off `.dark` on <html>
+ * because an app has a toggle; a static page has nothing to set the class.
+ */
+
 :root {
-  --bg: #fafaf9;
-  --fg: #1a1a1a;
-  --muted: #6b6b6b;
-  --line: #e5e5e3;
-  --card: #ffffff;
-  --accent: #2563eb;
-  --accent-fg: #ffffff;
-  --radius: 10px;
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.985 0 0);
+  --neutral: oklch(0.205 0 0);
+  --neutral-foreground: oklch(0.985 0 0);
+  --hover: oklch(0.922 0.025 218);
+  --active: oklch(0.5 0.07 218);
+  --active-foreground: oklch(1 0 0);
+  --positive: oklch(0.5273 0.1371 150.069);
+  --positive-foreground: oklch(1 0 0);
+  --warning: oklch(0.5553 0.1455 48.998);
+  --warning-foreground: oklch(1 0 0);
+  --info: oklch(0.5 0.1193 242.749);
+  --info-foreground: oklch(1 0 0);
+  --negative: oklch(0.577 0.245 27.325);
+  --negative-foreground: oklch(1 0 0);
   --maxw: 64rem;
   --pad: clamp(1rem, 4vw, 2rem);
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas,
     monospace;
+
+  /* The names this file used before it took cubeui's. Kept so a project's own
+     site.css still resolves after a `--theme` re-sync; nothing in here uses
+     them, and new rules should not either. */
+  --bg: var(--background);
+  --fg: var(--foreground);
+  --card: var(--secondary);
+  --muted: color-mix(in oklab, var(--foreground) 60%, transparent);
+  --line: color-mix(in oklab, var(--foreground) 10%, transparent);
+  --accent: var(--info);
+  --accent-fg: var(--info-foreground);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #111113;
-    --fg: #ececec;
-    --muted: #9a9a9a;
-    --line: #26262a;
-    --card: #1a1a1d;
-    --accent: #7aa6ff;
-    --accent-fg: #0c0c0e;
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.269 0 0);
+    --neutral: oklch(0.922 0 0);
+    --neutral-foreground: oklch(0.205 0 0);
+    --hover: oklch(0.371 0.035 218);
+    --active: oklch(0.68 0.065 218);
+    --active-foreground: oklch(0.145 0 0);
+    --positive: oklch(0.7227 0.192 149.579);
+    --positive-foreground: oklch(0.145 0 0);
+    --warning: oklch(0.7686 0.1647 70.08);
+    --warning-foreground: oklch(0.145 0 0);
+    --info: oklch(0.6847 0.1479 237.323);
+    --info-foreground: oklch(0.145 0 0);
+    --negative: oklch(0.704 0.191 22.216);
+    --negative-foreground: oklch(0.145 0 0);
   }
 }
 
@@ -46,13 +87,14 @@
 }
 
 html {
+  color-scheme: light dark;
   -webkit-text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--background);
+  color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.55;
@@ -63,11 +105,16 @@ body {
 }
 
 a {
-  color: var(--accent);
+  color: var(--info);
   text-decoration: none;
 }
 a:hover {
   text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
 }
 
 main {
@@ -96,7 +143,7 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 0.625rem;
-  color: var(--fg);
+  color: var(--foreground);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -112,7 +159,7 @@ main {
   width: 40px;
   height: 40px;
   display: inline-block;
-  color: var(--fg);
+  color: var(--foreground);
   flex-shrink: 0;
 }
 
@@ -123,11 +170,11 @@ main {
   flex-wrap: wrap;
 }
 .site-header nav a {
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
 }
 .site-header nav a:hover,
 .site-header nav a[aria-current="page"] {
-  color: var(--fg);
+  color: var(--foreground);
   text-decoration: none;
 }
 
@@ -138,19 +185,19 @@ main {
   max-width: var(--maxw);
   margin: 4rem auto 0;
   padding: 2rem var(--pad);
-  border-top: 1px solid var(--line);
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
   display: flex;
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
   font-size: 0.85rem;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
 }
 .site-footer a {
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
 }
 .site-footer a:hover {
-  color: var(--fg);
+  color: var(--foreground);
 }
 .footer-links {
   display: inline-flex;
@@ -162,7 +209,7 @@ main {
 
 .hero {
   padding: 3.5rem 0 2.5rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
 }
 .hero h1 {
   font-size: clamp(2rem, 5vw, 3rem);
@@ -175,7 +222,7 @@ main {
 }
 .hero p {
   margin: 0;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
   font-size: 1.125rem;
 }
 .hero .meta {
@@ -198,25 +245,24 @@ main {
   align-items: center;
   gap: 0.4rem;
   padding: 0.55rem 1.1rem;
-  border-radius: var(--radius);
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--accent-fg);
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid transparent;
+  background: var(--neutral);
+  color: var(--neutral-foreground);
   font-size: 0.95rem;
   font-weight: 500;
 }
 .button:hover {
   text-decoration: none;
-  filter: brightness(1.08);
+  background: color-mix(in oklab, var(--neutral) 90%, transparent);
 }
 .button.secondary {
-  background: transparent;
-  color: var(--fg);
-  border-color: var(--line);
+  background: var(--background);
+  color: var(--foreground);
+  border-color: color-mix(in oklab, var(--foreground) 15%, transparent);
 }
 .button.secondary:hover {
-  border-color: var(--fg);
-  filter: none;
+  background: var(--hover);
 }
 
 /* sections */
@@ -224,7 +270,7 @@ main {
 .section-label {
   font-size: 0.95rem;
   font-weight: 500;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
   margin: 2.5rem 0 1rem;
 }
 
@@ -238,7 +284,7 @@ main {
 }
 .section > .section-intro {
   margin: 0 0 1.25rem;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
   max-width: 42rem;
 }
 
@@ -259,8 +305,8 @@ main {
 .card {
   position: relative;
   flex: 1;
-  background: var(--card);
-  border: 1px solid var(--line);
+  background: var(--secondary);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
   border-radius: var(--radius);
   padding: 1.25rem;
   display: flex;
@@ -269,7 +315,7 @@ main {
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
 .card:hover {
-  border-color: var(--fg);
+  border-color: var(--foreground);
   transform: translateY(-1px);
 }
 .card h3 {
@@ -279,7 +325,7 @@ main {
   letter-spacing: -0.01em;
 }
 .card h3 .card-link {
-  color: var(--fg);
+  color: var(--foreground);
 }
 .card h3 .card-link:hover {
   text-decoration: none;
@@ -294,7 +340,7 @@ main {
 }
 .card p {
   margin: 0;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
   font-size: 0.95rem;
   flex: 1;
 }
@@ -303,7 +349,7 @@ main {
   justify-content: space-between;
   align-items: center;
   font-size: 0.85rem;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
   margin-top: 0.5rem;
 }
 .card-actions {
@@ -314,10 +360,10 @@ main {
 .card-site {
   position: relative;
   z-index: 1;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
 }
 .card-site:hover {
-  color: var(--accent);
+  color: var(--info);
 }
 
 /* prose */
@@ -341,17 +387,16 @@ main {
 }
 .prose code {
   font-family: var(--font-mono);
-  background: var(--card);
-  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
   padding: 0.05rem 0.35rem;
   border-radius: 4px;
   font-size: 0.9em;
 }
 .prose pre,
 pre.code {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: calc(var(--radius) - 2px);
   padding: 1rem;
   overflow-x: auto;
   font-family: var(--font-mono);
@@ -359,7 +404,6 @@ pre.code {
 }
 .prose pre code,
 pre.code code {
-  border: 0;
   padding: 0;
   background: transparent;
 }
@@ -373,11 +417,11 @@ pre.code code {
 .prose td {
   text-align: left;
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
   vertical-align: top;
 }
 .prose th {
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
   font-weight: 500;
 }
 
@@ -386,9 +430,9 @@ pre.code code {
 .readme-link {
   margin: 2rem 0 0;
   padding: 1rem 1.25rem;
-  border: 1px dashed var(--line);
+  border: 1px dashed color-mix(in oklab, var(--foreground) 10%, transparent);
   border-radius: var(--radius);
   font-size: 0.95rem;
-  color: var(--muted);
+  color: color-mix(in oklab, var(--foreground) 60%, transparent);
   max-width: 42rem;
 }
