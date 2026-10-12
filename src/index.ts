@@ -69,6 +69,7 @@ export {
   endpointKey,
   firstTokenMs,
   getClient,
+  type LookupOptions,
   listModels,
   type ModelInfo,
   NO_KEY,
