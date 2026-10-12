@@ -1165,6 +1165,24 @@ applies `resolveApiKey` afterwards, so a document naming somebody else's endpoin
 host send its own provider key there. `exportSpec(spec)` strips a bundled server's `env` and
 `headers`, and a redacted document is still a valid one.
 
+Those two fields are where the format puts a bundled server's credentials, and not the only place a
+pasted `.mcp.json` has them: an `--api-key` among the `args`, a `?token=` or a `user:pass@` in the
+`url`. `exportSpec` keeps those, since a server with its query string cut off is a different
+server, and `findSpecSecrets` says where they may be so a host can warn before it calls a file safe
+to share:
+
+```ts
+const out = exportSpec(spec);
+for (const { path, server, sign } of findSpecSecrets(out)) {
+  warn(`${server}: ${path} may hold a credential (${sign})`); // bundle.mcpServers[0].args[2] … (flag)
+}
+```
+
+A hint is a place and a reason — `SecretSign.Userinfo`, `Query`, `Flag`, `Value` or `Field` — and
+never the value. It is a guess in both directions: a credential in a positional argument with no
+telling prefix is missed, and a flag called `--keyboard` is named. A `${VAR}` is a reference, and is
+not reported.
+
 `bundle.mcpServers` is parsed only under `parseSpec(document, { bundle: true })`. A bundled server
 is a command line and an environment map, so importing one is equivalent to running a program, and
 that is a decision a host makes rather than inherits from a default.
