@@ -6,9 +6,11 @@ import {
   AGENT_SPEC,
   type AgentSpec,
   exportSpec,
+  findSpecSecrets,
   parseSpec,
   type ResolvedAgent,
   resolveAgentSpec,
+  SecretSign,
   SPEC_EVENTS,
 } from '../../src/spec/spec.ts';
 import { PartType } from '../../src/wire/wire.ts';
@@ -287,6 +289,97 @@ describe('exportSpec', () => {
     expect(again.errors).toEqual([]);
     expect(again.spec?.id).toBe('ocr');
     expect(again.spec?.bundle?.mcpServers).toEqual([{ slug: 'fs', command: 'npx' }]);
+  });
+});
+
+describe('findSpecSecrets', () => {
+  /** The hints for a document bundling `servers`, as `path sign` lines. */
+  const found = (...servers: Record<string, unknown>[]) =>
+    findSpecSecrets(parsed(doc({ id: 'ocr', bundle: { mcpServers: servers } }), { bundle: true })).map(
+      (hint) => `${hint.path} ${hint.sign}`,
+    );
+
+  it('names the value after a flag that reads as a credential, and a flag carrying its own', () => {
+    expect(found({ slug: 'a', command: 'npx', args: ['some-mcp', '--api-key', 'abc123', '--token=abc123'] })).toEqual([
+      'bundle.mcpServers[0].args[2] flag',
+      'bundle.mcpServers[0].args[3] flag',
+    ]);
+  });
+
+  it('names a URL with userinfo or a credential in its query, as a field or an argument', () => {
+    expect(
+      found(
+        { slug: 'a', url: 'https://mcp.example.com/sse?token=abc123' },
+        { slug: 'b', url: 'https://user:pass@mcp.example.com/' },
+        { slug: 'c', command: 'npx', args: ['mcp-remote', 'https://mcp.example.com/sse?api_key=abc123'] },
+      ),
+    ).toEqual([
+      'bundle.mcpServers[0].url query',
+      'bundle.mcpServers[1].url userinfo',
+      'bundle.mcpServers[2].args[1] query',
+    ]);
+  });
+
+  it("names a header written as an argument, and a value with a key's shape wherever it is", () => {
+    expect(
+      found({
+        slug: 'a',
+        command: 'npx',
+        args: ['mcp-remote', '--header', 'Authorization: Bearer abc123', 'sk-live-1', '--header', 'X-Api-Key:abc123'],
+      }),
+    ).toEqual([
+      'bundle.mcpServers[0].args[2] flag',
+      'bundle.mcpServers[0].args[3] value',
+      'bundle.mcpServers[0].args[5] flag',
+    ]);
+  });
+
+  it('names a command written as one line once, and a key of the server named like a credential', () => {
+    expect(found({ slug: 'a', command: 'some-mcp --api-key abc123 --token abc123', apiKey: 'abc123' })).toEqual([
+      'bundle.mcpServers[0].command flag',
+      'bundle.mcpServers[0].apiKey field',
+    ]);
+  });
+
+  it('names nothing in a server that shows no credential, or only a reference to one', () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal is the subject of the test
+    const reference = '${TOKEN}';
+    expect(
+      found(
+        { slug: 'a', command: 'npx', args: ['-y', 'some-mcp', '--port', '8080', '--verbose', '/home/me/notes'] },
+        { slug: 'b', url: 'https://mcp.example.com/sse?transport=sse&token=' },
+        { slug: 'c', command: 'npx', args: ['mcp-remote', '--header', `Authorization: Bearer ${reference}`] },
+        { slug: 'd', url: `https://mcp.example.com/sse?token=${reference}`, apiKey: reference, token: '' },
+        // A flag named like a credential and followed by another flag has no value to name.
+        { slug: 'e', command: 'npx', args: ['some-mcp', '--token', '--verbose', 7, 'not a url: at all'] },
+      ),
+    ).toEqual([]);
+    expect(findSpecSecrets(parsed(doc({ id: 'ocr' })))).toEqual([]);
+  });
+
+  it('leaves env and headers to exportSpec, and says the same of a document before and after it', () => {
+    const spec = parsed(
+      doc({
+        id: 'ocr',
+        bundle: {
+          mcpServers: [{ id: 'fs', command: 'npx', args: ['--token', 'abc123'], env: { TOKEN: 'sk-live-1' } }],
+        },
+      }),
+      { bundle: true },
+    );
+    const hints = [{ path: 'bundle.mcpServers[0].args[1]', server: 'fs', sign: SecretSign.Flag }];
+    expect(findSpecSecrets(spec)).toEqual(hints);
+    expect(findSpecSecrets(exportSpec(spec))).toEqual(hints);
+    // The report says where, and never what.
+    expect(JSON.stringify(hints)).not.toContain('abc123');
+  });
+
+  it('is what exportSpec leaves in: the export still points at the same server', () => {
+    const spec = parsed(
+      doc({ id: 'ocr', bundle: { mcpServers: [{ slug: 'a', url: 'https://mcp.example.com/sse?token=abc123' }] } }),
+      { bundle: true },
+    );
+    expect(exportSpec(spec).bundle?.mcpServers).toEqual(spec.bundle?.mcpServers);
   });
 });
 

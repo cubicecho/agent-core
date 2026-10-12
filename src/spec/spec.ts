@@ -1218,8 +1218,10 @@ export interface ExportSpecOptions {
  * The property worth keeping is that **a redacted spec is still a valid spec** — it parses, it
  * resolves, and what comes back is the same agent pointed at the same servers, needing only the
  * credentials the importing host supplies itself. So a bundled server loses its `env` and its
- * `headers` and nothing else, and nothing outside `bundle` is touched: the format has no
- * credential field at any depth, which is the reason there is nothing else to strip.
+ * `headers` and nothing else, and nothing outside `bundle` is touched: those two are the only
+ * fields the format gives a credential. A server can still carry one where the format gives it no
+ * field — an `--api-key` among its `args`, a token in its `url` — and that is kept, because
+ * cutting it would point the agent at a different server. `findSpecSecrets` says where to look.
  */
 export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptions = {}): AgentSpec {
   if (secrets || !spec.bundle?.mcpServers) {
@@ -1232,4 +1234,186 @@ export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptio
       mcpServers: spec.bundle.mcpServers.map(({ env: _env, headers: _headers, ...rest }) => rest),
     },
   };
+}
+
+/** Why `findSpecSecrets` named a place. */
+export const SecretSign = {
+  /** A URL with a user or a password before its host. */
+  Userinfo: 'userinfo',
+  /** A URL query parameter whose name reads as a credential's. */
+  Query: 'query',
+  /** The value of a command-line flag, or of a header written as `Name: value`, so named. */
+  Flag: 'flag',
+  /** A value with the shape of a credential: a known key prefix, or `Bearer` and a token. */
+  Value: 'value',
+  /** A key of the server itself whose name reads as a credential's. */
+  Field: 'field',
+} as const;
+
+/** Any one of the reasons in `SecretSign`. */
+export type SecretSign = (typeof SecretSign)[keyof typeof SecretSign];
+
+/** One place `findSpecSecrets` thinks a credential may be, and never the credential. */
+export interface SecretHint {
+  /** Where, in `parseSpec`'s spelling: `bundle.mcpServers[0].args[2]`. */
+  path: string;
+  /** The server's slug, or its id where it has no slug. */
+  server: string;
+  sign: SecretSign;
+}
+
+/** A name that reads as a credential's: `api-key`, `TOKEN`, `Authorization`. */
+const SECRET_NAME = /key|token|secret|passw|auth|credential|bearer/i;
+
+/** A value shaped like a credential, whatever it is called. */
+const SECRET_VALUE = /^(sk-|pk-|rk-|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abprs]-|AKIA)|\b(bearer|basic)\s+\S/i;
+
+/** What an absolute URL opens with. */
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/** A header as one string, `Name: value`, as `--header` takes it. */
+const HEADER = /^([\w-]+):\s*(\S.*)$/;
+
+/** A flag carrying its own value, `--name=value`. */
+const FLAG_WITH_VALUE = /^(-{1,2}[^=\s]+)=(.+)$/;
+
+/** The keys of a server `findSpecSecrets` reads for itself, or `exportSpec` strips. */
+const SERVER_KEYS_READ = new Set(['id', 'slug', 'url', 'command', 'args', 'env', 'headers']);
+
+/**
+ * Whether a string is a credential written out, as against a reference to one.
+ *
+ * @param value - What a field, a flag or a parameter holds.
+ * @returns `false` for an empty string and for one holding a `${VAR}`, which names where the
+ * credential is and is not it.
+ */
+const writtenOut = (value: string) => value !== '' && VARIABLE.test(value) === false;
+
+/**
+ * Why a URL may carry a credential.
+ *
+ * @param text - A string, which need not be a URL.
+ * @returns `Userinfo`, `Query`, or `undefined` for a URL that shows neither and for a string
+ * that is not an absolute URL.
+ */
+function urlSign(text: string): SecretSign | undefined {
+  if (URL_SCHEME.test(text) === false || URL.canParse(text) === false) {
+    return undefined;
+  }
+  const url = new URL(text);
+  if (writtenOut(url.username) || writtenOut(url.password)) {
+    return SecretSign.Userinfo;
+  }
+  for (const [name, value] of url.searchParams) {
+    if (SECRET_NAME.test(name) && writtenOut(value)) {
+      return SecretSign.Query;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Why one word of a command line may be a credential, read on its own.
+ *
+ * @param word - One argument.
+ * @returns A sign, or `undefined` for a word that shows none. A flag with no value of its own
+ * shows none here: `argumentSigns` reads the word after it.
+ */
+function wordSign(word: string): SecretSign | undefined {
+  if (writtenOut(word) === false) {
+    return undefined;
+  }
+  const flag = FLAG_WITH_VALUE.exec(word);
+  if (flag?.[1] !== undefined && SECRET_NAME.test(flag[1])) {
+    return SecretSign.Flag;
+  }
+  const header = HEADER.exec(word);
+  if (header?.[1] !== undefined && SECRET_NAME.test(header[1])) {
+    return SecretSign.Flag;
+  }
+  // A flag's own value is read as a word too: `--url=https://user:pass@host`.
+  const value = flag?.[2] ?? word;
+  return SECRET_VALUE.test(value) ? SecretSign.Value : urlSign(value);
+}
+
+/**
+ * The words of a command line that may be credentials.
+ *
+ * @param words - The arguments in order. One that is not a string is passed over.
+ * @returns Each suspect word's index and its sign, in order, at most one sign a word.
+ *
+ * @remarks
+ * A flag named like a credential marks the word after it, unless that word is another flag.
+ */
+function argumentSigns(words: readonly unknown[]): [index: number, sign: SecretSign][] {
+  const signs: [number, SecretSign][] = [];
+  let flagged = false;
+  for (const [index, word] of words.entries()) {
+    if (typeof word !== 'string') {
+      flagged = false;
+      continue;
+    }
+    const isFlag = word.startsWith('-');
+    const sign = flagged && isFlag === false && writtenOut(word) ? SecretSign.Flag : wordSign(word);
+    if (sign) {
+      signs.push([index, sign]);
+    }
+    flagged = isFlag && word.includes('=') === false && SECRET_NAME.test(word);
+  }
+  return signs;
+}
+
+/**
+ * The places one bundled server may carry a credential, outside its `env` and `headers`.
+ *
+ * @param server - The server as the document holds it.
+ * @param path - Where the server is, which each hint's path opens with.
+ * @returns The hints in the order `url`, `command`, `args`, then the server's other keys.
+ */
+function serverSecrets(server: SpecServer, path: string): SecretHint[] {
+  const name = server.slug ?? server.id ?? '';
+  const hints: SecretHint[] = [];
+  const hint = (at: string, sign: SecretSign | undefined) => {
+    if (sign) {
+      hints.push({ path: `${path}.${at}`, server: name, sign });
+    }
+  };
+  if (typeof server.url === 'string') {
+    hint('url', urlSign(server.url));
+  }
+  if (typeof server.command === 'string') {
+    // A command written as one line is read as its words, and named once.
+    hint('command', argumentSigns(server.command.split(/\s+/))[0]?.[1]);
+  }
+  if (Array.isArray(server.args)) {
+    for (const [index, sign] of argumentSigns(server.args)) {
+      hint(`args[${index}]`, sign);
+    }
+  }
+  for (const [key, value] of Object.entries(server)) {
+    const empty = absent(value) || value === '' || (typeof value === 'string' && writtenOut(value) === false);
+    if (SERVER_KEYS_READ.has(key) === false && SECRET_NAME.test(key) && empty === false) {
+      hint(key, SecretSign.Field);
+    }
+  }
+  return hints;
+}
+
+/**
+ * Where a document's bundled servers may still carry a credential after `exportSpec`.
+ *
+ * @param spec - A document, exported or not: `env` and `headers` are not reported either way,
+ * since `exportSpec` strips them.
+ * @returns One hint for each suspect place, in document order, each naming where and why and
+ * none holding the value. Empty for a document with no bundle.
+ *
+ * @remarks
+ * A host calls this before it offers an export as safe to share, and warns with what comes back.
+ * It reads a server's `url`, its `command` and `args`, and the names of its other keys, and is a
+ * guess both ways: a credential in a positional argument with no telling prefix is missed, and a
+ * flag called `--keyboard` is named. A `${VAR}` is a reference and is never named.
+ */
+export function findSpecSecrets(spec: AgentSpec): SecretHint[] {
+  const servers = spec.bundle?.mcpServers ?? [];
+  return servers.flatMap((server, index) => serverSecrets(server, `bundle.mcpServers[${index}]`));
 }

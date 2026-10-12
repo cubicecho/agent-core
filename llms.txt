@@ -218,6 +218,7 @@ A JSON document that defines an agent, and the rules for reading one.
 - `EndpointSpec` (type) — Where a model is reached, and how long to wait for it.
 - `ExportSpecOptions` (type) — What `exportSpec` takes besides the document.
 - `exportSpec` — A document fit to leave the host: the same agent, with the secrets of its bundled servers gone.
+- `findSpecSecrets` — Where a document's bundled servers may still carry a credential after `exportSpec`.
 - `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
 - `ParsedSpec` (type) — What `parseSpec` hands back.
 - `ParseSpecOptions` (type) — What `parseSpec` takes besides the document.
@@ -230,6 +231,8 @@ A JSON document that defines an agent, and the rules for reading one.
 - `ResolvedTask` (type) — One side task, resolved: a model, and the endpoint it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
 - `resolveAgentSpec` — Layers documents into the flat object the loop takes, weakest first.
+- `SecretHint` (type) — One place `findSpecSecrets` thinks a credential may be, and never the credential.
+- `SecretSign` — Any one of the reasons in `SecretSign`.
 - `SPEC_EVENTS` — Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
 - `SpecBundle` (type) — What an agent carries so it can travel whole: the definitions of the servers it names.
 - `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
