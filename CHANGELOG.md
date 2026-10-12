@@ -1,3 +1,10 @@
+# [4.2.0](https://github.com/cubicecho/agent-core/compare/v4.1.0...v4.2.0) (2026-10-12)
+
+
+### Features
+
+* **spec:** say where an export may still hold a credential ([91ab933](https://github.com/cubicecho/agent-core/commit/91ab9331269f6ccf1a22ff918a9d0bbe65fd37b1)), closes [#152](https://github.com/cubicecho/agent-core/issues/152)
+
 # [4.1.0](https://github.com/cubicecho/agent-core/compare/v4.0.0...v4.1.0) (2026-10-12)
 
 
