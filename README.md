@@ -299,6 +299,16 @@ neither native route gives a number. A server with neither route is latched and 
 `/api/v0/models` is also dropped on its own: for the life of the process once it answers 404, 405
 or 501, and for `listingMissMs` after any other error.
 
+A host that sizes the window before each run passes the run's signal as the third argument, so a
+stopped run does not wait on the lookup:
+
+```ts
+const contextLimit = await contextLimitFor({ ...settings, model }, settings.contextLength, { signal });
+```
+
+It rejects with the signal's reason, closes the request it had open, and remembers nothing of the
+lookup. Nothing else makes it reject. `listModels` and `servedWindow` take the same option.
+
 A top-level listing key is trusted without a second opinion, so on a server that puts a trained
 window there, pass `contextLength`. Ollama reports no window on any route this reads, and truncates
 an over-long prompt rather than refusing it, so on Ollama pass `contextLength` or there is no guard

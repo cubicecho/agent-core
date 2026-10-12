@@ -421,6 +421,7 @@ const NOT_THERE: ReadonlySet<number> = new Set([
  * @param config - The endpoint. Its key goes as a bearer token where it has one, and its request
  * timeout bounds the wait — `PROBE_TIMEOUT_MS` where it has none.
  * @param path - The route and its query, from the server root rather than from the base URL.
+ * @param [signal] - Abandons the request, which then throws as an unreachable server does.
  * @returns How the server answered, with `body` only for a 2xx that parsed as JSON.
  *
  * @remarks
@@ -428,11 +429,16 @@ const NOT_THERE: ReadonlySet<number> = new Set([
  * without the route; `body` is absent for both, and for a 2xx that was not JSON. A server that
  * could not be reached throws.
  */
-async function probe(config: Endpoint, path: string): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
+async function probe(
+  config: Endpoint,
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
   const apiKey = config.apiKey || undefined;
+  const timeout = AbortSignal.timeout(timeoutMs(config) ?? PROBE_TIMEOUT_MS);
   const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
     headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
-    signal: AbortSignal.timeout(timeoutMs(config) ?? PROBE_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
   });
   if (!response.ok) {
     return { failed: true, missing: NOT_THERE.has(response.status) };
@@ -444,13 +450,20 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
   }
 }
 
+/** What a lookup takes besides the endpoint: `listModels`, `servedWindow` and `contextLimitFor`. */
+export interface LookupOptions {
+  /** Abandons the lookup, which then rejects with the signal's reason and remembers nothing. */
+  signal?: AbortSignal;
+}
+
 /**
  * The window a local server's own API says it is serving a model in, for the servers whose
  * listing does not say.
  *
  * @param config - The endpoint, plus the model whose window is wanted.
- * @returns The window in tokens, or zero where none was found. Never rejects: a server that could
- * not be reached answers zero too.
+ * @param [options] - Cancellation. See `LookupOptions`.
+ * @returns The window in tokens, or zero where none was found. Rejects only with the reason of
+ * `options.signal`: a server that could not be reached answers zero too.
  *
  * @remarks
  * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
@@ -466,7 +479,10 @@ async function probe(config: Endpoint, path: string): Promise<{ failed: boolean;
  *
  * The listing is not read here; `contextLimitFor` reads it first and comes here after.
  */
-export async function servedWindow(config: Endpoint & { model: string }): Promise<number> {
+export async function servedWindow(
+  config: Endpoint & { model: string },
+  { signal }: LookupOptions = {},
+): Promise<number> {
   const endpoint = endpointKey(config);
   if (unserved().has(endpoint)) {
     return 0;
@@ -480,12 +496,12 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
   let window = 0;
   try {
     // Named, for a llama.cpp router serving several models; a single-model server ignores it.
-    const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`);
+    const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`, signal);
     const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })?.default_generation_settings;
     window = positive(settings?.n_ctx);
     if (!window) {
       if (!refused(endpoint)) {
-        const lmstudio = await probe(config, '/api/v0/models');
+        const lmstudio = await probe(config, '/api/v0/models', signal);
         if (lmstudio.failed) {
           refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
         } else {
@@ -503,6 +519,7 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
       }
     }
   } catch {
+    signal?.throwIfAborted();
     return 0;
   }
   served().set(key, { window, at: Date.now() });
@@ -513,10 +530,18 @@ export async function servedWindow(config: Endpoint & { model: string }): Promis
  * Asks an endpoint what it serves, and remembers the answer.
  *
  * @param config - The endpoint to ask. Remembered per base URL and key, not per model.
- * @returns The models in order of id, whatever order the endpoint listed them in.
+ * @param [options] - Cancellation. See `LookupOptions`.
+ * @returns The models in order of id, whatever order the endpoint listed them in. Rejects with the
+ * reason of `options.signal` where that is what stopped it, and with the request's own error otherwise.
  */
-export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
-  const { data } = await getClient(config).models.list();
+export async function listModels(config: Endpoint, { signal }: LookupOptions = {}): Promise<ModelInfo[]> {
+  const { data } = await getClient(config)
+    .models.list({ signal })
+    .catch((error: unknown) => {
+      // The SDK throws an abort error of its own, and a caller asks its signal what happened.
+      signal?.throwIfAborted();
+      throw error;
+    });
   const trained = new Set<string>();
   const models: ModelInfo[] = [];
   for (const model of data) {
@@ -538,8 +563,9 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  *
  * @param config - The endpoint, plus the model whose window is wanted.
  * @param [declared] - The operator's own number. Above zero it wins and the endpoint is not asked.
- * @returns The window in tokens, or zero. Never rejects: a listing or a native route that failed
- * is an unknown window.
+ * @param [options] - Cancellation. See `LookupOptions`.
+ * @returns The window in tokens, or zero. Rejects only with the reason of `options.signal`: a
+ * listing or a native route that failed is an unknown window.
  *
  * @remarks
  * `declared` is the operator's own number, and it wins outright: an endpoint can report the
@@ -560,7 +586,11 @@ export async function listModels(config: Endpoint): Promise<ModelInfo[]> {
  * first, they were also asked again every `listingMissMs` for the life of the process on a server
  * whose `/props` answers without a window, by any host that sizes the window per turn.
  */
-export async function contextLimitFor(config: Endpoint & { model: string }, declared = 0): Promise<number> {
+export async function contextLimitFor(
+  config: Endpoint & { model: string },
+  declared = 0,
+  { signal }: LookupOptions = {},
+): Promise<number> {
   if (declared > 0) {
     return declared;
   }
@@ -585,10 +615,11 @@ export async function contextLimitFor(config: Endpoint & { model: string }, decl
     if (asked === undefined || Date.now() - asked >= poolLimits().listingMissMs) {
       // A failure is not remembered: an endpoint that was down when the last run started is not
       // an endpoint with no models, and a window nobody could ask about is not a failed run.
-      const answered = await listModels(config).then(
+      const answered = await listModels(config, { signal }).then(
         () => true,
         () => false,
       );
+      signal?.throwIfAborted();
       // Recorded where the endpoint was actually asked, and only there. Stamping it on the calls
       // that skipped the request would push the deadline out ahead of any caller polling faster
       // than the interval, which is a memory that never expires rather than one that expires in
@@ -609,7 +640,7 @@ export async function contextLimitFor(config: Endpoint & { model: string }, decl
   if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) {
     return fromListing;
   }
-  const window = await servedWindow(config);
+  const window = await servedWindow(config, { signal });
   return window > 0 ? window : fromListing;
 }
 

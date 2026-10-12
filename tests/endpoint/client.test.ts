@@ -287,12 +287,82 @@ describe('contextLimitFor', () => {
     list.mockRejectedValue(new Error('down'));
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(32768);
   });
+
+  /** A request that never answers, and rejects as `fetch` does once its signal fires. */
+  const silent = (signal: AbortSignal | null | undefined) =>
+    new Promise<never>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+
+  it('rejects with the reason of a signal that fires while the listing is out', async () => {
+    list.mockImplementation(({ signal }: { signal?: AbortSignal }) => silent(signal));
+    const stop = new AbortController();
+    const reason = new Error('run stopped');
+    const lookup = contextLimitFor({ ...endpoint, model: 'qwen' }, 0, { signal: stop.signal });
+    stop.abort(reason);
+    await expect(lookup).rejects.toBe(reason);
+  });
+
+  it('rejects with the reason of a signal that fires while a native route is out', async () => {
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    const fetch = vi.fn((_url: string, init?: RequestInit) => silent(init?.signal));
+    vi.stubGlobal('fetch', fetch);
+    const stop = new AbortController();
+    const reason = new Error('run stopped');
+    const lookup = contextLimitFor({ ...endpoint, model: 'qwen' }, 0, { signal: stop.signal });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    stop.abort(reason);
+    await expect(lookup).rejects.toBe(reason);
+  });
+
+  it('remembers nothing of a lookup that was stopped', async () => {
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => silent(init?.signal)),
+    );
+    const stop = new AbortController();
+    const lookup = contextLimitFor({ ...endpoint, model: 'qwen' }, 0, { signal: stop.signal });
+    stop.abort(new Error('run stopped'));
+    await expect(lookup).rejects.toThrow('run stopped');
+
+    // Answered now, the server is asked: a stopped lookup is not a server without a window.
+    const fetch = routes({ '/props': { default_generation_settings: { n_ctx: 16384 } } });
+    vi.stubGlobal('fetch', fetch);
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(16384);
+  });
+
+  it('asks nothing of a declared window, even under a signal already aborted', async () => {
+    const signal = AbortSignal.abort(new Error('run stopped'));
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' }, 16384, { signal })).resolves.toBe(16384);
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('still answers zero for an unreachable server when the signal has not fired', async () => {
+    list.mockRejectedValue(new Error('connection refused'));
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
+    const { signal } = new AbortController();
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' }, 0, { signal })).resolves.toBe(0);
+  });
 });
 
 describe('listModels', () => {
   beforeEach(() => {
     resetClients();
     list.mockReset();
+  });
+
+  it("rejects with the signal's reason, not the SDK's abort error", async () => {
+    // What the SDK throws for an aborted request, whatever the signal was aborted with.
+    list.mockRejectedValue(new Error('Request was aborted.'));
+    const reason = new Error('run stopped');
+    await expect(listModels(endpoint, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
+  });
+
+  it("rejects with the request's own error under a signal that has not fired", async () => {
+    const down = new Error('connection refused');
+    list.mockRejectedValue(down);
+    await expect(listModels(endpoint, { signal: new AbortController().signal })).rejects.toBe(down);
   });
 
   it('orders the ids by code unit, the same on every host', async () => {
