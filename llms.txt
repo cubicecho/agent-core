@@ -305,6 +305,7 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `AskJsonOptions` (type) — What `askJson` takes besides a side task's options.
 - `ask` — Runs a side task and returns the reply text, thinking stripped.
 - `askJson` — A side task whose answer is JSON matching a schema, parsed.
+- `askReply` — Runs a side task as `ask` does, and says why the reply ended as well as what it said.
 - `clean` — Strips the quoting and list punctuation models decorate short answers with.
 - `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
 - `parseJson` — The first array or object in a model's reply, parsed, whatever prose or fence surrounds it.
@@ -312,7 +313,8 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
-- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askJson`, `summariser` and `preselect` take last.
+- `SideTaskReply` (type) — A side task's reply, with why the model stopped writing it.
+- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
 - `tryAsk` — Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
 
 ### errors

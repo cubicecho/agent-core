@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { JSON_SCHEMA_FORMAT, SchemaType } from '../../src/wire/wire.ts';
+import { FinishReason, JSON_SCHEMA_FORMAT, SchemaType } from '../../src/wire/wire.ts';
 import { answer, apiError } from '../helpers.ts';
 
 const create = vi.fn();
@@ -41,6 +41,14 @@ describe('askJson', () => {
     const [system] = body(0).messages as { content: string }[];
     expect(system.content).toContain('Pick.');
     expect(system.content).toContain('"required":["tools"]');
+  });
+
+  it('answers undefined for a reply cut off before its JSON closed', async () => {
+    // Nothing the repair does adds a missing closer, so the root never parses.
+    create.mockResolvedValue({
+      choices: [{ message: { content: '{"tools": ["read", {"x": 1}, "wri' }, finish_reason: FinishReason.Length }],
+    });
+    expect(await askJson(config, 'm', 's', 'u', schema)).toBeUndefined();
   });
 
   it('keeps the no-thinking hints', async () => {

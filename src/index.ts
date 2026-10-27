@@ -223,6 +223,7 @@ export {
   type AskJsonOptions,
   ask,
   askJson,
+  askReply,
   clean,
   listLines,
   parseJson,
@@ -230,6 +231,7 @@ export {
   type SideTask,
   type SideTaskInput,
   type SideTaskOptions,
+  type SideTaskReply,
   taskCall,
   tryAsk,
 } from './turn/side-task.ts';

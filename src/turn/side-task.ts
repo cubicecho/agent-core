@@ -187,13 +187,51 @@ export interface SideTask {
  * @returns The reply's content, trimmed. Where that is empty once the thinking is stripped, a
  * `reasoning_content` the server sent beside it, stripped the same way, or an empty string.
  */
-export function ask(
+export async function ask(
   config: Endpoint,
   model: string,
   system: string,
   user: SideTaskInput,
   options: SideTaskOptions = {},
 ): Promise<string> {
+  const { text } = await complete(config, model, system, user, options);
+  return text;
+}
+
+/** A side task's reply, with why the model stopped writing it. */
+export interface SideTaskReply {
+  /** The reply's content as `ask` returns it: trimmed, thinking stripped. */
+  text: string;
+  /**
+   * The first choice's `finish_reason` as the server sent it, compared with `FinishReason`.
+   * `FinishReason.Length` means `text` was cut off at the ceiling. Undefined when none was sent.
+   */
+  finishReason: string | undefined;
+}
+
+/**
+ * Runs a side task as `ask` does, and says why the reply ended as well as what it said.
+ *
+ * @param config - Where to send it and how long to wait.
+ * @param model - The model to ask.
+ * @param system - The instruction.
+ * @param user - The input it applies to. Content parts where the model is being shown an image.
+ * @param [options] - Reply ceiling, temperature, a reasoning effort, extra fields, cancellation, notices.
+ * @returns The text `ask` would return, and the `finish_reason` it came with.
+ *
+ * @remarks
+ * For a caller whose reply is the product, such as a page's transcript: one that ran into the
+ * ceiling, often because the model was looping, reads like a finished one in its text alone.
+ * Nothing is thrown for it, because whether a cut-off reply is still worth keeping is the
+ * caller's call.
+ */
+export function askReply(
+  config: Endpoint,
+  model: string,
+  system: string,
+  user: SideTaskInput,
+  options: SideTaskOptions = {},
+): Promise<SideTaskReply> {
   return complete(config, model, system, user, options);
 }
 
@@ -211,8 +249,8 @@ export function ask(
  * An `extraBody` goes out less the fields this model has refused by name.
  * @param [format] - Builds the extra body fields from the endpoint's capabilities and the model's.
  * Called on every send, so a re-send is built from what has been latched since. Absent adds none.
- * @returns The first choice's message as `answerOf` reads it, empty when there was no answer.
- * Throws what the request throws, except that a 400 or 422 `negotiate` did not answer, on a
+ * @returns The first choice's message as `answerOf` reads it, empty when there was no answer, and
+ * its `finish_reason`. Throws what the request throws, except that a 400 or 422 `negotiate` did not answer, on a
  * request that carried the hints or an effort, is retried once without either.
  */
 async function complete(
@@ -222,7 +260,7 @@ async function complete(
   user: SideTaskInput,
   { maxTokens = 512, temperature = 0.3, reasoningEffort, extraBody, signal, onNotice }: SideTaskOptions,
   format?: (supports: Capabilities, refused: ModelCapabilities) => Record<string, unknown>,
-): Promise<string> {
+): Promise<SideTaskReply> {
   // The effort the caller chose, or empty where it chose none: `""` and `"off"` read as absent,
   // since off is what the hints below already ask for.
   const level = effortFor(undefined, reasoningEffort);
@@ -304,7 +342,9 @@ async function complete(
     }
   }
 
-  return answerOf(response.choices[0]?.message);
+  const [choice] = response.choices;
+  // Typed as always present, and sent as `null` or not at all by servers that have none to give.
+  return { text: answerOf(choice?.message), finishReason: choice?.finish_reason ?? undefined };
 }
 
 /**
@@ -360,7 +400,7 @@ export interface AskJsonOptions extends SideTaskOptions {
  * @param schema - The JSON Schema of the answer. Its root is held to an object, as a tool's is.
  * @param [options] - A side task's options, plus the schema's `name` and whether it is `strict`.
  * @returns What the reply parsed to, unchecked against the schema: `T` is the caller's claim.
- * `undefined` when `parseJson` found nothing in it.
+ * `undefined` when `parseJson` found nothing in it, as in a reply cut off before its JSON closed.
  *
  * @remarks
  * Sends `response_format` with the schema, which a llama.cpp server compiles into a grammar and
@@ -380,7 +420,7 @@ export async function askJson<T>(
 ): Promise<T | undefined> {
   const sanitized = sanitizeSchema(schema);
   const instruction = `${system}\n\nReply with JSON alone, matching this JSON Schema:\n${JSON.stringify(sanitized)}`;
-  const reply = await complete(config, model, instruction, user, options, (supports, refused) =>
+  const { text } = await complete(config, model, instruction, user, options, (supports, refused) =>
     refused.structuredOutput
       ? {
           response_format: {
@@ -394,7 +434,7 @@ export async function askJson<T>(
         }
       : {},
   );
-  return parseJson<T>(reply);
+  return parseJson<T>(text);
 }
 
 /**
@@ -496,7 +536,7 @@ export const listLines = (text: string, max: number, maxChars: number) =>
 
 /**
  * A side task's settings as the call that honours them: its endpoint, its model, and the options
- * `ask`, `askJson`, `summariser` and `preselect` take last.
+ * `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
  *
  * @param task - The task, ordinarily `resolved.tasks.<key>`.
  * @param [options] - What the host adds — cancellation, notices, `keywords` — and its own defaults
@@ -507,7 +547,7 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * `endpoint` is the task's own object when no `agent` was given, a copy otherwise.
  *
  * @remarks
- * A helper rather than a second signature on each of the four, so a setting added to a task later
+ * A helper rather than a second signature on each entry point, so a setting added to a task later
  * arrives through `options` without a host's call changing. What the task states wins over the
  * same field in `options`: the host's code is written once and the task is what an operator
  * configured over it, so a host passes its own ceiling as the value for a task that names none.

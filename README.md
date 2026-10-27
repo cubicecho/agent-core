@@ -268,6 +268,24 @@ const page: SideTaskInput = [
 const text = await ask(config, visionModel, "You are an OCR engine.", page);
 ```
 
+### Telling a finished reply from a cut-off one
+
+`ask` returns the text alone, so a reply that ran into `maxTokens` reads like one that finished.
+Where the reply is the product, `askReply` takes the same arguments and also returns the choice's
+`finish_reason` as the server sent it, or `undefined` where it sent none. A model looping on a page
+writes until the ceiling stops it, and a transcript saved from that is worse than none:
+
+```ts
+const { text, finishReason } = await askReply(config, visionModel, "You are an OCR engine.", page);
+if (finishReason === FinishReason.Length) {
+  // cut off: retry with a higher ceiling, or keep the OCR text already there
+}
+```
+
+Nothing is thrown for a cut-off reply, since whether one is still worth keeping is the caller's
+call. `askJson` needs no such variant: a reply cut off before its JSON closed does not parse, so it
+comes back `undefined`, as a reply with no JSON in it does.
+
 ## Sizing a request before sending it
 
 `runTurn` will refuse a request that cannot fit rather than spending a round trip finding out:
