@@ -1,3 +1,10 @@
+# [4.4.0](https://github.com/cubicecho/agent-core/compare/v4.3.0...v4.4.0) (2026-10-27)
+
+
+### Features
+
+* **side-task:** add askReply, which returns the reply's finish_reason ([7105bc8](https://github.com/cubicecho/agent-core/commit/7105bc82181de7a0526a92af28b08e8ce85a664a)), closes [#161](https://github.com/cubicecho/agent-core/issues/161)
+
 # [4.3.0](https://github.com/cubicecho/agent-core/compare/v4.2.0...v4.3.0) (2026-10-27)
 
 
