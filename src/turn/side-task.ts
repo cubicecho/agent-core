@@ -7,6 +7,7 @@ import {
   ceilingAndTemperature,
   EFFORT_NONE,
   effortFor,
+  extraFields,
   type ModelCapabilities,
   modelCapabilitiesFor,
   negotiate,
@@ -118,6 +119,16 @@ export interface SideTaskOptions {
    * refused it by value, and `chat_template_kwargs` is left out of the request altogether.
    */
   reasoningEffort?: string;
+  /**
+   * Request fields these options cannot spell, as `ModelParams.extraBody` is for the main model:
+   * `top_p`, `top_k`, `min_p` and the penalties a model card asks for.
+   *
+   * @remarks
+   * Merged in after the ceiling, temperature and thinking fields, so it may override them, and
+   * before `askJson`'s `response_format`. `model`, `messages`, `stream` and `tools` are dropped. A
+   * field the endpoint refuses by name is latched for the model and the request sent again without it.
+   */
+  extraBody?: Record<string, unknown>;
   /** Abandons the call, usually because the run it supports has gone away. */
   signal?: AbortSignal;
   /**
@@ -161,6 +172,8 @@ export interface SideTask {
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: a level replaces the no-thinking hints. */
   reasoningEffort?: string;
+  /** As `SideTaskOptions.extraBody`: the sampler fields a model card asks for, sent as given. */
+  extraBody?: Record<string, unknown>;
 }
 
 /**
@@ -170,7 +183,7 @@ export interface SideTask {
  * @param model - The model to ask, usually smaller than the one running the work.
  * @param system - The instruction.
  * @param user - The input it applies to. Content parts where the model is being shown an image.
- * @param [options] - Reply ceiling, temperature, a reasoning effort, cancellation, notices.
+ * @param [options] - Reply ceiling, temperature, a reasoning effort, extra fields, cancellation, notices.
  * @returns The reply's content, trimmed. Where that is empty once the thinking is stripped, a
  * `reasoning_content` the server sent beside it, stripped the same way, or an empty string.
  */
@@ -195,6 +208,7 @@ export function ask(
  * @param user - The input, sent as the user message as it was given.
  * @param options - A side task's options. A `reasoningEffort` that is a level leaves the
  * no-thinking hints out; absent, `""` or `"off"` sends them unless this pair has refused them.
+ * An `extraBody` goes out less the fields this model has refused by name.
  * @param [format] - Builds the extra body fields from the endpoint's capabilities and the model's.
  * Called on every send, so a re-send is built from what has been latched since. Absent adds none.
  * @returns The first choice's message as `answerOf` reads it, empty when there was no answer.
@@ -206,7 +220,7 @@ async function complete(
   model: string,
   system: string,
   user: SideTaskInput,
-  { maxTokens = 512, temperature = 0.3, reasoningEffort, signal, onNotice }: SideTaskOptions,
+  { maxTokens = 512, temperature = 0.3, reasoningEffort, extraBody, signal, onNotice }: SideTaskOptions,
   format?: (supports: Capabilities, refused: ModelCapabilities) => Record<string, unknown>,
 ): Promise<string> {
   // The effort the caller chose, or empty where it chose none: `""` and `"off"` read as absent,
@@ -237,6 +251,7 @@ async function complete(
         // Not gated on `hints`: a model that refuses `chat_template_kwargs` may still read the
         // effort, and the two latches would otherwise contradict each other.
         ...(sentEffort ? { reasoning_effort: asked } : {}),
+        ...extraFields(refused, extraBody),
         ...(format && refused ? format(supports, refused) : {}),
       } as OpenAI.ChatCompletionCreateParamsNonStreaming,
       { signal },
@@ -252,6 +267,7 @@ async function complete(
     negotiate(supports, (latched, _produced, refused) => send(hints, effort, latched, refused), {
       model,
       onNotice,
+      droppable: Object.keys(extraBody ?? {}),
     });
 
   const key = modelKey(endpointId(config), model);
@@ -495,6 +511,7 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * arrives through `options` without a host's call changing. What the task states wins over the
  * same field in `options`: the host's code is written once and the task is what an operator
  * configured over it, so a host passes its own ceiling as the value for a task that names none.
+ * `extraBody` is merged key by key, the task's keys winning, as layers merge it.
  * A setting the task leaves out and `options` does too is absent from the result, which is what
  * leaves it to the entry point's own default — 0.3, not the agent's temperature.
  *
@@ -521,6 +538,9 @@ export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   }
   if (task.reasoningEffort !== undefined) {
     stated.reasoningEffort = task.reasoningEffort;
+  }
+  if (task.extraBody !== undefined) {
+    stated.extraBody = { ...options?.extraBody, ...task.extraBody };
   }
   return {
     endpoint: agent

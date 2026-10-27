@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { answer, type Message, says, tool } from '../helpers.ts';
+import { answer, apiError, type Message, says, tool } from '../helpers.ts';
 
 const create = vi.fn();
 /** Every endpoint a client was asked for, in order, so a test can say where a request went. */
@@ -23,7 +23,7 @@ const { preselect } = await import('../../src/tools/preselect.ts');
 const { capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { NO_KEY } = await import('../../src/endpoint/client.ts');
 const { SUMMARY_LEAD, summariser } = await import('../../src/context/compaction.ts');
-const { ask, resetHints, taskCall } = await import('../../src/turn/side-task.ts');
+const { ask, askJson, resetHints, taskCall } = await import('../../src/turn/side-task.ts');
 const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../../src/spec/spec.ts');
 
 type AgentSpec = import('../../src/spec/spec.ts').AgentSpec;
@@ -91,6 +91,15 @@ describe('taskCall', () => {
       maxTokens: 0,
       temperature: 0,
     });
+  });
+
+  it("lays a task's extraBody over the host's key by key", () => {
+    const task: SideTask = { model: 'small', endpoint, extraBody: { top_k: 20, top_p: 0.8 } };
+    const call = taskCall(task, { extraBody: { top_p: 0.95, min_p: 0.05 } });
+    expect(call.options.extraBody).toEqual({ top_p: 0.8, min_p: 0.05, top_k: 20 });
+    // A task with none leaves the host's as it was given.
+    const host = { extraBody: { min_p: 0.05 } };
+    expect(taskCall({ model: 'small', endpoint }, host).options.extraBody).toBe(host.extraBody);
   });
 
   it('takes a resolved task as it comes', () => {
@@ -164,7 +173,13 @@ describe("a side task's own settings", () => {
   });
 
   it('sends what a task states through every entry point', async () => {
-    const stated = { model: 'tiny', temperature: 0, maxTokens: 64, reasoningEffort: 'low' };
+    const stated = {
+      model: 'tiny',
+      temperature: 0,
+      maxTokens: 64,
+      reasoningEffort: 'low',
+      extraBody: { top_k: 20, presence_penalty: 1.5 },
+    };
     const resolved = agent({ title: stated, compaction: stated, toolSelect: stated });
     create.mockResolvedValue(answer('ok'));
 
@@ -177,7 +192,13 @@ describe("a side task's own settings", () => {
 
     expect(create).toHaveBeenCalledTimes(3);
     for (const nth of [0, 1, 2]) {
-      expect(body(nth)).toMatchObject({ temperature: 0, max_tokens: 64, reasoning_effort: 'low' });
+      expect(body(nth)).toMatchObject({
+        temperature: 0,
+        max_tokens: 64,
+        reasoning_effort: 'low',
+        top_k: 20,
+        presence_penalty: 1.5,
+      });
       expect(body(nth)).not.toHaveProperty('chat_template_kwargs');
     }
   });
@@ -189,6 +210,59 @@ describe("a side task's own settings", () => {
     await preselect(config, 'small', catalog, 'read it');
     expect(body(0).temperature).toBe(0);
     expect(body(1).temperature).toBe(0.3);
+  });
+});
+
+describe("a side task's extraBody", () => {
+  const config = { baseUrl: 'http://local/v1', apiKey: '' };
+  /** Qwen's non-thinking settings, as engrafo sends them. */
+  const sampler = { top_p: 0.8, top_k: 20, presence_penalty: 1.5 };
+
+  it('sends its fields beside the temperature, and none of them without one', async () => {
+    create.mockResolvedValue(answer('ok'));
+    await ask(config, 'qwen', 'Read the page.', 'a page', { temperature: 0.7, extraBody: sampler });
+    await ask(config, 'qwen', 'Read the page.', 'a page');
+    expect(body(0)).toMatchObject({ temperature: 0.7, ...sampler });
+    for (const field of Object.keys(sampler)) {
+      expect(body(1)).not.toHaveProperty(field);
+    }
+  });
+
+  it('never lets it set what the request is built around', async () => {
+    create.mockResolvedValue(answer('ok'));
+    const extraBody = { model: 'other', messages: [], stream: true, tools: [], top_k: 20 };
+    await ask(config, 'qwen', 'Name it.', 'a chat', { extraBody });
+    expect(body(0)).toMatchObject({ model: 'qwen', top_k: 20 });
+    expect(body(0).messages).toHaveLength(2);
+    expect(body(0)).not.toHaveProperty('stream');
+    expect(body(0)).not.toHaveProperty('tools');
+  });
+
+  it("keeps askJson's response_format over one of its own", async () => {
+    create.mockResolvedValue(answer('{"a": 1}'));
+    const extraBody = { top_k: 20, response_format: { type: 'text' } };
+    await askJson(config, 'qwen', 'Answer.', 'a question', { type: 'object' }, { extraBody });
+    expect(body(0)).toMatchObject({ top_k: 20, response_format: { type: 'json_schema' } });
+  });
+
+  it('drops a field the endpoint refuses by name, sends the rest again, and remembers', async () => {
+    const notices: string[] = [];
+    create
+      .mockRejectedValueOnce(apiError(400, 'Unrecognized request argument supplied: top_k'))
+      .mockResolvedValue(answer('ok'));
+    const options = { extraBody: sampler, onNotice: (text: string) => notices.push(text) };
+    expect(await ask(config, 'gpt', 'Name it.', 'a chat', options)).toBe('ok');
+    expect(body(0)).toHaveProperty('top_k', 20);
+    expect(body(1)).not.toHaveProperty('top_k');
+    expect(body(1)).toMatchObject({ top_p: 0.8, presence_penalty: 1.5 });
+    // The no-thinking hints were not what was refused, so they still go out.
+    expect(body(1).chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(notices).toEqual(['gpt does not take top_k; retrying without it']);
+
+    // Latched for the model: the next call leaves it out from the start.
+    await ask(config, 'gpt', 'Name it.', 'a chat', options);
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(body(2)).not.toHaveProperty('top_k');
   });
 });
 

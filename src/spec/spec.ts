@@ -168,6 +168,8 @@ export interface TaskSpec {
    * side task is sent by default; see `SideTaskOptions.reasoningEffort`.
    */
   reasoningEffort?: string;
+  /** Request fields the interface cannot spell, as `model.extraBody` but for this task alone. */
+  extraBody?: Record<string, unknown>;
 }
 
 /** A tool call bound to a lifecycle event, run by the host rather than the model. */
@@ -219,7 +221,7 @@ export interface SpecBundle {
  * One side task, resolved: a model, and the endpoint it is reached through.
  *
  * @remarks
- * The three settings are present only where a layer stated them, and nothing is filled in from
+ * The settings are present only where a layer stated them, and nothing is filled in from
  * the agent's own model — `taskCall` turns one into a call, and what is absent there is left to
  * the side task's default.
  */
@@ -230,6 +232,8 @@ export interface ResolvedTask {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
+  /** Merged key by key across the layers. `model.extraBody` is the agent's and never reaches it. */
+  extraBody?: Record<string, unknown>;
 }
 
 /**
@@ -709,6 +713,7 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
       model: report.string(`${path}.model`, held.model),
       endpoint: parseEndpoint(report, `${path}.endpoint`, held.endpoint),
       ...parseSampling(report, path, held),
+      extraBody: parseExtraBody(report, `${path}.extraBody`, held.extraBody),
     });
   }
   return tasks;
@@ -1067,16 +1072,18 @@ function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => str
  * @param layers - The documents, weakest first. None is written to.
  * @param endpoint - The agent's merged endpoint. Read, not written to.
  * @returns The tasks whose merged `model` is not empty, keyed as the documents keyed them — one a
- * layer declined with `model: ""` is not among them.
+ * layer declined with `model: ""` is not among them. A task's `extraBody` merges by key.
  */
 function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
   const merged = new Map<string, TaskSpec>();
   for (const layer of layers) {
     for (const [key, task] of Object.entries(layer.tasks ?? {})) {
+      const below = merged.get(key);
       merged.set(key, {
-        ...(merged.get(key) ?? {}),
+        ...below,
         ...task,
-        endpoint: mergeLayers([merged.get(key)?.endpoint, task.endpoint]),
+        endpoint: mergeLayers([below?.endpoint, task.endpoint]),
+        extraBody: mergeLayers([below?.extraBody, task.extraBody]),
       });
     }
   }
@@ -1093,6 +1100,7 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
       maxTokens: task.maxTokens,
       temperature: task.temperature,
       reasoningEffort: task.reasoningEffort,
+      extraBody: task.extraBody && said(task.extraBody) ? task.extraBody : undefined,
     });
   }
   return tasks;

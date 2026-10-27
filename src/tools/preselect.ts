@@ -347,6 +347,8 @@ export interface PreselectOptions {
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
   reasoningEffort?: string;
+  /** As `SideTaskOptions.extraBody`: sampler fields the options cannot spell. */
+  extraBody?: Record<string, unknown>;
   /**
    * The most tools the choice may name.
    *
@@ -371,8 +373,8 @@ export interface PreselectOptions {
  * `toolSelectModel: settings.toolSelectModel || settings.model`.
  * @param catalog - The servers to choose from.
  * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
- * @param [options] - Cancellation, notices, the reply ceiling, the temperature and reasoning effort
- * as `ask` reads them, the cap the choice is held to, and whether to try the words first.
+ * @param [options] - Cancellation, notices, the reply ceiling, the temperature, reasoning effort and
+ * extra fields as `ask` reads them, the cap the choice is held to, and whether to try the words first.
  * @returns Names as the catalogue spells them, never more than `maxPerLoad`. Empty where `model` is
  * empty, the catalogue has no tools, the call failed, or its reply named nothing in the catalogue.
  *
@@ -399,6 +401,7 @@ export async function preselect(
     maxTokens = 256,
     temperature,
     reasoningEffort,
+    extraBody,
     maxPerLoad = MAX_PER_LOAD,
     keywords,
   }: PreselectOptions = {},
@@ -425,6 +428,7 @@ export async function preselect(
         maxTokens,
         temperature,
         reasoningEffort,
+        extraBody,
         signal,
         onNotice,
       }),
