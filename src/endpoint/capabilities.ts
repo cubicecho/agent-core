@@ -1,4 +1,4 @@
-import type { EndpointIdentity } from '../core/config.ts';
+import { type EndpointIdentity, RESERVED_BODY_FIELDS } from '../core/config.ts';
 import { getOrCreate } from '../core/guards.ts';
 import { scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
@@ -549,6 +549,29 @@ export const ceilingAndTemperature = (
     ...(refused?.chosenTemperature === false ? {} : { temperature }),
   };
 };
+
+/**
+ * The request fields an `extraBody` adds as this model takes them, to spread into a request body.
+ *
+ * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model that
+ * has refused nothing.
+ * @param [extraBody] - The fields to add. Absent adds none.
+ * @returns A fresh object of the fields, less the `RESERVED_BODY_FIELDS` and those the model has
+ * refused by name.
+ *
+ * @remarks
+ * The keys are what a caller hands `negotiate` as `droppable`, so a field the endpoint has never
+ * heard of is latched into `refusedFields` and left out of the next send.
+ */
+export const extraFields = (
+  refused: ModelCapabilities | undefined,
+  extraBody: Record<string, unknown> = {},
+): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(extraBody).filter(
+      ([field]) => !RESERVED_BODY_FIELDS.includes(field) && !refused?.refusedFields.has(field),
+    ),
+  );
 
 /** What answering a refused effort *value* would latch, and the rung it would try next. */
 interface EffortStep {

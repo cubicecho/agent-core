@@ -513,10 +513,6 @@ const parseSampling = (report: Report, path: string, value: Record<string, unkno
  * @param value - What the document held under `model`.
  * @returns The fields that survived — an empty object where none did — or `undefined` where the
  * section is absent or is not an object.
- *
- * @remarks
- * `extraBody` comes back as a new object without the `RESERVED_BODY_FIELDS`, each of which is
- * warned about. An empty one survives as an empty one.
  */
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (absent(value)) {
@@ -525,28 +521,40 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (!isRecord(value)) {
     return void report.drop('model', 'must be an object');
   }
-  let extraBody: Record<string, unknown> | undefined;
-  if (!absent(value.extraBody)) {
-    if (!isRecord(value.extraBody)) {
-      report.drop('model.extraBody', 'must be an object');
-    } else {
-      extraBody = {};
-      for (const [key, held] of Object.entries(value.extraBody)) {
-        // `buildBody` would overwrite them anyway; better to say so on import.
-        if (RESERVED_BODY_FIELDS.includes(key)) {
-          report.drop(`model.extraBody.${key}`, "is the loop's to set");
-        } else {
-          extraBody[key] = held;
-        }
-      }
-    }
-  }
   return kept({
     model: report.string('model.model', value.model),
     ...parseSampling(report, 'model', value),
     contextLength: report.number('model.contextLength', value.contextLength, 0),
-    extraBody,
+    extraBody: parseExtraBody(report, 'model.extraBody', value.extraBody),
   });
+}
+
+/**
+ * Reads an `extraBody`, the agent's model's or a side task's.
+ *
+ * @param report - Where what is dropped is written.
+ * @param path - Where it sits in the document: `model.extraBody`, or `tasks.title.extraBody`.
+ * @param value - What the document held there.
+ * @returns A new object without the `RESERVED_BODY_FIELDS`, each of which is warned about, or
+ * `undefined` where it is absent or is not an object. An empty one survives as an empty one.
+ */
+function parseExtraBody(report: Report, path: string, value: unknown): Record<string, unknown> | undefined {
+  if (absent(value)) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    return void report.drop(path, 'must be an object');
+  }
+  const extraBody: Record<string, unknown> = {};
+  for (const [key, held] of Object.entries(value)) {
+    // The request is built around them and they would be overwritten anyway; better to say so on import.
+    if (RESERVED_BODY_FIELDS.includes(key)) {
+      report.drop(`${path}.${key}`, "is the loop's to set");
+    } else {
+      extraBody[key] = held;
+    }
+  }
+  return extraBody;
 }
 
 /**

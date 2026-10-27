@@ -1,9 +1,10 @@
 import type OpenAI from 'openai';
-import { type ModelParams, RESERVED_BODY_FIELDS } from '../core/config.ts';
+import type { ModelParams } from '../core/config.ts';
 import {
   type Capabilities,
   ceilingAndTemperature,
   effortFor,
+  extraFields,
   type ModelCapabilities,
 } from '../endpoint/capabilities.ts';
 import { relaxTools, sanitizeTools } from '../endpoint/schema-compat.ts';
@@ -47,14 +48,11 @@ export function buildBody(
   const sorted = orderTools(tools, order);
   const declared = supports.strictSchemas ? sanitizeTools(sorted) : relaxTools(sanitizeTools(sorted));
   const effort = effortFor(refused, config.reasoningEffort);
-  const extra = Object.entries(config.extraBody ?? {}).filter(
-    ([field]) => !RESERVED_BODY_FIELDS.includes(field) && !refused?.refusedFields.has(field),
-  );
   return {
     ...ceilingAndTemperature(refused, config.maxTokens, config.temperature),
     ...(effort ? { reasoning_effort: effort as OpenAI.ReasoningEffort } : {}),
     ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
-    ...Object.fromEntries(extra),
+    ...extraFields(refused, config.extraBody),
     model: config.model,
     messages,
     stream: true,
