@@ -152,6 +152,8 @@ export interface TaskSpec {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
+  /** As `model.extraBody`, for this task alone. `model`, `messages`, `stream`, `tools` are dropped. */
+  extraBody?: Record<string, unknown>;
 }
 
 export interface AgentHook {
@@ -283,6 +285,7 @@ export interface ResolvedTask {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
+  extraBody?: Record<string, unknown>;
 }
 ```
 
@@ -313,6 +316,7 @@ as `null` and refusing it would make every host write a stripper first.
 | `tools.discovery` | inherit; nowhere is `eager` | as stated | — |
 | `retry.maxRetries` | inherit; nowhere is `0` | this many | `0` — no retries |
 | `tasks.<key>` | not configured | configured | `model: ""` — the task is off |
+| `tasks.<key>.extraBody` | inherit | merged key by key | `{}` — adds nothing |
 | `hooks` | inherit | merged by hook id | `[]` — adds none; `enabled: false` stops one |
 | `requires` | nothing required | all must be understood | `[]` — nothing required |
 
@@ -420,8 +424,8 @@ unknown task key is carried through untouched and not warned about, since a host
 package has never heard of. `toolSelectModel` flattens from `tasks.toolSelect?.model ?? ""`, where
 `""` already means do not preselect.
 
-A task's settings are its own. `maxTokens`, `temperature` and `reasoningEffort` are resolved only
-where a layer stated them, and nothing is filled in from `model`: an absent field is the side
+A task's settings are its own. `maxTokens`, `temperature`, `reasoningEffort` and `extraBody` are
+resolved only where a layer stated them, and nothing is filled in from `model`: an absent field is the side
 task's default — temperature 0.3, and the ceiling of whichever entry point runs it — so raising the
 agent's temperature to 1.0 for the chat does not make its titler creative. Layers merge a task
 field by field before an entry without a model is dropped, so a profile can set
@@ -439,8 +443,8 @@ under its `preselect` option and `tasks.compaction` under `compact`, both off by
 no-thinking hints unless told otherwise, so absent and `"off"` both keep them, where on the main
 model they send nothing; a level is sent as `reasoning_effort` and the hints are left out.
 `maxTokens: 0` is no ceiling on both. Sampling beyond temperature — `top_p`, `top_k`, the
-penalties — has no field on a task: `model.extraBody` carries it for the main model, and a side
-task is sent none.
+penalties — goes in `tasks.<key>.extraBody`, which is sent and negotiated as `model.extraBody` is
+for the main model. The agent's `model.extraBody` never reaches a task.
 
 ## Out of scope
 

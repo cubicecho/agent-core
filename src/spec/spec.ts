@@ -168,6 +168,8 @@ export interface TaskSpec {
    * side task is sent by default; see `SideTaskOptions.reasoningEffort`.
    */
   reasoningEffort?: string;
+  /** Request fields the interface cannot spell, as `model.extraBody` but for this task alone. */
+  extraBody?: Record<string, unknown>;
 }
 
 /** A tool call bound to a lifecycle event, run by the host rather than the model. */
@@ -219,7 +221,7 @@ export interface SpecBundle {
  * One side task, resolved: a model, and the endpoint it is reached through.
  *
  * @remarks
- * The three settings are present only where a layer stated them, and nothing is filled in from
+ * The settings are present only where a layer stated them, and nothing is filled in from
  * the agent's own model — `taskCall` turns one into a call, and what is absent there is left to
  * the side task's default.
  */
@@ -230,6 +232,8 @@ export interface ResolvedTask {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
+  /** Merged key by key across the layers. `model.extraBody` is the agent's and never reaches it. */
+  extraBody?: Record<string, unknown>;
 }
 
 /**
@@ -513,10 +517,6 @@ const parseSampling = (report: Report, path: string, value: Record<string, unkno
  * @param value - What the document held under `model`.
  * @returns The fields that survived — an empty object where none did — or `undefined` where the
  * section is absent or is not an object.
- *
- * @remarks
- * `extraBody` comes back as a new object without the `RESERVED_BODY_FIELDS`, each of which is
- * warned about. An empty one survives as an empty one.
  */
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (absent(value)) {
@@ -525,28 +525,40 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (!isRecord(value)) {
     return void report.drop('model', 'must be an object');
   }
-  let extraBody: Record<string, unknown> | undefined;
-  if (!absent(value.extraBody)) {
-    if (!isRecord(value.extraBody)) {
-      report.drop('model.extraBody', 'must be an object');
-    } else {
-      extraBody = {};
-      for (const [key, held] of Object.entries(value.extraBody)) {
-        // `buildBody` would overwrite them anyway; better to say so on import.
-        if (RESERVED_BODY_FIELDS.includes(key)) {
-          report.drop(`model.extraBody.${key}`, "is the loop's to set");
-        } else {
-          extraBody[key] = held;
-        }
-      }
-    }
-  }
   return kept({
     model: report.string('model.model', value.model),
     ...parseSampling(report, 'model', value),
     contextLength: report.number('model.contextLength', value.contextLength, 0),
-    extraBody,
+    extraBody: parseExtraBody(report, 'model.extraBody', value.extraBody),
   });
+}
+
+/**
+ * Reads an `extraBody`, the agent's model's or a side task's.
+ *
+ * @param report - Where what is dropped is written.
+ * @param path - Where it sits in the document: `model.extraBody`, or `tasks.title.extraBody`.
+ * @param value - What the document held there.
+ * @returns A new object without the `RESERVED_BODY_FIELDS`, each of which is warned about, or
+ * `undefined` where it is absent or is not an object. An empty one survives as an empty one.
+ */
+function parseExtraBody(report: Report, path: string, value: unknown): Record<string, unknown> | undefined {
+  if (absent(value)) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    return void report.drop(path, 'must be an object');
+  }
+  const extraBody: Record<string, unknown> = {};
+  for (const [key, held] of Object.entries(value)) {
+    // The request is built around them and they would be overwritten anyway; better to say so on import.
+    if (RESERVED_BODY_FIELDS.includes(key)) {
+      report.drop(`${path}.${key}`, "is the loop's to set");
+    } else {
+      extraBody[key] = held;
+    }
+  }
+  return extraBody;
 }
 
 /**
@@ -701,6 +713,7 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
       model: report.string(`${path}.model`, held.model),
       endpoint: parseEndpoint(report, `${path}.endpoint`, held.endpoint),
       ...parseSampling(report, path, held),
+      extraBody: parseExtraBody(report, `${path}.extraBody`, held.extraBody),
     });
   }
   return tasks;
@@ -1059,16 +1072,18 @@ function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => str
  * @param layers - The documents, weakest first. None is written to.
  * @param endpoint - The agent's merged endpoint. Read, not written to.
  * @returns The tasks whose merged `model` is not empty, keyed as the documents keyed them — one a
- * layer declined with `model: ""` is not among them.
+ * layer declined with `model: ""` is not among them. A task's `extraBody` merges by key.
  */
 function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
   const merged = new Map<string, TaskSpec>();
   for (const layer of layers) {
     for (const [key, task] of Object.entries(layer.tasks ?? {})) {
+      const below = merged.get(key);
       merged.set(key, {
-        ...(merged.get(key) ?? {}),
+        ...below,
         ...task,
-        endpoint: mergeLayers([merged.get(key)?.endpoint, task.endpoint]),
+        endpoint: mergeLayers([below?.endpoint, task.endpoint]),
+        extraBody: mergeLayers([below?.extraBody, task.extraBody]),
       });
     }
   }
@@ -1085,6 +1100,7 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
       maxTokens: task.maxTokens,
       temperature: task.temperature,
       reasoningEffort: task.reasoningEffort,
+      extraBody: task.extraBody && said(task.extraBody) ? task.extraBody : undefined,
     });
   }
   return tasks;

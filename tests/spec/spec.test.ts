@@ -111,6 +111,18 @@ describe('parseSpec', () => {
     expect(result.warnings).toEqual(["model.extraBody.messages: is the loop's to set, and was dropped"]);
   });
 
+  it("reads a task's extraBody by the same rules", () => {
+    const result = parseSpec(
+      doc({ tasks: { title: { model: 'm', extraBody: { top_k: 20, tools: [] } }, other: { extraBody: 3 } } }),
+    );
+    expect(result.spec?.tasks?.title?.extraBody).toEqual({ top_k: 20 });
+    expect(result.spec?.tasks?.other).toEqual({});
+    expect(result.warnings).toEqual([
+      "tasks.title.extraBody.tools: is the loop's to set, and was dropped",
+      'tasks.other.extraBody: must be an object, and was dropped',
+    ]);
+  });
+
   it('carries a key from a later 1.x rather than erasing it', () => {
     const result = parseSpec(doc({ id: 'a', memory: { store: 'vector' } }));
     expect(result.spec?.memory).toEqual({ store: 'vector' });
@@ -524,7 +536,7 @@ describe('resolveAgentSpec', () => {
   it("fills nothing in on a task from the agent's own model", () => {
     const spec = parsed(
       doc({
-        model: { model: 'big', temperature: 1, maxTokens: 4096, reasoningEffort: 'high' },
+        model: { model: 'big', temperature: 1, maxTokens: 4096, reasoningEffort: 'high', extraBody: { top_k: 40 } },
         tasks: { title: { model: 'qwen3:0.6b' } },
       }),
     );
@@ -541,6 +553,19 @@ describe('resolveAgentSpec', () => {
     const resolved = resolveAgentSpec([base, over]);
     expect(resolved.extraBody).toEqual({ top_k: 40, min_p: 0.05 });
     expect(resolved.extensions).toEqual({ a: 1, b: 3 });
+  });
+
+  it("merges a task's extraBody by top-level key across the layers", () => {
+    const base = parsed(doc({ tasks: { vision: { model: 'qwen', extraBody: { top_p: 0.8, top_k: 20 } } } }));
+    const over = parsed(doc({ tasks: { vision: { extraBody: { top_k: 40, presence_penalty: 1.5 } } } }));
+    expect(resolveAgentSpec([base, over]).tasks.vision?.extraBody).toEqual({
+      top_p: 0.8,
+      top_k: 40,
+      presence_penalty: 1.5,
+    });
+    // An empty one adds nothing, and the task carries none.
+    const empty = parsed(doc({ tasks: { vision: { model: 'qwen', extraBody: {} } } }));
+    expect(resolveAgentSpec([empty]).tasks.vision).not.toHaveProperty('extraBody');
   });
 
   it('unions requires, so a layer above cannot quietly drop one below it', () => {

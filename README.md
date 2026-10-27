@@ -588,7 +588,7 @@ one just over it means the ranking chose arbitrarily, which is the case a model 
 on. Matching nothing is not confident either, since the words cannot tell a request that needs no
 tools from one whose words are not in the catalogue. An empty `toolSelectModel` still means no
 preselection at all, words included. `preselect` also takes a `temperature` and a
-`reasoningEffort`, read as `ask` reads them, and `runAgentLoop({ preselect: true })` makes the call
+`reasoningEffort` and an `extraBody`, read as `ask` reads them, and `runAgentLoop({ preselect: true })` makes the call
 itself — see "Its side tasks" below.
 
 A turn cut off at `maxTokens` is said so as a notice, and with `maxContinuations` above zero it is
@@ -1196,7 +1196,7 @@ comes from.
 ### Its side tasks
 
 `tasks.<key>` configures a side task apart from the main model — its own model, endpoint, ceiling,
-temperature and reasoning effort — and resolution hands each back as a `ResolvedTask` holding only
+temperature, reasoning effort and `extraBody` — and resolution hands each back as a `ResolvedTask` holding only
 what a layer stated. `taskCall` turns one into the arguments `ask`, `askJson`, `summariser` and
 `preselect` already take, so a setting added to a task later arrives without the host's call
 changing:
@@ -1216,6 +1216,13 @@ sends no ceiling, as it does on the main model.
 no-thinking hints by default, and absent or `"off"` keeps them; a level — `"low"`, `"high"` — is
 sent as `reasoning_effort` in their place, for a compaction model an operator pointed at a model
 that should deliberate.
+
+`extraBody` carries the sampler fields a model card asks for, as it does on the main model: `ask`,
+`askJson`, `summariser` and `preselect` all take one in their options, merge it in after the
+temperature, and offer its keys to `negotiate` as `droppable`, so a field the endpoint refuses by
+name is latched off for that model and the request is sent again without it. The agent's own
+`model.extraBody` is never sent to a side task, and `taskCall` lays a task's over the host's key by
+key.
 
 The third argument is the endpoint the main turn uses. Given it, a task on the same endpoint is
 sent the agent's spelling of the URL and, having no key of its own, the agent's key, so the two
