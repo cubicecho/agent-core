@@ -1,3 +1,10 @@
+# [4.3.0](https://github.com/cubicecho/agent-core/compare/v4.2.0...v4.3.0) (2026-10-27)
+
+
+### Features
+
+* let side tasks send sampler fields through an extraBody ([2e788eb](https://github.com/cubicecho/agent-core/commit/2e788eb7ba01abf1c68bbcc374aeeed9f9fd3172)), closes [#159](https://github.com/cubicecho/agent-core/issues/159)
+
 # [4.2.0](https://github.com/cubicecho/agent-core/compare/v4.1.0...v4.2.0) (2026-10-12)
 
 
