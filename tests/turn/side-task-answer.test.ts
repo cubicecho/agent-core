@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FinishReason } from '../../src/wire/wire.ts';
 import { answer, endpoint } from '../helpers.ts';
 
 const create = vi.fn();
@@ -12,7 +13,7 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { ask } = await import('../../src/turn/side-task.ts');
+const { ask, askReply } = await import('../../src/turn/side-task.ts');
 
 /** What the caller gets back when the model replies with this content. */
 const answerTo = (content: string) => {
@@ -47,5 +48,44 @@ describe('the scratchpad a reasoning model fences off', () => {
     // The close here is the one its own open paired off with, not an orphan, so the rule for
     // the never-opened fence must not reach back and eat `before`.
     expect(await answerTo('before<think>weighing it up</think>after')).toBe('beforeafter');
+  });
+});
+
+describe('why a side task stopped', () => {
+  beforeEach(() => create.mockReset());
+
+  it('says a reply ran into the ceiling, and still hands back what it wrote', async () => {
+    create.mockResolvedValue({
+      choices: [{ message: { content: 'page text page text page' }, finish_reason: FinishReason.Length }],
+    });
+    expect(await askReply(endpoint, 'm', 'system', 'user')).toEqual({
+      text: 'page text page text page',
+      finishReason: FinishReason.Length,
+    });
+  });
+
+  it('passes on a reason it has no name for as the server sent it', async () => {
+    create.mockResolvedValue({ choices: [{ message: { content: 'done' }, finish_reason: 'eos' }] });
+    expect(await askReply(endpoint, 'm', 'system', 'user')).toEqual({ text: 'done', finishReason: 'eos' });
+  });
+
+  it('reads a null or missing reason as none', async () => {
+    create.mockResolvedValueOnce({ choices: [{ message: { content: 'a' }, finish_reason: null }] });
+    create.mockResolvedValueOnce(answer('b'));
+    create.mockResolvedValueOnce({ choices: [] });
+    expect(await askReply(endpoint, 'm', 'system', 'user')).toEqual({ text: 'a', finishReason: undefined });
+    expect(await askReply(endpoint, 'm', 'system', 'user')).toEqual({ text: 'b', finishReason: undefined });
+    expect(await askReply(endpoint, 'm', 'system', 'user')).toEqual({ text: '', finishReason: undefined });
+  });
+
+  it('strips the thinking from the text as ask does', async () => {
+    create.mockResolvedValue({
+      choices: [{ message: { content: '<think>hmm</think> Answer ' }, finish_reason: FinishReason.Stop }],
+    });
+    expect(await askReply(endpoint, 'm', 'system', 'user')).toEqual({
+      text: 'Answer',
+      finishReason: FinishReason.Stop,
+    });
+    expect(await ask(endpoint, 'm', 'system', 'user')).toBe('Answer');
   });
 });
