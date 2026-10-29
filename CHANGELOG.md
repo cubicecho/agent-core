@@ -1,3 +1,10 @@
+# [4.5.0](https://github.com/cubicecho/agent-core/compare/v4.4.0...v4.5.0) (2026-10-29)
+
+
+### Features
+
+* **compaction:** fold inside a single question's tool loop ([655326e](https://github.com/cubicecho/agent-core/commit/655326e21affa2fc70bbfc594b6c39d022a0e641)), closes [#163](https://github.com/cubicecho/agent-core/issues/163)
+
 # [4.4.0](https://github.com/cubicecho/agent-core/compare/v4.3.0...v4.4.0) (2026-10-27)
 
 
