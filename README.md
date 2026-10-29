@@ -815,9 +815,15 @@ once `used` (the last turn's prompt tokens, or the estimate) is past three quart
 The kept tail fills at most 35% of it and starts on a user message, since a transcript resuming
 mid-exchange is one servers refuse; leading system prompts are never folded, and an earlier
 summary is continued rather than summarised. `compactTranscript` writes the summary and tells
-`beforeCompact` hooks what is going while it does. Because the cut lands on
-a user message, one long tool run under a single question has nothing to fold — pruning is what
-keeps that one going.
+`beforeCompact` hooks what is going while it does.
+
+A run that is one question and a long tool loop has no user message to cut at, so there the plan
+cuts inside the loop instead: the question is kept whole (the plan's `question`), the calls and
+results after it are folded up to an assistant message, and the request becomes the summary, the
+question, then the rest of the loop — every tool result still after its call. A transcript with a
+user message to cut at is planned as before. `runAgentLoop({ compact: true })` folds such a run on
+its own; a host that numbers messages across steps passes `hooks.offset`, the stored index of the
+run's first message, so the ids `beforeCompact` is told match its own.
 
 ```ts
 beforeStep: async (messages, step) => {
@@ -950,8 +956,8 @@ leading `system` messages, and reads an earlier summary back out of a `SUMMARY_L
 them. A host whose system prompt is a separate argument and whose summary is a column has neither
 in the array, and knows both exactly. Given them, nothing is scanned.
 
-`applyCompaction(messages, fold)` is the way back — the summary as a `system` message, then
-everything from `through` — and it writes the same `SUMMARY_LEAD` `planCompaction` looks for, so
+`applyCompaction(messages, fold)` is the way back — the summary as a `system` message, then the
+fold's `question` if it was made inside one, then everything from `through` — and it writes the same `SUMMARY_LEAD` `planCompaction` looks for, so
 the next fold continues those notes rather than summarising them a second time. No fold yet hands
 back the messages themselves.
 

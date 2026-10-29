@@ -472,6 +472,45 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'compacted 2 messages into a summary' });
   });
 
+  it("folds a single question's tool loop, keeping the question, and numbers it from the offset", async () => {
+    const step = (id: string): Message[] => [
+      {
+        role: Role.Assistant,
+        content: `reading ${id}`,
+        tool_calls: [{ id, type: 'function', function: { name: 's__read', arguments: '{}' } }],
+      },
+      { role: Role.Tool, tool_call_id: id, content: 'line '.repeat(150) },
+    ];
+    const question: Message = { role: Role.User, content: 'summarise the repo' };
+    const loop: Message[] = [question, ...['a', 'b', 'c', 'd', 'e'].flatMap(step)];
+    const run = vi.fn(async () => []);
+    const events: RunEventInput[] = [];
+    create.mockResolvedValueOnce(answer('read a to d')).mockResolvedValueOnce(says('done'));
+    await runAgentLoop({
+      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      messages: loop,
+      tools: [tool('s__read')],
+      dispatch: async () => 'done',
+      compact: true,
+      hooks: { run, context: { session: { id: 's' } }, offset: 40 },
+      onEvent: (event) => events.push(event),
+    });
+    const sent = body(1).messages as Message[];
+    expect(sent.slice(0, 2)).toEqual([{ role: Role.System, content: `${SUMMARY_LEAD}read a to d` }, question]);
+    expect(sent[2].role).toBe(Role.Assistant);
+    expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'compacted 8 messages into a summary' });
+    const compacting = (run.mock.calls as unknown[][]).find((args) => args[0] === 'beforeCompact')?.[1] as {
+      compacting: { text: string; uuid: string }[];
+    };
+    expect(compacting.compacting.map((message) => message.text)).toEqual([
+      'reading a',
+      'reading b',
+      'reading c',
+      'reading d',
+    ]);
+    expect(compacting.compacting[0].uuid).toMatch(/^s:41:/);
+  });
+
   it('does not fold without the task, however full the window', async () => {
     create.mockResolvedValue(says('hello'));
     await runAgentLoop({

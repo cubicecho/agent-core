@@ -150,6 +150,14 @@ export interface AgentLoopHooks {
   preface?: string;
   /** Hears each note, from before the request and from `afterTurn`. */
   onNote?: OnNote;
+  /**
+   * What the run's first message is numbered as in the uuids hooks are told — the host's stored
+   * index of `messages[0]`, for a host that numbers messages across steps or runs. Read for
+   * `beforeCompact`'s `compacting` and `afterTurn`'s `turn`. See `turnMessages`.
+   *
+   * @defaultValue `0`
+   */
+  offset?: number;
 }
 
 /** How full the window is as a step is about to be sent, as `beforeStep` is told it. */
@@ -719,10 +727,10 @@ async function foldBeforeStep(
     return transcript;
   }
   const folded = await compactTranscript(transcript, plan, summarise, {
-    ...(hooks ? { hooks: { run: hooks.run, context: hooks.context, onNote: hooks.onNote } } : {}),
+    ...(hooks ? { hooks: { run: hooks.run, context: hooks.context, onNote: hooks.onNote, offset: hooks.offset } } : {}),
   });
   if (folded !== transcript) {
-    notice(`compacted ${plan.cut - plan.from} messages into a summary`);
+    notice(`compacted ${plan.toSummarise.length} messages into a summary`);
   }
   return folded;
 }
@@ -754,7 +762,7 @@ const tellAfterTurn = (
         ? {
             turn: {
               index: turnIndex(messages, at),
-              messages: turnMessages(hooks.context.session.id, messages, at),
+              messages: turnMessages(hooks.context.session.id, messages, at, undefined, { offset: hooks.offset }),
             },
           }
         : {}),
