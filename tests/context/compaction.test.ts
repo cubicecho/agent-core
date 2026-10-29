@@ -489,3 +489,130 @@ describe('a stored fold', () => {
     expect(requestIndex(6, record, 1)).toBe(2);
   });
 });
+
+describe('a fold inside one question', () => {
+  /**
+   * An assistant message that calls a tool, saying what it is doing.
+   *
+   * @param id - The call's id, which its result answers.
+   * @returns The message.
+   */
+  const call = (id: string): Message => ({
+    role: Role.Assistant,
+    content: `reading ${id}`,
+    tool_calls: [{ id, type: FUNCTION_TOOL, function: { name: 'read', arguments: '{}' } }],
+  });
+  /**
+   * The tool result answering `call(id)`.
+   *
+   * @param id - The call's id.
+   * @returns The message.
+   */
+  const answer = (id: string): Message => ({ role: Role.Tool, tool_call_id: id, content: `contents of ${id}` });
+  /** The steps of a tool loop, a call and its result each. */
+  const steps = (count: number, first = 0) =>
+    Array.from({ length: count }, (_, at) => [call(`c${at + first}`), answer(`c${at + first}`)]).flat();
+  const prompt: Message = { role: Role.System, content: 'prompt' };
+  /** System, one question, then four steps: ten messages of ten each on a window of 100. */
+  const loop: Message[] = [prompt, user('task'), ...steps(4)];
+
+  it('keeps the question and cuts at a call once there is no user message to cut at', () => {
+    // The tail may fill 35: three messages, moved forward onto the call at eight.
+    const plan = planCompaction(loop, { limit: 100, estimate });
+    expect(plan).toMatchObject({ from: 1, cut: 8, question: 1 });
+    expect(plan?.toSummarise).toEqual(loop.slice(2, 8));
+  });
+
+  it('folds the least that reaches a target, the question not counted as folded', () => {
+    // At the call at eight: 100, less the six step messages before it (the question is kept, so
+    // not counted), plus 10 for the summary, is 50. The call at six leaves 70, over the 60.
+    const plan = planCompaction(loop, { limit: 100, estimate, summaryTokens: 10, target: 0.6 });
+    expect(plan).toMatchObject({ cut: 8, question: 1, after: 50 });
+  });
+
+  it('plans as before wherever a user message can be cut at', () => {
+    const twoQuestions = [prompt, user('first'), ...steps(2), user('second'), ...steps(2, 2)];
+    // A tail of 60 reaches back past the second question, so the cut moves onto it.
+    const plan = planCompaction(twoQuestions, { limit: 100, estimate, keepRatio: 0.6 });
+    expect(plan).toMatchObject({ from: 1, cut: 6 });
+    expect(plan).not.toHaveProperty('question');
+  });
+
+  it('plans nothing for a loop too short to fold, or a transcript with no question', () => {
+    expect(planCompaction([user('task'), call('c0'), answer('c0')], { limit: 10, estimate })).toBeUndefined();
+    expect(planCompaction(steps(5), { limit: 100, estimate })).toBeUndefined();
+  });
+
+  it('sends the question after the summary, and the next fold continues the notes', async () => {
+    const plan = planCompaction(loop, { limit: 100, estimate });
+    if (!plan) {
+      throw new Error('expected a plan');
+    }
+    const folded = await compactTranscript(loop, plan, async () => 'read c0 to c2');
+    expect(folded).toEqual([
+      prompt,
+      { role: Role.System, content: `${SUMMARY_LEAD}read c0 to c2` },
+      user('task'),
+      ...loop.slice(8),
+    ]);
+
+    // Five more steps later the window is full again, and the only user message is the question.
+    const grown = [...folded, ...steps(5, 4)];
+    const again = planCompaction(grown, { limit: 100, used: 100, estimate });
+    expect(again).toMatchObject({ from: 2, question: 2, previous: 'read c0 to c2' });
+    expect(again?.toSummarise).not.toContain(grown[2]);
+    expect(grown[again?.cut ?? 0].role).toBe(Role.Assistant);
+  });
+
+  it('tells the hooks what is folded, the question left out, numbered from the offset', async () => {
+    const plan = planCompaction(loop, { limit: 100, estimate });
+    if (!plan) {
+      throw new Error('expected a plan');
+    }
+    const run = vi.fn<HookRunner>(async () => []);
+    await runCompaction(loop, plan, async () => 'notes', {
+      hooks: { run, context: { session: { id: 's' } }, offset: 20 },
+    });
+    const told = run.mock.calls[0][1];
+    expect(told.range).toEqual({ from: 1, through: 8 });
+    expect(told.compacting?.map((message) => message.text)).toEqual(['reading c0', 'reading c1', 'reading c2']);
+    expect(told.compacting?.[0].uuid).toMatch(/^s:22:/);
+  });
+
+  describe('stored rather than applied', () => {
+    /** A host with its system prompt kept apart: the question at zero, then five steps. */
+    const stored: Message[] = [user('task'), ...steps(5)];
+    const window = { limit: 100, used: 100, estimate };
+
+    it('records the question, and rebuilds the request with it after the summary', async () => {
+      const plan = planCompaction(stored, { ...window, from: 0 });
+      expect(plan).toMatchObject({ from: 0, cut: 9, question: 0 });
+      if (!plan) {
+        throw new Error('expected a plan');
+      }
+      const record = await runCompaction(stored, plan, async () => 'notes');
+      expect(record).toMatchObject({ through: 9, question: 0 });
+      expect(applyCompaction(stored, record)).toEqual([
+        { role: Role.System, content: `${SUMMARY_LEAD}notes` },
+        user('task'),
+        ...stored.slice(9),
+      ]);
+    });
+
+    it('folds again from where the last fold ended, keeping the same question', () => {
+      const grown = [...stored, ...steps(4, 5)];
+      const plan = planCompaction(grown, { ...window, from: 9, previous: 'notes' });
+      expect(plan).toMatchObject({ from: 9, question: 0, previous: 'notes' });
+      expect(plan?.toSummarise).toEqual(grown.slice(9, plan?.cut));
+    });
+
+    it('maps a stored index onto the request, the question right after the summary', () => {
+      const record = { through: 9, question: 0 };
+      expect(requestIndex(0, record)).toBe(1);
+      expect(requestIndex(9, record)).toBe(2);
+      expect(requestIndex(10, record)).toBe(3);
+      expect(requestIndex(4, record)).toBe(0);
+      expect(requestIndex(1, { through: 9, question: 1 }, 1)).toBe(2);
+    });
+  });
+});

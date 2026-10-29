@@ -252,9 +252,17 @@ export interface CompactionOptions {
 export interface CompactionPlan {
   /** The first message folded away. Everything before it is a system prompt and stays. */
   from: number;
-  /** The first message kept whole, always a user message. */
+  /**
+   * The first message kept whole: a user message, or an assistant message on a fold made inside
+   * one question's tool loop (see `question`).
+   */
   cut: number;
-  /** The messages from `from` to `cut`, the ones the summary replaces. */
+  /**
+   * The user message kept whole between the summary and `cut`, on a fold made inside its tool
+   * loop. Absent on a fold that cuts at a user message.
+   */
+  question?: number;
+  /** The messages from `from` to `cut`, `question` left out: the ones the summary replaces. */
   toSummarise: Message[];
   /** The summary an earlier compaction left, which this one continues. */
   previous?: string;
@@ -276,6 +284,83 @@ export interface CompactionPlan {
  */
 const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most);
 
+/** What `findCut` weighs a transcript by, which `planCompaction` has already worked out. */
+interface CutSearch {
+  /** The first message that may be folded. */
+  from: number;
+  /** What the transcript costs now. */
+  cost: number;
+  /** The window, in tokens. */
+  limit: number;
+  /** The share of `limit` the kept tail may fill, where there is no `target`. */
+  keepRatio: number;
+  /** The share of `limit` the whole request should come down to. */
+  target?: number;
+  /** What the summary is assumed to cost. */
+  summaryTokens: number;
+  /** One message's tokens. */
+  estimate: (message: Message) => number;
+  /** Whether the kept tail may start at this index. */
+  isCut: (at: number) => boolean;
+  /** An index that is kept rather than folded, wherever the cut lands: the question. */
+  kept?: number;
+}
+
+/**
+ * Where to cut, by `target` when there is one and by `keepRatio` otherwise, among the indexes
+ * `isCut` allows.
+ *
+ * @param messages - The transcript. Not written to.
+ * @param search - The weights, the bounds and which indexes are legal cuts. See `CutSearch`.
+ * @returns `cut`, the length of `messages` when no legal cut was found, and on a plan made to a
+ * `target` the cost it leaves as `after`.
+ */
+const findCut = (
+  messages: Message[],
+  { from, cost, limit, keepRatio, target, summaryTokens, estimate, isCut, kept }: CutSearch,
+): { cut: number; after?: number } => {
+  let cut = messages.length;
+  let after: number | undefined;
+  if (target !== undefined && target > 0) {
+    // Forward from the head, so the first cut that reaches the target is the one that folds least.
+    let folded = 0;
+    for (let at = from; at < messages.length; at++) {
+      if (isCut(at)) {
+        cut = at;
+        after = cost - folded + summaryTokens;
+        if (after <= limit * target) {
+          break;
+        }
+      }
+      if (at !== kept) {
+        folded += estimate(messages[at]);
+      }
+    }
+    return { cut, after };
+  }
+  const budget = limit * keepRatio;
+  let tail = 0;
+  for (let at = messages.length - 1; at > from; at--) {
+    tail += estimate(messages[at]);
+    if (tail > budget) {
+      break;
+    }
+    cut = at;
+  }
+  while (cut < messages.length && isCut(cut) === false) {
+    cut++;
+  }
+  return { cut };
+};
+
+/**
+ * The index of the last user message in a transcript.
+ *
+ * @param messages - The transcript.
+ * @returns The index, or `-1` when there is none.
+ */
+const lastUser = (messages: Message[]): number => messages.findLastIndex((message) => message.role === Role.User);
+
 /**
  * Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
  *
@@ -292,6 +377,13 @@ const clamp = (index: number, most: number) => Math.min(Math.max(index, 0), most
  * the head are never folded, and a summary an earlier compaction left there is continued rather
  * than summarised as if it were conversation. No plan comes back when the window is not full
  * enough, or when the only legal cut folds too little to pay for the summary.
+ *
+ * A transcript that is one question and a long tool loop has no user message to cut at, so where
+ * no user cut folds anything the plan cuts inside the last question's loop instead: the question
+ * is kept whole as `question`, the assistant and tool messages after it are folded up to an
+ * assistant message, and the tail resumes there — every tool result in it still follows its call.
+ * `applyCompaction` sends the question after the summary. A transcript with a user cut is planned
+ * exactly as it was.
  *
  * Both of those are recovered by reading the transcript, which is what a host whose array holds
  * everything it sends has to do. A host that keeps its fold as a record beside an append-only
@@ -334,47 +426,62 @@ export function planCompaction(
   const from = clamp(givenFrom ?? head.from, messages.length);
   const previous = givenPrevious ?? head.previous;
 
-  let cut = messages.length;
-  let after: number | undefined;
-  if (target !== undefined && target > 0) {
-    // Forward from the head, so the first cut that reaches the target is the one that folds least.
-    let folded = 0;
-    for (let at = from; at < messages.length; at++) {
-      if (messages[at].role === Role.User) {
-        cut = at;
-        after = cost - folded + summaryTokens;
-        if (after <= limit * target) {
-          break;
-        }
-      }
-      folded += estimate(messages[at]);
-    }
-  } else {
-    const budget = limit * keepRatio;
-    let kept = 0;
-    for (let at = messages.length - 1; at > from; at--) {
-      kept += estimate(messages[at]);
-      if (kept > budget) {
-        break;
-      }
-      cut = at;
-    }
-    while (cut < messages.length && messages[cut].role !== Role.User) {
-      cut++;
-    }
+  const search = { from, cost, limit, keepRatio, target, summaryTokens, estimate };
+  const atUser = findCut(messages, { ...search, isCut: (at) => messages[at].role === Role.User });
+  const foldsAtUser = atUser.cut < messages.length && atUser.cut - from >= FEWEST_FOLDED;
+  if (foldsAtUser) {
+    return planFor(messages, from, atUser.cut, previous, atUser.after);
   }
-
-  if (cut >= messages.length || cut - from < FEWEST_FOLDED) {
+  // A cut that folds too little but already reaches the target means there is nothing to fold.
+  const reachesTarget = target !== undefined && atUser.after !== undefined && atUser.after <= limit * target;
+  if (reachesTarget) {
     return undefined;
   }
-  return {
-    from,
-    cut,
-    toSummarise: messages.slice(from, cut),
-    ...(previous ? { previous } : {}),
-    ...(after === undefined ? {} : { after: Math.round(after) }),
-  };
+
+  // No user message to cut at: fold inside the last question's tool loop, keeping the question.
+  const question = lastUser(messages);
+  if (question < 0) {
+    return undefined;
+  }
+  const inLoop = findCut(messages, {
+    ...search,
+    isCut: (at) => at > question && messages[at].role === Role.Assistant,
+    kept: question,
+  });
+  if (inLoop.cut >= messages.length) {
+    return undefined;
+  }
+  const folded = planFor(messages, from, inLoop.cut, previous, inLoop.after, question);
+  return folded.toSummarise.length >= FEWEST_FOLDED ? folded : undefined;
 }
+
+/**
+ * A plan for a cut `planCompaction` has chosen.
+ *
+ * @param messages - The transcript. Not written to.
+ * @param from - The first message folded.
+ * @param cut - The first message kept whole.
+ * @param [previous] - The summary this one continues.
+ * @param [after] - What the request is expected to cost once folded, on a plan made to a target.
+ * @param [question] - The user message kept whole ahead of `cut`, on a fold inside its tool loop.
+ * Left out of `toSummarise` where it lies between `from` and `cut`.
+ * @returns The plan, `toSummarise` a new array of the same message objects.
+ */
+const planFor = (
+  messages: Message[],
+  from: number,
+  cut: number,
+  previous?: string,
+  after?: number,
+  question?: number,
+): CompactionPlan => ({
+  from,
+  cut,
+  ...(question === undefined ? {} : { question }),
+  toSummarise: messages.slice(from, cut).filter((_, at) => at + from !== question),
+  ...(previous ? { previous } : {}),
+  ...(after === undefined ? {} : { after: Math.round(after) }),
+});
 
 /**
  * What the summariser is handed for a plan: the earlier summary if there was one, then each
@@ -430,6 +537,11 @@ export interface CompactionRecord {
   summary: string;
   /** Index into the transcript the plan was made for: the first message still sent whole. */
   through: number;
+  /**
+   * The user message sent whole after the summary and ahead of `through`, on a fold made inside
+   * that question's tool loop. Absent on a fold that cut at a user message.
+   */
+  question?: number;
   /** ISO 8601, so the chat can show where history was folded and how stale the notes are. */
   at: string;
 }
@@ -438,7 +550,8 @@ export interface CompactionRecord {
 export interface CompactionRunOptions {
   /**
    * Hooks to tell. `context` is extended with `compacting` and `range`, whose indexes are the
-   * plan's — and so the host's own, for a plan made over a stored transcript. `honourVeto` waits
+   * plan's — and so the host's own, for a plan made over a stored transcript. `compacting` leaves
+   * out a `question` the fold keeps. `honourVeto` waits
    * for the hooks and lets one stop the compaction; without it they add no latency.
    */
   hooks?: {
@@ -446,6 +559,14 @@ export interface CompactionRunOptions {
     context: HookContext;
     onNote?: OnNote;
     honourVeto?: boolean;
+    /**
+     * What the transcript's first message is numbered as in the `compacting` uuids: the host's
+     * stored index of `messages[0]`, for a host that numbers messages across steps or requests.
+     * See `turnMessages`.
+     *
+     * @defaultValue `0`
+     */
+    offset?: number;
   };
   /**
    * The window is already exceeded — the caller caught a `ContextOverflow`, or is compacting to
@@ -453,6 +574,23 @@ export interface CompactionRunOptions {
    */
   forced?: boolean;
 }
+
+/**
+ * What `beforeCompact` hooks are told is going: the plan's stretch as `turnMessages` reads it,
+ * less the question the fold keeps.
+ *
+ * @param sessionId - Prefixes every uuid.
+ * @param messages - The transcript the plan was made for.
+ * @param plan - What `planCompaction` returned for it.
+ * @param [offset] - What `messages[0]` is numbered as in the uuids.
+ * @returns The user and assistant text from `plan.from` to `plan.cut`, `plan.question` left out.
+ */
+const foldedMessages = (sessionId: string, messages: Message[], plan: CompactionPlan, offset = 0) => {
+  const { from, cut, question } = plan;
+  const read = (start: number, end: number) => turnMessages(sessionId, messages, start, end, { offset });
+  const splitsAtQuestion = question !== undefined && question >= from && question < cut;
+  return splitsAtQuestion ? [...read(from, question), ...read(question + 1, cut)] : read(from, cut);
+};
 
 /**
  * The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
@@ -478,7 +616,7 @@ export async function runCompaction(
 ): Promise<CompactionRecord | undefined> {
   const context: HookContext | undefined = hooks && {
     ...hooks.context,
-    compacting: turnMessages(hooks.context.session.id, messages, plan.from, plan.cut),
+    compacting: foldedMessages(hooks.context.session.id, messages, plan, hooks.offset),
     range: { from: plan.from, through: plan.cut },
   };
   let summary: string;
@@ -497,7 +635,12 @@ export async function runCompaction(
   if (!summary.trim()) {
     return undefined;
   }
-  return { summary: summary.trim(), through: plan.cut, at: new Date().toISOString() };
+  return {
+    summary: summary.trim(),
+    through: plan.cut,
+    ...(plan.question === undefined ? {} : { question: plan.question }),
+    at: new Date().toISOString(),
+  };
 }
 
 /**
@@ -511,7 +654,8 @@ export async function runCompaction(
  * Absent, the leading `system` messages are found by scanning, and zero of them is the ordinary
  * case for a host whose system prompt is a separate argument.
  * @returns `messages` itself when there is no record or its summary is blank, otherwise a new
- * array: the kept head, one summary message, then everything from the record's `through` on.
+ * array: the kept head, one summary message, the record's `question` when it has one and the head
+ * does not already hold it, then everything from the record's `through` on.
  *
  * @remarks
  * The inverse of storing a `CompactionRecord`, and the shape `planCompaction` expects to meet
@@ -521,19 +665,31 @@ export async function runCompaction(
  */
 export function applyCompaction(
   messages: Message[],
-  record?: Pick<CompactionRecord, 'summary' | 'through'>,
+  record?: Pick<CompactionRecord, 'summary' | 'through' | 'question'>,
   { from }: { from?: number } = {},
 ): Message[] {
   if (!record?.summary.trim()) {
     return messages;
   }
   const head = clamp(from ?? systemHead(messages).from, record.through);
+  const question = keptQuestion(record, head);
   return [
     ...messages.slice(0, head).filter((message) => !isSummary(message)),
     summaryMessage(record.summary),
+    ...(question === undefined ? [] : [messages[question]]),
     ...messages.slice(record.through),
   ];
 }
+
+/**
+ * The question a fold sends after its summary, unless the kept head already holds it.
+ *
+ * @param record - The fold.
+ * @param head - How many messages are kept ahead of the summary.
+ * @returns `record.question` where it lies from `head` up to `through`, otherwise `undefined`.
+ */
+const keptQuestion = ({ question, through }: Pick<CompactionRecord, 'through' | 'question'>, head: number) =>
+  question !== undefined && question >= head && question < through ? question : undefined;
 
 /**
  * Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted
@@ -546,7 +702,8 @@ export function applyCompaction(
  * prompts, when the host keeps them in the array. Zero is the stored-fold case,
  * where the summary is the request's first message.
  * @returns The index in the request. One before the record's `through` gives `head`, where the
- * summary sits — an index among the kept head messages themselves included.
+ * summary sits — an index among the kept head messages themselves included — except the record's
+ * `question`, which is sent whole right after the summary.
  *
  * @remarks
  * A transcript that stays append-only and a request that does not are two numberings of the same
@@ -554,11 +711,20 @@ export function applyCompaction(
  * hook — has to say which it is in. An index inside the folded stretch answers with the summary
  * message that now stands for it.
  */
-export const requestIndex = (index: number, record?: Pick<CompactionRecord, 'through'>, head = 0): number => {
+export const requestIndex = (
+  index: number,
+  record?: Pick<CompactionRecord, 'through' | 'question'>,
+  head = 0,
+): number => {
   if (!record) {
     return index;
   }
-  return index < record.through ? head : index - record.through + head + 1;
+  const question = keptQuestion(record, head);
+  if (index === question) {
+    return head + 1;
+  }
+  const afterSummary = question === undefined ? 1 : 2;
+  return index < record.through ? head : index - record.through + head + afterSummary;
 };
 
 /**
