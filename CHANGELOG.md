@@ -1,3 +1,10 @@
+# [4.8.0](https://github.com/cubicecho/agent-core/compare/v4.7.0...v4.8.0) (2026-11-10)
+
+
+### Features
+
+* **tools:** put the servers' instructions in the system prompt ([21d761e](https://github.com/cubicecho/agent-core/commit/21d761ebe025c95c7c215e2228046b19213ad319)), closes [#167](https://github.com/cubicecho/agent-core/issues/167)
+
 # [4.7.0](https://github.com/cubicecho/agent-core/compare/v4.6.0...v4.7.0) (2026-11-10)
 
 
