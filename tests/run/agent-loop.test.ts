@@ -590,6 +590,206 @@ describe('runAgentLoop', () => {
     expect(dispatched).toEqual(['send', 'send', 'read']);
   });
 
+  describe('parallel as a predicate', () => {
+    /** Reads are the calls named `read`. */
+    const reads = (call: ToolCallRequest) => call.name === 'read';
+    /** A dispatcher that logs each call's start and end, and holds every call for a tick. */
+    const logged = () => {
+      const log: string[] = [];
+      const dispatch = vi.fn(async ({ name, args }: ToolCallRequest) => {
+        log.push(`start ${name} ${args.n}`);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        log.push(`end ${name} ${args.n}`);
+        return `${name} ${args.n}`;
+      });
+      return { log, dispatch };
+    };
+
+    it('runs consecutive reads together and each write alone, in the order asked', async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            ['read', '{"n":1}'],
+            ['read', '{"n":2}'],
+            ['write', '{"n":3}'],
+            ['read', '{"n":4}'],
+            ['read', '{"n":5}'],
+          ),
+        )
+        .mockReturnValueOnce(says('done'));
+      const { log, dispatch } = logged();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read'), tool('write')],
+        dispatch,
+        parallel: reads,
+      });
+      expect(log).toEqual([
+        'start read 1',
+        'start read 2',
+        'end read 1',
+        'end read 2',
+        'start write 3',
+        'end write 3',
+        'start read 4',
+        'start read 5',
+        'end read 4',
+        'end read 5',
+      ]);
+      const answers = result.messages.filter((m) => m.role === Role.Tool).map((m) => [m.tool_call_id, m.content]);
+      expect(answers).toEqual([
+        ['c0', 'read 1'],
+        ['c1', 'read 2'],
+        ['c2', 'write 3'],
+        ['c3', 'read 4'],
+        ['c4', 'read 5'],
+      ]);
+      expect(result.toolCalls.map((c) => c.id)).toEqual(['c0', 'c1', 'c2', 'c3', 'c4']);
+    });
+
+    it('a read after a write sees the write', async () => {
+      create.mockReturnValueOnce(calls(['write', '{"n":1}'], ['read', '{"n":2}'])).mockReturnValueOnce(says('done'));
+      let stored = 'before';
+      const dispatch = async ({ name }: ToolCallRequest) => {
+        if (name === 'write') {
+          // Slower than the read, so a read run beside it would see the old value.
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          stored = 'after';
+          return 'written';
+        }
+        return stored;
+      };
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read'), tool('write')],
+        dispatch,
+        parallel: reads,
+      });
+      expect(result.messages.at(-2)).toMatchObject({ role: Role.Tool, tool_call_id: 'c1', content: 'after' });
+    });
+
+    it('lands results out of order inside a batch, and the transcript in the order asked', async () => {
+      create.mockReturnValueOnce(calls(['read', '{"n":1}'], ['read', '{"n":2}'])).mockReturnValueOnce(says('done'));
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const landed: string[] = [];
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read')],
+        parallel: reads,
+        dispatch: async ({ args }) => {
+          if (args.n === 1) {
+            await held;
+          } else {
+            release();
+          }
+          return `answer ${args.n}`;
+        },
+        onToolResult: ({ id }) => landed.push(id),
+      });
+      expect(landed).toEqual(['c1', 'c0']);
+      const answers = result.messages.filter((m) => m.role === Role.Tool).map((m) => m.tool_call_id);
+      expect(answers).toEqual(['c0', 'c1']);
+    });
+
+    it('puts to the predicate only the calls that would reach dispatch', async () => {
+      create
+        .mockReturnValueOnce(
+          calls(
+            ['read', '{"n":1}'],
+            ['broken', '{"n":'],
+            ['read', '{"n":1}'],
+            ['write', '{"n":2}'],
+            ['write', '{"n":2}'],
+          ),
+        )
+        .mockReturnValueOnce(says('done'));
+      const asked: string[] = [];
+      const { log, dispatch } = logged();
+      await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read'), tool('write'), tool('broken')],
+        dispatch,
+        // The second write is a repeat answered from the first, so it is not a write at all.
+        dedupeToolCalls: true,
+        parallel: (call) => {
+          asked.push(call.id);
+          return reads(call);
+        },
+      });
+      // Not the unreadable call, the repeated read, nor the repeated write.
+      expect(asked).toEqual(['c0', 'c3']);
+      expect(log).toEqual(['start read 1', 'end read 1', 'start write 2', 'end write 2']);
+    });
+
+    it('counts a load_tools as a read', async () => {
+      create
+        .mockReturnValueOnce(
+          calls(['read', '{"n":1}'], [LOAD_TOOLS, '{"names":["read"]}'], ['read', '{"n":2}'], ['write', '{"n":3}']),
+        )
+        .mockReturnValueOnce(says('done'));
+      const asked: string[] = [];
+      const { log, dispatch } = logged();
+      await runAgentLoop({
+        config: { ...config, toolDiscovery: ToolDiscovery.OnDemand },
+        messages: question,
+        tools: [tool('read'), tool('write')],
+        catalog: [
+          {
+            id: 's',
+            label: 's',
+            tools: [
+              { name: 'read', description: 'reads' },
+              { name: 'write', description: 'writes' },
+            ],
+          },
+        ],
+        dispatch,
+        parallel: (call) => {
+          asked.push(call.name);
+          return reads(call);
+        },
+      });
+      expect(asked).toEqual(['read', 'read', 'write']);
+      expect(log.slice(0, 4)).toEqual(['start read 1', 'start read 2', 'end read 1', 'end read 2']);
+    });
+
+    it('answers every call of the step when a write is stopped part-way', async () => {
+      create.mockReturnValueOnce(calls(['read', '{"n":1}'], ['write', '{"n":2}'], ['read', '{"n":3}']));
+      const controller = new AbortController();
+      const dispatch = vi.fn(async ({ name }: ToolCallRequest, signal?: AbortSignal) => {
+        if (name === 'write') {
+          controller.abort();
+          signal?.throwIfAborted();
+        }
+        return 'ok';
+      });
+      const error = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read'), tool('write')],
+        dispatch,
+        parallel: reads,
+        signal: controller.signal,
+      }).catch((caught: unknown) => caught);
+      expect(dispatch).toHaveBeenCalledTimes(2);
+      const answers = (failedRun(error)?.messages ?? [])
+        .filter((m) => m.role === Role.Tool)
+        .map((m) => [m.tool_call_id, m.content]);
+      expect(answers).toEqual([
+        ['c0', 'ok'],
+        ['c1', 'Stopped before this call finished.'],
+        ['c2', 'Not run: the run stopped first.'],
+      ]);
+    });
+  });
+
   describe('artifacts', () => {
     /** A link to this uri, named after it. */
     const link = (uri: string, title?: string) => ({ uri, name: uri, ...(title ? { title } : {}) });

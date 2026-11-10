@@ -166,7 +166,8 @@ export interface Calling {
   artifacts: Map<string, RunArtifact>;
   dedupable: (call: ToolCallRequest) => boolean;
   dispatch: ToolDispatch;
-  parallel: boolean;
+  /** All of a step's calls together, each alone, or together in runs of the calls it passes. */
+  parallel: boolean | ((call: ToolCallRequest) => boolean);
   signal: AbortSignal | undefined;
   onEvent: (input: RunEventInput) => void;
   onToolCall: ((call: ToolCallRequest) => void) | undefined;
@@ -276,31 +277,38 @@ function collect(run: Calling, links: ResourceLink[], from: Omit<RunArtifact, 'l
   }
 }
 
+/** One call made ready to run: what a host is told of it, and what `dispatch` would be handed. */
+interface Prepared {
+  entry: ReadCall;
+  request: ToolCallRequest;
+  /** Whether the call is a `load_tools` the loop answers itself. */
+  load: boolean;
+  /** Why a `call_tool` was refused before it was dispatched, which is then its answer. */
+  refused?: { error: unknown };
+  /** Whether an identical repeat of it is answered from the first, as `dedupeToolCalls` said. */
+  dedupable: boolean;
+  /** What makes two calls of a step the same one. */
+  key: string;
+  /** Whether it may run beside other calls, once decided: a barrier ends one batch and opens the next. */
+  passed?: boolean;
+}
+
 /**
- * Runs one call to its result, telling the host of both. A tool that throws is that call's answer
- * rather than the run's end, unless the run was stopped.
+ * A call looked through and built into the request every host callback is handed.
  *
- * @param run - The run the call belongs to.
+ * @param run - The run the call belongs to. Read, never written to.
  * @param entry - The call, with its arguments read.
- * @param answered - The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
- * @param step - Which step this is, for the artifacts the call's links become.
- * @returns The call's id, the name it was shown under, whether it worked, the whole of what the
- * model reads, and the links its answer carried, where it carried any. Rejects where the run was
- * stopped or a host callback threw.
+ * @returns The call, its request, and whether the loop answers it itself or may answer it from
+ * an identical call. `dedupeToolCalls` is asked only of a call that would reach `dispatch`.
  */
-async function runCall(
-  run: Calling,
-  entry: ReadCall,
-  answered: Map<string, Promise<string | ToolAnswer>>,
-  step: number,
-): Promise<ToolCallResult> {
-  const { catalog, onDemand, proxied, signal } = run;
-  const { call, args, error: unreadable, normal } = entry;
+function prepare(run: Calling, entry: ReadCall): Prepared {
+  const { catalog, onDemand } = run;
+  const { call, args, normal } = entry;
   const proxy = run.proxies && call.function.name === CALL_TOOL;
   const { name, input: raw } = shownAs(run, entry);
   // Looked through before the call is announced, so a host is told of the tool it names with
   // that tool's arguments. A name outside the catalogue is refused here, so `call_tool` reaches
-  // nothing a load could not, and the refusal is the call's answer below.
+  // nothing a load could not, and the refusal is the call's answer.
   let inner = args ?? {};
   let refused: { error: unknown } | undefined;
   if (proxy && args) {
@@ -314,6 +322,97 @@ async function runCall(
   // Built for every call rather than only the dispatched ones, so a host hears of the calls
   // the loop answers itself in the same shape. Arguments that could not be read are none.
   const request: ToolCallRequest = { id: call.id, name, args: inner, raw };
+  // By the name the model called, not the one a `call_tool` wraps: `load_tools` is not in
+  // the catalogue, and one reached through `call_tool` is refused like any other.
+  const load = onDemand && call.function.name === LOAD_TOOLS;
+  const dispatched = args !== undefined && load === false && refused === undefined;
+  // Keyed on the inner call, so one made through `call_tool` and one made natively share.
+  const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
+  return { entry, request, load, refused, dedupable: dispatched && run.dedupable(request), key };
+}
+
+/**
+ * Whether a call is answered without `dispatch` seeing it, so it can run beside anything.
+ *
+ * @param prepared - The call.
+ * @param answered - The step's calls already made, by key. A call that threw is not in it.
+ * @param batch - The keys of the calls in the batch being gathered, which a repeat shares.
+ * @returns True for a `load_tools`, a call whose arguments could not be read, a `call_tool` that
+ * was refused, and an identical repeat that `dedupeToolCalls` answers from the first.
+ */
+const answersItself = (
+  { entry, load, refused, dedupable, key }: Prepared,
+  answered: ReadonlyMap<string, unknown>,
+  batch: ReadonlySet<string>,
+) => entry.args === undefined || load || refused !== undefined || (dedupable && (answered.has(key) || batch.has(key)));
+
+/**
+ * Where the batch of calls starting at `from` ends: every call, one call, or the calls up to the
+ * first one the host's predicate does not pass.
+ *
+ * @param run - The run, read for `parallel`.
+ * @param ready - The step's calls by position, prepared as they are first asked for.
+ * @param from - Where the batch starts.
+ * @param total - How many calls the step has.
+ * @param answered - The step's calls already made, by key.
+ * @returns The position after the batch's last call; always past `from`.
+ *
+ * @remarks
+ * A call the predicate fails is a barrier: it waits for every call before it, and runs alone, so
+ * a read asked for after a write sees what the write did. Calls the loop answers itself are not
+ * put to the predicate — they touch nothing a tool could — and count as reads.
+ */
+function batchEnd(
+  run: Calling,
+  ready: (at: number) => Prepared,
+  from: number,
+  total: number,
+  answered: ReadonlyMap<string, unknown>,
+): number {
+  const { parallel } = run;
+  if (parallel === true) {
+    return total;
+  }
+  if (parallel === false) {
+    return from + 1;
+  }
+  const batch = new Set<string>();
+  for (let at = from; at < total; at++) {
+    const prepared = ready(at);
+    prepared.passed ??= answersItself(prepared, answered, batch) || parallel(prepared.request);
+    const reads = prepared.passed;
+    if (reads === false) {
+      return at === from ? at + 1 : at;
+    }
+    if (prepared.dedupable) {
+      batch.add(prepared.key);
+    }
+  }
+  return total;
+}
+
+/**
+ * Runs one call to its result, telling the host of both. A tool that throws is that call's answer
+ * rather than the run's end, unless the run was stopped.
+ *
+ * @param run - The run the call belongs to.
+ * @param prepared - The call, with its request built.
+ * @param answered - The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
+ * @param step - Which step this is, for the artifacts the call's links become.
+ * @returns The call's id, the name it was shown under, whether it worked, the whole of what the
+ * model reads, and the links its answer carried, where it carried any. Rejects where the run was
+ * stopped or a host callback threw.
+ */
+async function runCall(
+  run: Calling,
+  prepared: Prepared,
+  answered: Map<string, Promise<string | ToolAnswer>>,
+  step: number,
+): Promise<ToolCallResult> {
+  const { catalog, onDemand, proxied, signal } = run;
+  const { entry, request, load, refused, dedupable, key } = prepared;
+  const { call, args, error: unreadable } = entry;
+  const { name, raw } = request;
   run.onEvent({ kind: RunEventKind.ToolCall, id: call.id, name, text: preview(raw) });
   run.onToolCall?.(request);
   let content: string;
@@ -325,9 +424,7 @@ async function runCall(
     if (!args) {
       throw unreadable;
     }
-    // By the name the model called, not the one a `call_tool` wraps: `load_tools` is not in
-    // the catalogue, and one reached through `call_tool` is refused below like any other.
-    if (onDemand && call.function.name === LOAD_TOOLS) {
+    if (load) {
       ({ content, ok } = answerLoad(run, args));
     } else {
       if (refused) {
@@ -340,9 +437,6 @@ async function runCall(
         run.loaded.add(name);
       }
       run.used.add(name);
-      // Keyed on the inner call, so one made through `call_tool` and one made natively share.
-      const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
-      const dedupable = run.dedupable(request);
       // Read before `once` looks, which it does before it awaits anything.
       shared = dedupable && answered.has(key);
       const answer = dedupable
@@ -406,27 +500,31 @@ export async function runCalls(
     kept++;
     await run.announce(result, step);
   };
+  // Prepared when first asked for, so a predicate is put only calls the step got to.
+  const prepared: Prepared[] = [];
+  const ready = (at: number) => {
+    prepared[at] ??= prepare(run, parsed[at]);
+    return prepared[at];
+  };
   try {
-    if (run.parallel) {
+    // One batch of every call, a batch per call, or batches split at the calls the host's
+    // predicate does not pass; a batch's calls run together and the next waits for all of them.
+    let from = 0;
+    while (from < parsed.length) {
       signal?.throwIfAborted();
-      begun = parsed.length;
+      const start = from;
+      const to = batchEnd(run, ready, start, parsed.length, answered);
+      begun = to;
       await Promise.all(
-        parsed.map(async (call, at) => {
-          outcomes[at] = await runCall(run, call, answered, step);
+        parsed.slice(start, to).map(async (_, offset) => {
+          outcomes[start + offset] = await runCall(run, ready(start + offset), answered, step);
         }),
       );
-      for (const { id, name, ok, content } of outcomes.flatMap((outcome) => outcome ?? [])) {
+      for (const { id, name, ok, content } of outcomes.slice(from, to).flatMap((outcome) => outcome ?? [])) {
         toolCalls.push({ id, name, ok });
         await keep(id, content);
       }
-    } else {
-      for (const [at, call] of parsed.entries()) {
-        signal?.throwIfAborted();
-        begun = at + 1;
-        const { id, name, ok, content } = await runCall(run, call, answered, step);
-        toolCalls.push({ id, name, ok });
-        await keep(id, content);
-      }
+      from = to;
     }
   } catch (error) {
     // Only a call that was made counts in `toolCalls`.
