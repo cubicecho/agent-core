@@ -1,3 +1,10 @@
+# [4.6.0](https://github.com/cubicecho/agent-core/compare/v4.5.0...v4.6.0) (2026-11-10)
+
+
+### Features
+
+* **run:** let dispatch return resource links, and collect them as artifacts ([6ed9bdf](https://github.com/cubicecho/agent-core/commit/6ed9bdf4c185013369953dab997cf03bbac96127)), closes [#180](https://github.com/cubicecho/agent-core/issues/180) [#165](https://github.com/cubicecho/agent-core/issues/165)
+
 # [4.5.0](https://github.com/cubicecho/agent-core/compare/v4.4.0...v4.5.0) (2026-10-29)
 
 
