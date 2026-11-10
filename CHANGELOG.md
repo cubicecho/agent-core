@@ -1,3 +1,10 @@
+# [4.7.0](https://github.com/cubicecho/agent-core/compare/v4.6.0...v4.7.0) (2026-11-10)
+
+
+### Features
+
+* **run:** let parallel take a predicate, running reads together ([f670375](https://github.com/cubicecho/agent-core/commit/f6703759c8ae2197ef800db99bd0b489bd6512d6)), closes [#166](https://github.com/cubicecho/agent-core/issues/166)
+
 # [4.6.0](https://github.com/cubicecho/agent-core/compare/v4.5.0...v4.6.0) (2026-11-10)
 
 
