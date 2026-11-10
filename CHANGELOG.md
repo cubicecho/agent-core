@@ -1,3 +1,10 @@
+# [4.9.0](https://github.com/cubicecho/agent-core/compare/v4.8.0...v4.9.0) (2026-11-10)
+
+
+### Features
+
+* **run:** pin each session to a llama.cpp slot ([275c1fd](https://github.com/cubicecho/agent-core/commit/275c1fd40c724242adc90ddb6b42ecf7025e2565)), closes [#168](https://github.com/cubicecho/agent-core/issues/168)
+
 # [4.8.0](https://github.com/cubicecho/agent-core/compare/v4.7.0...v4.8.0) (2026-11-10)
 
 
