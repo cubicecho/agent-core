@@ -601,6 +601,24 @@ describe('runMetrics', () => {
     expect(runMetrics(history('running'))).not.toHaveProperty('outcome');
   });
 
+  it('counts the turns a session run served on no slot of its own, and only where any said', () => {
+    const turn = (pinned?: boolean) => ({
+      kind: RunEventKind.Usage,
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        turn: { prompt: 0, completion: 0, total: 0, cached: 0, finishReason: FinishReason.Stop, pinned },
+      },
+    });
+    emit('pinned', turn(true));
+    emit('pinned', turn(false));
+    emit('pinned', turn(false));
+    expect(runMetrics(history('pinned')).unpinnedTurns).toBe(2);
+    emit('plain', turn());
+    expect(runMetrics(history('plain'))).not.toHaveProperty('unpinnedTurns');
+  });
+
   it('ignores usage a caller emitted without a turn report', () => {
     emit('r', { kind: RunEventKind.Usage, usage: { promptTokens: 10, completionTokens: 1, totalTokens: 11 } });
     expect(runMetrics(history('r'))).toMatchObject({ turns: 0, promptTokens: 0 });

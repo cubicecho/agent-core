@@ -20,6 +20,7 @@ const {
   NO_KEY,
   resetClients,
   resolveApiKey,
+  servedSlots,
 } = await import('../../src/endpoint/client.ts');
 
 /** What a listing endpoint answers with: the OpenAI shape plus whatever window key it uses. */
@@ -400,6 +401,65 @@ describe('contextLimitFor', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
     const { signal } = new AbortController();
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' }, 0, { signal })).resolves.toBe(0);
+  });
+});
+
+describe('servedSlots', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetClients();
+    list.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("reads total_slots off llama.cpp's /props, naming the model", async () => {
+    const fetch = routes({ '/props': { total_slots: 4 } });
+    vi.stubGlobal('fetch', fetch);
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(4);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual(['http://local/props?model=qwen']);
+  });
+
+  it('answers zero for a server without /props, and does not ask it again', async () => {
+    const fetch = routes({});
+    vi.stubGlobal('fetch', fetch);
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers zero for a /props that does not say, as every server but llama.cpp does', async () => {
+    vi.stubGlobal('fetch', routes({ '/props': { default_generation_settings: { n_ctx: 16384 } } }));
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+  });
+
+  it('takes the count from the /props a window lookup already made', async () => {
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    const fetch = routes({ '/props': { default_generation_settings: { n_ctx: 16384 }, total_slots: 2 } });
+    vi.stubGlobal('fetch', fetch);
+    await contextLimitFor({ ...endpoint, model: 'qwen' });
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again once listingMissMs has passed, so a restart with another --parallel is seen', async () => {
+    vi.stubGlobal('fetch', routes({ '/props': { total_slots: 4 } }));
+    await servedSlots({ ...endpoint, model: 'qwen' });
+    vi.stubGlobal('fetch', routes({ '/props': { total_slots: 2 } }));
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(4);
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(2);
+  });
+
+  it('answers zero for an unreachable server, and remembers nothing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    vi.stubGlobal('fetch', routes({ '/props': { total_slots: 4 } }));
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(4);
   });
 });
 

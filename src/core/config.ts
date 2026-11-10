@@ -93,7 +93,7 @@ export interface ModelParams {
    * What a model card asks for and nothing here names: `top_k`, `min_p`, `repeat_penalty` —
    * what actually stops a small model looping — and a server's own fields, such as llama.cpp's
    * `id_slot`, which pins a session to one slot of a `--parallel` server so its KV cache is
-   * still warm on the next turn. A local server ignores a field it does not know; OpenAI refuses
+   * still warm on the next turn — `runAgentLoop`'s `session` picks one itself. A local server ignores a field it does not know; OpenAI refuses
    * one by name, and `negotiate` drops that name for the model and sends the request again.
    * `model`, `messages`, `stream` and `tools` are the loop's and are not overridden from here.
    * Ollama's `options` object is not read on its `/v1` route, so sampling there has to go in as

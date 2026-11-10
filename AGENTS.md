@@ -37,7 +37,7 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 | --- | --- | --- |
 | `core` | what every other folder shares, and no concept of its own | `guards` `platform` `digest` `scope` `config` |
 | `wire` | what is sent, what comes back, and how it fails | `wire` `stream` `thinking` `tool-calls` `tokens` `retry` `errors` |
-| `endpoint` | one server, and what it turned out to support | `client` `capabilities` `calibration` `schema-compat` |
+| `endpoint` | one server, and what it turned out to support | `client` `capabilities` `calibration` `schema-compat` `slots` |
 | `turn` | one request, negotiated and retried | `run-turn` `continuation` `side-task` |
 | `tools` | which tools the model is shown, and what their servers say of them | `catalog` `tool-loading` `preselect` `instructions` |
 | `hooks` | what a host is told, and what it may inject | `hooks` `hook-events` |

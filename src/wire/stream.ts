@@ -120,6 +120,12 @@ export interface TurnUsage {
   /** How many tools the request declared, filled by `runAgentLoop`. */
   toolsDeclared?: number;
   /**
+   * The turn was served on the llama.cpp slot its run holds, filled by `runAgentLoop`. Present only
+   * for a run given a `session` on a server that reports slots: `false` is one that could not be
+   * pinned, every slot being held or the server refusing `id_slot`.
+   */
+  pinned?: boolean;
+  /**
    * The declared tool block's estimated tokens. A chat template renders it ahead of the system
    * prompt, so this is what every change to the tool list costs the cache.
    */
@@ -461,6 +467,11 @@ export interface StreamTurnOptions {
   onThinking?: (delta: string) => void;
   /** The model's answer, as it arrives. */
   onOutput?: (delta: string) => void;
+  /**
+   * Headers sent with the request, beside the client's own — `SESSION_HEADER`, for a router that
+   * keeps a session on one provider. Never refused, so never negotiated.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -495,6 +506,7 @@ export async function streamTurn(
     startInReasoning,
     onThinking,
     onOutput,
+    headers,
   }: StreamTurnOptions = {},
 ): Promise<Turn> {
   // Silence, not duration: the timer is rearmed on every chunk, so a model that is still
@@ -545,6 +557,7 @@ export async function streamTurn(
     const stream = await client.chat.completions.create(body, {
       signal: linked,
       ...(watched ? { timeout: NO_SDK_TIMEOUT } : {}),
+      ...(headers ? { headers } : {}),
     });
     // The field's reasoning here, the fenced kind in the splitter, which can still move text
     // already read as answer into reasoning when a closing tag turns up with no opening one.

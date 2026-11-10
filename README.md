@@ -867,10 +867,23 @@ again without it, with a notice naming it. A nested name is dropped at its top-l
 refused field nobody said was droppable is passed on, since dropping it would change the request
 behind the caller's back.
 
-On a llama.cpp server started with `--parallel`, pin each session to a slot with
-`extraBody: { id_slot: n }`. The slot keeps that session's KV cache warm, which is the difference
-between a cached prefill on every turn and a full one — but only while the prefix stays the same
-from turn to turn; see #63, and the caution on compaction below.
+On a llama.cpp server started with `--parallel`, give `runAgentLoop` a `session` — a run id, a
+conversation id — and the run is pinned to a slot of its own. `servedSlots` reads `total_slots` off
+`/props` (the request `servedWindow` already makes), `slotAllocator` hands each session a free
+slot, the one it last held where that is still free, and every request of the run carries
+`id_slot` and `cache_prompt: true` until the loop returns or throws. The slot keeps that session's
+KV cache warm against every other run on the server, which is the difference between a cached
+prefill on every turn and a full one — but only while the prefix stays the same from turn to turn;
+see #63, and the caution on compaction below.
+
+More sessions than slots run unpinned rather than wait, and so does a second loop under a key
+that holds a slot already. A notice says `pinned to slot 0 of 4`, or that no slot was free, and
+each turn of a session run on a server with slots reports `pinned`, which `runMetrics` counts as `unpinnedTurns`
+beside `cacheHitRatio`. A server that refuses `id_slot` is latched off it like any other
+`extraBody` field, and an `extraBody` that names `id_slot` itself is the host pinning by hand and
+is left alone. On a server without `total_slots` none of this happens. Whatever the server, the
+session also goes out as an `X-Session-Id` header (`SESSION_HEADER`), which llm-router's sticky
+affinity reads first, so a run behind a router keeps both its provider and its slot.
 
 Ollama's `options` object is not read on its OpenAI-compatible `/v1` route, so sampling set there
 does nothing; send the fields at the top level.
@@ -1378,6 +1391,13 @@ case where a configured name never matches anything the server serves (a llama.c
 OpenRouter `:free` suffix, a typo) would otherwise fetch the listing on every call and answer the
 same zero each time. Half a minute later it asks again, so a model pulled onto a box that has been
 up a week is still picked up without a restart.
+
+Which session holds which llama.cpp slot is kept as well, keyed on the base URL and the model but
+not the key: two keys reaching one server under two allocators would hand one slot to two runs,
+which is the collision the allocator is there to stop. It is bounded by the slots the server
+reported, and the slot count itself is asked for again every half minute, so a server restarted
+with another `--parallel` is not sent a slot it no longer has. `resetSlots` clears it, and
+`resetAll` with the rest.
 
 Both numbers are defaults, as is the ten seconds a window lookup is given
 (`lookupTimeoutMs`). `configureClients` moves them for the process, the way `configureEvents`

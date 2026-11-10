@@ -695,6 +695,11 @@ export interface RunMetrics {
   cacheBreakReasons: Partial<Record<CacheBreakReason, number>>;
   /** Turns cut off at `maxTokens` after any continuation. */
   truncatedTurns: number;
+  /**
+   * Turns of a `session` run served on no llama.cpp slot of their own, which `cacheHitRatio` reads
+   * against. Absent where no turn reported `pinned`.
+   */
+  unpinnedTurns?: number;
   /** From the first event to the last, which a still-running run keeps moving. */
   wallMs?: number;
   /** Prefill time summed over the turns. */
@@ -857,6 +862,9 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       }
       if (turn.finishReason === FinishReason.Length) {
         metrics.truncatedTurns++;
+      }
+      if (turn.pinned !== undefined) {
+        add('unpinnedTurns', turn.pinned ? 0 : 1);
       }
       if (turn.wallMs !== undefined) {
         metrics.slowestTurnMs = Math.max(metrics.slowestTurnMs ?? 0, turn.wallMs);
