@@ -316,10 +316,25 @@ export interface AgentLoopOptions {
    */
   dispatch: ToolDispatch;
   /**
-   * Runs a step's calls together rather than one after another. Results still go into the
-   * transcript in the order the model asked. See `dedupeToolCalls`, which applies either way.
+   * Runs a step's calls together rather than one after another, or — given a predicate — runs
+   * together the consecutive calls it passes, and each one it fails alone, in the order asked.
+   *
+   * @defaultValue `false`
+   *
+   * @remarks
+   * Results go into the transcript in the order the model asked, whichever way they ran. See
+   * `dedupeToolCalls`, which applies either way.
+   *
+   * A predicate is how a host runs reads together while its writes keep their order: a call it
+   * fails is a barrier, waiting for every call before it, and every call after waits for it. Read
+   * A, read B, write C, read D, read E runs as `[A ‖ B] → C → [D ‖ E]`, so a read asked for after
+   * a write sees what the write did. Calls the loop answers itself — `load_tools`, a call whose
+   * arguments could not be read, an identical repeat `dedupeToolCalls` answers — are not put to
+   * it, and count as reads. Inside a batch, `onToolResult` and the events arrive as calls finish.
+   * A pool that reads the MCP `readOnlyHint` annotation can answer it; nothing in an OpenAI tool
+   * definition can.
    */
-  parallel?: boolean;
+  parallel?: boolean | ((call: ToolCallRequest) => boolean);
   /**
    * Answers an identical repeat of a call — the same name and the same arguments, word for word —
    * within one step from the first one, rather than dispatching it again.

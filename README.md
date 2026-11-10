@@ -449,7 +449,8 @@ const { turn, messages, usage, loaded } = await runAgentLoop({
 
 Each step is one `runTurn` with the body from `buildBody`, so everything `negotiate` answers is
 answered here too, and a request that is too big throws `ContextOverflow` whichever side found
-out. Between steps the loop runs the calls: sequentially by default, or together with `parallel: true`.
+out. Between steps the loop runs the calls: sequentially by default, together with `parallel: true`, or
+reads together and writes in order with a predicate (below).
 Either way an identical call — the same name and arguments, byte for byte — is made once and its
 answer handed to the repeat, and two still in flight share the request. A call that threw is
 forgotten rather than cached, so asking again is a real retry. What a tool throws is what the model
@@ -460,6 +461,26 @@ may be the file it has since written. `dedupeToolCalls: false` dispatches everyt
 predicate is asked per call — which is how `send_email` opts out, since twice is two emails and
 nothing in an OpenAI tool definition says which tools those are. A pool that reads the MCP
 `readOnlyHint` and `idempotentHint` annotations can answer it; this package cannot.
+
+`parallel` takes a predicate for the same reason. Consecutive calls it passes run together, and a
+call it fails is a barrier: it waits for every call before it and every call after waits for it,
+so a read asked for after a write sees what the write did.
+
+```
+read A, read B, write C, read D, read E   →   [A ‖ B] → C → [D ‖ E]
+```
+
+Results go into the transcript in the order the model asked, and inside a batch `onToolResult` and
+the events arrive as calls finish, as with `parallel: true`. The calls the loop answers itself —
+`load_tools`, unreadable arguments, an identical repeat — are not put to the predicate and count
+as reads. `@cubicecho/agent-mcp-pool` (3.10.0 and later) answers both predicates from the
+annotations of a server whose row sets `trustAnnotations`, and the worst case — run alone, send
+every time — for everything else:
+
+```ts
+const reads = (call: ToolCallRequest) => pool.readsOnly(call.name, { servers });
+await runAgentLoop({ ...options, parallel: reads, dedupeToolCalls: reads });
+```
 
 Three kinds of call never reach `dispatch`: `load_tools`, which the loop answers itself, a call
 whose arguments could not be read, and that identical repeat. A host that draws each call as a
