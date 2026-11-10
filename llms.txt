@@ -94,6 +94,7 @@ What an endpoint turned out not to support, and answering it when it says so.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `resetClients` — Forgets every cached client and listing, and puts `configureClients` back to the defaults.
 - `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
+- `servedSlots` — How many slots a llama.cpp server runs a model in, for pinning a session to one of them.
 - `servedWindow` — The window a local server's own API says it is serving a model in, for the servers whose listing does not say.
 - `timeoutMs` — An endpoint's request timeout in the SDK's spelling: milliseconds, and `undefined` for no limit.
 
@@ -106,6 +107,17 @@ JSON Schema compatibility for llama.cpp-backed servers.
 - `relaxTools` — The tool array with every schema's `pattern` and `format` keywords gone — the shape a turn is retried with.
 - `sanitizeSchema` — One JSON Schema as a strict server will accept it, for a schema that is not a tool's parameters.
 - `sanitizeTools` — Tool definitions a strict server will accept, remembered per definition object.
+
+### slots
+
+Which slot of a multi-slot llama.cpp server each session is on, so concurrent runs stop evicting each other's prompt cache.
+
+- `CACHE_PROMPT_FIELD` — The request field that asks llama.cpp to reuse the slot's cached prefix.
+- `resetSlots` — Forgets every endpoint's slots, held ones included.
+- `SESSION_HEADER` — The header llm-router's sticky affinity reads first, which keeps a session on one provider.
+- `SLOT_FIELD` — The request field that names a llama.cpp slot.
+- `SlotAllocator` (type) — Hands one endpoint's slots to sessions.
+- `slotAllocator` — The slot allocator for one endpoint and model, sized to what its `/props` said.
 
 ### hook-events
 

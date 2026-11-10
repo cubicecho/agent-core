@@ -19,7 +19,8 @@ import {
   modelCapabilitiesFor,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
-import { firstTokenMs, getClient, loadingMs, timeoutMs } from '../endpoint/client.ts';
+import { firstTokenMs, getClient, loadingMs, servedSlots, timeoutMs } from '../endpoint/client.ts';
+import { CACHE_PROMPT_FIELD, SESSION_HEADER, SLOT_FIELD, slotAllocator } from '../endpoint/slots.ts';
 import { HookEvent } from '../hooks/hook-events.ts';
 import {
   configureHooks,
@@ -423,6 +424,19 @@ export interface AgentLoopOptions {
   ledger?: TokenLedger;
   /** Stops the run: the request in flight, and between steps and calls. */
   signal?: AbortSignal;
+  /**
+   * The run's own key — a run id, a conversation id — which keeps its prompt cache warm across
+   * steps and beside other runs. Every request carries it as `SESSION_HEADER`, for a router's
+   * sticky affinity.
+   *
+   * @remarks
+   * On a llama.cpp server that reports `total_slots`, the run also holds one slot from its first
+   * request to its return or throw, sent as `id_slot` with `cache_prompt: true`, and a notice says
+   * which. The slot is the one this key held last where it is free; with every slot held, or one
+   * held by this key already, the run goes unpinned. An `extraBody` naming `id_slot` is the host
+   * pinning for itself and is left alone, and a server that refuses the field is latched off it.
+   */
+  session?: string;
   /** Told what the run is doing, as the events a watcher reads. */
   onEvent?: (event: RunEventInput) => void;
   /**
@@ -640,6 +654,7 @@ interface Standing {
  * run's `temperature` or `maxTokens`.
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
+  let pin: SessionPin | undefined;
   // Until the steps have set themselves up there is only what the caller handed over.
   const standing: Standing = {
     read: () => ({
@@ -654,7 +669,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   };
   let result: AgentLoopResult | undefined;
   try {
-    result = await runSteps(options, standing);
+    pin = await pinSession(options);
+    result = await runSteps(options, standing, pin);
   } catch (error) {
     // Wrapped rather than annotated: an abort's reason is one object shared by every run under
     // the signal, so the run cannot be hung on the error itself. An overflow keeps its class,
@@ -662,11 +678,68 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     throw error instanceof ContextOverflow
       ? new AgentLoopOverflow(error.message, standing.read(), { cause: error })
       : new AgentLoopError(errorMessage(error), standing.read(), { cause: error });
+  } finally {
+    pin?.release();
   }
   if (result) {
     return result;
   }
   throw new ToolIterationLimit(`Stopped after ${options.config.maxToolIterations} tool iterations.`, standing.read());
+}
+
+/** What a run's `session` adds to its requests, and the slot it holds while it runs. */
+interface SessionPin {
+  /** Laid under the config's `extraBody`: `id_slot` and `cache_prompt`, or nothing unpinned. */
+  fields: Record<string, unknown>;
+  /** Sent with every request: the session as `SESSION_HEADER`. */
+  headers: Record<string, string>;
+  /** The server reports slots, so each turn says whether it was `pinned`. */
+  slotted: boolean;
+  /** Frees the slot, where one is held. */
+  release: () => void;
+}
+
+/**
+ * Pins a run to a llama.cpp slot where it has a session and the server has slots to hand out.
+ *
+ * @param options - The run's options. Read for `session`, the config and the signal; a notice goes
+ * to `onEvent`.
+ * @returns The pin, unpinned on a server without slots, one that refused `id_slot` or whose slots
+ * are all held. `undefined` without a session. Rejects only with the reason of `signal`.
+ */
+async function pinSession(options: AgentLoopOptions): Promise<SessionPin | undefined> {
+  const { config, session, signal } = options;
+  if (!session) {
+    return undefined;
+  }
+  const headers = { [SESSION_HEADER]: session };
+  const unpinned: SessionPin = { fields: {}, headers, slotted: false, release: () => {} };
+  const pinsItself = config.extraBody !== undefined && SLOT_FIELD in config.extraBody;
+  if (pinsItself) {
+    return unpinned;
+  }
+  const total = await servedSlots(config, { signal });
+  if (total === 0) {
+    return unpinned;
+  }
+  const notice = (text: string) => options.onEvent?.({ kind: RunEventKind.Notice, text });
+  const refused = modelCapabilitiesFor(capabilitiesFor(config.baseUrl, config.apiKey), config.model);
+  if (refused.refusedFields.has(SLOT_FIELD)) {
+    return { ...unpinned, slotted: true };
+  }
+  const slots = slotAllocator(config, config.model, total);
+  const slot = slots.acquire(session);
+  if (slot === undefined) {
+    notice(`no free slot of ${total} for this session; running unpinned`);
+    return { ...unpinned, slotted: true };
+  }
+  notice(`pinned to slot ${slot} of ${total}`);
+  return {
+    fields: { [SLOT_FIELD]: slot, [CACHE_PROMPT_FIELD]: true },
+    headers,
+    slotted: true,
+    release: () => slots.release(session),
+  };
 }
 
 /**
@@ -979,10 +1052,15 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
  * @param options - What `runAgentLoop` was given.
  * @param standing - Written to: once the steps have set themselves up, its `read` is theirs, so the
  * caller can read the run as it stands whether they return or throw.
+ * @param [pin] - What the run's session adds to each request. Absent adds nothing.
  * @returns The result of the turn that asked for no tools, or `undefined` when `maxToolIterations`
  * is spent.
  */
-async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<AgentLoopResult | undefined> {
+async function runSteps(
+  options: AgentLoopOptions,
+  standing: Standing,
+  pin?: SessionPin,
+): Promise<AgentLoopResult | undefined> {
   const { config, system = '', tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
     onRequest,
@@ -1006,6 +1084,9 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
   const notice = (text: string) => onEvent({ kind: RunEventKind.Notice, text });
+  // The host's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.
+  const extraBody = pin ? { ...pin.fields, ...config.extraBody } : config.extraBody;
+  const sending = { ...config, extraBody };
 
   const { proxied, onDemand, loaded, preselected } = await discovery(options, notice);
   const instructions =
@@ -1156,10 +1237,11 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     ];
 
     const build = (supported: Capabilities, refused: ModelCapabilities | undefined) =>
-      buildBody(config, supported, refused, request, declared, toolOrder);
+      buildBody(sending, supported, refused, request, declared, toolOrder);
     const turnOptions = {
       model: config.model,
-      droppable: Object.keys(config.extraBody ?? {}),
+      droppable: Object.keys(extraBody ?? {}),
+      ...(pin ? { headers: pin.headers } : {}),
       maxRetries,
       loadingTimeoutMs: loadingMs(config),
       contextLimit: config.contextLength ?? 0,
@@ -1183,7 +1265,14 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     // The breakdown measures the array `toolSchemaTokens` does, so where no prompt was reported
     // the two give one number for the tool block rather than two.
     const charsPerToken = charsPerTokenFor(supports, config.model);
-    Object.assign(first.usage, cacheDiagnosis(previous, { messages: request, tools: names }, first.usage), {
+    // Read after the turn, so a refusal answered by dropping `id_slot` counts this turn unpinned.
+    const pinned = pin?.slotted
+      ? {
+          pinned:
+            SLOT_FIELD in pin.fields && !modelCapabilitiesFor(supports, config.model).refusedFields.has(SLOT_FIELD),
+        }
+      : {};
+    Object.assign(first.usage, cacheDiagnosis(previous, { messages: request, tools: names }, first.usage), pinned, {
       toolsDeclared: declared.length,
       toolSchemaTokens: Math.ceil(toolsChars(declared) / charsPerToken),
       context: contextTokens(

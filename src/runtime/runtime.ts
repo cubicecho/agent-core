@@ -9,8 +9,10 @@ import {
   getClient,
   listModels,
   resetClients,
+  servedSlots,
   servedWindow,
 } from '../endpoint/client.ts';
+import { resetSlots, slotAllocator } from '../endpoint/slots.ts';
 import {
   assembleContext,
   configureHooks,
@@ -50,6 +52,8 @@ const STATEFUL = {
   listModels,
   contextLimitFor,
   servedWindow,
+  servedSlots,
+  slotAllocator,
   configureClients,
   capabilitiesFor,
   expireCapabilities,
@@ -74,6 +78,7 @@ const STATEFUL = {
   resetHints,
   resetEvents,
   resetHooks,
+  resetSlots,
   resetAll,
 };
 

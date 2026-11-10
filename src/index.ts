@@ -75,6 +75,7 @@ export {
   NO_KEY,
   resetClients,
   resolveApiKey,
+  servedSlots,
   servedWindow,
   timeoutMs,
 } from './endpoint/client.ts';
@@ -85,6 +86,14 @@ export {
   sanitizeSchema,
   sanitizeTools,
 } from './endpoint/schema-compat.ts';
+export {
+  CACHE_PROMPT_FIELD,
+  resetSlots,
+  SESSION_HEADER,
+  SLOT_FIELD,
+  type SlotAllocator,
+  slotAllocator,
+} from './endpoint/slots.ts';
 export { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from './hooks/hook-events.ts';
 export {
   assembleContext,

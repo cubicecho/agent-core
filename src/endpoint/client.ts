@@ -382,6 +382,35 @@ export const endpointId = (config: EndpointIdentity) => digestOf(endpointKey(con
  */
 const served = scoped(() => new Map<string, { window: number; at: number }>());
 
+/**
+ * Slot counts read off llama.cpp's `/props`, keyed on endpoint and model as `served` is.
+ *
+ * @remarks
+ * `gone` is a server without the route, which is not asked again until `resetClients`. Any other
+ * answer, a count included, stands for `listingMissMs`: a server restarted with another
+ * `--parallel` must not be sent a slot it no longer has for the life of the process.
+ */
+const slotCounts = scoped(() => new Map<string, { slots: number; at: number; gone: boolean }>());
+
+/**
+ * Remembers what a `/props` answer said of its slots.
+ *
+ * @param key - The endpoint and model, by `modelKey`.
+ * @param props - How `/props` answered, as `probe` hands it over.
+ */
+function noteSlots(key: string, props: { missing: boolean; body?: unknown }) {
+  const { total_slots } = (props.body ?? {}) as { total_slots?: unknown };
+  slotCounts().set(key, { slots: positive(total_slots), at: Date.now(), gone: props.missing });
+}
+
+/**
+ * The path `/props` is asked on, naming the model for a llama.cpp router serving several.
+ *
+ * @param model - The model's name as the endpoint knows it.
+ * @returns The path and its query. A single-model server ignores the query.
+ */
+const propsPath = (model: string) => `/props?model=${encodeURIComponent(model)}`;
+
 /** Endpoints with neither native route, which are not asked for either again. */
 const unserved = scoped(() => new Set<string>());
 
@@ -533,8 +562,8 @@ async function readServed(config: Endpoint & { model: string }, within: AbortSig
 
   let window = 0;
   try {
-    // Named, for a llama.cpp router serving several models; a single-model server ignores it.
-    const props = await probe(config, `/props?model=${encodeURIComponent(config.model)}`, within);
+    const props = await probe(config, propsPath(config.model), within);
+    noteSlots(key, props);
     const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })?.default_generation_settings;
     window = positive(settings?.n_ctx);
     if (!window) {
@@ -561,6 +590,53 @@ async function readServed(config: Endpoint & { model: string }, within: AbortSig
   }
   served().set(key, { window, at: Date.now() });
   return window;
+}
+
+/**
+ * How many slots a llama.cpp server runs a model in, for pinning a session to one of them.
+ *
+ * @param config - The endpoint, plus the model the requests will name.
+ * @param [options] - Cancellation. See `LookupOptions`.
+ * @returns `total_slots` from `/props`, or zero where the server has no such route or did not say.
+ * Rejects only with the reason of `options.signal`: a server that could not be reached answers zero.
+ *
+ * @remarks
+ * The same request `servedWindow` makes, so a run that has sized its window has the count without
+ * a second one. A count stands for `listingMissMs`, and a server without `/props` is not asked again
+ * until `resetClients`. Zero is what every server but llama.cpp answers, and leaves a run unpinned.
+ */
+export async function servedSlots(
+  config: Endpoint & { model: string },
+  { signal }: LookupOptions = {},
+): Promise<number> {
+  const slots = await readSlots(config, lookupSignal(config, signal));
+  signal?.throwIfAborted();
+  return slots;
+}
+
+/**
+ * `servedSlots` under a lookup's signal.
+ *
+ * @param config - The endpoint, plus the model the requests will name.
+ * @param within - The lookup's signal. Fired, the answer is zero and nothing is remembered.
+ * @returns The slot count, or zero. Never rejects.
+ */
+async function readSlots(config: Endpoint & { model: string }, within: AbortSignal): Promise<number> {
+  const endpoint = endpointKey(config);
+  if (unserved().has(endpoint)) {
+    return 0;
+  }
+  const key = modelKey(endpoint, config.model);
+  const known = slotCounts().get(key);
+  if (known && (known.gone || Date.now() - known.at < poolLimits().listingMissMs)) {
+    return known.slots;
+  }
+  try {
+    noteSlots(key, await probe(config, propsPath(config.model), within));
+  } catch {
+    return 0;
+  }
+  return slotCounts().get(key)?.slots ?? 0;
 }
 
 /**
@@ -708,6 +784,7 @@ export function resetClients() {
   misses().clear();
   trainedOnly().clear();
   served().clear();
+  slotCounts().clear();
   unserved().clear();
   refusals().clear();
 }
