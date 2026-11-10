@@ -182,6 +182,11 @@ export {
 } from './spec/spec.ts';
 export type { CatalogServer } from './tools/catalog.ts';
 export {
+  SERVER_INSTRUCTION_TOKENS,
+  type ServerInstructionsOptions,
+  serverInstructionsPrompt,
+} from './tools/instructions.ts';
+export {
   type KeywordPreselection,
   type KeywordPreselectOptions,
   PRESELECT_SCHEMA,

@@ -2133,4 +2133,73 @@ describe('runAgentLoop', () => {
     await runAgentLoop({ config: withSlot, messages: question, dispatch: async () => '' });
     expect(create.mock.calls.map(([body]) => 'id_slot' in (body as object))).toEqual([true, false, false]);
   });
+
+  describe("the servers' instructions", () => {
+    const tools = [tool('s__read'), tool('q__ping')];
+    const catalog = [
+      { id: 's', label: 'S', tools: [{ name: 's__read', description: 'read' }], instructions: 'Read twice.' },
+      { id: 'q', label: 'Q', tools: [], instructions: 'Ask Q nothing you can read from S.' },
+    ];
+    const systems = () => create.mock.calls.map(([body]) => (body as Body).messages[0].content);
+    const run = (overrides: Partial<Parameters<typeof runAgentLoop>[0]>) =>
+      runAgentLoop({
+        config,
+        system: 'sys',
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => 'ok',
+        serverInstructions: true,
+        ...overrides,
+      });
+
+    it('leave the system prompt alone unless asked for', async () => {
+      create.mockReturnValueOnce(says('done'));
+      await run({ serverInstructions: undefined });
+      expect(systems()).toEqual(['sys']);
+    });
+
+    it('follow the system prompt in eager mode, a section per server that spoke', async () => {
+      create.mockReturnValueOnce(says('done'));
+      await run({});
+      const [prompt] = systems();
+      expect(prompt).toMatch(/^sys\n\n# MCP server instructions\n/);
+      expect(prompt).toContain('## S\n\n<untrusted source="S">\nRead twice.\n</untrusted>');
+      expect(prompt).toContain('## Q\n\n<untrusted source="Q">');
+      expect(prompt).not.toContain('Tool catalogue');
+    });
+
+    it('sit before the catalogue on demand, the same text on every step, a toolless server included', async () => {
+      create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}'])).mockReturnValueOnce(says('done'));
+      await run({ config: { ...config, toolDiscovery: ToolDiscovery.OnDemand } });
+      const [first, second] = systems();
+      expect(first).toBe(second);
+      expect(String(first).indexOf('# MCP server instructions')).toBeLessThan(
+        String(first).indexOf('# Tool catalogue'),
+      );
+      expect(first).toContain('Ask Q nothing');
+    });
+
+    it('sit before the catalogue proxied', async () => {
+      create.mockReturnValueOnce(says('done'));
+      await run({ config: { ...config, toolDiscovery: ToolDiscovery.Proxy } });
+      const [prompt] = systems();
+      expect(prompt).toMatch(/^sys\n\n# MCP server instructions\n[\s\S]*\n\n# Tool catalogue\n/);
+    });
+
+    it('stay on a preselected first step, leaving it the head of the next', async () => {
+      create.mockReturnValueOnce(calls(['s__read', '{}'])).mockReturnValueOnce(says('done'));
+      await run({ config: { ...config, toolDiscovery: ToolDiscovery.OnDemand }, preselected: ['s__read'] });
+      const [first, second] = systems();
+      expect(first).toContain('# MCP server instructions');
+      expect(first).not.toContain('Tool catalogue');
+      expect(String(second).startsWith(`${first}\n\n# Tool catalogue`)).toBe(true);
+    });
+
+    it('are cut to the budget an object names', async () => {
+      create.mockReturnValueOnce(says('done'));
+      await run({ serverInstructions: { maxTokensPerServer: 1 } });
+      expect(systems()[0]).toContain('(Cut to about 1 of the 3 tokens this server sent.)');
+    });
+  });
 });

@@ -12,4 +12,9 @@ export interface CatalogServer {
   id: string;
   label: string;
   tools: { name: string; description: string }[];
+  /**
+   * What the server said about using its tools when it connected — MCP's `instructions`. Absent
+   * where it said nothing. Read by `serverInstructionsPrompt`, never by the loading itself.
+   */
+  instructions?: string;
 }
