@@ -563,4 +563,67 @@ export interface ToolCallResult extends ToolCallOutcome {
    * `load_tools` answer, or why the arguments could not be read.
    */
   content: string;
+  /**
+   * What the dispatcher's answer said the call produced, as it said it. Absent where it said
+   * nothing, and always for a call that threw. A deduplicated repeat carries the first call's.
+   */
+  links?: ResourceLink[];
+}
+
+/**
+ * A handle to something a tool call made or found — a document it wrote, a file it saved.
+ *
+ * @remarks
+ * MCP's `ResourceLink` less its `type`, declared structurally rather than imported, the way
+ * agent-mcp-pool declares `ToolDefinition` against `ChatCompletionTool`: the pool's own
+ * `ResourceLink` has these field names exactly, so its answer is assignable here and neither
+ * package depends on the other.
+ */
+export interface ResourceLink {
+  uri: string;
+  name: string;
+  title?: string;
+  mimeType?: string;
+  description?: string;
+  /** Who the link is for, how much it matters, and when it last changed — the server's word. */
+  annotations?: { audience?: ('user' | 'assistant')[]; priority?: number; lastModified?: string };
+  _meta?: Record<string, unknown>;
+}
+
+/**
+ * A dispatcher's answer when it has more to say than the text: what the model reads, and what the
+ * call produced for the host.
+ *
+ * @remarks
+ * A link meant for the model alone — one whose MCP `audience` leaves out `"user"` — is the
+ * dispatcher's to drop, since that is MCP's rule and this package knows nothing of MCP.
+ */
+export interface ToolAnswer {
+  /** What goes into the transcript, exactly as a string answer does. */
+  text: string;
+  /** What the call produced, in the order the tool gave them. Never sent to the model. */
+  links?: ResourceLink[];
+}
+
+/**
+ * One thing a run's tool calls produced: the first link to a uri, and where it came from.
+ *
+ * @remarks
+ * A link is what one call answered with; an artifact is what the run made, one per uri however
+ * many calls linked to it.
+ */
+export interface RunArtifact {
+  /** The link as the first call to give its uri gave it. A later call's says nothing new here. */
+  link: ResourceLink;
+  /** The call that first linked to it. */
+  callId: string;
+  /** That call's tool. For a `call_tool`, the tool it named. */
+  tool: string;
+  /** The loop's step that call was made in, from 0. */
+  step: number;
+  /**
+   * How many calls linked to it. A deduplicated repeat does not count, since nothing was made
+   * twice, and a call that links one uri twice counts once.
+   */
+  count: number;
 }

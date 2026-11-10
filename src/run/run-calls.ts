@@ -16,6 +16,9 @@ import { errorMessage } from '../wire/errors.ts';
 import type { Turn } from '../wire/stream.ts';
 import {
   parseToolArguments,
+  type ResourceLink,
+  type RunArtifact,
+  type ToolAnswer,
   type ToolCall,
   type ToolCallOutcome,
   type ToolCallRequest,
@@ -127,8 +130,20 @@ export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.Ch
 export const definedAs = (definitions: ReadonlyMap<string, OpenAI.ChatCompletionTool>, names: Iterable<string>) =>
   [...names].flatMap((name) => definitions.get(name) ?? []);
 
-/** Runs one tool call and resolves to what the model reads; what it throws, the model reads too. */
-export type ToolDispatch = (call: ToolCallRequest, signal?: AbortSignal) => Promise<string>;
+/**
+ * Runs one tool call and resolves to what the model reads, alone or with what the call produced;
+ * what it throws, the model reads too.
+ */
+export type ToolDispatch = (call: ToolCallRequest, signal?: AbortSignal) => Promise<string | ToolAnswer>;
+
+/**
+ * A dispatcher's answer in the one shape, whichever it gave.
+ *
+ * @param answer - What `dispatch` resolved to.
+ * @returns The text and the links, a string answer's being none.
+ */
+const answerOf = (answer: string | ToolAnswer): Required<ToolAnswer> =>
+  typeof answer === 'string' ? { text: answer, links: [] } : { text: answer.text, links: answer.links ?? [] };
 
 /**
  * What running a step's calls reads of the run and writes back into it. One per run, shared by
@@ -147,6 +162,8 @@ export interface Calling {
   loads: { toolsLoaded: number; redundantLoads: number; unknownToolNames: number };
   used: Set<string>;
   toolCalls: ToolCallOutcome[];
+  /** What the run's calls linked to, by uri, in the order first seen. */
+  artifacts: Map<string, RunArtifact>;
   dedupable: (call: ToolCallRequest) => boolean;
   dispatch: ToolDispatch;
   parallel: boolean;
@@ -206,6 +223,7 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
  * Makes a call at most once per key, sharing the in-flight promise so two identical calls in one
  * step make one request between them whether they run together or one after the other.
  *
+ * @typeParam T - What a call answers with.
  * @param answered - The step's calls so far, by key. Written to.
  * @param key - What makes two calls the same one.
  * @param make - Makes the call. Not called where the key has an answer, or one on its way.
@@ -216,7 +234,7 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
  * A call that rejected is forgotten, so asking again is a real retry rather than a replayed
  * failure.
  */
-async function once(answered: Map<string, Promise<string>>, key: string, make: () => Promise<string>): Promise<string> {
+async function once<T>(answered: Map<string, Promise<T>>, key: string, make: () => Promise<T>): Promise<T> {
   const previous = answered.get(key);
   if (previous) {
     return previous;
@@ -234,16 +252,48 @@ async function once(answered: Map<string, Promise<string>>, key: string, make: (
 }
 
 /**
+ * Adds one call's links to the run's artifacts, telling watchers of each uri the first time.
+ *
+ * @param run - The run. Written to: a new uri is added to `artifacts`, and a known one counted.
+ * @param links - What the call's answer linked to.
+ * @param from - The call they came from.
+ */
+function collect(run: Calling, links: ResourceLink[], from: Omit<RunArtifact, 'link' | 'count'>) {
+  // Per call, so a tool that lists one uri twice in an answer is counted as making it once.
+  const seen = new Set<string>();
+  for (const link of links) {
+    if (seen.has(link.uri)) {
+      continue;
+    }
+    seen.add(link.uri);
+    const known = run.artifacts.get(link.uri);
+    if (known) {
+      known.count++;
+      continue;
+    }
+    run.artifacts.set(link.uri, { link, ...from, count: 1 });
+    run.onEvent({ kind: RunEventKind.Artifact, id: from.callId, name: from.tool, text: link.title || link.uri, link });
+  }
+}
+
+/**
  * Runs one call to its result, telling the host of both. A tool that throws is that call's answer
  * rather than the run's end, unless the run was stopped.
  *
  * @param run - The run the call belongs to.
  * @param entry - The call, with its arguments read.
  * @param answered - The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
- * @returns The call's id, the name it was shown under, whether it worked, and the whole of what
- * the model reads. Rejects where the run was stopped or a host callback threw.
+ * @param step - Which step this is, for the artifacts the call's links become.
+ * @returns The call's id, the name it was shown under, whether it worked, the whole of what the
+ * model reads, and the links its answer carried, where it carried any. Rejects where the run was
+ * stopped or a host callback threw.
  */
-async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Promise<string>>) {
+async function runCall(
+  run: Calling,
+  entry: ReadCall,
+  answered: Map<string, Promise<string | ToolAnswer>>,
+  step: number,
+): Promise<ToolCallResult> {
   const { catalog, onDemand, proxied, signal } = run;
   const { call, args, error: unreadable, normal } = entry;
   const proxy = run.proxies && call.function.name === CALL_TOOL;
@@ -267,7 +317,10 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
   run.onEvent({ kind: RunEventKind.ToolCall, id: call.id, name, text: preview(raw) });
   run.onToolCall?.(request);
   let content: string;
+  let links: ResourceLink[] = [];
   let ok = true;
+  // Answered from an earlier identical call of the step, whose links are already counted.
+  let shared = false;
   try {
     if (!args) {
       throw unreadable;
@@ -289,9 +342,13 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
       run.used.add(name);
       // Keyed on the inner call, so one made through `call_tool` and one made natively share.
       const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
-      content = run.dedupable(request)
+      const dedupable = run.dedupable(request);
+      // Read before `once` looks, which it does before it awaits anything.
+      shared = dedupable && answered.has(key);
+      const answer = dedupable
         ? await once(answered, key, () => run.dispatch(request, signal))
         : await run.dispatch(request, signal);
+      ({ text: content, links } = answerOf(answer));
     }
   } catch (error) {
     if (signal?.aborted) {
@@ -301,7 +358,11 @@ async function runCall(run: Calling, entry: ReadCall, answered: Map<string, Prom
     ok = false;
   }
   run.onEvent({ kind: RunEventKind.ToolResult, id: call.id, name, ok, text: preview(content) });
-  const result = { id: call.id, name, ok, content };
+  const isFirstAnswer = shared === false;
+  if (isFirstAnswer) {
+    collect(run, links, { callId: call.id, tool: name, step });
+  }
+  const result: ToolCallResult = { id: call.id, name, ok, content, ...(links.length ? { links } : {}) };
   run.onToolResult?.(result);
   return result;
 }
@@ -328,7 +389,7 @@ export async function runCalls(
   const { signal, toolCalls } = run;
   // Per step, not per run: the answer to a call made two steps ago was true before the tools in
   // between ran, and the file the model read may be the file it has since written.
-  const answered = new Map<string, Promise<string>>();
+  const answered = new Map<string, Promise<string | ToolAnswer>>();
   // By position, so a call that came back while another was being stopped is still found.
   const outcomes: (Awaited<ReturnType<typeof runCall>> | undefined)[] = parsed.map(() => undefined);
   // How many of the step's calls were handed off, and how many have their result in the
@@ -351,7 +412,7 @@ export async function runCalls(
       begun = parsed.length;
       await Promise.all(
         parsed.map(async (call, at) => {
-          outcomes[at] = await runCall(run, call, answered);
+          outcomes[at] = await runCall(run, call, answered, step);
         }),
       );
       for (const { id, name, ok, content } of outcomes.flatMap((outcome) => outcome ?? [])) {
@@ -362,7 +423,7 @@ export async function runCalls(
       for (const [at, call] of parsed.entries()) {
         signal?.throwIfAborted();
         begun = at + 1;
-        const { id, name, ok, content } = await runCall(run, call, answered);
+        const { id, name, ok, content } = await runCall(run, call, answered, step);
         toolCalls.push({ id, name, ok });
         await keep(id, content);
       }

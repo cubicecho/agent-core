@@ -481,6 +481,34 @@ await runAgentLoop({
 });
 ```
 
+### What the calls made
+
+A tool that wrote a document or saved a file can say so, and `dispatch` can pass that on: it
+resolves to a `ToolAnswer`, `{ text, links }`, in place of the string. `text` is the whole of
+what goes into the transcript, so the request, the prompt cache, pruning and compaction never see
+the links. `links` are `ResourceLink`s, MCP's own shape declared structurally, so what
+agent-mcp-pool's `call` answers with `links: true` is a dispatcher's answer as it stands.
+
+```ts
+const { artifacts } = await runAgentLoop({
+  // ...
+  dispatch: ({ name, args }, signal) => pool.call(name, args, { signal, links: true }),
+});
+// [{ link: { uri, name, title?, ... }, callId, tool, step, count }]
+```
+
+The loop collects them into the run's `artifacts`: one per uri in the order first seen, each with
+the call, tool and step that first linked to it and the number of calls that did. A link is what
+one call answered with; an artifact is what the run made. `onToolResult` hears a call's `links`
+beside its `content`, an `artifact` event goes out the first time each uri appears — `name` the
+tool, `text` the title or else the uri, and `link` the link — and `runMetrics` counts those events
+as `artifacts`. A deduplicated repeat shares the first call's answer and links but adds nothing to
+the count, since nothing was made twice. A call that threw made nothing. A failed run carries what
+its calls made on the error too, read off with `failedRun`.
+
+A link meant for the model alone — one whose MCP `audience` leaves out `"user"` — is the
+dispatcher's to drop, since that is MCP's rule and this package knows nothing of MCP.
+
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
 `True` and `None`, bare keys, a trailing comma — is repaired, without touching what is inside a
