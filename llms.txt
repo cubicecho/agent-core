@@ -248,6 +248,12 @@ The contract between whatever holds the tools and the loop that offers them to a
 
 - `CatalogServer` (type) — One server's tools, without their JSON schemas — the cheap half of a tool definition.
 
+### instructions
+
+- `SERVER_INSTRUCTION_TOKENS` — The most of one server's instructions the block carries by default, in estimated tokens.
+- `ServerInstructionsOptions` (type) — How `serverInstructionsPrompt` cuts the text, and what `runAgentLoop`'s `serverInstructions` takes.
+- `serverInstructionsPrompt` — The connected servers' own instructions, as a block for the system prompt.
+
 ### preselect
 
 Choosing a run's tools before it starts, from the request and the catalogue's names.

@@ -49,7 +49,8 @@ only, Node >=22.
 | `runtime` | `createRuntime`: a second set of those caches, with the functions that use them as methods — for a host whose tenants must not share a client pool, a latch or an event bus. `defaultRuntime` is the one the top-level functions use. |
 | `tokens` | How big a request is, estimated: `estimateTokens` — characters over four, deliberately low — and what is built on it for everything here that has to guess at a window: `messageTokens`, `requestTokens`, `contextTokens`. |
 | `errors` | `errorMessage`: a caught `unknown` turned into something a run row can hold. And what `runAgentLoop` throws, with the run as it stood: `AgentLoopError`, `ToolIterationLimit`, `AgentLoopOverflow`, and `failedRun` to read it off any of them. |
-| `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as. |
+| `catalog` | `CatalogServer`: the name-only shape `tool-loading` reads a connected server as, with the server's own `instructions` beside it. |
+| `instructions` | `serverInstructionsPrompt`: the servers' own `instructions` as one block for the system prompt, attributed by label, fenced by `untrusted` and cut to a budget per server. |
 
 What is **not** here is the work: orchestration, prompts, and whatever the run is about. That
 is the caller's, and it is the part that actually differs between one server and the next.
@@ -439,6 +440,7 @@ const { turn, messages, usage, loaded } = await runAgentLoop({
   messages: history,              // ending in the question; not written to
   tools,                          // every tool the run may reach
   catalog,                        // the same, name-only, for on-demand and proxied loading
+  serverInstructions: true,       // the catalogue's `instructions` after `system`; off by default
   preselected,                    // from `preselect`, if a small model chose
   dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
   hooks: { run, context: { session: { id } } },
@@ -620,6 +622,31 @@ a `tool-call` and a `tool-result` event, told to `onToolCall` and `onToolResult`
 `toolCalls` and in the `load_tools` metrics. The
 id is numbered by where the call lands in the transcript, so two questions do not share one. A name
 with no definition in `tools`, or outside the catalogue, is left out, and none left is no exchange.
+
+### What the servers say about themselves
+
+An MCP server may send `instructions` when it connects — "resolve the library id before querying
+docs" — and agent-mcp-pool puts them on each `catalog()` entry. `serverInstructions: true` writes
+them into the system prompt after `system` and before the catalogue, as `serverInstructionsPrompt`
+builds them: a heading, one sentence saying what the block is, and a section per server that said
+anything, under its label, with the text inside an `untrusted` fence. The text is a third party's,
+in the one place a model most takes literally, so it is named rather than folded into the
+operator's prompt: the model can weigh one server's advice against what the user asked, and a
+surprising turn can be traced back to where the instruction came from. A text over
+`maxTokensPerServer` (`SERVER_INSTRUCTION_TOKENS`, 1000, by default; zero keeps it whole) is cut,
+and the cut is said after the fence.
+
+```ts
+await runAgentLoop({ ...options, catalog: pool.catalog(), serverInstructions: { maxTokensPerServer: 500 } });
+```
+
+It is off by default, so no host's prompt changes on upgrade, and it reads `catalog` in every mode,
+eager included. The block comes from the catalogue rather than from what is loaded, so it is the same
+text on every step and the prompt cache holds, and it covers a server none of whose tools is loaded
+yet, whose guidance is often about when to load them. A preselected first step keeps it while
+dropping the catalogue, so that step's system prompt is the head of the next one's. Behind
+mcp-router a router's members arrive as one entry, and their instructions as one section under the
+router's name. A host that assembles its own prompt calls `serverInstructionsPrompt(catalog)`.
 
 What is loaded there is what the history holds, so `loaded` comes back empty and the `loaded`
 option is not read: there is nothing to carry, and a definition a compaction folded away has to be

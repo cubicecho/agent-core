@@ -35,6 +35,7 @@ import {
   withContext,
 } from '../hooks/hooks.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
+import { type ServerInstructionsOptions, serverInstructionsPrompt } from '../tools/instructions.ts';
 import { type KeywordPreselectOptions, preselect } from '../tools/preselect.ts';
 import {
   CALL_TOOL,
@@ -205,7 +206,8 @@ export interface AgentLoopOptions {
     };
   /**
    * The standing instruction, sent as the first message. On-demand and proxied modes append the
-   * catalogue, each in its own wording.
+   * catalogue, each in its own wording, and `serverInstructions` puts the servers' own guidance
+   * between the two.
    */
   system?: string;
   /** The transcript so far, ending in the question. Not written to; see the result's `messages`. */
@@ -220,6 +222,21 @@ export interface AgentLoopOptions {
    * without it.
    */
   catalog?: CatalogServer[];
+  /**
+   * Puts the catalogue's `instructions` in the system prompt, after `system` and before the
+   * catalogue, as `serverInstructionsPrompt` writes them. Off by default, so no host's prompt
+   * changes on upgrade.
+   *
+   * @defaultValue `false`
+   *
+   * @remarks
+   * Read from `catalog` in every mode, eager included, so a host that wants them passes one either
+   * way. The block is built once, from the catalogue rather than from what is loaded, so it is the
+   * same text on every step and covers a server none of whose tools is loaded; the preselected
+   * first step keeps it too, which leaves that step's system prompt a prefix of the next one's.
+   * `true` cuts each server's text at `SERVER_INSTRUCTION_TOKENS`; an object moves the budget.
+   */
+  serverInstructions?: boolean | ServerInstructionsOptions;
   /**
    * How the declared tools are ordered before each request. By name unless told otherwise, so a
    * run whose tool array was assembled in a different order than last time still meets its cache.
@@ -980,6 +997,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     toolOrder = true,
     dedupeToolCalls = true,
     preselectRouting = PRESELECT_EXCLUSIVE,
+    serverInstructions = false,
   } = options;
   const dedupable = typeof dedupeToolCalls === 'function' ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
@@ -990,6 +1008,10 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
   const notice = (text: string) => onEvent({ kind: RunEventKind.Notice, text });
 
   const { proxied, onDemand, loaded, preselected } = await discovery(options, notice);
+  const instructions =
+    serverInstructions === false
+      ? ''
+      : serverInstructionsPrompt(catalog, serverInstructions === true ? {} : serverInstructions);
   const summarise = ownSummariser(options, notice);
   const used = new Set<string>();
   const definitions = definitionsByName(tools);
@@ -1123,7 +1145,11 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     // `load_tools` result instead. The preselected first step is the one exception, by design,
     // and `preselectRouting: "append"` is the way out of it.
     const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
-    const prompt = onDemand && !routed ? `${system}\n\n${catalogue}`.trim() : system;
+    const catalogued = onDemand && !routed;
+    const sections = [instructions, catalogued ? catalogue : ''].filter((text) => text !== '');
+    // `system` as it was given when nothing is added, so a host with neither sees no change.
+    const isBare = catalogued === false && sections.length === 0;
+    const prompt = isBare ? system : [system, ...sections].join('\n\n').trim();
     const request: OpenAI.ChatCompletionMessageParam[] = [
       ...(prompt ? [{ role: Role.System, content: prompt }] : []),
       ...withContext(messages, questionAt(), gathered.context, preface),
