@@ -465,6 +465,7 @@ describe('runMetrics', () => {
       toolCalls: 0,
       toolErrors: {},
       loadCalls: 0,
+      artifacts: 0,
       promptTokens: 0,
       completionTokens: 0,
       cachedTokens: 0,
@@ -472,6 +473,12 @@ describe('runMetrics', () => {
       cacheBreakReasons: {},
       truncatedTurns: 0,
     });
+  });
+
+  it('counts an artifact event as one artifact', () => {
+    emit('r', { kind: RunEventKind.Artifact, id: 'c0', name: 'write', text: 'a', link: { uri: 'doc://a', name: 'a' } });
+    emit('r', { kind: RunEventKind.Artifact, id: 'c1', name: 'write', text: 'b', link: { uri: 'doc://b', name: 'b' } });
+    expect(runMetrics(history('r')).artifacts).toBe(2);
   });
 
   it("sums a run's turns, times its tools and weighs what only some turns reported", () => {

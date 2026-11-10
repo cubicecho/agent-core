@@ -185,6 +185,7 @@ What a run is doing, while it is doing it.
 The tools between two turns: a step's calls read, run and written into the transcript.
 
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
+- `ToolDispatch` (type) — Runs one tool call and resolves to what the model reads, alone or with what the call produced; what it throws, the model reads too.
 
 ### reset
 
@@ -384,7 +385,10 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 - `ARGUMENTS_MALFORMED` — The `ToolArgumentsError` kind for a call the model wrote wrongly.
 - `ARGUMENTS_TRUNCATED` — The `ToolArgumentsError` kind for a call cut off at the reply ceiling.
 - `parseToolArguments` — A tool call's arguments as the object the tool is handed.
+- `ResourceLink` (type) — A handle to something a tool call made or found — a document it wrote, a file it saved.
+- `RunArtifact` (type) — One thing a run's tool calls produced: the first link to a uri, and where it came from.
 - `recoverToolCalls` — Tool calls a model wrote into its reply as text, taken out of it and made into calls.
+- `ToolAnswer` (type) — A dispatcher's answer when it has more to say than the text: what the model reads, and what the call produced for the host.
 - `ToolArgumentsError` — Tool arguments that could not be read as an object, with why.
 - `ToolCall` (type) — A tool call as the loop handles it, recovered or streamed.
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.

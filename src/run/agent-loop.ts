@@ -63,6 +63,7 @@ import { ContextOverflow } from '../wire/retry.ts';
 import { addCounts, noUsage, type Turn, type TurnUsage } from '../wire/stream.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
 import {
+  type RunArtifact,
   recoverToolCalls,
   type ToolCall,
   type ToolCallOutcome,
@@ -305,7 +306,14 @@ export interface AgentLoopOptions {
    * mode, where a tool is loaded only while its definition is in the history.
    */
   loaded?: Iterable<string>;
-  /** Runs one tool call and returns what the model reads. What it throws, the model reads too. */
+  /**
+   * Runs one tool call and returns what the model reads. What it throws, the model reads too.
+   *
+   * @remarks
+   * A `ToolAnswer` in place of the string adds what the call produced: its `text` is the whole of
+   * what goes into the transcript, and its `links` become the result's `artifacts`, an `artifact`
+   * event the first time each uri is seen, and `links` on what `onToolResult` is handed.
+   */
   dispatch: ToolDispatch;
   /**
    * Runs a step's calls together rather than one after another. Results still go into the
@@ -444,6 +452,12 @@ export interface AgentLoopResult {
    * proxied preselection's among them, first.
    */
   toolCalls: ToolCallOutcome[];
+  /**
+   * What the run's calls linked to, one per uri in the order first seen, each with the call and
+   * step that first linked to it and how many calls did. Empty where `dispatch` answered with
+   * strings only.
+   */
+  artifacts: RunArtifact[];
   /**
    * What is loaded at the end, for `carryOver`. Empty in eager mode, and in proxied mode: a
    * definition loaded there is already in the history, and one a compaction folded away has to be
@@ -600,6 +614,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       messages: [...options.messages],
       usage: noUsage(),
       toolCalls: [],
+      artifacts: [],
       loaded: [],
       used: [],
       preselected: [],
@@ -977,10 +992,12 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
   let messages = [...options.messages];
   let usage = noUsage();
   const toolCalls: ToolCallOutcome[] = [];
+  const artifacts = new Map<string, RunArtifact>();
   standing.read = () => ({
     messages,
     usage,
     toolCalls,
+    artifacts: [...artifacts.values()],
     // As the result would have said it: proxied, nothing is loaded that the history does not hold.
     loaded: proxied ? [] : [...loaded],
     used: [...used],
@@ -1027,6 +1044,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
     loads,
     used,
     toolCalls,
+    artifacts,
     dedupable,
     dispatch,
     parallel,
@@ -1183,6 +1201,7 @@ async function runSteps(options: AgentLoopOptions, standing: Standing): Promise<
         messages,
         usage,
         toolCalls,
+        artifacts: [...artifacts.values()],
         loaded: proxied ? [] : [...loaded],
         used: [...used],
         preselected: [...preselected],

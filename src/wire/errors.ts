@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { ContextOverflow } from './retry.ts';
 import type { TurnUsage } from './stream.ts';
-import type { ToolCallOutcome } from './tool-calls.ts';
+import type { RunArtifact, ToolCallOutcome } from './tool-calls.ts';
 
 /**
  * What went wrong, as a string.
@@ -36,6 +36,12 @@ export interface AgentLoopFailure {
   usage: TurnUsage;
   /** Every call that was made, in order. One the run was stopped during is `ok: false`. */
   toolCalls: ToolCallOutcome[];
+  /**
+   * What the calls that came back linked to, as the result's `artifacts` would have said it: a
+   * failed run's writes were still made. `runAgentLoop` always sets it; optional so a failure
+   * built before it existed still compiles.
+   */
+  artifacts?: RunArtifact[];
   /** What was loaded when the run failed, for `carryOver`. Empty in eager and proxied modes. */
   loaded: string[];
   /** The tools the model had called, `load_tools` excluded. */
@@ -58,6 +64,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
   readonly messages: OpenAI.ChatCompletionMessageParam[];
   readonly usage: TurnUsage;
   readonly toolCalls: ToolCallOutcome[];
+  readonly artifacts: RunArtifact[];
   readonly loaded: string[];
   readonly used: string[];
   readonly preselected: string[];
@@ -72,6 +79,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
     this.messages = run.messages;
     this.usage = run.usage;
     this.toolCalls = run.toolCalls;
+    this.artifacts = run.artifacts ?? [];
     this.loaded = run.loaded;
     this.used = run.used;
     this.preselected = run.preselected;
@@ -102,6 +110,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
   readonly messages: OpenAI.ChatCompletionMessageParam[];
   readonly usage: TurnUsage;
   readonly toolCalls: ToolCallOutcome[];
+  readonly artifacts: RunArtifact[];
   readonly loaded: string[];
   readonly used: string[];
   readonly preselected: string[];
@@ -116,6 +125,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
     this.messages = run.messages;
     this.usage = run.usage;
     this.toolCalls = run.toolCalls;
+    this.artifacts = run.artifacts ?? [];
     this.loaded = run.loaded;
     this.used = run.used;
     this.preselected = run.preselected;

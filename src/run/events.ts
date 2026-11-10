@@ -5,6 +5,7 @@ import { assignSettings, scoped } from '../core/scope.ts';
 import { LOAD_TOOLS } from '../tools/tool-loading.ts';
 import type { TurnUsage } from '../wire/stream.ts';
 import { CacheBreakReason } from '../wire/stream.ts';
+import type { ResourceLink } from '../wire/tool-calls.ts';
 import { FinishReason } from '../wire/wire.ts';
 
 /**
@@ -127,6 +128,12 @@ export const RunEventKind = {
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
   Notice: 'notice',
   /**
+   * A tool call's answer linked to something the run had not produced before. `id` is the call's,
+   * `name` the tool, `text` the link's title or else its uri, and `link` the link itself. Once
+   * per uri per run: a later call that links the same uri again only adds to its count.
+   */
+  Artifact: 'artifact',
+  /**
    * What the run has cost so far, at the end of every turn, and what that one turn did. Sent
    * whether or not the endpoint reported tokens, since the timings and the cache comparison are
    * measured either way.
@@ -177,8 +184,8 @@ export interface TurnReport extends TurnUsage {
  * One thing that happened in a run, as a watcher receives it.
  *
  * @remarks
- * Every field but `id` is always present — the empty ones are `""` or `null` rather than
- * missing — so a client reads it without guarding each key.
+ * Every field but `id` and `link` is always present — the empty ones are `""` or `null` rather
+ * than missing — so a client reads it without guarding each key.
  */
 export interface RunEvent {
   /** The run it belongs to. `emit` fills this in; a caller does not pass it. */
@@ -216,6 +223,11 @@ export interface RunEvent {
   ok: boolean | null;
   /** Running totals on `usage`, otherwise null. */
   usage: RunUsage | null;
+  /**
+   * What the call produced, on `artifact` and on no other kind. Optional for the reason `id` is:
+   * an event built before it existed still compiles.
+   */
+  link?: ResourceLink;
 }
 
 /**
@@ -658,6 +670,8 @@ export interface RunMetrics {
   toolErrors: Record<string, number>;
   /** `load_tools` calls. */
   loadCalls: number;
+  /** `artifact` events: the distinct things the run's tool calls linked to. */
+  artifacts: number;
   /**
    * Tools `load_tools` loaded that were not loaded already. Filled by `runAgentLoop`, which sees
    * the resolution; the events carry only its text.
@@ -777,6 +791,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
     toolCalls: 0,
     toolErrors: {},
     loadCalls: 0,
+    artifacts: 0,
     promptTokens: 0,
     completionTokens: 0,
     cachedTokens: 0,
@@ -815,6 +830,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       if (called !== undefined) {
         add('toolMs', event.at - called);
       }
+    } else if (event.kind === RunEventKind.Artifact) {
+      metrics.artifacts++;
     } else if (event.kind === RunEventKind.Usage && event.usage?.turn) {
       const turn = event.usage.turn;
       last = turn;

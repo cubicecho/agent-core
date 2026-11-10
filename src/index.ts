@@ -139,7 +139,7 @@ export {
   watch,
 } from './run/events.ts';
 export { buildBody } from './run/request-body.ts';
-export { preview } from './run/run-calls.ts';
+export { preview, type ToolDispatch } from './run/run-calls.ts';
 export { resetAll } from './runtime/reset.ts';
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from './runtime/runtime.ts';
 export {
@@ -288,7 +288,10 @@ export {
   ARGUMENTS_MALFORMED,
   ARGUMENTS_TRUNCATED,
   parseToolArguments,
+  type ResourceLink,
+  type RunArtifact,
   recoverToolCalls,
+  type ToolAnswer,
   ToolArgumentsError,
   type ToolCall,
   type ToolCallOutcome,
