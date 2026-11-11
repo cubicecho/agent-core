@@ -16,6 +16,7 @@ import {
   type RequestShape,
   rebaseLedger,
   recordRequest,
+  sameMessage,
   type TokenLedger,
 } from '../context/ledger.ts';
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from '../core/config.ts';
@@ -598,6 +599,20 @@ export interface AgentLoopOptions {
     step: number,
     window: StepWindow,
   ) => OpenAI.ChatCompletionMessageParam[] | undefined | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
+  /**
+   * Asked for input that arrived while the run was going — a person steering it — which the run
+   * then goes on with as a user message.
+   *
+   * @remarks
+   * Asked at the top of every step, once the last step's calls have all answered, and once more
+   * when the model answers without calls, where input keeps the run going for another step if one
+   * is left. What it returns is appended, told to `onMessage` and as an `input` event, before
+   * `beforeStep` is handed the transcript. Input it still holds when the run returns is the host's.
+   */
+  takeInput?: () =>
+    | OpenAI.ChatCompletionUserMessageParam
+    | undefined
+    | Promise<OpenAI.ChatCompletionUserMessageParam | undefined>;
   /**
    * The ledger an earlier run handed back for this transcript, to be continued. Its indexes have
    * to be into `messages` as given here — see `rebaseLedger` for a transcript rewritten since.
@@ -1492,6 +1507,7 @@ async function runSteps(
     onToolCall,
     onToolResult,
     beforeStep,
+    takeInput,
     parallel = false,
     formatToolError = defaultToolError,
     recoverToolCalls: recover = true,
@@ -1581,15 +1597,26 @@ async function runSteps(
     };
   };
   const announce = announcer(onMessage);
+  // What `takeInput` handed over, which are user messages the question has to be told apart from.
+  const admitted: OpenAI.ChatCompletionMessageParam[] = [];
+  const isAdmitted = (message: OpenAI.ChatCompletionMessageParam) =>
+    admitted.some((input) => sameMessage(input, message));
+  const admit = async (input: OpenAI.ChatCompletionUserMessageParam, step: number) => {
+    messages.push(input);
+    admitted.push(input);
+    onEvent({ kind: RunEventKind.Input, text: textOf(input.content) });
+    await announce(input, step);
+  };
   // Held by reference, so a `beforeStep` that folds the head into a summary moves the question
   // without losing it, and found again by role where a host rebuilt the transcript and the object
-  // went with it: nothing the loop writes is a user message, so the question is still the last one
-  // that is not a summary. One that summarises the question away took every user message before it
-  // too, and the hooks' context goes with it, which is right.
+  // went with it: the only user messages the loop writes are its input, so the question is the
+  // last other one that is not a summary. One that summarises the question away took every user
+  // message before it too, and the hooks' context goes with it, which is right.
   const question = messages.findLast(isQuestion);
   const questionAt = () => {
     const at = question ? messages.indexOf(question) : -1;
-    return at >= 0 || question === undefined ? at : messages.findLastIndex(isQuestion);
+    const isFound = at >= 0 || question === undefined;
+    return isFound ? at : messages.findLastIndex((message) => isQuestion(message) && isAdmitted(message) === false);
   };
   const gathered = await gathering;
   // Read once, so what the result hands back is what every step of this run said.
@@ -1649,6 +1676,10 @@ async function runSteps(
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
     // end — so the signal is read between steps as well.
     signal?.throwIfAborted();
+    const input = await takeInput?.();
+    if (input) {
+      await admit(input, step);
+    }
     const before = messages;
     const reported = previous && previous.prompt > 0 ? { used: previous.prompt } : {};
     const rewritten = await beforeStep?.(messages, step, {
@@ -1864,6 +1895,13 @@ async function runSteps(
     if (ended) {
       const by = ended.reason ? `: ${ended.reason}` : '';
       notice(`${ended.name} ended the run${by}`);
+    }
+    // Written while the model was answering, it is answered too, while a step is left to do it in.
+    const hasStepLeft = step + 1 < config.maxToolIterations;
+    const late = isAnswer && hasStepLeft ? await takeInput?.() : undefined;
+    if (late) {
+      await admit(late, step + 1);
+      continue;
     }
     if (isAnswer || ended) {
       // The tool loop is over, so its scratchpads go; what came before the question is the host's.

@@ -83,7 +83,7 @@ export interface LedgerEstimateOptions extends TokenEstimateOptions {
  * @returns `true` for the same object, or two that serialise to the same JSON — so the same fields
  * written in another key order are not the same.
  */
-const sameMessage = (a: Message, b: Message) => a === b || JSON.stringify(a) === JSON.stringify(b);
+export const sameMessage = (a: Message, b: Message) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * Whether two requests declared the same tools in the same order.
