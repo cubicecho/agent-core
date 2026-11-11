@@ -1,3 +1,10 @@
+# [4.15.0](https://github.com/cubicecho/agent-core/compare/v4.14.0...v4.15.0) (2026-11-11)
+
+
+### Features
+
+* **run:** let a host choose which hook events runAgentLoop fires ([0f0156e](https://github.com/cubicecho/agent-core/commit/0f0156ed34019d1544662eb37e08b8148ddb1beb)), closes [#174](https://github.com/cubicecho/agent-core/issues/174)
+
 # [4.14.0](https://github.com/cubicecho/agent-core/compare/v4.13.0...v4.14.0) (2026-11-11)
 
 
