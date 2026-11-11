@@ -470,6 +470,7 @@ const { turn, messages, usage, loaded } = await runAgentLoop({
   messages: history,              // ending in the question; not written to
   tools,                          // every tool the run may reach
   catalog,                        // the same, name-only, for on-demand and proxied loading
+  hostTools,                      // the host's own, declared in every mode and never catalogued
   serverInstructions: true,       // the catalogue's `instructions` after `system`; off by default
   preselected,                    // from `preselect`, if a small model chose
   dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
@@ -687,6 +688,27 @@ a `tool-call` and a `tool-result` event, told to `onToolCall` and `onToolResult`
 `toolCalls` and in the `load_tools` metrics. The
 id is numbered by where the call lands in the transcript, so two questions do not share one. A name
 with no definition in `tools`, or outside the catalogue, is left out, and none left is no exchange.
+
+A host with tools of its own — a question for a person, a resource read — passes them as
+`hostTools`, and they are declared on every step in every mode: after `PROXY_TOOLS` proxied, after
+`load_tools` and ahead of anything loaded on demand, after `tools` in eager mode, and after the
+shortlist on a preselected first step. They reach `dispatch` like any other call and are kept out
+of discovery: taken out of `catalog`, `loaded` and `preselected` before the run starts, never
+counted as a load, and a `call_tool` naming one is refused with a pointer to call it directly.
+Proxied and eager, the array is one set for the whole run, so the cache holds whatever `toolOrder`
+does with it; on demand, `toolOrder: false` keeps them in the prefix every load appends after.
+
+```ts
+await runAgentLoop({
+  config: { ...config, toolDiscovery: "proxy" },
+  messages: history,
+  tools: pool.tools(),
+  catalog: pool.catalog(),
+  hostTools: [ASK_PERSON_DEFINITION], // declared beside load_tools and call_tool, on every step
+  dispatch: (call, signal) =>
+    call.name === ASK_PERSON ? ask(call.args) : pool.call(call.name, call.args, signal),
+});
+```
 
 ### What the servers said on the way
 

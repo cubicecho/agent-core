@@ -253,6 +253,23 @@ export interface AgentLoopOptions {
    */
   tools?: OpenAI.ChatCompletionTool[];
   /**
+   * The host's own tools — a question for a person, a resource read — declared on every step in
+   * every discovery mode and dispatched like any other call, but never catalogued, loaded, or
+   * reached through `call_tool`.
+   *
+   * @remarks
+   * Each sits after the loop's own definitions: after `PROXY_TOOLS` proxied, after `load_tools`
+   * and ahead of anything loaded on demand, after `tools` in eager mode, and after the shortlist
+   * on a preselected first step; `toolOrder` then orders the array as it always does. Proxied and
+   * eager, the array is one set for the whole run, so the cache holds in either order; on demand,
+   * `toolOrder: false` keeps them in the prefix every load appends after.
+   *
+   * A name of one is taken out of `catalog`, `loaded` and `preselected` before the run starts, is
+   * never counted as a load, and is declared once where `tools` or the loop has it too. A
+   * `call_tool` naming one is refused with a pointer to call it directly.
+   */
+  hostTools?: OpenAI.ChatCompletionTool[];
+  /**
    * The same tools as a name-only catalogue. On-demand and proxied modes need it, and are eager
    * without it.
    */
@@ -747,6 +764,8 @@ interface Standing {
  * tool array to go into, so it is written into the transcript as a `load_tools` exchange after
  * the question. `call_tool` is honoured on demand too, unless the host has a tool of that name —
  * a session switched out of proxied mode still has it in its history, and the model copies it.
+ * The host's own `hostTools` are declared beside whatever the mode sends, in every mode, and are
+ * never catalogued.
  *
  * Neither side task is run unless asked for. `preselect` has the loop make the preselection and
  * `compact` has it fold the transcript, each by the task `config.tasks` carries for it and on
@@ -768,9 +787,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }),
   };
   let result: AgentLoopResult | undefined;
+  const apart = hostToolsApart(options);
   try {
-    pin = await pinSession(options);
-    result = await runSteps(options, standing, pin);
+    pin = await pinSession(apart);
+    result = await runSteps(apart, standing, pin);
   } catch (error) {
     // Wrapped rather than annotated: an abort's reason is one object shared by every run under
     // the signal, so the run cannot be hung on the error itself. An overflow keeps its class,
@@ -1080,6 +1100,47 @@ function recorder(heard: AgentLoopOptions['onEvent']) {
   return { recorded, onEvent };
 }
 
+/**
+ * The names of the host's own tools.
+ *
+ * @param [tools] - The host's definitions. One that is not a function has no name, and is left out.
+ * @returns A new set, empty where there are none.
+ */
+const hostToolNames = (tools: readonly OpenAI.ChatCompletionTool[] = []) =>
+  new Set(tools.flatMap((tool) => toolName(tool) ?? []));
+
+/**
+ * The run's options with the host's own tools kept out of discovery: off the catalogue, and out of
+ * what was carried and what was picked.
+ *
+ * @param options - What `runAgentLoop` was given. Not written to.
+ * @returns `options` itself where there are no host tools, and otherwise a copy with `catalog`,
+ * `loaded` and `preselected` filtered, a server that offers none of them kept as it was.
+ *
+ * @remarks
+ * Done once, here, so that preselection, `load_tools`, `call_tool` and the catalogue prompt all
+ * read one catalogue, and a host tool is never loadable however a name of one reaches the loop.
+ */
+function hostToolsApart(options: AgentLoopOptions): AgentLoopOptions {
+  const own = hostToolNames(options.hostTools);
+  if (own.size === 0) {
+    return options;
+  }
+  const isCatalogued = (name: string) => own.has(name) === false;
+  const { catalog, loaded, preselected } = options;
+  const apart = (server: CatalogServer) =>
+    server.tools.every((entry) => isCatalogued(entry.name))
+      ? server
+      : { ...server, tools: server.tools.filter((entry) => isCatalogued(entry.name)) };
+  return {
+    ...options,
+    ...(catalog ? { catalog: catalog.map(apart) } : {}),
+    ...(loaded ? { loaded: [...loaded].filter(isCatalogued) } : {}),
+    // Undefined stays undefined: an empty shortlist is a host saying it has already decided.
+    ...(preselected ? { preselected: preselected.filter(isCatalogued) } : {}),
+  };
+}
+
 /** What opens the notice naming the loop's own picks, ahead of the names. */
 export const PRESELECTED_NOTICE = 'tools picked before the run: ';
 
@@ -1277,11 +1338,17 @@ async function runSteps(
   const summarise = ownSummariser(options, notice);
   const used = new Set<string>();
   const definitions = definitionsByName(tools);
+  // Each once, by name, so one given twice is declared once.
+  const hostTools = loadedTools([], options.hostTools ?? []);
+  const hostNames = hostToolNames(hostTools);
+  // After the head the mode declares, which a host tool of the same name does not displace.
+  const withHost = (head: OpenAI.ChatCompletionTool[]) => (hostTools.length ? loadedTools(head, hostTools) : head);
   // Looked through unless the host has a tool by that name, which is then the host's to answer.
-  const proxies = onDemand && !definitions.has(CALL_TOOL);
+  const proxies = onDemand && !definitions.has(CALL_TOOL) && !hostNames.has(CALL_TOOL);
   // What a call the model wrote as text may name: the host's tools, and the loop's own on demand.
   const recoverable = [
     ...tools.map(toolName).filter((name) => name !== undefined),
+    ...hostNames,
     ...(onDemand ? [LOAD_TOOLS, ...(proxies ? [CALL_TOOL] : [])] : []),
   ];
   // In the order the names are given, not the order of `tools`: `loaded` is a set, which iterates
@@ -1336,6 +1403,7 @@ async function runSteps(
     proxied,
     proxies,
     definitions,
+    hostNames,
     loaded,
     loads,
     used,
@@ -1404,13 +1472,13 @@ async function runSteps(
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
-    let offered = tools;
+    let offered = withHost(tools);
     if (routed) {
-      offered = byName(new Set(preselected));
+      offered = withHost(byName(new Set(preselected)));
     } else if (proxied) {
-      offered = [...PROXY_TOOLS];
+      offered = withHost([...PROXY_TOOLS]);
     } else if (onDemand) {
-      offered = loadedTools([LOAD_TOOLS_DEFINITION], byName(loaded));
+      offered = loadedTools(withHost([LOAD_TOOLS_DEFINITION]), byName(loaded));
     }
     const declared = orderTools(offered, toolOrder);
     // Unmarked, so the system prompt is the same text on every step and a load does not throw
@@ -1501,7 +1569,7 @@ async function runSteps(
     if (turn.finishReason === FinishReason.Length) {
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
-    const canRecover = recover && (tools.length > 0 || onDemand);
+    const canRecover = recover && (tools.length > 0 || hostTools.length > 0 || onDemand);
     const { calls, content } = turnCalls(turn, canRecover ? recoverable : undefined, notice);
     const shown: Turn = { ...turn, content, toolCalls: calls };
     onTurn?.(shown, step);

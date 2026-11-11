@@ -223,6 +223,8 @@ export interface Calling {
   /** Whether a `call_tool` is looked through, which it is unless the host has a tool by that name. */
   proxies: boolean;
   definitions: ReadonlyMap<string, OpenAI.ChatCompletionTool>;
+  /** The host's own tools by name: declared on every step, and never reached through `call_tool`. */
+  hostNames: ReadonlySet<string>;
   loaded: Set<string>;
   loads: { toolsLoaded: number; redundantLoads: number; unknownToolNames: number };
   used: Set<string>;
@@ -376,7 +378,11 @@ function prepare(run: Calling, entry: ReadCall): Prepared {
   // nothing a load could not, and the refusal is the call's answer.
   let inner = args ?? {};
   let refused: { error: unknown } | undefined;
-  if (proxy && args) {
+  if (proxy && args && run.hostNames.has(name)) {
+    // Declared already, so the model is pointed at the call it can make rather than told the
+    // tool does not exist.
+    refused = { error: new Error(`${name} is not in the catalogue; call it directly, not through ${CALL_TOOL}.`) };
+  } else if (proxy && args) {
     try {
       inner = proxiedCall(args, catalog).input;
     } catch (error) {
