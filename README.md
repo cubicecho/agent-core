@@ -768,8 +768,8 @@ distinctive than a word the catalogue shares has to have matched, and the tools 
 have to score well below the ones it kept — a hit just under the line scoring nearly as much as
 one just over it means the ranking chose arbitrarily, which is the case a model is worth spending
 on. Matching nothing is not confident either, since the words cannot tell a request that needs no
-tools from one whose words are not in the catalogue. An empty `toolSelectModel` still means no
-preselection at all, words included. `preselect` also takes a `temperature` and a
+tools from one whose words are not in the catalogue. An empty model still means no preselection
+at all, words included. `preselect` also takes a `temperature` and a
 `reasoningEffort` and an `extraBody`, read as `ask` reads them, and `runAgentLoop({ preselect: true })` makes the call
 itself — see "Its side tasks" below.
 
@@ -884,10 +884,12 @@ as the host passed them, this one as typed — which is why the snippet stores o
 without waiting; a host that stores those notes with the turn, or would otherwise exit before the
 turn is remembered, awaits it once the answer is out.
 
-The loop gathers before its first request, and nothing of the host's can run beside that. A host
-with pre-turn work to overlap with the hooks — compaction, a preselection — calls `gather` itself,
-applies `withContext` to the current question as well, calls `notify` after, and passes no `hooks`
-(see [Hooks](#hooks)).
+The loop gathers before its first request, beside its own preselection when `preselect` asked for
+one, and nothing else of the host's can run beside those. A host with pre-turn work to overlap with
+the hooks — a compaction — calls `gather` itself, applies `withContext` to the current question as
+well, calls `notify` after, and passes no `hooks` (see [Hooks](#hooks)). Such a host passes the
+question as it was typed as `preselectQuery` too, or the preselector is shown the context in front
+of it and picks tools for what was recalled rather than what was asked.
 
 A host that stores its transcript — a row per message, so a crash or a stop mid-run still leaves
 readable history — gets each message as the loop appends it, and the run as it stood when the loop
@@ -1488,16 +1490,31 @@ with `tasks.compaction` writing the summary and no falling back to the main mode
 are off by default: a host that already calls `preselect` or compacts in `beforeStep` is not sent
 a second request.
 
+The preselector falls back to the main model. With neither `tasks.toolSelect` nor
+`toolSelectModel` naming one, `preselect: true` asks `config.model` on the agent's own endpoint at
+`preselect`'s defaults: a host that opted in has asked for a preselection, and an empty name is a
+setting nobody filled in. Compaction has no such fallback. A host that wants no preselection passes
+no `preselect`. A spec layer that declines the task with `model: ""` leaves it absent from the
+resolved agent, as one nobody configured is, so under `preselect: true` the main model is asked
+there too.
+
+What it asks about is the question as written: the last user message of `messages`, which the hooks'
+context never reaches because the loop puts that on the request. A host that put context on the
+question itself passes `preselectQuery`. The preselection and the hooks' `gather` run side by side,
+since neither reads the other, so asking for both costs the first request one round trip rather
+than two.
+
 What the loop picked it says twice. A `notice` event names the tools before the first `turn` event
 — `PRESELECTED_NOTICE` and then the names, comma-separated — and the result's `preselected` is the
 shortlist the run opened with, the host's own where it gave one and empty where nothing was picked.
 A run that fails carries it too, beside `loaded` and `used`.
 
-An empty `toolSelectModel` means no preselection, and says nothing about it. A host whose settings
-read `""` as "use the run's model" has to say so in the config it builds:
+Called directly, `preselect` reads an empty model as no preselection and says nothing about it; it
+is only the loop that falls back. A host calling it itself whose settings read `""` as "use the
+run's model" says so in the call:
 
 ```ts
-const config = { ...settings, toolSelectModel: settings.toolSelectModel || settings.model };
+await preselect(config, settings.toolSelectModel || settings.model, catalog, prompt, options);
 ```
 
 ```ts

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { answer, apiError, type Message, says, tool } from '../helpers.ts';
+import { answer, apiError, type Message, outcome, says, tool } from '../helpers.ts';
 
 const create = vi.fn();
 /** Every endpoint a client was asked for, in order, so a test can say where a request went. */
@@ -341,17 +341,30 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(declared(1)).toEqual(['s__read']);
   });
 
-  it('asks nothing when the host has already decided, or no preselector is named', async () => {
+  it('asks nothing when the host has already decided, in eager mode, or for a blank query', async () => {
     const config = onDemand({ toolSelect: { model: 'tiny' } });
     create.mockResolvedValue(says('hello'));
     // An empty list is a decision too.
     await run(config, { preselect: true, preselected: [] });
-    await run(onDemand({}), { preselect: true });
     await run({ ...config, toolDiscovery: ToolDiscovery.Eager }, { preselect: true });
+    await run(config, { preselect: true, preselectQuery: '  ' });
     expect(create).toHaveBeenCalledTimes(3);
     for (const nth of [0, 1, 2]) {
       expect(body(nth)).toMatchObject({ model: 'big', stream: true });
     }
+  });
+
+  it('falls back to the main model when no preselector is named, on its own defaults', async () => {
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    const result = await run(onDemand({}), { preselect: true });
+    // The preselector's defaults rather than the agent's temperature and ceiling.
+    expect(body(0)).toMatchObject({ model: 'big', temperature: 0.3, max_tokens: 256 });
+    expect(body(0).stream).toBeUndefined();
+    expect(new Set(reached.map((endpoint) => JSON.stringify(endpoint)))).toEqual(
+      new Set([JSON.stringify({ baseUrl: 'http://main/v1', apiKey: 'sk-main' })]),
+    );
+    expect(result.preselected).toEqual(['s__read']);
+    expect(declared(1)).toEqual(['s__read']);
   });
 
   it('reports a failed preselection as a notice and runs without one', async () => {
@@ -401,7 +414,8 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const onEvent = (event: RunEventInput) => events.push(event);
     const config = onDemand({ toolSelect: { model: 'tiny' } });
     create.mockResolvedValue(says('hello'));
-    // No preselector is named, so none is asked.
+    // The main model is asked, and names nothing.
+    create.mockResolvedValueOnce(answer('[]'));
     const unnamed = await run(onDemand({}), { preselect: true, onEvent });
     // Eager mode shows every tool, and a shortlist means nothing to it.
     const eager = await run({ ...config, toolDiscovery: ToolDiscovery.Eager }, { preselected: ['s__read'], onEvent });
@@ -410,7 +424,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(notices(events)).toEqual([]);
   });
 
-  it("picks nothing for an empty toolSelectModel, and for the run's model once the host names it", async () => {
+  it("asks the run's model for an empty toolSelectModel, as it would once the host named it", async () => {
     const settings = {
       baseUrl: 'http://local/v1',
       apiKey: '',
@@ -421,14 +435,99 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       toolDiscovery: ToolDiscovery.OnDemand,
       toolSelectModel: '',
     };
-    create.mockResolvedValueOnce(says('hello'));
-    expect((await run(settings, { preselect: true })).preselected).toEqual([]);
-    expect(create).toHaveBeenCalledTimes(1);
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    expect((await run(settings, { preselect: true })).preselected).toEqual(['s__read']);
+    expect(body(0)).toMatchObject({ model: 'm', temperature: 0.3 });
 
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     const named = { ...settings, toolSelectModel: settings.toolSelectModel || settings.model };
     expect((await run(named, { preselect: true })).preselected).toEqual(['s__read']);
-    expect(body(1)).toMatchObject({ model: 'm' });
+    expect(body(2)).toEqual(body(0));
+  });
+
+  /** Everything the nth request showed the model, as one string. */
+  const shown = (nth: number) => JSON.stringify(body(nth).messages);
+
+  it("asks about the question as written, never the hooks' context in front of it", async () => {
+    const run_ = vi.fn(async () => [outcome({ inject: true, text: 'the user likes tea' })]);
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    const result = await run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      hooks: { run: run_, context: { session: { id: 's' } } },
+    });
+    expect(result.context).toContain('the user likes tea');
+    expect(shown(0)).toContain('read it');
+    expect(shown(0)).not.toContain('the user likes tea');
+    // The main turn still carries it.
+    expect(shown(1)).toContain('the user likes tea');
+  });
+
+  it('asks about preselectQuery in place of a question the host sent with its context on', async () => {
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    await run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      preselectQuery: 'read it',
+      messages: [{ role: Role.User, content: '<context>the user likes tea</context>\n\nread it' }],
+    });
+    expect(shown(0)).toContain('read it');
+    expect(shown(0)).not.toContain('the user likes tea');
+    expect(shown(1)).toContain('the user likes tea');
+  });
+
+  it("runs the preselection beside the hooks' gather, and sends the first step after both", async () => {
+    const PAUSE_MS = 80;
+    const spans: Record<string, { from: number; to: number }> = {};
+    const timed = async <T>(name: string, value: T) => {
+      const from = performance.now();
+      await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
+      spans[name] = { from, to: performance.now() };
+      return value;
+    };
+    let firstStepAt = 0;
+    create
+      .mockImplementationOnce(() => timed('preselect', answer('["s__read"]')))
+      .mockImplementationOnce(() => {
+        firstStepAt = performance.now();
+        return says('hello');
+      });
+    const result = await run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      hooks: {
+        run: () => timed('gather', [outcome({ inject: true, text: 'remembered' })]),
+        context: { session: { id: 's' } },
+      },
+    });
+    const { preselect: picking, gather: gathering } = spans;
+    // Each began before the other ended.
+    expect(gathering.from).toBeLessThan(picking.to);
+    expect(picking.from).toBeLessThan(gathering.to);
+    expect(firstStepAt).toBeGreaterThanOrEqual(Math.max(picking.to, gathering.to));
+    expect(result.preselected).toEqual(['s__read']);
+    expect(result.context).toContain('remembered');
+  });
+
+  it("rejects with a note hearer's throw from the gather, not unhandled, while the preselection is out", async () => {
+    let answerPreselect: (value: unknown) => void = () => undefined;
+    create.mockImplementationOnce(() => new Promise((resolve) => (answerPreselect = resolve)));
+    const failing = run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      hooks: {
+        // A runner that fails is a note, and the host's hearer of it throws.
+        run: () => Promise.reject(new Error('hooks down')),
+        context: { session: { id: 's' } },
+        onNote: () => {
+          throw new Error('hearer broke');
+        },
+      },
+    }).catch((thrown: unknown) => thrown);
+    // Long enough for the gather to have rejected with nothing yet awaiting it.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    answerPreselect(answer('["s__read"]'));
+    const error = await failing;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('hearer broke');
+    expect(failedRun(error)?.preselected).toEqual(['s__read']);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it('says what it opened with when the run fails', async () => {

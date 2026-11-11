@@ -422,7 +422,8 @@ because every side task in this package already takes one: `summariser` (`src/co
 llama.cpp beside a frontier main model is expressible here, and no published format serves it. An
 unknown task key is carried through untouched and not warned about, since a host may run tasks this
 package has never heard of. `toolSelectModel` flattens from `tasks.toolSelect?.model ?? ""`, where
-`""` already means do not preselect.
+`""` means do not preselect to `preselect` itself, and the main model to `runAgentLoop`'s
+`preselect` option.
 
 A task's settings are its own. `maxTokens`, `temperature`, `reasoningEffort` and `extraBody` are
 resolved only where a layer stated them, and nothing is filled in from `model`: an absent field is the side
@@ -437,7 +438,9 @@ It turns a `ResolvedTask` into the endpoint, model and options that `ask`, `askJ
 and `preselect` take, with what the task states winning over the host's options. Given the agent's
 endpoint it also keys a task on that endpoint as the agent is keyed, so the two share one
 capability entry rather than learning each refusal twice. `runAgentLoop` reads `tasks.toolSelect`
-under its `preselect` option and `tasks.compaction` under `compact`, both off by default.
+under its `preselect` option and `tasks.compaction` under `compact`, both off by default. Asked to
+preselect with no `toolSelect` model, it asks the main model; asked to compact with no `compaction`
+model, it folds nothing.
 
 `reasoningEffort` does not read as `model.reasoningEffort` does. A side task is sent the
 no-thinking hints unless told otherwise, so absent and `"off"` both keep them, where on the main
