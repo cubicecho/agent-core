@@ -1,3 +1,10 @@
+## [4.23.3](https://github.com/cubicecho/agent-core/compare/v4.23.2...v4.23.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* **run:** never write an assistant message with neither text nor calls ([dacf665](https://github.com/cubicecho/agent-core/commit/dacf665df30a10ced9c36322f959bd336a409937)), closes [#202](https://github.com/cubicecho/agent-core/issues/202)
+
 ## [4.23.2](https://github.com/cubicecho/agent-core/compare/v4.23.1...v4.23.2) (2026-11-11)
 
 
