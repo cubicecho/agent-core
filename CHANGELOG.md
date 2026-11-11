@@ -1,3 +1,10 @@
+## [4.23.1](https://github.com/cubicecho/agent-core/compare/v4.23.0...v4.23.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* send a fold's summary as conversation, never as a second system message ([8005d76](https://github.com/cubicecho/agent-core/commit/8005d768b74c4f765a9372aa95b7c47c4743d0da)), closes [#200](https://github.com/cubicecho/agent-core/issues/200)
+
 # [4.23.0](https://github.com/cubicecho/agent-core/compare/v4.22.0...v4.23.0) (2026-11-11)
 
 
