@@ -138,6 +138,7 @@ export {
   PRESELECTED_NOTICE,
   runAgentLoop,
   type StepWindow,
+  type WrittenMessage,
 } from './run/agent-loop.ts';
 export {
   configureEvents,

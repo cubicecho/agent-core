@@ -529,9 +529,24 @@ export interface ToolCallRequest {
   args: Record<string, unknown>;
   /**
    * The arguments as the model wrote them, before any repair. Through `call_tool`, the inner
-   * arguments as JSON text.
+   * arguments as JSON text. For a call recovered from the reply's text, the arguments recovery read
+   * out of it, as JSON text: the words the model wrote are the reply's content, which `onMessage`'s
+   * `raw` message carries.
    */
   raw: string;
+  /**
+   * Whether `args` took a repair to read: true where `raw` does not parse, as written, to the JSON
+   * object `args` holds — near-JSON, or JSON inside a string — and for every call recovered from
+   * text, which the model never sent as a call. False for blank arguments, which every reader takes
+   * as none, and for arguments that could not be read at all. Through `call_tool`, whether the
+   * `call_tool`'s own arguments did.
+   *
+   * @remarks
+   * A host that shows or stores what the model said reads `raw` where this is true. Whitespace is
+   * not a repair, though the replayed arguments are re-serialised either way. `runAgentLoop` always
+   * sets it; optional so a request built before it existed still compiles.
+   */
+  repaired?: boolean;
 }
 
 /** What one tool call did, in the order the model asked. */

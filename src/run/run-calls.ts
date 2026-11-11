@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { isRecord } from '../core/guards.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
 import {
   CALL_TOOL,
@@ -68,6 +69,25 @@ export interface ReadCall {
   error?: unknown;
   /** The arguments as every later request replays them: the repaired JSON, or `{}` for none. */
   normal: string;
+  /** Whether `args` took a repair to read, as `ToolCallRequest.repaired` says. */
+  repaired: boolean;
+}
+
+/**
+ * Whether a call's arguments are, as written, the JSON of an object — or no arguments at all.
+ *
+ * @param raw - The arguments as the turn carried them: a string, or an object a server parsed.
+ * @returns False where reading them took `parseToolArguments`' repairs.
+ */
+function readsAsWritten(raw: unknown): boolean {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return true;
+  }
+  try {
+    return isRecord(JSON.parse(raw));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -75,14 +95,17 @@ export interface ReadCall {
  *
  * @param call - The call as the turn carried it.
  * @param finishReason - Why the turn ended, which tells a call cut off from one written wrongly.
+ * @param recovered - Whether the call was recovered from the reply's text, which makes it repaired
+ * whatever its arguments.
  * @returns The call beside its arguments and their repaired JSON, or beside the error and `{}`.
  */
-function readCall(call: ToolCall, finishReason: Turn['finishReason']): ReadCall {
+function readCall(call: ToolCall, finishReason: Turn['finishReason'], recovered: boolean): ReadCall {
   try {
     const args = parseToolArguments(call.function.arguments, { finishReason });
-    return { call, args, normal: JSON.stringify(args) };
+    const repaired = recovered || !readsAsWritten(call.function.arguments);
+    return { call, args, normal: JSON.stringify(args), repaired };
   } catch (error) {
-    return { call, error, normal: '{}' };
+    return { call, error, normal: '{}', repaired: false };
   }
 }
 
@@ -91,6 +114,7 @@ function readCall(call: ToolCall, finishReason: Turn['finishReason']): ReadCall 
  *
  * @param calls - The turn's calls, in the order the model made them.
  * @param finishReason - Why the turn ended, which tells a call cut off from one written wrongly.
+ * @param [recovered] - Whether the calls were recovered from the reply's text.
  * @returns One entry per call, in the same order. Unreadable arguments do not throw: the entry
  * carries the error in place of them.
  *
@@ -98,8 +122,8 @@ function readCall(call: ToolCall, finishReason: Turn['finishReason']): ReadCall 
  * A server that parses replayed arguments refuses the almost-JSON a model wrote, so each is
  * normalised here, and one that could not be read at all is replayed as no arguments.
  */
-export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason']): ReadCall[] =>
-  calls.map((call) => readCall(call, finishReason));
+export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason'], recovered = false): ReadCall[] =>
+  calls.map((call) => readCall(call, finishReason, recovered));
 
 /**
  * The assistant message a turn is written into the transcript as, its calls' arguments repaired.
@@ -120,6 +144,20 @@ export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.Ch
         })),
       }
     : {}),
+});
+
+/**
+ * The assistant message a turn is, as the model produced it: its text and calls as they streamed.
+ *
+ * @param content - The turn's text, recovered calls left in it. Empty is written as `null`.
+ * @param calls - The calls the model sent as calls, with their arguments as streamed. Not written
+ * to. None leaves `tool_calls` off the message rather than empty.
+ * @returns A new message, each call on it a copy.
+ */
+export const writtenMessage = (content: string, calls: ToolCall[]): OpenAI.ChatCompletionAssistantMessageParam => ({
+  role: Role.Assistant,
+  content: content || null,
+  ...(calls.length ? { tool_calls: calls.map((call) => ({ ...call, function: { ...call.function } })) } : {}),
 });
 
 /**
@@ -405,7 +443,7 @@ function prepare(run: Calling, entry: ReadCall): Prepared {
   }
   // Built for every call rather than only the dispatched ones, so a host hears of the calls
   // the loop answers itself in the same shape. Arguments that could not be read are none.
-  const request: ToolCallRequest = { id: call.id, name, args: inner, raw };
+  const request: ToolCallRequest = { id: call.id, name, args: inner, raw, repaired: entry.repaired };
   // By the name the model called, not the one a `call_tool` wraps: `load_tools` is not in
   // the catalogue, and one reached through `call_tool` is refused like any other.
   const load = onDemand && call.function.name === LOAD_TOOLS;
@@ -694,7 +732,7 @@ export async function loadShortlist(
   // host that shortlisted more has already chosen.
   const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
   run.onEvent({ kind: RunEventKind.ToolCall, id, name: LOAD_TOOLS, text: preview(args) });
-  run.onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
+  run.onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args, repaired: false });
   const loads: LoadCounts = { toolsLoaded: names.length, redundantLoads: 0, unknownToolNames: 0 };
   run.onEvent({ kind: RunEventKind.ToolResult, id, name: LOAD_TOOLS, ok: true, text: preview(content), loads });
   run.onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
