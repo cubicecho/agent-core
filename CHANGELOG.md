@@ -1,3 +1,10 @@
+## [4.23.5](https://github.com/cubicecho/agent-core/compare/v4.23.4...v4.23.5) (2026-11-11)
+
+
+### Bug Fixes
+
+* **endpoint:** step a template's refused reasoning effort up the ladder ([7d3671a](https://github.com/cubicecho/agent-core/commit/7d3671ade31048fb8e5cd0efa7505e121463ec4e)), closes [#205](https://github.com/cubicecho/agent-core/issues/205)
+
 ## [4.23.4](https://github.com/cubicecho/agent-core/compare/v4.23.3...v4.23.4) (2026-11-11)
 
 

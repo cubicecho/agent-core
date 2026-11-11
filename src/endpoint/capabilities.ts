@@ -364,7 +364,20 @@ const rejectsResponseFormat = (detail: string) =>
  * the default with the setting still reading what the operator typed. `stepEffort` answers this
  * one instead, by naming an effort the model does take.
  */
-const REFUSED_VALUE = /unsupported value|invalid value|supported values/i;
+const REFUSED_VALUE =
+  /unsupported value|invalid value|supported (?:values|types)|must be one of|unexpected reasoning[ _]effort/i;
+
+/**
+ * The field named in a server's words or a chat template's: `reasoning_effort` on the wire, and
+ * `reasoning effort` where a Jinja template raises over the value it was handed.
+ *
+ * @remarks
+ * Only the value refusal reads it. Qwen3.8's template says `Unexpected reasoning effort high.
+ * Supported types are xhigh (default), medium, and low.`, which llama.cpp passes on as a 500 and
+ * vLLM as a 400 — with the space, because the template is prose. `rejectsEffort` keeps the
+ * underscore: a sentence about reasoning effort is not, on its own, a server refusing the field.
+ */
+const NAMES_EFFORT = /reasoning[ _]effort/i;
 
 /**
  * A model that cannot reason refuses the field by name — and only the field.
@@ -391,13 +404,15 @@ export const EFFORT_NONE = 'none' as const;
  *
  * @remarks
  * Not a list of what any model takes — `medium` is refused by a model whose list is
- * `minimal, low, high`, and `xhigh` is real and deliberately absent. It is the order the values
- * OpenAI has shipped stand in, which is all a step needs to know. A value not on it cannot be
- * placed, and an unplaceable value is left alone rather than guessed at: stepping down from a
- * refused `xhigh` to `high` would quietly answer a question with less deliberation than whoever
- * typed it asked for, where stepping up from `none` to `minimal` only costs tokens and says so.
+ * `minimal, low, high`, and Qwen3.8's template takes `xhigh, medium, low` and refuses `high`. It
+ * is the order the values stand in, which is all a step needs to know. `xhigh` is the top rung,
+ * so a refused `high` steps up to it, and a refused `xhigh` has nowhere to go. A value not on it
+ * cannot be placed, and an unplaceable value is left alone rather than guessed at: stepping down
+ * from a refused `xhigh` to `high` would quietly answer a question with less deliberation than
+ * whoever typed it asked for, where stepping up from `none` to `minimal` only costs tokens and says
+ * so.
  */
-export const EFFORT_LADDER = [EFFORT_NONE, 'minimal', 'low', 'medium', 'high'] as const;
+export const EFFORT_LADDER = [EFFORT_NONE, 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 
 /** The ladder as plain strings, so a value that is not on it can be looked for. */
 const LADDER: readonly string[] = EFFORT_LADDER;
@@ -412,26 +427,32 @@ const rankOf = (effort: string): number => LADDER.indexOf(effort.toLowerCase());
 
 /**
  * The efforts a refusal lists as this model's: `Supported values are: 'minimal', 'low', 'medium',
- * and 'high'.`
+ * and 'high'.`, `Supported types are xhigh (default), medium, and low.`, or `must be one of
+ * ['low', 'medium', 'high']`.
  *
  * @param detail - The server's error text.
  * @returns The listed efforts the ladder can place, lowercased and in the order the refusal gave
  * them; `undefined` where it lists none, or none that can be placed.
  *
  * @remarks
- * Quoted or bare, separated by commas and a trailing `and` or `or`.
+ * Quoted or bare, bracketed or not, separated by commas and a trailing `and` or `or`. A
+ * parenthetical after a value — Qwen3.8's `(default)` — is the template's aside, not a value.
  */
 function listedEfforts(detail: string): string[] | undefined {
-  const listed = detail.match(/supported values(?:\s+\w+)?\s*(?:are|is|include)?\s*:?\s*([^\n.]+)/i)?.[1];
+  const match = detail.match(
+    /supported (?:values|types)(?:\s+\w+)?\s*(?:are|is|include)?\s*:?\s*([^\n.]+)|must be one of\s*:?\s*([^\n.]+)/i,
+  );
+  const listed = match?.[1] ?? match?.[2];
   if (!listed) {
     return undefined;
   }
   const values = listed
+    .replace(/\([^)]*\)/g, '')
     .split(/,|\band\b|\bor\b/)
     .map((value) =>
       value
         .trim()
-        .replace(/^['"`]+|['"`]+$/g, '')
+        .replace(/^[\s'"`[]+|[\s'"`\]]+$/g, '')
         .toLowerCase(),
     )
     .filter((value) => rankOf(value) >= 0);
@@ -439,8 +460,9 @@ function listedEfforts(detail: string): string[] | undefined {
 }
 
 /**
- * Which effort a refusal says was refused, in the two shapes the wording takes: the field quoted
- * then `does not support 'none'`, and `reasoning_effort: none`.
+ * Which effort a refusal says was refused, in the three shapes the wording takes: the field quoted
+ * then `does not support 'none'`, `reasoning_effort: none`, and a template's `Unexpected reasoning
+ * effort high`.
  *
  * @param detail - The refusal.
  * @param [supported] - What the same refusal listed, which the value cannot be one of.
@@ -454,10 +476,10 @@ function listedEfforts(detail: string): string[] | undefined {
  * rung was refused is how a ladder walks past the value that would have worked.
  */
 function refusedEffortValue(detail: string, supported: readonly string[] = []): string | undefined {
-  const found = detail.match(
-    /reasoning_effort['"`]?\s*(?:does not support|is not supported with|:)\s*['"`]?([\w-]+)/i,
-  )?.[1];
-  const value = found?.toLowerCase();
+  const match = detail.match(
+    /reasoning[ _]effort['"`]?\s*(?:does not support|is not supported with|:)\s*['"`]?([\w-]+)|unexpected reasoning[ _]effort\s*:?\s*['"`]?([\w-]+)/i,
+  );
+  const value = (match?.[1] ?? match?.[2])?.toLowerCase();
   return value && !supported.includes(value) ? value : undefined;
 }
 
@@ -608,7 +630,7 @@ function planEffortStep(detail: string, refused: ModelCapabilities): EffortStep 
   if (!refused.reasoningEffort) {
     return undefined;
   }
-  if (!/reasoning_effort/i.test(detail) || !REFUSED_VALUE.test(detail)) {
+  if (!NAMES_EFFORT.test(detail) || !REFUSED_VALUE.test(detail)) {
     return undefined;
   }
   const supported = listedEfforts(detail);
