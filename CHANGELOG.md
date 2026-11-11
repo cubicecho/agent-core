@@ -1,3 +1,10 @@
+# [4.20.0](https://github.com/cubicecho/agent-core/compare/v4.19.0...v4.20.0) (2026-11-11)
+
+
+### Features
+
+* **run:** hand hosts the model's raw tool arguments and message ([74c57cc](https://github.com/cubicecho/agent-core/commit/74c57ccd6901697ea632885dcf80097f10959ceb)), closes [#179](https://github.com/cubicecho/agent-core/issues/179)
+
 # [4.19.0](https://github.com/cubicecho/agent-core/compare/v4.18.0...v4.19.0) (2026-11-11)
 
 
