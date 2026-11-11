@@ -1,3 +1,10 @@
+# [4.24.0](https://github.com/cubicecho/agent-core/compare/v4.23.9...v4.24.0) (2026-11-11)
+
+
+### Features
+
+* **hooks:** tell afterTurn the question as typed, in the host's numbering ([d6c3554](https://github.com/cubicecho/agent-core/commit/d6c35549be3c7f6b371e1d384484352358c67508)), closes [#218](https://github.com/cubicecho/agent-core/issues/218)
+
 ## [4.23.9](https://github.com/cubicecho/agent-core/compare/v4.23.8...v4.23.9) (2026-11-11)
 
 
