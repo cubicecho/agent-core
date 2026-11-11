@@ -38,7 +38,7 @@ only, Node >=22.
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. |
 | `request-body` | `buildBody`: the one place a streamed request's body is decided from a config and what the endpoint and the model have refused. |
-| `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher. |
+| `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher, and `formatToolError` words a failed call for the model. |
 | `preselect` | Choosing a run's tools before it starts: `preselect` asks a small model, `preselectByKeywords` scores the request's own words against the tool names without one, and `preselectSystem`, `preselectInput` and `preselection` are the prompt and the reading of the reply for a host that makes the call itself. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. Plus the shapes a call is handed round in: `ToolCallRequest`, `ToolCallResult`, `ToolCallOutcome`. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planPrune` moves a boundary for them that keeps the prompt cache, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
@@ -151,6 +151,18 @@ A host storing rows from `onMessage` gets the message as replayed, field and all
 `dropReasoning(rows, from)` does the same to the stored copy. History before the question is sent as
 the host gave it.
 
+Two providers hand back opaque state that has to go back byte for byte. OpenRouter streams
+`reasoning_details`, a list of summary, signed-text and encrypted blocks, beside `reasoning`, and asks
+for them back unmodified and in order. `streamTurn` puts them back together as `reasoningDetails` on
+the turn: a text or summary block's pieces are joined, an index that differs or an encrypted block
+starts a new one. `runAgentLoop` writes them back as `reasoning_details` under the same
+`reasoningReplay` policy as the scratchpad, since they are the same reasoning. `dropReasoning` and the
+`reasoningContent` latch take them off with it. Gemini puts `extra_content.google.thought_signature`
+on the first call of a step, and refuses with a 400 a request that replays the step without it. That
+is not reasoning to drop, so it stays on the call under every policy. The keys a call keeps are an
+allowlist, `CALL_EXTRA_KEYS`, which is `extra_content` today, so no key a server merely added is sent
+to a stricter one.
+
 A server without a reasoning parser leaves the scratchpad in `content`, fenced, and then it is shown
 as output, stored and sent back. `streamTurn` routes text inside a fence to `onThinking` and
 `reasoning` instead, holding back the tail of a chunk that could be half a tag. `DEFAULT_FENCES` is
@@ -184,9 +196,14 @@ The effort is the exception, because there the model has said what it *would* ta
 `Unsupported value: 'reasoning_effort' does not support 'none' with this model. Supported values
 are: 'minimal', 'low', 'medium', and 'high'.` `negotiate` latches the rung that was refused and
 re-sends at the cheapest one above it, which is a request rather than a failure. Where the refusal
-lists nothing it walks `EFFORT_LADDER` — `none`, `minimal`, `low`, `medium`, `high` — a rung per
-refusal. Both latch per `(endpoint, model)` and ride in the snapshot, so a restart does not walk
-the ladder again.
+lists nothing it walks `EFFORT_LADDER` — `none`, `minimal`, `low`, `medium`, `high`, `xhigh` — a
+rung per refusal. Both latch per `(endpoint, model)` and ride in the snapshot, so a restart does
+not walk the ladder again.
+
+A chat template's raise is read the same way, whether llama.cpp passes it on as a 500 or vLLM as a
+400. Qwen3.8's says `Unexpected reasoning effort high. Supported types are xhigh (default), medium,
+and low.` — so `high` is re-sent as `xhigh` and `minimal` as `low`, and the model's list is
+latched. A generic `must be one of [...]` list is read too.
 
 Only ever upward, and only from a value on the ladder. Answering a refused `xhigh` with `high`
 would quietly reason less than whoever typed it asked for; stepping up from `none` only costs
@@ -529,7 +546,11 @@ reads together and writes in order with a predicate (below).
 Either way an identical call — the same name and arguments, byte for byte — is made once and its
 answer handed to the repeat, and two still in flight share the request. A call that threw is
 forgotten rather than cached, so asking again is a real retry. What a tool throws is what the model
-reads, and so are arguments that did not parse.
+reads, behind `Error: ` — chat completions has no `is_error`, so a failure the text does not announce
+reads as an answer — unless the message opens with `error` already; `formatToolError` replaces that
+wording, and the default is exported under the same name. Arguments that did not parse, and the
+loop's other refusals, are read in their own words. A result is never empty: one with nothing in it,
+failed or not, is `(no output)`, as agent-mcp-pool writes an empty MCP result.
 
 The scope is the step, not the run: between steps other tools have run, and the file the model read
 may be the file it has since written. `dedupeToolCalls: false` dispatches everything, and a

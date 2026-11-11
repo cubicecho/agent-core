@@ -29,6 +29,19 @@ const NO_SUCH_EFFORT = apiError(
   "Unsupported value: 'reasoning_effort' does not support 'none' with this model. " +
     "Supported values are: 'minimal', 'low', 'medium', and 'high'.",
 );
+/**
+ * Qwen3.8's chat template refusing an effort it has no instructions for (`chat_template.jinja`
+ * L47-49), as the template raises it. It takes `xhigh`, `medium` and `low` and nothing else.
+ *
+ * @param value - The effort the template was handed.
+ * @returns The template's own words.
+ */
+const qwenTemplateRaise = (value: string) =>
+  `Unexpected reasoning effort ${value}. Supported types are xhigh (default), medium, and low.`;
+/** llama.cpp renders the template on its own engine, and a raise there is a 500. */
+const QWEN_LLAMA_CPP = (value: string) => apiError(500, `Jinja Exception: ${qwenTemplateRaise(value)}`);
+/** vLLM catches the `TemplateError` and answers 400, with the exception's cause on the end. */
+const QWEN_VLLM = (value: string) => apiError(400, `${qwenTemplateRaise(value)} None`);
 /** A real field refusal that happens to be worded the way a value refusal usually is. */
 const NO_EFFORT_FIELD = apiError(400, 'This model does not support reasoning_effort.');
 
@@ -253,13 +266,19 @@ describe('effortFor', () => {
     expect(effortFor(refused, 'medium')).toBe('medium');
   });
 
+  it('steps a refused high up to xhigh, the rung above it', () => {
+    const refused = model();
+    refused.refusedEfforts.add('high');
+    expect(effortFor(refused, 'high')).toBe('xhigh');
+  });
+
   it('hands back what it was given when there is nowhere to step', () => {
     // The caller's own value goes out and is refused again, where guessing would either reason
     // less than was asked for or send a rung already known to fail.
     const refused = model();
-    refused.refusedEfforts.add('high');
-    expect(effortFor(refused, 'high')).toBe('high');
+    refused.refusedEfforts.add('xhigh');
     expect(effortFor(refused, 'xhigh')).toBe('xhigh');
+    expect(effortFor(refused, 'max')).toBe('max');
   });
 });
 
@@ -449,13 +468,19 @@ describe('negotiate, for a model', () => {
     // Never a step *down*: answering a refused `xhigh` with `high` would quietly reason less than
     // whoever typed it asked for, where stepping up only costs tokens and says so in a notice.
     const supports = openai();
-    const unplaceable = apiError(
-      400,
-      "Unsupported value: 'reasoning_effort' does not support 'xhigh' with this model.",
-    );
+    const unplaceable = apiError(400, "Unsupported value: 'reasoning_effort' does not support 'max' with this model.");
     const { send } = modelThatRefuses(unplaceable);
-    await expect(negotiate(supports, send, { model: 'gpt-5' })).rejects.toThrow('xhigh');
+    await expect(negotiate(supports, send, { model: 'gpt-5' })).rejects.toThrow('max');
     expect(send).toHaveBeenCalledTimes(1);
+
+    const topRung = apiError(
+      400,
+      "Unsupported value: 'reasoning_effort' does not support 'xhigh' with this model. " +
+        "Supported values are: 'minimal', 'low', 'medium', and 'high'.",
+    );
+    const { send: atTop } = modelThatRefuses(topRung);
+    await expect(negotiate(supports, atTop, { model: 'gpt-5-mini' })).rejects.toThrow('xhigh');
+    expect(atTop).toHaveBeenCalledTimes(1);
 
     const topOut = apiError(
       400,
@@ -465,6 +490,60 @@ describe('negotiate, for a model', () => {
     const { send: second } = modelThatRefuses(topOut);
     await expect(negotiate(supports, second, { model: 'gpt-4o' })).rejects.toThrow('high');
     expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it("steps Qwen3.8's refused high up to xhigh, on llama.cpp's 500 and vLLM's 400 alike", async () => {
+    // The template words it as prose — a space, not the field's underscore, and `Supported types`
+    // with an aside on the default — and the listed set has no `high` to stay at. The cheapest
+    // value at or above the one asked for is the one above it.
+    for (const refusal of [QWEN_LLAMA_CPP('high'), QWEN_VLLM('high')]) {
+      resetCapabilities();
+      const supports = capabilitiesFor('http://llama:8080/v1');
+      const notices: string[] = [];
+      const { send } = modelThatRefuses(refusal);
+      await expect(negotiate(supports, send, { model: 'qwen3.8-27b', onNotice: (m) => notices.push(m) })).resolves.toBe(
+        'answered',
+      );
+      expect(send).toHaveBeenCalledTimes(2);
+      const refused = modelCapabilitiesFor(supports, 'qwen3.8-27b');
+      expect(refused.reasoningEffort).toBe(true);
+      expect([...refused.refusedEfforts]).toEqual(['high']);
+      expect(refused.supportedEfforts).toEqual(['xhigh', 'medium', 'low']);
+      expect(effortFor(refused, 'high')).toBe('xhigh');
+      expect(notices).toEqual(['qwen3.8-27b does not reason at high; retrying at xhigh']);
+    }
+  });
+
+  it("steps Qwen3.8's refused minimal up to low, and leaves the values it lists alone", async () => {
+    const supports = capabilitiesFor('http://llama:8080/v1');
+    const { send } = modelThatRefuses(QWEN_LLAMA_CPP('minimal'));
+    await expect(negotiate(supports, send, { model: 'qwen3.8-27b' })).resolves.toBe('answered');
+    const refused = modelCapabilitiesFor(supports, 'qwen3.8-27b');
+    expect(effortFor(refused, 'minimal')).toBe('low');
+    // Latched as the model's list, so a value it never refused out loud is placed from it too.
+    expect(effortFor(refused, 'high')).toBe('xhigh');
+    expect(effortFor(refused, 'medium')).toBe('medium');
+    expect(effortFor(refused, 'xhigh')).toBe('xhigh');
+  });
+
+  it("reads a generic template's must be one of list", async () => {
+    const supports = capabilitiesFor('http://vllm:8000/v1');
+    const refusal = apiError(400, "Invalid reasoning_effort: 'minimal'; must be one of ['low', 'medium', 'high']");
+    const { send } = modelThatRefuses(refusal);
+    await expect(negotiate(supports, send, { model: 'some-model' })).resolves.toBe('answered');
+    const refused = modelCapabilitiesFor(supports, 'some-model');
+    expect(refused.supportedEfforts).toEqual(['low', 'medium', 'high']);
+    expect(effortFor(refused, 'minimal')).toBe('low');
+    expect(refused.reasoningEffort).toBe(true);
+  });
+
+  it("gives Qwen3.8's refusal back where nothing it lists is at or above the value", async () => {
+    // Stepping down from a refused value is never the answer, even to a template that lists
+    // values below it.
+    const supports = capabilitiesFor('http://llama:8080/v1');
+    const { send } = modelThatRefuses(QWEN_LLAMA_CPP('max'));
+    await expect(negotiate(supports, send, { model: 'qwen3.8-27b' })).rejects.toThrow('Unexpected reasoning effort');
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('stops rather than re-sending when the refusal names an effort nobody sent', async () => {
@@ -513,7 +592,8 @@ describe('negotiate, for a model', () => {
 
   it('stops replaying the scratchpad to a model whose endpoint refuses the field', async () => {
     const ollamaSpelling = apiError(400, "Unknown parameter: 'messages[1].reasoning'.");
-    for (const refusal of [GROQ_NO_REASONING, MISTRAL_NO_REASONING, UNKNOWN_REASONING, ollamaSpelling]) {
+    const blocks = apiError(422, 'body.messages.1.assistant.reasoning_details: Extra inputs are not permitted');
+    for (const refusal of [GROQ_NO_REASONING, MISTRAL_NO_REASONING, UNKNOWN_REASONING, ollamaSpelling, blocks]) {
       resetCapabilities();
       const supports = openai();
       const { send } = modelThatRefuses(refusal);

@@ -175,6 +175,7 @@ export {
 export { buildBody } from './run/request-body.ts';
 export {
   dropReasoning,
+  formatToolError,
   oneCallPerMessage,
   preview,
   type ReasonedMessage,
@@ -323,6 +324,8 @@ export {
   type LoopUsage,
   type PartialTurn,
   type Produced,
+  type ReasoningDetail,
+  reasoningDetailsEntry,
   reasoningEntry,
   type StreamTurnOptions,
   streamTurn,
@@ -375,6 +378,8 @@ export {
   type ToolCallResult,
 } from './wire/tool-calls.ts';
 export {
+  CALL_EXTRA_KEYS,
+  type CallExtraKey,
   FinishReason,
   FUNCTION_TOOL,
   JSON_SCHEMA_FORMAT,
@@ -382,6 +387,7 @@ export {
   PartType,
   REASONING,
   REASONING_CONTENT,
+  REASONING_DETAILS,
   type ReasoningField,
   Role,
   SchemaType,

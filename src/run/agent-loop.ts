@@ -109,6 +109,7 @@ import { buildBody, singleCalls, singleSystem } from './request-body.ts';
 import {
   assistantMessage,
   type Calling,
+  formatToolError as defaultToolError,
   definedAs,
   dropReasoning,
   loadShortlist,
@@ -455,6 +456,20 @@ export interface AgentLoopOptions {
    * ends the run once the step's calls are answered; see `AgentLoopResult.ended`.
    */
   dispatch: ToolDispatch;
+  /**
+   * What the model reads for a call whose `dispatch` threw.
+   *
+   * @defaultValue `formatToolError`: the error's message behind `Error: `, unless it opens with
+   * `error` already, and `Error: (no output)` for an empty one
+   *
+   * @remarks
+   * Chat completions has no `is_error` field, so the text is the only place a model learns the
+   * call failed; `ok: false` reaches the events and `onToolResult` either way. Not asked of the
+   * refusals the loop writes itself — arguments it could not read, a `call_tool` outside the
+   * catalogue, a call the run was stopped during — which keep their own words. An empty answer
+   * from either path, a successful one included, is written as `(no output)`.
+   */
+  formatToolError?: (error: unknown) => string;
   /**
    * Runs a step's calls together rather than one after another, or — given a predicate — runs
    * together the consecutive calls it passes, and each one it fails alone, in the order asked.
@@ -1411,6 +1426,7 @@ async function runSteps(
     onToolResult,
     beforeStep,
     parallel = false,
+    formatToolError = defaultToolError,
     recoverToolCalls: recover = true,
     mintCallId = defaultMinter,
     maxContinuations = 0,
@@ -1538,6 +1554,7 @@ async function runSteps(
     detects,
     dedupable,
     dispatch,
+    formatToolError,
     parallel,
     signal,
     onEvent,
@@ -1746,7 +1763,7 @@ async function runSteps(
     const parsed = readCalls(calls, turn.finishReason, recovered);
     const isAnswer = calls.length === 0;
     const replayed = replaysReasoning(reasoningReplay, !isAnswer)
-      ? { reasoning: turn.reasoning, field: turn.reasoningField }
+      ? { reasoning: turn.reasoning, field: turn.reasoningField, details: turn.reasoningDetails }
       : undefined;
     const assistant = assistantMessage(content, parsed, replayed);
     // Split as it is written rather than only as it is sent, so the result's `messages` and the

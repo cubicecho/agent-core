@@ -6,6 +6,7 @@ import {
   addCounts,
   type InFlight,
   type PartialTurn,
+  reasoningDetailsEntry,
   reasoningEntry,
   type Turn,
   type TurnUsage,
@@ -185,6 +186,19 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
 }
 
 /**
+ * The reasoning blocks of a turn and its continuation, as the `reasoningDetails` of the two joined.
+ *
+ * @param joined - The turn so far.
+ * @param next - The continuation's turn.
+ * @returns `{ reasoningDetails }` with the first's blocks then the second's, or an empty object
+ * where neither had any.
+ */
+function joinedDetails(joined: Turn, next: Turn): Pick<Turn, 'reasoningDetails'> {
+  const blocks = [...(joined.reasoningDetails ?? []), ...(next.reasoningDetails ?? [])];
+  return blocks.length ? { reasoningDetails: blocks } : {};
+}
+
+/**
  * The answer so far with the piece a continuation in flight had added to it.
  *
  * @param sofar - The turn being continued, which may itself be a joined one. Not written to.
@@ -259,7 +273,12 @@ export async function continueTurn(
       break;
     }
     const answer = joined.content;
-    const thought = replayReasoning ? reasoningEntry(joined.reasoning, joined.reasoningField) : {};
+    const thought = replayReasoning
+      ? {
+          ...reasoningEntry(joined.reasoning, joined.reasoningField),
+          ...reasoningDetailsEntry(joined.reasoningDetails),
+        }
+      : {};
     if (outer) {
       const sofar = joined;
       piece.read = undefined;
@@ -320,6 +339,9 @@ export async function continueTurn(
       ...(joined.reasoningField || next.reasoningField
         ? { reasoningField: joined.reasoningField ?? next.reasoningField }
         : {}),
+      // Two responses' blocks, one after the other: each came whole from its own stream, and
+      // joining a block of one onto the other's would make a signed block a different one.
+      ...joinedDetails(joined, next),
     };
   }
   return joined;

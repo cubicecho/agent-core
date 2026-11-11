@@ -32,8 +32,17 @@ export const ARGUMENTS_MALFORMED = 'malformed' as const;
  */
 export const CODE_FENCE = /```(?:json)?\s*([\s\S]*?)```/gi;
 
-/** A tool call as the loop handles it, recovered or streamed. */
-export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
+/**
+ * A tool call as the loop handles it, recovered or streamed.
+ *
+ * @remarks
+ * A streamed call keeps any of `CALL_EXTRA_KEYS` the server put on it, as it came, so that it is
+ * sent back with the call: Gemini's thought signature is in `extra_content`.
+ */
+export type ToolCall = OpenAI.ChatCompletionMessageFunctionToolCall & {
+  /** A provider's own fields on the call, such as Gemini's `{ google: { thought_signature } }`. */
+  extra_content?: unknown;
+};
 
 /**
  * Tool arguments that could not be read as an object, with why.

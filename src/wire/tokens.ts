@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { FUNCTION_TOOL, PartType, Role } from './wire.ts';
+import { CALL_EXTRA_KEYS, type CallExtraKey, FUNCTION_TOOL, PartType, Role } from './wire.ts';
 
 /**
  * The characters one token is taken to be, where nothing has measured it.
@@ -92,6 +92,20 @@ const REASONING_KEY = 23;
 /** The same for `"reasoning":"",`, OpenRouter's spelling of it. */
 const REASONING_ALT_KEY = 15;
 
+/** The same for `"reasoning_details":,` around OpenRouter's reasoning blocks, counted as their JSON. */
+const REASONING_DETAILS_KEY = 21;
+
+/** The quotes, colon and comma around a provider's own key on a call, `"":,`. */
+const EXTRA_KEY_ENVELOPE = 4;
+
+/**
+ * How many characters a value is worth as JSON, for a provider's field that is not text.
+ *
+ * @param value - What the field holds.
+ * @returns The length of its JSON, or zero for a value JSON cannot spell.
+ */
+const jsonChars = (value: unknown) => JSON.stringify(value)?.length ?? 0;
+
 /** What the two token estimates below take besides what they measure. */
 export interface TokenEstimateOptions {
   /**
@@ -145,9 +159,14 @@ export function messageChars(message: OpenAI.ChatCompletionMessageParam): number
   if ('tool_call_id' in message && typeof message.tool_call_id === 'string') {
     chars += TOOL_CALL_ID_KEY + message.tool_call_id.length;
   }
-  const { reasoning_content: reasoning, reasoning: alternate } = message as {
+  const {
+    reasoning_content: reasoning,
+    reasoning: alternate,
+    reasoning_details: details,
+  } = message as {
     reasoning_content?: unknown;
     reasoning?: unknown;
+    reasoning_details?: unknown;
   };
   if (typeof reasoning === 'string') {
     chars += REASONING_KEY + reasoning.length;
@@ -155,12 +174,23 @@ export function messageChars(message: OpenAI.ChatCompletionMessageParam): number
   if (typeof alternate === 'string') {
     chars += REASONING_ALT_KEY + alternate.length;
   }
+  // Encrypted blocks, like Gemini's signatures on a call below, are opaque and can run to kilobytes:
+  // priced by their length, like any text, rather than left out of a guard meant to come up long.
+  if (Array.isArray(details)) {
+    chars += REASONING_DETAILS_KEY + jsonChars(details);
+  }
   if ('tool_calls' in message && Array.isArray(message.tool_calls)) {
     chars += TOOL_CALLS_KEY;
     for (const call of message.tool_calls) {
       chars += CALL_ENVELOPE + call.id.length;
       if (call.type === FUNCTION_TOOL) {
         chars += call.function.name.length + call.function.arguments.length;
+      }
+      for (const key of CALL_EXTRA_KEYS) {
+        const extra = (call as Partial<Record<CallExtraKey, unknown>>)[key];
+        if (extra !== undefined) {
+          chars += EXTRA_KEY_ENVELOPE + key.length + jsonChars(extra);
+        }
       }
     }
   }
