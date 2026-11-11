@@ -1,3 +1,10 @@
+# [4.22.0](https://github.com/cubicecho/agent-core/compare/v4.21.0...v4.22.0) (2026-11-11)
+
+
+### Features
+
+* **run:** replay the model's reasoning as reasoning_content ([a3e5277](https://github.com/cubicecho/agent-core/commit/a3e5277a34d7fe9cbf173d92c2b6b6dc38a8c336)), closes [#197](https://github.com/cubicecho/agent-core/issues/197)
+
 # [4.21.0](https://github.com/cubicecho/agent-core/compare/v4.20.0...v4.21.0) (2026-11-11)
 
 
