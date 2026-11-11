@@ -1,5 +1,14 @@
 import type OpenAI from 'openai';
-import { type CompactionOptions, compactTranscript, planCompaction, summariser } from '../context/compaction.ts';
+import {
+  type CompactionOptions,
+  compactTranscript,
+  type PrunePlanOptions,
+  planCompaction,
+  planPrune,
+  pruneNotice,
+  pruneThrough,
+  summariser,
+} from '../context/compaction.ts';
 import {
   breakReason,
   type LedgerRequest,
@@ -354,13 +363,30 @@ export interface AgentLoopOptions {
    * more: the plan is made from the last request's reported prompt, or an estimate before the
    * first step and after a `beforeStep` rewrite; `hooks`, when given, are told `beforeCompact`
    * beside the summary; and a fold is said as a `notice` event. A summary that fails is a notice
-   * too and folds nothing. Tool results are not pruned — `beforeStep` is where a host does that.
+   * too and folds nothing. Tool results are not pruned by this — `prune` is.
    *
    * The result's `messages` then open with the summary in place of what was folded, so a host
    * that keeps its transcript append-only wants `runCompaction` and a stored fold instead. `true`
    * plans by `planCompaction`'s defaults; an object moves its thresholds.
    */
   compact?: boolean | Pick<CompactionOptions, 'compactAt' | 'keepRatio' | 'target'>;
+  /**
+   * Has the loop stub old tool results itself before a step, at a boundary `planPrune` moves, so
+   * the prompt cache is lost once per move rather than once per tool call. Off by default, and
+   * nothing moves without a `config.contextLength` — except alongside a fold.
+   *
+   * @remarks
+   * It runs after `beforeStep`, on what that returned, and before `compact`, which then plans from
+   * what is left: a prune that brings the run back under the line spares it the summary's round
+   * trip. Where a fold is made anyway, the boundary is moved again after it with `compacted`, since
+   * the cache is already lost. Each move is said as a `notice` event, with `pruneNotice`'s counts.
+   *
+   * The stubs are in the result's `messages`, as a fold is, so a host that keeps its transcript
+   * whole calls `planPrune` and `pruneThrough` in its own `beforeStep` and stores the boundary
+   * instead. `true` plans by `planPrune`'s defaults — past `COMPACT_AT` of the window, and only for
+   * at least `PRUNE_SHARE` of it; an object moves the gate and what is kept.
+   */
+  prune?: boolean | Pick<PrunePlanOptions, 'at' | 'minShare' | 'keepLast' | 'maxChars'>;
   /**
    * Tools already loaded, carried from an earlier question. See `carryOver`. Not read in proxied
    * mode, where a tool is loaded only while its definition is in the history.
@@ -890,6 +916,47 @@ function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
 }
 
 /**
+ * A step's transcript with the loop's prune boundary moved, where a move was due.
+ *
+ * @param transcript - The step's messages. Not written to.
+ * @param through - The boundary in force, which only ever moves forward.
+ * @param context - The run's options, read for `prune`'s gate and the window; what the last
+ * request reported, where it still describes `transcript`; the characters per token an estimate is
+ * made at; whether a fold was just made; and `notice`, told of a move.
+ * @returns `transcript` itself and the boundary unmoved where nothing was due, otherwise the
+ * stubbed array, the new boundary and what it won back.
+ */
+function pruneBeforeStep(
+  transcript: OpenAI.ChatCompletionMessageParam[],
+  through: number,
+  {
+    options,
+    used,
+    charsPerToken,
+    compacted = false,
+    notice,
+  }: { options: AgentLoopOptions; used?: number; charsPerToken: number; compacted?: boolean; notice: OnNotice },
+): { messages: OpenAI.ChatCompletionMessageParam[]; through: number; tokens: number } {
+  const gate = typeof options.prune === 'object' ? options.prune : {};
+  const plan = planPrune(transcript, options.config.contextLength ?? 0, {
+    ...gate,
+    through,
+    ...(used === undefined ? {} : { used }),
+    charsPerToken,
+    compacted,
+  });
+  if (!plan) {
+    return { messages: transcript, through, tokens: 0 };
+  }
+  notice(pruneNotice(plan, compacted));
+  return {
+    messages: pruneThrough(transcript, plan.through, { maxChars: gate.maxChars }),
+    through: plan.through,
+    tokens: plan.tokens,
+  };
+}
+
+/**
  * A step's transcript after the loop's own compaction: folded where a fold was due and its summary
  * came back, and otherwise the array it was given.
  *
@@ -1247,6 +1314,9 @@ async function runSteps(
 
   const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
   let previous: Sent | undefined;
+  // The loop's prune boundary. Its stubs stay in `messages`, so between moves each request only
+  // extends the last; a rewrite or a fold renumbers the transcript, and it starts again from zero.
+  let pruneBoundary = 0;
   let ledger: TokenLedger = options.ledger ?? [];
   // The request the ledger's last entry came from, which is what the next one is measured against.
   // Nothing before this run's first: an earlier run's head is not something the loop can see.
@@ -1297,14 +1367,28 @@ async function runSteps(
       ledger,
     });
     const given = rewritten ?? messages;
-    // The last request's prompt describes this transcript only while nothing has rewritten it.
-    const next = summarise
-      ? await foldBeforeStep(given, given === messages ? reported : {}, summarise, {
-          options,
-          charsPerToken: charsPerTokenFor(supports, config.model),
-          notice,
-        })
-      : given;
+    const isOwn = given === messages;
+    if (isOwn === false) {
+      pruneBoundary = 0;
+    }
+    // Read again after the turn: a reported prompt calibrates it.
+    const planRatio = charsPerTokenFor(supports, config.model);
+    // The last request's prompt describes this transcript only while nothing has rewritten it,
+    // and less what a prune has just won back of it.
+    const ownUsed = isOwn ? reported.used : undefined;
+    const trimmed = options.prune
+      ? pruneBeforeStep(given, pruneBoundary, { options, used: ownUsed, charsPerToken: planRatio, notice })
+      : { messages: given, through: pruneBoundary, tokens: 0 };
+    pruneBoundary = trimmed.through;
+    const foldUsed = ownUsed === undefined ? {} : { used: Math.max(0, ownUsed - trimmed.tokens) };
+    let next = summarise
+      ? await foldBeforeStep(trimmed.messages, foldUsed, summarise, { options, charsPerToken: planRatio, notice })
+      : trimmed.messages;
+    if (options.prune && next !== trimmed.messages) {
+      const after = pruneBeforeStep(next, 0, { options, charsPerToken: planRatio, compacted: true, notice });
+      next = after.messages;
+      pruneBoundary = after.through;
+    }
     // A rewrite may have folded a definition away, and a load answered "already loaded" would
     // then point at nothing. Forgetting costs a definition sent twice at worst.
     if (proxied && next !== messages) {

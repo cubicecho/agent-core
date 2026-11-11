@@ -41,7 +41,7 @@ only, Node >=22.
 | `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher. |
 | `preselect` | Choosing a run's tools before it starts: `preselect` asks a small model, `preselectByKeywords` scores the request's own words against the tool names without one, and `preselectSystem`, `preselectInput` and `preselection` are the prompt and the reading of the reply for a host that makes the call itself. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. Plus the shapes a call is handed round in: `ToolCallRequest`, `ToolCallResult`, `ToolCallOutcome`. |
-| `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
+| `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planPrune` moves a boundary for them that keeps the prompt cache, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `ledger` | What stretches of a transcript cost, read off the prompt counts the server reported rather than estimated: `recordRequest`, `tokensBetween`, `estimateFrom`, `rebaseLedger`. |
 | `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
 | `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. `defineSpecColumns` maps a stored row onto a layer and back, at `@cubicecho/agent-core/spec/columns`. |
@@ -1066,6 +1066,38 @@ way to save tokens.
 
 `pruneToolResults` keeps the transcript's indexes, so a plan made before pruning still applies to
 what it returns, as above.
+
+### A prune boundary that keeps the cache
+
+`pruneToolResults` keeps a sliding window: applied on every step, each new result pushes an older
+one out and rewrites a message in the middle of the history, so the cache misses from there once
+per tool call. `planPrune` plans a boundary instead. The host stores its `through`, sends
+`pruneThrough(messages, through)` on every request, and between moves each request is the one
+before it with only its tail added.
+
+```ts
+const plan = planPrune(messages, config.contextLength ?? 0, { through: stored, used: lastPromptTokens });
+if (plan) {
+  stored = plan.through;
+  notice(pruneNotice(plan)); // cleared 4 old tool results (~9,120 tokens) as the window filled
+}
+const sent = pruneThrough(messages, stored);
+```
+
+A plan never moves the boundary backwards and never moves it for nothing. It moves to the earliest
+of the latest `keepLast` (5) results once the window is past `at` (`COMPACT_AT`, the fold's own
+line) — by the larger of `used` and the estimate, since a report does not count the results that
+came after it — and only when what it clears is at least `minShare` (`PRUNE_SHARE`, a tenth) of
+the window. `compacted: true`, beside a fold that has rewritten the head anyway, skips both gates:
+the cache is already lost, so the move is free. `from` leaves out results a fold has already taken
+out of the request. `at: 0` with a larger `minShare` is a pure hysteresis on what is won back.
+
+`runAgentLoop({ prune: true })` does this itself: after `beforeStep`, ahead of `compact`, which
+then plans from what is left — so a prune that brings the run back under the line spares it the
+summary — and again with `compacted` after a fold. Each move is a `notice` with the counts. Its
+stubs stay in the loop's transcript and in the result's `messages`, as a fold's summary does; a
+host that keeps the transcript whole calls `planPrune` in its own `beforeStep` and stores the
+boundary. An object moves `at`, `minShare`, `keepLast` and `maxChars`.
 
 ### What the messages cost, measured
 

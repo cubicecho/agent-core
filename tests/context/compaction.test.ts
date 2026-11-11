@@ -3,6 +3,9 @@ import {
   applyCompaction,
   compactTranscript,
   planCompaction,
+  planPrune,
+  pruneNotice,
+  pruneThrough,
   pruneToolResults,
   requestIndex,
   runCompaction,
@@ -73,6 +76,147 @@ describe('pruneToolResults', () => {
       '[result cleared, 400 chars]',
       big,
     ]);
+  });
+});
+
+/** A message weighed by its characters, so a stub is visibly cheaper than what it replaced. */
+const chars = (message: Message) => String(message.content).length;
+
+/** A result of a thousand characters, which a stub replaces with twenty-nine. */
+const big = () => result('x'.repeat(1000));
+
+/** What a move clears per result, by `chars`: the result, less its stub. */
+const SAVED = 1000 - '[result cleared, 1,000 chars]'.length;
+
+/** A question, then this many big results. */
+const run = (results: number) => [user('q'), ...Array.from({ length: results }, big)];
+
+describe('planPrune', () => {
+  it('moves the boundary to the earliest of the latest results, and counts what it clears', () => {
+    const plan = planPrune(run(7), 8000, { estimate: chars });
+    // Seven results, five kept: the boundary is the third, at index 3, and the first two clear.
+    expect(plan).toEqual({ through: 3, cleared: 2, tokens: 2 * SAVED });
+  });
+
+  it('never moves the boundary backwards, and makes no plan for a move that clears nothing', () => {
+    const messages = run(7);
+    expect(planPrune(messages, 8000, { estimate: chars, through: 3 })).toBeUndefined();
+    expect(planPrune(messages, 8000, { estimate: chars, through: 5 })).toBeUndefined();
+    // Five results or fewer: there is nothing outside the latest five.
+    expect(planPrune(run(5), 1000, { estimate: chars, at: 0 })).toBeUndefined();
+    // Short results stay whole wherever the boundary is, so moving past them clears nothing.
+    const short = [user('q'), result('a'), result('b'), ...run(5).slice(1)];
+    expect(planPrune(short, 1000, { estimate: chars, at: 0, minShare: 0 })).toBeUndefined();
+  });
+
+  it('waits for the window to fill past `at`, by the larger of the report and the estimate', () => {
+    const messages = run(7);
+    // 7001 characters in a window of 10,000 is under COMPACT_AT.
+    expect(planPrune(messages, 10_000, { estimate: chars })).toBeUndefined();
+    expect(planPrune(messages, 10_000, { estimate: chars, used: 7500 })?.through).toBe(3);
+    // A report that predates the latest results does not hold the estimate down.
+    expect(planPrune(messages, 9000, { estimate: chars, used: 100 })?.through).toBe(3);
+    expect(planPrune(messages, 10_000, { estimate: chars, at: 0.7 })?.through).toBe(3);
+  });
+
+  it('skips a move that wins back less than `minShare` of the window', () => {
+    const messages = run(7);
+    expect(planPrune(messages, 8000, { estimate: chars, minShare: 0.25 })).toBeUndefined();
+    expect(planPrune(messages, 8000, { estimate: chars, minShare: 0.24 })?.cleared).toBe(2);
+    expect(planPrune(messages, 8000, { estimate: chars, minShare: 0 })?.cleared).toBe(2);
+  });
+
+  it('moves alongside a fold whatever it saves, with or without a window', () => {
+    const messages = run(7);
+    const free = { estimate: chars, compacted: true, minShare: 0.9 };
+    expect(planPrune(messages, 100_000, free)).toEqual({ through: 3, cleared: 2, tokens: 2 * SAVED });
+    expect(planPrune(messages, 0, free)?.through).toBe(3);
+    expect(planPrune(messages, 0, { estimate: chars, at: 0, minShare: 0 })).toBeUndefined();
+  });
+
+  it('does not count a result before `from`, which a fold has already taken out of the request', () => {
+    const plan = planPrune(run(7), 8000, { estimate: chars, from: 2, minShare: 0 });
+    expect(plan).toEqual({ through: 3, cleared: 1, tokens: SAVED });
+  });
+
+  it('keeps as many results as it is told, and stubs only what is long enough to clear', () => {
+    expect(planPrune(run(7), 8000, { estimate: chars, keepLast: 2 })?.through).toBe(6);
+    expect(planPrune(run(7), 8000, { estimate: chars, keepLast: 0 })?.through).toBe(8);
+    expect(planPrune(run(7), 8000, { estimate: chars, maxChars: 1000, at: 0, minShare: 0 })).toBeUndefined();
+  });
+
+  it('expresses both hosts: the gate past COMPACT_AT with a tenth to win, and a marker moved on a quarter', () => {
+    // task-server: no stored marker, gated at three quarters of the window, a tenth to win back.
+    const filling = run(9);
+    expect(planPrune(filling, 12_000, { estimate: chars })).toEqual({ through: 5, cleared: 4, tokens: 4 * SAVED });
+    // min-agent: any fill, a quarter of the window, from the marker in force.
+    const stored = { estimate: chars, at: 0, minShare: 0.25 };
+    expect(planPrune(filling, 12_000, { ...stored, through: 3 })).toBeUndefined();
+    expect(planPrune(filling, 12_000, { ...stored, through: 1 })?.cleared).toBe(4);
+  });
+});
+
+describe('pruneThrough', () => {
+  it('stubs every long result before the boundary and none at or after it', () => {
+    const messages = run(4);
+    const sent = pruneThrough(messages, 3);
+    expect(sent.map(chars)).toEqual([1, 29, 29, 1000, 1000]);
+    expect(sent[3]).toBe(messages[3]);
+    expect(messages[1].content).toHaveLength(1000);
+  });
+
+  it('hands back the same array when there is nothing before the boundary to clear', () => {
+    const messages = run(3);
+    expect(pruneThrough(messages, 0)).toBe(messages);
+    expect(pruneThrough(messages, 1)).toBe(messages);
+    expect(pruneThrough(messages, 4, { maxChars: 1000 })).toBe(messages);
+  });
+
+  it('clamps a boundary left past the end of the transcript', () => {
+    expect(pruneThrough(run(2), 99).map(chars)).toEqual([1, 29, 29]);
+  });
+
+  it('the prefix is byte-identical across steps until the boundary moves', () => {
+    const gate = { estimate: chars, minShare: 0.19 };
+    const window = 10_000;
+    let messages = run(5);
+    let through = 0;
+    const sent: string[][] = [];
+    const moves: number[] = [];
+    for (let step = 0; step < 8; step++) {
+      messages = [...messages, big()];
+      const plan = planPrune(messages, window, { ...gate, through, at: 0 });
+      if (plan) {
+        through = plan.through;
+        moves.push(step);
+      }
+      sent.push(pruneThrough(messages, through).map((message) => JSON.stringify(message)));
+    }
+    // Two results are worth the move and one is not, so the boundary waits for a second each time.
+    expect(moves).toEqual([1, 3, 5, 7]);
+    sent.slice(1).forEach((request, index) => {
+      const previous = sent[index];
+      const extendsPrevious = request.slice(0, previous.length).every((message, at) => message === previous[at]);
+      expect(extendsPrevious).toBe(moves.includes(index + 1) === false);
+    });
+    // What the sliding window sends instead: every step rewrites a message in the middle.
+    const sliding = Array.from({ length: 4 }, (_, extra) =>
+      pruneToolResults(run(6 + extra)).map((message) => JSON.stringify(message)),
+    );
+    sliding.slice(1).forEach((request, index) => {
+      expect(request.slice(0, sliding[index].length)).not.toEqual(sliding[index]);
+    });
+  });
+});
+
+describe('pruneNotice', () => {
+  it('says the counts, and why the boundary moved', () => {
+    expect(pruneNotice({ through: 3, cleared: 2, tokens: 12_345 })).toBe(
+      'cleared 2 old tool results (~12,345 tokens) as the window filled',
+    );
+    expect(pruneNotice({ through: 3, cleared: 1, tokens: 900 }, true)).toBe(
+      'cleared 1 old tool result (~900 tokens) alongside a fold',
+    );
   });
 });
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
+import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
 import { apiError, type Body, chunks, config, type Message, says, tool } from '../helpers.ts';
 
@@ -532,5 +533,92 @@ describe('a proxied run', () => {
       'assistant: null',
       'tool c0: Stopped before this call finished.',
     ]);
+  });
+});
+
+describe('prune', () => {
+  /** Four thousand characters, a thousand tokens at the default ratio. */
+  const long = 'x'.repeat(4000);
+  /** Every request's messages, as they were sent. */
+  const sentMessages = () => create.mock.calls.map(([body]) => (body as Body).messages.map((m) => JSON.stringify(m)));
+  /** A run of `steps` calls, each answered with a long result, then an answer. */
+  const toolRun = (steps: number) => {
+    for (let step = 0; step < steps; step++) {
+      create.mockReturnValueOnce(calls([['read', '{}']]));
+    }
+    create.mockReturnValueOnce(says('done'));
+  };
+
+  it('keeps each request an extension of the last until the boundary moves, and says each move', async () => {
+    toolRun(7);
+    const notices: string[] = [];
+    const result = await runAgentLoop({
+      config: { ...config, maxToolIterations: 10, contextLength: 10_000 },
+      messages: question,
+      tools: [tool('read')],
+      dispatch: async () => long,
+      // Two results are worth a move and one is not, and the window need not be filling.
+      prune: { at: 0, minShare: 0.19, keepLast: 2 },
+      onEvent: (event) => {
+        if (event.kind === RunEventKind.Notice) {
+          notices.push(event.text ?? '');
+        }
+      },
+    });
+    const sent = sentMessages();
+    const extensions = sent.slice(1).map((request, index) => {
+      const previous = sent[index];
+      return request.slice(0, previous.length).every((message, at) => message === previous[at]);
+    });
+    // Moves before the fifth and seventh requests, each clearing the two results behind the kept two.
+    expect(extensions).toEqual([true, true, true, false, true, false, true]);
+    expect(notices.filter((text) => text.startsWith('cleared'))).toEqual([
+      expect.stringMatching(/^cleared 2 old tool results \(~\d[\d,]* tokens\) as the window filled$/),
+      expect.stringMatching(/^cleared 2 old tool results \(~\d[\d,]* tokens\) as the window filled$/),
+    ]);
+    // The stubs are in what the run hands back, as a fold would be.
+    const cleared = result.messages.filter((m) => m.role === Role.Tool && String(m.content).startsWith('[result'));
+    expect(cleared).toHaveLength(4);
+  });
+
+  it('prunes nothing without a window, and nothing when it is off', async () => {
+    toolRun(7);
+    await runAgentLoop({
+      config: { ...config, maxToolIterations: 10 },
+      messages: question,
+      tools: [tool('read')],
+      dispatch: async () => long,
+      prune: { at: 0, minShare: 0 },
+    });
+    toolRun(7);
+    await runAgentLoop({
+      config: { ...config, maxToolIterations: 10, contextLength: 10_000 },
+      messages: question,
+      tools: [tool('read')],
+      dispatch: async () => long,
+    });
+    expect(
+      sentMessages()
+        .flat()
+        .some((message) => message.includes('[result cleared')),
+    ).toBe(false);
+  });
+
+  it('runs after `beforeStep`, on what that returned, and starts the boundary again after a rewrite', async () => {
+    toolRun(3);
+    const handed: number[] = [];
+    await runAgentLoop({
+      config: { ...config, maxToolIterations: 10, contextLength: 10_000 },
+      messages: question,
+      tools: [tool('read')],
+      dispatch: async () => long,
+      prune: { at: 0, minShare: 0, keepLast: 1 },
+      beforeStep: (messages) => {
+        handed.push(messages.filter((m) => String(m.content).startsWith('[result')).length);
+        return [...messages];
+      },
+    });
+    // The first move is on the third step, after its `beforeStep`; the fourth is handed its stub.
+    expect(handed).toEqual([0, 0, 0, 1]);
   });
 });
