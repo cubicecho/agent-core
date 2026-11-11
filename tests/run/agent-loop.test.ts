@@ -26,6 +26,7 @@ const { failedRun } = await import('../../src/wire/errors.ts');
 type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
 type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
+type ToolCallReport = import('../../src/wire/tool-calls.ts').ToolCallReport;
 type AgentLoopRequest = import('../../src/run/agent-loop.ts').AgentLoopRequest;
 type ToolCallResult = import('../../src/wire/tool-calls.ts').ToolCallResult;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
@@ -891,6 +892,119 @@ describe('runAgentLoop', () => {
       expect(failedRun(error)?.artifacts).toEqual([
         { link: link('doc://a'), callId: 'c0', tool: 'write', step: 0, count: 1 },
       ]);
+    });
+  });
+
+  describe('server logs', () => {
+    /** The run's `server-log` events, as a watcher would read them. */
+    const logsOf = (events: RunEventInput[]) =>
+      events
+        .filter((event) => event.kind === RunEventKind.ServerLog)
+        .map(({ id, name, level, text }) => ({ id, name, level, text }));
+
+    it("puts what a call's server logged between its call and its result, and never in the transcript", async () => {
+      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      const events: RunEventInput[] = [];
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read')],
+        dispatch: async (_call, _signal, report) => {
+          report.log({ level: 'info', data: 'opening the index' });
+          report.log({ level: 'warning', logger: 'cache', data: { stale: true } });
+          return 'read it';
+        },
+        onEvent: (event) => events.push(event),
+      });
+      expect(logsOf(events)).toEqual([
+        { id: 'c0', name: 'read', level: 'info', text: 'opening the index' },
+        { id: 'c0', name: 'read', level: 'warning', text: '{"stale":true}' },
+      ]);
+      const around = [RunEventKind.ToolCall, RunEventKind.ServerLog, RunEventKind.ToolResult] as string[];
+      expect(events.map(({ kind }) => kind).filter((kind) => around.includes(kind))).toEqual([
+        RunEventKind.ToolCall,
+        RunEventKind.ServerLog,
+        RunEventKind.ServerLog,
+        RunEventKind.ToolResult,
+      ]);
+      expect(JSON.stringify(result.messages)).not.toContain('opening the index');
+      expect(JSON.stringify(create.mock.calls[1][0])).not.toContain('stale');
+      expect(result.metrics).toMatchObject({ serverWarnings: 1, serverErrors: 0 });
+    });
+
+    it('cuts a long message the way a tool result is cut', async () => {
+      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      const events: RunEventInput[] = [];
+      const long = 'x'.repeat(5000);
+      await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read')],
+        dispatch: async (_call, _signal, report) => {
+          report.log({ level: 'debug', data: long });
+          return 'ok';
+        },
+        onEvent: (event) => events.push(event),
+      });
+      expect(logsOf(events)[0].text).toBe(preview(long));
+    });
+
+    it('drops a message heard after the call has answered', async () => {
+      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      const events: RunEventInput[] = [];
+      let kept: ToolCallReport['log'] | undefined;
+      await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read')],
+        dispatch: async (_call, _signal, report) => {
+          kept = report.log;
+          return 'ok';
+        },
+        onEvent: (event) => events.push(event),
+      });
+      kept?.({ level: 'error', data: 'too late' });
+      expect(logsOf(events)).toEqual([]);
+    });
+
+    it('hears nothing from a call the loop answers itself', async () => {
+      create.mockReturnValueOnce(calls(['read', '{"a":'], ['read', '{}'])).mockReturnValueOnce(says('done'));
+      const events: RunEventInput[] = [];
+      const dispatch = vi.fn(
+        async (_call: ToolCallRequest, _signal: AbortSignal | undefined, report: ToolCallReport) => {
+          report.log({ level: 'error', data: 'once' });
+          return 'ok';
+        },
+      );
+      await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read')],
+        dispatch,
+        onEvent: (event) => events.push(event),
+      });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(logsOf(events)).toEqual([{ id: 'c1', name: 'read', level: 'error', text: 'once' }]);
+    });
+
+    it('still runs a dispatcher written for two arguments', async () => {
+      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read')],
+        dispatch: async (call: ToolCallRequest, _signal?: AbortSignal) => `read ${call.name}`,
+      });
+      expect(result.messages.find((m) => m.role === Role.Tool)).toMatchObject({ content: 'read read' });
+    });
+
+    it("takes report.log where agent-mcp-pool's onLog goes", () => {
+      // The pool's `CallOptions.onLog` as 3.13.0 declares it: the level a closed union, and a
+      // `dropped` count on the cap's summary. This compiling is the test.
+      type PoolLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical' | 'alert' | 'emergency';
+      type PoolEntry = { level: PoolLevel; logger?: string; data: unknown; dropped?: number };
+      const options = (report: ToolCallReport): { onLog?: (entry: PoolEntry) => void } => ({ onLog: report.log });
+      expect(options).toBeTypeOf('function');
     });
   });
 

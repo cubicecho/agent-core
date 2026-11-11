@@ -305,10 +305,13 @@ export {
   type ResourceLink,
   type RunArtifact,
   recoverToolCalls,
+  type ServerLogEntry,
+  ServerLogLevel,
   type ToolAnswer,
   ToolArgumentsError,
   type ToolCall,
   type ToolCallOutcome,
+  type ToolCallReport,
   type ToolCallRequest,
   type ToolCallResult,
 } from './wire/tool-calls.ts';

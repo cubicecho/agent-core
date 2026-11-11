@@ -5,7 +5,7 @@ import { assignSettings, scoped } from '../core/scope.ts';
 import { LOAD_TOOLS } from '../tools/tool-loading.ts';
 import type { TurnUsage } from '../wire/stream.ts';
 import { CacheBreakReason } from '../wire/stream.ts';
-import type { ResourceLink } from '../wire/tool-calls.ts';
+import { type ResourceLink, ServerLogLevel } from '../wire/tool-calls.ts';
 import { FinishReason } from '../wire/wire.ts';
 
 /**
@@ -134,6 +134,13 @@ export const RunEventKind = {
    */
   Artifact: 'artifact',
   /**
+   * A tool's server logged something while a call was running, which the dispatcher passed on
+   * through `report.log`. `id` is the call's, `name` the tool, `level` the server's, and `text`
+   * the message's data — as it was where a string, as JSON otherwise — cut by `preview`. Never in
+   * the transcript, and never from a call the loop answers itself.
+   */
+  ServerLog: 'server-log',
+  /**
    * What the run has cost so far, at the end of every turn, and what that one turn did. Sent
    * whether or not the endpoint reported tokens, since the timings and the cache comparison are
    * measured either way.
@@ -228,6 +235,11 @@ export interface RunEvent {
    * an event built before it existed still compiles.
    */
   link?: ResourceLink;
+  /**
+   * The level the server logged at, on `server-log` and on no other kind. Optional for the reason
+   * `id` is.
+   */
+  level?: string;
 }
 
 /**
@@ -672,6 +684,10 @@ export interface RunMetrics {
   loadCalls: number;
   /** `artifact` events: the distinct things the run's tool calls linked to. */
   artifacts: number;
+  /** `server-log` events at `warning`. */
+  serverWarnings: number;
+  /** `server-log` events at `error` or above: `critical`, `alert` and `emergency` with it. */
+  serverErrors: number;
   /**
    * Tools `load_tools` loaded that were not loaded already. Filled by `runAgentLoop`, which sees
    * the resolution; the events carry only its text.
@@ -731,6 +747,12 @@ export interface RunMetrics {
 type CountedMetric = {
   [K in keyof RunMetrics]-?: RunMetrics[K] extends number | undefined ? K : never;
 }[keyof RunMetrics];
+
+/** The log levels quietest first, which is what makes "warning and above" a comparison. */
+const SEVERITY: readonly string[] = Object.values(ServerLogLevel);
+
+/** Where `warning` sits in `SEVERITY`: a level past it is an error. */
+const WARNING = SEVERITY.indexOf(ServerLogLevel.Warning);
 
 /** How a run ended, as `runMetrics` reads it. */
 export const RunOutcome = {
@@ -797,6 +819,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
     toolErrors: {},
     loadCalls: 0,
     artifacts: 0,
+    serverWarnings: 0,
+    serverErrors: 0,
     promptTokens: 0,
     completionTokens: 0,
     cachedTokens: 0,
@@ -837,6 +861,13 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       }
     } else if (event.kind === RunEventKind.Artifact) {
       metrics.artifacts++;
+    } else if (event.kind === RunEventKind.ServerLog) {
+      const severity = SEVERITY.indexOf(event.level ?? '');
+      if (severity === WARNING) {
+        metrics.serverWarnings++;
+      } else if (severity > WARNING) {
+        metrics.serverErrors++;
+      }
     } else if (event.kind === RunEventKind.Usage && event.usage?.turn) {
       const turn = event.usage.turn;
       last = turn;

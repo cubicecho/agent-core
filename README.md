@@ -623,6 +623,29 @@ a `tool-call` and a `tool-result` event, told to `onToolCall` and `onToolResult`
 id is numbered by where the call lands in the transcript, so two questions do not share one. A name
 with no definition in `tools`, or outside the catalogue, is left out, and none left is no exchange.
 
+### What the servers said on the way
+
+A server can log while a call runs — a warning that the cache was stale, an error it recovered
+from — and that is often why the call went the way it did. `dispatch` is handed a third argument,
+`report`, and `report.log(entry)` tells watchers of one such message as a `server-log` event for
+the call: `id` the call's, `name` the tool, `level` the server's, and `text` the message's `data`,
+as it was where a string and as JSON otherwise, cut by `preview`. The entry is MCP's
+`notifications/message` params, `{ level, logger?, data }`, declared structurally, so
+agent-mcp-pool's `onLog` takes `report.log` as it stands:
+
+```ts
+dispatch: (call, signal, report) =>
+  pool.call(call.name, call.args, { servers, signal, onLog: report.log }),
+```
+
+None of it reaches the transcript: it is for the person watching, not the model. A call the loop
+answers itself never logs, a deduplicated repeat reports nothing of its own, and a message heard
+after the call has answered is dropped rather than landing after the result it explains.
+`runMetrics` counts `warning` as `serverWarnings` and `error` and above as `serverErrors`, so a
+summary can say the server complained without the events. A dispatcher written for
+`(call, signal)` needs no change. `report` is an object so that what a call can report — progress
+is next — grows there without `dispatch` changing again.
+
 ### What the servers say about themselves
 
 An MCP server may send `instructions` when it connects — "resolve the library id before querying

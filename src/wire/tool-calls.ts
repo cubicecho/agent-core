@@ -606,6 +606,63 @@ export interface ToolAnswer {
 }
 
 /**
+ * The levels a server's log message is sent at, quietest first: MCP's, which are syslog's.
+ *
+ * @remarks
+ * `runMetrics` reads `warning` and the four above it as a server complaining. A level outside
+ * this list is still shown, and is counted as neither.
+ */
+export const ServerLogLevel = {
+  Debug: 'debug',
+  Info: 'info',
+  Notice: 'notice',
+  Warning: 'warning',
+  Error: 'error',
+  Critical: 'critical',
+  Alert: 'alert',
+  Emergency: 'emergency',
+} as const;
+
+/** Any one of the levels in `ServerLogLevel`. */
+export type ServerLogLevel = (typeof ServerLogLevel)[keyof typeof ServerLogLevel];
+
+/**
+ * One log message a tool's server sent while the call was running, as `ToolCallReport.log` is
+ * handed it.
+ *
+ * @remarks
+ * The params of MCP's `notifications/message`, declared structurally rather than imported, as
+ * `ResourceLink` is: agent-mcp-pool's `ServerLogEntry` has these field names, so its `onLog`
+ * takes `report.log` as it stands. `level` is a plain string so a server's own word is shown
+ * rather than refused.
+ */
+export interface ServerLogEntry {
+  /** How serious the server says it is: one of `ServerLogLevel`, by the spec. */
+  level: string;
+  /** The server's name for the part of itself that logged, where it gave one. */
+  logger?: string;
+  /** Whatever the server sent: a string usually, any JSON value by the spec. */
+  data: unknown;
+}
+
+/**
+ * What a dispatcher may tell the run about the call it is making, besides its answer.
+ *
+ * @remarks
+ * An object rather than a fourth and fifth argument, so what a call can report grows here —
+ * progress is the next one — without `dispatch` changing again. Every member is a bound function,
+ * so it can be handed on alone: `onLog: report.log`. What is reported reaches the run's events
+ * and never the transcript: it is for the person watching, not the model.
+ */
+export interface ToolCallReport {
+  /**
+   * Tells watchers of a server's log message, as a `server-log` event for this call. Heard after
+   * the call has answered, it is dropped: the event would land after the result it explains.
+   */
+  log: (entry: ServerLogEntry) => void;
+}
+
+/**
  * One thing a run's tool calls produced: the first link to a uri, and where it came from.
  *
  * @remarks
