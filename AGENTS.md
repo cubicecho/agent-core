@@ -42,7 +42,7 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 | `tools` | which tools the model is shown, and what their servers say of them | `catalog` `tool-loading` `preselect` `instructions` |
 | `hooks` | what a host is told, and what it may inject | `hooks` `hook-events` |
 | `context` | keeping a run inside its window | `ledger` `compaction` |
-| `run` | the loop, and watching it | `agent-loop` `run-calls` `request-body` `events` |
+| `run` | the loop, and watching it | `agent-loop` `run-calls` `artifacts` `request-body` `events` |
 | `runtime` | the process's state: scoping it, clearing it, saving it | `runtime` `reset` `snapshot` |
 | `spec` | an agent as a document | `spec` `columns` |
 

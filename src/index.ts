@@ -141,6 +141,16 @@ export {
   type WrittenMessage,
 } from './run/agent-loop.ts';
 export {
+  type ArtifactDraft,
+  type ArtifactOptions,
+  artifactSource,
+  declaredArtifact,
+  detectArtifact,
+  mediaTypeFor,
+  RECORD_ARTIFACT,
+  RECORD_ARTIFACT_TOOL,
+} from './run/artifacts.ts';
+export {
   configureEvents,
   type EventBusOptions,
   emit,
@@ -329,6 +339,8 @@ export {
 export {
   ARGUMENTS_MALFORMED,
   ARGUMENTS_TRUNCATED,
+  ArtifactAction,
+  ArtifactSource,
   type EndedBy,
   parseToolArguments,
   type ResourceLink,

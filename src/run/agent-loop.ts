@@ -92,6 +92,7 @@ import {
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
 import { FinishReason, PartType, Role } from '../wire/wire.ts';
+import { type ArtifactOptions, RECORD_ARTIFACT_TOOL, RunArtifacts } from './artifacts.ts';
 import {
   type RunEvent,
   type RunEventInput,
@@ -488,6 +489,23 @@ export interface AgentLoopOptions {
    */
   dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
   /**
+   * Collects artifacts from the two sources that take a guess, beside the `links` every run keeps:
+   * `declare` has the model name them through `record_artifact`, and `detect` reads each successful
+   * call for the shape of a write. Both off by default.
+   *
+   * @remarks
+   * For servers that never send a `resource_link`, which is the source to rely on. One artifact per
+   * location either way: a later write moves `action` on, a declaration over a detection fills in
+   * the title and description and takes the `source` over, and a link over either takes over too.
+   *
+   * `record_artifact` is declared beside `hostTools`, in every mode, and answered by the loop
+   * without `dispatch` seeing it. A declaration is believed only where some successful call in the
+   * run was given or answered with the location, and is otherwise refused for the model to read;
+   * run in a batch, it waits for the batch's other calls. `onToolCall` and `onToolResult` hear it
+   * as they hear `load_tools`, and it counts in `toolCalls` but not in `used`.
+   */
+  artifacts?: ArtifactOptions;
+  /**
    * Told of every call the model made, as it starts — the ones `dispatch` never sees included:
    * `load_tools`, an identical repeat answered from the first, and a call whose arguments could
    * not be read, which arrives with empty `args` and the model's own text in `raw`.
@@ -650,7 +668,7 @@ export interface AgentLoopResult {
   /**
    * What the run's calls linked to, one per uri in the order first seen, each with the call and
    * step that first linked to it and how many calls did. Empty where `dispatch` answered with
-   * strings only.
+   * strings only and `artifacts` collected nothing else.
    */
   artifacts: RunArtifact[];
   /**
@@ -831,7 +849,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }),
   };
   let result: AgentLoopResult | undefined;
-  const apart = hostToolsApart(options);
+  const apart = hostToolsApart(withRecordTool(options));
   try {
     pin = await pinSession(apart);
     result = await runSteps(apart, standing, pin);
@@ -1185,6 +1203,24 @@ function hostToolsApart(options: AgentLoopOptions): AgentLoopOptions {
   };
 }
 
+/**
+ * The run's options with `record_artifact` among the host's tools, where the run declares.
+ *
+ * @param options - What `runAgentLoop` was given. Not written to.
+ * @returns `options` itself where `artifacts.declare` is off, and otherwise a copy whose `hostTools`
+ * open with the loop's definition, which a host tool of the same name does not displace.
+ *
+ * @remarks
+ * A host tool in all but who answers it, so it is declared in every mode, kept off the catalogue,
+ * recoverable from text, and refused through `call_tool` exactly as the host's own are.
+ */
+function withRecordTool(options: AgentLoopOptions): AgentLoopOptions {
+  if (options.artifacts?.declare !== true) {
+    return options;
+  }
+  return { ...options, hostTools: loadedTools([RECORD_ARTIFACT_TOOL], options.hostTools ?? []) };
+}
+
 /** What opens the notice naming the loop's own picks, ahead of the names. */
 export const PRESELECTED_NOTICE = 'tools picked before the run: ';
 
@@ -1355,6 +1391,7 @@ async function runSteps(
     dedupeToolCalls = true,
     preselectRouting = PRESELECT_EXCLUSIVE,
     serverInstructions = false,
+    artifacts: collecting = {},
   } = options;
   const dedupable = typeof dedupeToolCalls === 'function' ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
@@ -1409,7 +1446,9 @@ async function runSteps(
   let usage = noUsage();
   let cacheReported = false;
   const toolCalls: ToolCallOutcome[] = [];
-  const artifacts = new Map<string, RunArtifact>();
+  const artifacts = new RunArtifacts();
+  const { detect = false } = collecting;
+  const detects = typeof detect === 'function' ? detect : detect ? () => true : undefined;
   // A box per request, emptied once its turn is in `messages`: a failure while the tools run had
   // no request in flight.
   let inFlight: InFlight = {};
@@ -1420,7 +1459,7 @@ async function runSteps(
       ...(partial ? { partial } : {}),
       usage: loopUsage(usage, cacheReported),
       toolCalls,
-      artifacts: [...artifacts.values()],
+      artifacts: artifacts.list(),
       // As the result would have said it: proxied, nothing is loaded that the history does not hold.
       loaded: proxied ? [] : [...loaded],
       used: [...used],
@@ -1467,6 +1506,8 @@ async function runSteps(
     used,
     toolCalls,
     artifacts,
+    declares: collecting.declare === true,
+    detects,
     dedupable,
     dispatch,
     parallel,
@@ -1668,7 +1709,7 @@ async function runSteps(
         messages,
         usage: loopUsage(usage, cacheReported),
         toolCalls,
-        artifacts: [...artifacts.values()],
+        artifacts: artifacts.list(),
         loaded: proxied ? [] : [...loaded],
         used: [...used],
         preselected: [...preselected],

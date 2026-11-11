@@ -698,24 +698,71 @@ export interface ToolCallReport {
 }
 
 /**
+ * How the loop came to know of an artifact, most trusted first.
+ *
+ * @remarks
+ * `linked` is a call's answer saying so, and is the only one that takes no guessing. `declared` is
+ * the model naming it through `record_artifact`, believed only where some call in the run touched
+ * the location. `detected` is the loop reading a successful call as a write: a verb at the front
+ * of its name and a path in its arguments. The last two are opt-in, through `artifacts` on the
+ * loop's options.
+ */
+export const ArtifactSource = {
+  Linked: 'linked',
+  Declared: 'declared',
+  Detected: 'detected',
+} as const;
+
+/** Any one of the sources in `ArtifactSource`. */
+export type ArtifactSource = (typeof ArtifactSource)[keyof typeof ArtifactSource];
+
+/** What the run's last write did to an artifact's location, as a detection read it. */
+export const ArtifactAction = {
+  Created: 'created',
+  Updated: 'updated',
+  Moved: 'moved',
+  Deleted: 'deleted',
+} as const;
+
+/** Any one of the actions in `ArtifactAction`. */
+export type ArtifactAction = (typeof ArtifactAction)[keyof typeof ArtifactAction];
+
+/**
  * One thing a run's tool calls produced: the first link to a uri, and where it came from.
  *
  * @remarks
  * A link is what one call answered with; an artifact is what the run made, one per uri however
- * many calls linked to it.
+ * many calls linked to it. A declared or detected artifact is one per location the same way, and
+ * its `link` is built from what was said of it: the location as `uri`, its last segment as `name`.
  */
 export interface RunArtifact {
-  /** The link as the first call to give its uri gave it. A later call's says nothing new here. */
+  /**
+   * The link as the first call to give its uri gave it. A later call's says nothing new here, and
+   * a declaration only fills in a `title` or `description` it left out.
+   */
   link: ResourceLink;
-  /** The call that first linked to it. */
+  /** The call that first linked to it, wrote it, or — for a declaration alone — last touched it. */
   callId: string;
   /** That call's tool. For a `call_tool`, the tool it named. */
   tool: string;
   /** The loop's step that call was made in, from 0. */
   step: number;
   /**
-   * How many calls linked to it. A deduplicated repeat does not count, since nothing was made
-   * twice, and a call that links one uri twice counts once.
+   * How many calls linked to it or wrote it. A deduplicated repeat does not count, since nothing
+   * was made twice, a call that links one uri twice counts once, and a declaration counts none.
    */
   count: number;
+  /**
+   * How it came to be known: `linked` where absent, which is every artifact a call's answer
+   * linked to, so the shape from before the other two sources still reads the same. A declaration
+   * over a detection takes the source over; a link over either does too.
+   */
+  source?: ArtifactSource;
+  /**
+   * What the latest write a detection read did to it. Absent where no detection did: a link or a
+   * declaration says a thing exists, not what was done to it.
+   */
+  action?: ArtifactAction;
+  /** The bytes the latest detected write carried, where its arguments held the content. */
+  sizeBytes?: number;
 }
