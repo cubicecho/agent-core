@@ -510,7 +510,8 @@ describe('negotiate, for a model', () => {
   });
 
   it('stops replaying the scratchpad to a model whose endpoint refuses the field', async () => {
-    for (const refusal of [GROQ_NO_REASONING, MISTRAL_NO_REASONING, UNKNOWN_REASONING]) {
+    const ollamaSpelling = apiError(400, "Unknown parameter: 'messages[1].reasoning'.");
+    for (const refusal of [GROQ_NO_REASONING, MISTRAL_NO_REASONING, UNKNOWN_REASONING, ollamaSpelling]) {
       resetCapabilities();
       const supports = openai();
       const { send } = modelThatRefuses(refusal);
@@ -522,7 +523,9 @@ describe('negotiate, for a model', () => {
   it('passes on a refusal that asks for the scratchpad, rather than dropping it', async () => {
     // DeepSeek refuses a tool loop that left it out. Latched off, every later request would be
     // the same refusal.
-    for (const refusal of [DEEPSEEK_MISSING, DEEPSEEK_PASS_BACK]) {
+    // And the English in a refusal of an effort, which names no field of a message.
+    const effortProse = apiError(400, 'This model does not support reasoning; unknown option');
+    for (const refusal of [DEEPSEEK_MISSING, DEEPSEEK_PASS_BACK, effortProse]) {
       const supports = openai();
       const { send } = modelThatRefuses(refusal);
       await expect(negotiate(supports, send, { model: 'deepseek' })).rejects.toThrow(refusal.message);

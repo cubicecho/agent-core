@@ -15,7 +15,7 @@ import {
   toolName,
 } from '../tools/tool-loading.ts';
 import { errorMessage } from '../wire/errors.ts';
-import type { Turn } from '../wire/stream.ts';
+import { reasoningEntry, type Turn } from '../wire/stream.ts';
 import {
   type EndedBy,
   parseToolArguments,
@@ -29,7 +29,7 @@ import {
   type ToolCallRequest,
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
-import { FUNCTION_TOOL, REASONING_CONTENT, Role } from '../wire/wire.ts';
+import { FUNCTION_TOOL, REASONING, REASONING_CONTENT, type ReasoningField, Role } from '../wire/wire.ts';
 import {
   type ArtifactFrom,
   declaredArtifact,
@@ -134,15 +134,22 @@ export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason'],
   calls.map((call) => readCall(call, finishReason, recovered));
 
 /** An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay. */
-export type ReasonedMessage = OpenAI.ChatCompletionAssistantMessageParam & { [REASONING_CONTENT]?: string };
+export type ReasonedMessage = OpenAI.ChatCompletionAssistantMessageParam & {
+  [REASONING_CONTENT]?: string;
+  [REASONING]?: string;
+};
 
-/**
- * The scratchpad as a field to spread onto a message.
- *
- * @param reasoning - The turn's reasoning, or `""` for none.
- * @returns `{ reasoning_content }`, or an empty object where there is no reasoning.
- */
-const reasoningField = (reasoning: string) => (reasoning ? { [REASONING_CONTENT]: reasoning } : {});
+/** A scratchpad to write onto a message, and the field it goes under. */
+export interface Scratchpad {
+  /** The reasoning. Empty writes no field. */
+  reasoning: string;
+  /**
+   * The field it arrived in, as `Turn.reasoningField` has it.
+   *
+   * @defaultValue `REASONING_CONTENT`
+   */
+  field?: ReasoningField;
+}
 
 /**
  * Whether a turn's scratchpad is written onto its assistant message under a policy.
@@ -160,13 +167,14 @@ export const replaysReasoning = (policy: ReasoningReplay, endsInCalls: boolean) 
  * @param content - The turn's text. Empty is written as `null`.
  * @param parsed - The turn's calls as `readCalls` read them. Not written to. None leaves
  * `tool_calls` off the message rather than empty.
- * @param [reasoning] - The scratchpad to replay as `reasoning_content`. Empty leaves the field off.
+ * @param [scratchpad] - The reasoning to replay, under the field it arrived in. None, or empty
+ * reasoning, leaves the field off.
  * @returns A new message, each call on it a copy with `normal` for its arguments.
  */
-export const assistantMessage = (content: string, parsed: ReadCall[], reasoning = ''): ReasonedMessage => ({
+export const assistantMessage = (content: string, parsed: ReadCall[], scratchpad?: Scratchpad): ReasonedMessage => ({
   role: Role.Assistant,
   content: content || null,
-  ...reasoningField(reasoning),
+  ...reasoningEntry(scratchpad?.reasoning ?? '', scratchpad?.field),
   ...(parsed.length
     ? {
         tool_calls: parsed.map(({ call, normal }) => ({
@@ -183,19 +191,19 @@ export const assistantMessage = (content: string, parsed: ReadCall[], reasoning 
  * @param content - The turn's text, recovered calls left in it. Empty is written as `null`.
  * @param calls - The calls the model sent as calls, with their arguments as streamed. Not written
  * to. None leaves `tool_calls` off the message rather than empty.
- * @param [reasoning] - The scratchpad, written as `assistantMessage` was given it. Empty leaves the
- * field off.
+ * @param [scratchpad] - The reasoning, as `assistantMessage` was given it.
  * @returns A new message, each call on it a copy.
  */
-export const writtenMessage = (content: string, calls: ToolCall[], reasoning = ''): ReasonedMessage => ({
+export const writtenMessage = (content: string, calls: ToolCall[], scratchpad?: Scratchpad): ReasonedMessage => ({
   role: Role.Assistant,
   content: content || null,
-  ...reasoningField(reasoning),
+  ...reasoningEntry(scratchpad?.reasoning ?? '', scratchpad?.field),
   ...(calls.length ? { tool_calls: calls.map((call) => ({ ...call, function: { ...call.function } })) } : {}),
 });
 
 /**
- * The transcript with `reasoning_content` taken off its assistant messages from an index on.
+ * The transcript with `reasoning_content` and `reasoning` taken off its assistant messages from an
+ * index on.
  *
  * @param messages - The transcript. Not written to.
  * @param [from] - The first index to drop it from. Negative reads as zero.
@@ -204,7 +212,8 @@ export const writtenMessage = (content: string, calls: ToolCall[], reasoning = '
  *
  * @remarks
  * What `runAgentLoop` does to the question's tool loop under `tool-loop` once the answer is
- * written, and what a host storing rows from `onMessage` does to them for the same rule.
+ * written, what `buildBody` does for a model that refused the field, and what a host storing rows
+ * from `onMessage` does to them under `tool-loop`.
  */
 export function dropReasoning(
   messages: OpenAI.ChatCompletionMessageParam[],
@@ -213,10 +222,11 @@ export function dropReasoning(
   let out: OpenAI.ChatCompletionMessageParam[] | undefined;
   for (let at = Math.max(0, from); at < messages.length; at++) {
     const message = messages[at];
-    if (message.role !== Role.Assistant || !(REASONING_CONTENT in message)) {
+    const carries = REASONING_CONTENT in message || REASONING in message;
+    if (message.role !== Role.Assistant || !carries) {
       continue;
     }
-    const { [REASONING_CONTENT]: _dropped, ...rest } = message as ReasonedMessage;
+    const { [REASONING_CONTENT]: _content, [REASONING]: _alias, ...rest } = message as ReasonedMessage;
     out ??= [...messages];
     out[at] = rest;
   }

@@ -2,7 +2,14 @@ import type OpenAI from 'openai';
 import { type Capabilities, modelCapabilitiesFor } from '../endpoint/capabilities.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { ContextOverflow, refusesRequest } from '../wire/retry.ts';
-import { addCounts, type InFlight, type PartialTurn, type Turn, type TurnUsage } from '../wire/stream.ts';
+import {
+  addCounts,
+  type InFlight,
+  type PartialTurn,
+  reasoningEntry,
+  type Turn,
+  type TurnUsage,
+} from '../wire/stream.ts';
 import { FinishReason, Role } from '../wire/wire.ts';
 import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from './run-turn.ts';
 
@@ -24,6 +31,14 @@ export interface ContinueTurnOptions extends RunTurnOptions {
    * @defaultValue `1`
    */
   maxContinuations?: number;
+  /**
+   * Whether the prefill carries the reasoning the cut-off turn produced, under the field it arrived
+   * in. A Qwen3.5+ template renders a think block on that message either way, empty without it, so
+   * leaving it off tells the model it had no thoughts and misses the cache of what it generated.
+   *
+   * @defaultValue `true`
+   */
+  replayReasoning?: boolean;
 }
 
 /**
@@ -178,7 +193,7 @@ export async function continueTurn(
   supports: Capabilities,
   request: RequestBuilder,
   turn: Turn,
-  { maxContinuations = 1, ...options }: ContinueTurnOptions = {},
+  { maxContinuations = 1, replayReasoning = true, ...options }: ContinueTurnOptions = {},
 ): Promise<Turn> {
   const refused = options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
   const who = modelLabel(options.model);
@@ -192,6 +207,7 @@ export async function continueTurn(
       break;
     }
     const answer = joined.content;
+    const thought = replayReasoning ? reasoningEntry(joined.reasoning, joined.reasoningField) : {};
     if (outer) {
       const sofar = joined;
       piece.read = undefined;
@@ -204,9 +220,10 @@ export async function continueTurn(
         supports,
         (capabilities, forModel) => {
           const body = request(capabilities, forModel);
+          const scratchpad = forModel?.reasoningContent === false ? {} : thought;
           return {
             ...body,
-            messages: [...body.messages, { role: Role.Assistant, content: answer }],
+            messages: [...body.messages, { role: Role.Assistant, content: answer, ...scratchpad }],
           };
         },
         { ...options, ...told, startInReasoning: false },
@@ -242,6 +259,9 @@ export async function continueTurn(
       usage: joinUsage(joined.usage, next.usage),
       finishReason: next.finishReason,
       reasoning: joined.reasoning + next.reasoning,
+      ...(joined.reasoningField || next.reasoningField
+        ? { reasoningField: joined.reasoningField ?? next.reasoningField }
+        : {}),
     };
   }
   return joined;

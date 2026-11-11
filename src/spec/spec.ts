@@ -108,7 +108,7 @@ export interface ModelSpec {
   temperature?: number;
   /** `reasoning_effort`. `"off"` and `""` send nothing; any other string passes through. */
   reasoningEffort?: string;
-  /** Which assistant messages replay the scratchpad as `reasoning_content`. Absent is `tool-loop`. */
+  /** Which assistant messages replay the model's scratchpad. Absent is `all`. */
   reasoningReplay?: ReasoningReplay;
   /** What the operator says this model reads, in tokens. Zero asks the endpoint. */
   contextLength?: number;
@@ -536,13 +536,13 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   let reasoningReplay: ReasoningReplay | undefined;
   if (!absent(value.reasoningReplay)) {
     if (
-      value.reasoningReplay === ReasoningReplay.ToolLoop ||
       value.reasoningReplay === ReasoningReplay.All ||
+      value.reasoningReplay === ReasoningReplay.ToolLoop ||
       value.reasoningReplay === ReasoningReplay.None
     ) {
       reasoningReplay = value.reasoningReplay;
     } else {
-      report.drop('model.reasoningReplay', 'must be "tool-loop", "all" or "none"');
+      report.drop('model.reasoningReplay', 'must be "all", "tool-loop" or "none"');
     }
   }
   return kept({

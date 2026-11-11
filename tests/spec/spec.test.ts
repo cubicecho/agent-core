@@ -67,11 +67,11 @@ describe('parseSpec', () => {
     }
     const result = parseSpec(doc({ model: { model: 'm', reasoningReplay: 'some' } }));
     expect(result.spec?.model).toEqual({ model: 'm' });
-    expect(result.warnings).toEqual(['model.reasoningReplay: must be "tool-loop", "all" or "none", and was dropped']);
+    expect(result.warnings).toEqual(['model.reasoningReplay: must be "all", "tool-loop" or "none", and was dropped']);
     const base = parsed(doc({ model: { reasoningReplay: ReasoningReplay.None } }));
     const over = parsed(doc({ model: { reasoningReplay: ReasoningReplay.All } }));
     expect(resolveAgentSpec([base, over]).reasoningReplay).toBe(ReasoningReplay.All);
-    // Absent stays absent, which the loop reads as `tool-loop`.
+    // Absent stays absent, which the loop reads as `all`.
     expect(resolveAgentSpec([parsed(doc())])).not.toHaveProperty('reasoningReplay');
   });
 

@@ -75,10 +75,20 @@ export const FUNCTION_TOOL = 'function' as const;
 export const JSON_SCHEMA_FORMAT = 'json_schema' as const;
 
 /**
- * The assistant message field a model's scratchpad is replayed in. Not in the OpenAI types; it is
- * what llama.cpp, vLLM and the Qwen and DeepSeek templates read.
+ * The assistant message field a model's scratchpad is replayed in where it did not arrive as
+ * `reasoning`. Not in the OpenAI types; llama.cpp reads only this, as do DeepSeek and the Qwen
+ * templates.
  */
 export const REASONING_CONTENT = 'reasoning_content' as const;
+
+/**
+ * The other spelling of that field: what Ollama's `/v1` sends and the only one it reads back, and
+ * OpenRouter's own. vLLM reads either.
+ */
+export const REASONING = 'reasoning' as const;
+
+/** Either field a scratchpad travels in. */
+export type ReasoningField = typeof REASONING_CONTENT | typeof REASONING;
 
 /** The HTTP statuses this package reads a meaning into. */
 export const HttpStatus = {

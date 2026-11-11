@@ -92,7 +92,8 @@ for: a router is free to send two keys to two different backends, and then what 
 refused is not a fact about the other. Absent and empty read the same, so a local server with no
 key is one entry however its caller spells it.
 
-`Turn` is `content`, `toolCalls`, `usage`, `finishReason` and `reasoning`. The fourth is worth
+`Turn` is `content`, `toolCalls`, `usage`, `finishReason` and `reasoning`, with `reasoningField` naming
+the delta field the reasoning came in, where one did. The fourth is worth
 reading: a turn cut off at the token ceiling comes back looking exactly like a finished one, with
 truncated prose or — the case that bites — a tool call whose `arguments` stop mid-JSON, so the
 caller meets a parse failure with nothing to attribute it to. `finishReason` is `"length"` there,
@@ -113,23 +114,37 @@ than zero otherwise:
 | `cacheExpected`, `cacheBroken`, `cacheBreakReason`, `toolsDeclared`, `toolSchemaTokens`, `context` | `runAgentLoop`, below |
 
 `reasoning` is the scratchpad `onThinking` was told, kept because some models want it back.
-`runAgentLoop` writes it onto the assistant message as `reasoning_content` — the field llama.cpp,
-vLLM and the Qwen and DeepSeek templates read — and `reasoningReplay` on its config says which
-messages get it:
+`runAgentLoop` writes it onto the assistant message under the field it arrived in, which
+`reasoningField` on the turn names: llama.cpp reads back only `reasoning_content`, Ollama's `/v1`
+only `reasoning`, and vLLM and OpenRouter either. A scratchpad split out of fenced `content` goes back
+as `reasoning_content`, never glued into the text, since Qwen3.8's template no longer splits
+`<think>` out of content itself. No reasoning writes no field: never `null` or `""`, which llama.cpp
+throws on and Kimi's template renders as `<think>None</think>`. `reasoningReplay` on the config says
+which messages get it:
 
 | `reasoningReplay` | Carries it | For |
 | --- | --- | --- |
-| `'tool-loop'` (default) | each message that ends in tool calls, until the answer is written; the answer carries none, and the result's `messages` drop it from the question's tool loop | gpt-oss, whose harmony format keeps the analysis behind a call until a final answer and drops it after; Qwen3 templates, which render thinking only after the last user message |
-| `'all'` | every assistant message, the answer included, never dropped | DeepSeek's API in thinking mode with tools, which wants every earlier turn's back and refuses a request without it; templates with `preserve_thinking`; a prefix cache that has to see the bytes it generated |
+| `'all'` (default) | every assistant message, the answer included, never dropped | letting the template decide, which is where each model's rule already lives |
+| `'tool-loop'` | each message that ends in tool calls, until the answer is written; the answer carries none, and the result's `messages` drop it from the question's tool loop | gpt-oss's harmony rule written client-side, for a server that renders whatever it is sent |
 | `'none'` | nothing, as before 4.22 | a model that does not want it, since it is context paid for on every turn |
 
+The default is `'all'` because stripping it client-side is the one choice that breaks somebody.
+DeepSeek's API in thinking mode with `tools` wants every earlier assistant message's back, the
+final answers included, and refuses the request without it. Qwen3.8 keeps thinking for every turn
+by default, and GLM-5.3 defaults `clear_thinking` to false. The templates that want less — Qwen3
+through 3.6 and GLM-4.5/4.6 after the last user message, gpt-oss until a final answer, Kimi K2 after
+the last plain assistant message — drop it themselves. And a prefix cache matches on rendered
+tokens, so a replay that differs from what was generated is re-prefilled from that message on. 4.22
+shipped with `'tool-loop'` as the default; 4.23 changed it.
+
 **This is a change of default.** Before 4.22 no message carried it, and a run against a reasoning
-model now sends its tool loop's thinking back unless the host sets `reasoningReplay: 'none'`.
-`ModelParams` and the spec's `model` section both take it, so a host exposes it as one setting. An
-endpoint that refuses the field on a message — Groq, Mistral and `deepseek-reasoner` validate
-messages strictly — is answered like any refusal here: latched off for that model as
-`reasoningContent`, and the request sent again without it. `requestTokens`, `planCompaction` and
-the ledger count it as part of the message it is on.
+model now sends its thinking back unless the host sets `reasoningReplay: 'none'`. `ModelParams` and
+the spec's `model` section both take it, so a host exposes it as one setting. An endpoint that
+refuses the field on a message — Groq, Mistral and `deepseek-reasoner` validate messages strictly —
+is answered like any refusal here: latched off for that model as `reasoningContent`, and the request
+sent again without it. `requestTokens`, `planCompaction` and the ledger count it as part of the
+message it is on. A continuation's prefill carries it too, unless the policy is `'none'`: Qwen3.5+
+renders a think block on that message either way, empty without it.
 
 A host storing rows from `onMessage` gets the message as replayed, field and all; under
 `'tool-loop'` the result's `messages` no longer carry it from the question on, and
@@ -860,7 +875,8 @@ let turn = await runTurn(client, supports, build, options);
 turn = await continueTurn(client, supports, build, turn, { ...options, maxContinuations: 2 });
 ```
 
-It sends the transcript again with the answer so far as a trailing assistant message, which
+It sends the transcript again with the answer so far as a trailing assistant message, its
+reasoning on it under the field it arrived in (`replayReasoning: false` leaves it off), which
 llama.cpp renders as a prefill: the model carries on from the last token, and the cache holds all
 of the prompt and most of the reply. vLLM only does so given `continue_final_message: true` and
 `add_generation_prompt: false` on that request, which nothing here sends yet. The pieces come
