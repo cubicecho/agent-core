@@ -178,6 +178,19 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 - `WrittenMessage` (type) — What `onMessage` is handed beside an assistant message the model wrote: that message as the model produced it.
 
+### artifacts
+
+What a run left behind, from the two sources that take a guess: the model saying so, and a call that reads as a write.
+
+- `ArtifactDraft` (type) — What one declaration or detection said of a location, before it is merged into the run's.
+- `ArtifactOptions` (type) — Which of the guessing sources a run collects, beside the links every run keeps.
+- `artifactSource` — How an artifact came to be known, reading an absent `source` as the link it always was.
+- `declaredArtifact` — What the model said through `record_artifact`.
+- `detectArtifact` — What a successful call wrote, if its name and arguments look like a write.
+- `mediaTypeFor` — A media type guessed off a location's extension.
+- `RECORD_ARTIFACT` — The name of the tool the loop declares and answers itself when `artifacts.declare` is on.
+- `RECORD_ARTIFACT_TOOL` — The definition of `record_artifact`, as the loop declares it beside the host's own tools.
+
 ### events
 
 What a run is doing, while it is doing it.
@@ -433,6 +446,8 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 
 - `ARGUMENTS_MALFORMED` — The `ToolArgumentsError` kind for a call the model wrote wrongly.
 - `ARGUMENTS_TRUNCATED` — The `ToolArgumentsError` kind for a call cut off at the reply ceiling.
+- `ArtifactAction` — Any one of the actions in `ArtifactAction`.
+- `ArtifactSource` — Any one of the sources in `ArtifactSource`.
 - `EndedBy` (type) — The call that ended a run through its answer's `end`, as `AgentLoopResult.ended` says it.
 - `parseToolArguments` — A tool call's arguments as the object the tool is handed.
 - `ResourceLink` (type) — A handle to something a tool call made or found — a document it wrote, a file it saved.

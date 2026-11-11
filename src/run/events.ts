@@ -128,9 +128,11 @@ export const RunEventKind = {
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
   Notice: 'notice',
   /**
-   * A tool call's answer linked to something the run had not produced before. `id` is the call's,
-   * `name` the tool, `text` the link's title or else its uri, and `link` the link itself. Once
-   * per uri per run: a later call that links the same uri again only adds to its count.
+   * A tool call's answer linked to something the run had not produced before — or, where the run
+   * collects them, a write was detected or a declaration believed at a new location. `id` is the
+   * call's the artifact is put down to, `name` its tool, `text` the link's title or else its uri,
+   * and `link` the link itself. Once per location per run: a later call that links or writes it
+   * again only adds to its count, and a declaration over it only fills it in.
    */
   Artifact: 'artifact',
   /**

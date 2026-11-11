@@ -29,6 +29,13 @@ import {
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
 import { FUNCTION_TOOL, Role } from '../wire/wire.ts';
+import {
+  type ArtifactFrom,
+  declaredArtifact,
+  detectArtifact,
+  RECORD_ARTIFACT,
+  type RunArtifacts,
+} from './artifacts.ts';
 import type { LoadCounts, RunEventInput } from './events.ts';
 import { RunEventKind } from './events.ts';
 
@@ -267,8 +274,12 @@ export interface Calling {
   loads: LoadCounts;
   used: Set<string>;
   toolCalls: ToolCallOutcome[];
-  /** What the run's calls linked to, by uri, in the order first seen. */
-  artifacts: Map<string, RunArtifact>;
+  /** What the run's calls linked to, wrote, or were said to have stored, by location. */
+  artifacts: RunArtifacts;
+  /** Whether `record_artifact` is the loop's to answer, and every successful call is witnessed. */
+  declares: boolean;
+  /** Which successful calls are read for the shape of a write. Absent where none are. */
+  detects: ((call: ToolCallRequest) => boolean) | undefined;
   dedupable: (call: ToolCallRequest) => boolean;
   dispatch: ToolDispatch;
   /** All of a step's calls together, each alone, or together in runs of the calls it passes. */
@@ -371,28 +382,61 @@ async function once<T>(answered: Map<string, Promise<T>>, key: string, make: () 
 }
 
 /**
- * Adds one call's links to the run's artifacts, telling watchers of each uri the first time.
+ * Tells watchers of artifacts the run had not produced before.
  *
- * @param run - The run. Written to: a new uri is added to `artifacts`, and a known one counted.
- * @param links - What the call's answer linked to.
- * @param from - The call they came from.
+ * @param run - The run, whose watchers hear of them.
+ * @param added - The new artifacts, each told once.
  */
-function collect(run: Calling, links: ResourceLink[], from: Omit<RunArtifact, 'link' | 'count'>) {
-  // Per call, so a tool that lists one uri twice in an answer is counted as making it once.
-  const seen = new Set<string>();
-  for (const link of links) {
-    if (seen.has(link.uri)) {
-      continue;
-    }
-    seen.add(link.uri);
-    const known = run.artifacts.get(link.uri);
-    if (known) {
-      known.count++;
-      continue;
-    }
-    run.artifacts.set(link.uri, { link, ...from, count: 1 });
-    run.onEvent({ kind: RunEventKind.Artifact, id: from.callId, name: from.tool, text: link.title || link.uri, link });
+function announceArtifacts(run: Calling, added: RunArtifact[]) {
+  for (const { link, callId, tool } of added) {
+    run.onEvent({ kind: RunEventKind.Artifact, id: callId, name: tool, text: link.title || link.uri, link });
   }
+}
+
+/**
+ * Adds what one successful call produced to the run's artifacts: its links, and — where the run
+ * collects them — what it was given and answered, and the write it reads as.
+ *
+ * @param run - The run. Written to: its `artifacts`.
+ * @param request - The call, under the tool it was shown as.
+ * @param content - What it answered.
+ * @param links - What its answer linked to.
+ * @param from - The call, as an artifact is put down to it.
+ */
+function collect(run: Calling, request: ToolCallRequest, content: string, links: ResourceLink[], from: ArtifactFrom) {
+  announceArtifacts(run, run.artifacts.link(links, from));
+  if (run.declares) {
+    run.artifacts.witness(request.args, content, links, from);
+  }
+  const draft = run.detects?.(request) ? detectArtifact(request.name, request.args) : null;
+  const added = draft ? run.artifacts.add(draft, from) : undefined;
+  announceArtifacts(run, added ? [added] : []);
+}
+
+/**
+ * Answers a `record_artifact`, keeping the declaration where some call in the run touched the
+ * location.
+ *
+ * @param run - The run. Written to: its `artifacts`, where the declaration is believed.
+ * @param args - The call's arguments.
+ * @returns What the model reads. Throws, which the model reads instead, for a declaration with no
+ * location or one no call in the run was given or answered with.
+ */
+function answerRecord(run: Calling, args: Record<string, unknown>): string {
+  const draft = declaredArtifact(args);
+  if (draft === null) {
+    throw new Error(`${RECORD_ARTIFACT} needs a location.`);
+  }
+  const from = run.artifacts.seen(draft.location);
+  if (from === undefined) {
+    throw new Error(
+      `No tool call in this run touched ${draft.location}, so it was not recorded. ` +
+        'Record only what one of your tools stored, after the call that stored it.',
+    );
+  }
+  const added = run.artifacts.add(draft, from);
+  announceArtifacts(run, added ? [added] : []);
+  return `Recorded ${draft.location}.`;
 }
 
 /** One call made ready to run: what a host is told of it, and what `dispatch` would be handed. */
@@ -401,6 +445,8 @@ interface Prepared {
   request: ToolCallRequest;
   /** Whether the call is a `load_tools` the loop answers itself. */
   load: boolean;
+  /** Whether the call is a `record_artifact` the loop answers itself. */
+  record: boolean;
   /** Why a `call_tool` was refused before it was dispatched, which is then its answer. */
   refused?: { error: unknown };
   /** Whether an identical repeat of it is answered from the first, as `dedupeToolCalls` said. */
@@ -447,10 +493,11 @@ function prepare(run: Calling, entry: ReadCall): Prepared {
   // By the name the model called, not the one a `call_tool` wraps: `load_tools` is not in
   // the catalogue, and one reached through `call_tool` is refused like any other.
   const load = onDemand && call.function.name === LOAD_TOOLS;
-  const dispatched = args !== undefined && load === false && refused === undefined;
+  const record = run.declares && call.function.name === RECORD_ARTIFACT;
+  const dispatched = args !== undefined && load === false && record === false && refused === undefined;
   // Keyed on the inner call, so one made through `call_tool` and one made natively share.
   const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
-  return { entry, request, load, refused, dedupable: dispatched && run.dedupable(request), key };
+  return { entry, request, load, record, refused, dedupable: dispatched && run.dedupable(request), key };
 }
 
 /**
@@ -459,14 +506,20 @@ function prepare(run: Calling, entry: ReadCall): Prepared {
  * @param prepared - The call.
  * @param answered - The step's calls already made, by key. A call that threw is not in it.
  * @param batch - The keys of the calls in the batch being gathered, which a repeat shares.
- * @returns True for a `load_tools`, a call whose arguments could not be read, a `call_tool` that
- * was refused, and an identical repeat that `dedupeToolCalls` answers from the first.
+ * @returns True for a `load_tools`, a `record_artifact`, a call whose arguments could not be read,
+ * a `call_tool` that was refused, and an identical repeat that `dedupeToolCalls` answers from the
+ * first.
  */
 const answersItself = (
-  { entry, load, refused, dedupable, key }: Prepared,
+  { entry, load, record, refused, dedupable, key }: Prepared,
   answered: ReadonlyMap<string, unknown>,
   batch: ReadonlySet<string>,
-) => entry.args === undefined || load || refused !== undefined || (dedupable && (answered.has(key) || batch.has(key)));
+) =>
+  entry.args === undefined ||
+  load ||
+  record ||
+  refused !== undefined ||
+  (dedupable && (answered.has(key) || batch.has(key)));
 
 /**
  * Where the batch of calls starting at `from` ends: every call, one call, or the calls up to the
@@ -538,7 +591,7 @@ async function runCall(
   step: number,
 ): Promise<Ran> {
   const { catalog, onDemand, proxied, signal } = run;
-  const { entry, request, load, refused, dedupable, key } = prepared;
+  const { entry, request, load, record, refused, dedupable, key } = prepared;
   const { call, args, error: unreadable } = entry;
   const { name, raw } = request;
   run.onEvent({ kind: RunEventKind.ToolCall, id: call.id, name, text: preview(raw) });
@@ -557,6 +610,8 @@ async function runCall(
     }
     if (load) {
       ({ content, ok, counts: loads } = answerLoad(run, args));
+    } else if (record) {
+      content = answerRecord(run, args);
     } else {
       if (refused) {
         throw refused.error;
@@ -594,9 +649,10 @@ async function runCall(
     text: preview(content),
     ...(loads ? { loads } : {}),
   });
-  const isFirstAnswer = shared === false;
-  if (isFirstAnswer) {
-    collect(run, links, { callId: call.id, tool: name, step });
+  // Only what `dispatch` answered made anything, and a repeat made nothing the first did not.
+  const isMade = ok && load === false && record === false && shared === false;
+  if (isMade) {
+    collect(run, request, content, links, { callId: call.id, tool: name, step });
   }
   const result: ToolCallResult = { id: call.id, name, ok, content, ...(links.length ? { links } : {}) };
   run.onToolResult?.(result);
@@ -666,13 +722,17 @@ export async function runCalls(
       const start = from;
       const to = batchEnd(run, ready, start, parsed.length, answered);
       begun = to;
-      await Promise.all(
-        parsed.slice(start, to).map(async (_, offset) => {
-          const { result, end } = await runCall(run, ready(start + offset), answered, step);
-          outcomes[start + offset] = result;
-          ends[start + offset] = end;
-        }),
-      );
+      const runAt = async (at: number) => {
+        const { result, end } = await runCall(run, ready(at), answered, step);
+        outcomes[at] = result;
+        ends[at] = end;
+      };
+      // A declaration describes what the batch beside it stored, so it waits for the rest of the
+      // batch: run together, it would be checked before the write it names had answered.
+      const positions = parsed.slice(start, to).map((_, offset) => start + offset);
+      const isRecord = (at: number) => ready(at).record;
+      await Promise.all(positions.filter((at) => isRecord(at) === false).map(runAt));
+      await Promise.all(positions.filter(isRecord).map(runAt));
       for (const { id, name, ok, content } of outcomes.slice(from, to).flatMap((outcome) => outcome ?? [])) {
         toolCalls.push({ id, name, ok });
         await keep(id, content);

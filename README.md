@@ -568,6 +568,38 @@ its calls made on the error too, read off with `failedRun`.
 A link meant for the model alone — one whose MCP `audience` leaves out `"user"` — is the
 dispatcher's to drop, since that is MCP's rule and this package knows nothing of MCP.
 
+A link is the only source that takes no guessing, and the default. For servers that never send
+one, `artifacts` turns on the two that do, each off unless asked for:
+
+```ts
+const { artifacts } = await runAgentLoop({
+  // ...
+  artifacts: { declare: true, detect: true },
+});
+// [{ link, callId, tool, step, count, source: "declared", action: "updated", sizeBytes }]
+```
+
+- **`declare`** puts `record_artifact` (`RECORD_ARTIFACT_TOOL`) beside `hostTools` on every step,
+  in every mode, and the loop answers it without `dispatch` seeing it. It takes `location`,
+  `title`, `description` and `mediaType`. A declaration is believed only where some successful
+  call in the run was given or answered with that location — otherwise a model with no file tools
+  "saves" its answer to a file it never wrote — and the refusal is the call's answer, for the model
+  to read. A believed one is put down to the latest call that touched the location. In a
+  `parallel` batch it waits for the batch's other calls, so a write beside it counts.
+- **`detect`** reads every successful call for the shape of a write: a verb at the front of the
+  tool's own name (`write`, `create`, `save`, `upload`, `edit`, `move`, `delete`…) and a path in
+  its arguments (`destination`, `path`, `file_path`, `uri`…). Creating a folder is not an artifact.
+  A predicate in place of `true` reads only the calls it passes, which is how a host keeps its own
+  tools' writes off the list. `detectArtifact` is the same reading, for a host to call itself.
+
+One artifact per location per run, whichever sources found it. A later write moves `action`
+(`created`, `updated`, `moved`, `deleted`) and `sizeBytes` on; a declaration over a detection
+fills in the title and description and takes the `source` over, and never turns an `updated` back
+into `created`. A link is the server's word: a declaration over one fills only what it left out,
+and a link over either guess takes over. `source` is absent on a linked artifact, so the shape
+from before reads the same — `artifactSource` reads it as `linked`. The `artifact` event goes out
+once per location; the result's `artifacts` say what each ended as.
+
 ### A call that ends the run
 
 A tool whose call is the end of the job — handing off, asking a person — says so with `end` on
