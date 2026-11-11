@@ -1,3 +1,10 @@
+## [4.23.7](https://github.com/cubicecho/agent-core/compare/v4.23.6...v4.23.7) (2026-11-11)
+
+
+### Bug Fixes
+
+* send gemini thought signatures and openrouter reasoning blocks back ([85a8470](https://github.com/cubicecho/agent-core/commit/85a8470c712effd80e66f4a63ccc975d1a0a5e81)), closes [#204](https://github.com/cubicecho/agent-core/issues/204)
+
 ## [4.23.6](https://github.com/cubicecho/agent-core/compare/v4.23.5...v4.23.6) (2026-11-11)
 
 
