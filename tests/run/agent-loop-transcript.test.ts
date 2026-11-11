@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { apiError, type Body, chunks, config, type Message, says, text, tool } from '../helpers.ts';
+import { apiError, type Body, chunks, config, type Message, says, text, tool, user } from '../helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -16,6 +16,7 @@ const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = awa
 const { ContextOverflow } = await import('../../src/wire/retry.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
+const { dropReasoning } = await import('../../src/run/run-calls.ts');
 
 type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
@@ -87,8 +88,10 @@ describe('onMessage', () => {
         heard.push({ message, step, turn });
       },
     });
-    // Everything the run added, and nothing it was handed.
-    expect(heard.map((entry) => entry.message)).toEqual(result.messages.slice(1));
+    // Everything the run added, and nothing it was handed — less the scratchpad the tool loop
+    // carried, which the answer took off.
+    expect(heard[0].message).toHaveProperty('reasoning_content', 'hmm');
+    expect(dropReasoning(heard.map((entry) => entry.message))).toEqual(result.messages.slice(1));
     expect(heard.map((entry) => entry.step)).toEqual([0, 0, 0, 1]);
     expect(outline(heard.map((entry) => entry.message))).toEqual([
       'assistant: null',
@@ -836,5 +839,96 @@ describe('prune', () => {
     });
     // The first move is on the third step, after its `beforeStep`; the fourth is handed its stub.
     expect(handed).toEqual([0, 0, 0, 1]);
+  });
+});
+
+describe('reasoning replay', () => {
+  /** A turn that thinks, then answers in words. */
+  const thinksThenSays = (reasoning: string, content: string) =>
+    chunks(
+      { choices: [{ delta: { reasoning_content: reasoning } }] },
+      { choices: [{ delta: { content }, finish_reason: FinishReason.Stop }] },
+      { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
+    );
+  /** What each request carried, in the order they were sent. */
+  const sentMessages = () => create.mock.calls.map(([body]) => (body as Body).messages);
+  /** The `reasoning_content` of each assistant message, `undefined` where it has none. */
+  const scratchpads = (messages: readonly Message[]) =>
+    messages
+      .filter((message) => message.role === Role.Assistant)
+      .map((message) => (message as { reasoning_content?: string }).reasoning_content);
+
+  /** Runs a call, then an answer, each thought through, and keeps what each request carried. */
+  const twoSteps = async (reasoningReplay?: 'tool-loop' | 'all' | 'none', history: Message[] = []) => {
+    create
+      .mockReturnValueOnce(calls([['a', '{}']], 'look it up'))
+      .mockReturnValueOnce(thinksThenSays('that settles it', 'done'));
+    const written: (WrittenMessage | undefined)[] = [];
+    const result = await runAgentLoop({
+      config: reasoningReplay ? { ...config, reasoningReplay } : config,
+      messages: [...history, ...question],
+      tools: [tool('a')],
+      dispatch: async () => 'found',
+      onMessage: (message, _step, _turn, raw) => {
+        if (message.role === Role.Assistant) {
+          written.push(raw);
+        }
+      },
+    });
+    return { sent: sentMessages(), result, written };
+  };
+
+  it('replays the tool loop by default, and drops it once the answer is written', async () => {
+    const { sent, result, written } = await twoSteps();
+    expect(scratchpads(sent[1])).toEqual(['look it up']);
+    expect(written.map((raw) => raw && scratchpads([raw.raw])[0])).toEqual(['look it up', undefined]);
+    expect(scratchpads(result.messages)).toEqual([undefined, undefined]);
+    expect(result.turn.reasoning).toBe('that settles it');
+  });
+
+  it('keeps it on every assistant message under all', async () => {
+    const { sent, result } = await twoSteps('all');
+    expect(scratchpads(sent[1])).toEqual(['look it up']);
+    expect(scratchpads(result.messages)).toEqual(['look it up', 'that settles it']);
+  });
+
+  it('writes none under none, as every run did before', async () => {
+    const { sent, result, written } = await twoSteps('none');
+    expect(scratchpads(sent[1])).toEqual([undefined]);
+    expect(written.map((raw) => raw && scratchpads([raw.raw])[0])).toEqual([undefined, undefined]);
+    expect(scratchpads(result.messages)).toEqual([undefined, undefined]);
+  });
+
+  it("leaves what came before the question as the host gave it, and the host's own objects alone", async () => {
+    const earlier = { role: Role.Assistant, content: 'hello', reasoning_content: 'greet them' } as Message;
+    const { sent, result } = await twoSteps('tool-loop', [user('hey'), earlier]);
+    expect(scratchpads(sent[1])).toEqual(['greet them', 'look it up']);
+    expect(scratchpads(result.messages)).toEqual(['greet them', undefined, undefined]);
+    expect(result.messages[1]).toBe(earlier);
+  });
+
+  it('replays without it once the endpoint refuses the field, and remembers that', async () => {
+    create
+      .mockReturnValueOnce(calls([['a', '{}']], 'look it up'))
+      .mockRejectedValueOnce(apiError(400, "property 'reasoning_content' is unsupported"))
+      .mockReturnValueOnce(says('done'));
+    const notices: string[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'found',
+      onEvent: (event) => {
+        if (event.kind === RunEventKind.Notice) {
+          notices.push(event.text ?? '');
+        }
+      },
+    });
+    const sent = sentMessages();
+    expect(result.turn.content).toBe('done');
+    expect(sent).toHaveLength(3);
+    expect(scratchpads(sent[1])).toEqual(['look it up']);
+    expect(scratchpads(sent[2])).toEqual([undefined]);
+    expect(notices).toContain('m does not take reasoning_content; replaying without it');
   });
 });

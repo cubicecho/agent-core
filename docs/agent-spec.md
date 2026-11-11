@@ -106,6 +106,8 @@ export interface ModelSpec {
   temperature?: number;
   /** `reasoning_effort`. `"off"` and `""` send nothing; any other string passes through. */
   reasoningEffort?: string;
+  /** Which assistant messages replay the scratchpad as `reasoning_content`. Absent is `tool-loop`. */
+  reasoningReplay?: 'tool-loop' | 'all' | 'none';
   /** What the operator says this model reads, in tokens. Zero asks the endpoint. */
   contextLength?: number;
   /** Request fields the interface cannot spell. `model`, `messages`, `stream`, `tools` are dropped. */
@@ -309,6 +311,7 @@ as `null` and refusing it would make every host write a stripper first.
 | `model.model` | inherit | this model | `""` — names none, cannot run |
 | `model.maxTokens` | inherit | this ceiling | `0` — send none, the server decides |
 | `model.temperature` | inherit | this temperature | `0` — deterministic, not inherit |
+| `model.reasoningReplay` | inherit; nowhere is `tool-loop` | as stated | — |
 | `model.contextLength` | inherit | this window | `0` — ask the endpoint |
 | `model.extraBody` | inherit | merged key by key | `{}` — adds nothing |
 | `prompt` | inherit | merged by part id | `[]` — adds nothing; `text: ""` deletes a part |

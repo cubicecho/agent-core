@@ -57,6 +57,7 @@ What this package needs to know about a caller's configuration.
 - `Endpoint` (type) — Where to send a request and how long to wait.
 - `ModelParams` (type) — What to ask the model for.
 - `normalizeBaseUrl` — A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
+- `ReasoningReplay` — Any one of the policies in `ReasoningReplay`.
 - `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
 - `ToolDiscovery` — Any one of the modes in `ToolDiscovery`.
 - `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
@@ -222,7 +223,9 @@ What a run is doing, while it is doing it.
 
 The tools between two turns: a step's calls read, run and written into the transcript.
 
+- `dropReasoning` — The transcript with `reasoning_content` taken off its assistant messages from an index on.
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
+- `ReasonedMessage` (type) — An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay.
 - `ToolDispatch` (type) — Runs one tool call and resolves to what the model reads, alone or with what the call produced; what it throws, the model reads too.
 
 ### reset
@@ -471,5 +474,6 @@ The words the chat-completions wire is written in, each under a name.
 - `FUNCTION_TOOL` — The one `type` a tool definition or a tool call has on this wire.
 - `JSON_SCHEMA_FORMAT` — The `response_format` type that carries a schema the reply has to fit.
 - `PartType` — Any one of the part types in `PartType`.
+- `REASONING_CONTENT` — The assistant message field a model's scratchpad is replayed in.
 - `Role` — Any one of the roles in `Role`.
 - `SchemaType` — Any one of the types in `SchemaType`.

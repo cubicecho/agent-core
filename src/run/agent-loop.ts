@@ -18,7 +18,7 @@ import {
   type TokenLedger,
 } from '../context/ledger.ts';
 import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from '../core/config.ts';
-import { ToolDiscovery } from '../core/config.ts';
+import { ReasoningReplay, ToolDiscovery } from '../core/config.ts';
 import { counted } from '../core/guards.ts';
 import { charsPerTokenFor } from '../endpoint/calibration.ts';
 import {
@@ -107,8 +107,10 @@ import {
   assistantMessage,
   type Calling,
   definedAs,
+  dropReasoning,
   loadShortlist,
   readCalls,
+  replaysReasoning,
   runCalls,
   type ToolDispatch,
   writtenMessage,
@@ -602,8 +604,10 @@ export interface AgentLoopOptions {
    *
    * @remarks
    * The assistant message is the one replayed on later requests — arguments repaired, recovered
-   * calls folded in — and comes with its `turn`, as `onTurn` was handed it, for the `reasoning` a
-   * host keeps beside the message. A tool result comes without one, and so do the two messages
+   * calls folded in, `reasoning_content` on it where `reasoningReplay` says — and comes with its
+   * `turn`, as `onTurn` was handed it. Under `tool-loop` the result's `messages` drop that field
+   * once the answer is written, so a host storing these rows drops it too (`dropReasoning`).
+   * A tool result comes without one, and so do the two messages
    * a proxied run writes for its `preselected` shortlist, told as step zero's before any request.
    * What it returns is ignored: `beforeStep` is the one way to rewrite the transcript. What it
    * throws ends the run, and it is not called again for that run.
@@ -653,7 +657,10 @@ export interface AgentLoopResult {
    * the reason — which is how `runMetrics` reads the same outcome off the events.
    */
   ended?: EndedBy;
-  /** The transcript, with every assistant turn and tool result the run added. No system prompt. */
+  /**
+   * The transcript, with every assistant turn and tool result the run added. No system prompt.
+   * Under `tool-loop`, no assistant message from the question on carries `reasoning_content`.
+   */
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
    * Summed over every turn of the run, in the spelling the `usage` events use, with whether any
@@ -1403,6 +1410,7 @@ async function runSteps(
   // The host's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.
   const extraBody = pin ? { ...pin.fields, ...config.extraBody } : config.extraBody;
   const sending = { ...config, extraBody };
+  const reasoningReplay = config.reasoningReplay ?? ReasoningReplay.ToolLoop;
 
   // Started before the preselection rather than after it: neither reads the other, and in a row
   // they cost the first request two round trips where one will do. A failing runner is a note, but
@@ -1680,18 +1688,23 @@ async function runSteps(
     // Read before the assistant message is written, so what is replayed on every later request
     // is the repaired JSON.
     const parsed = readCalls(calls, turn.finishReason, recovered);
-    const assistant = assistantMessage(content, parsed);
+    const isAnswer = calls.length === 0;
+    const replayed = replaysReasoning(reasoningReplay, !isAnswer) ? turn.reasoning : '';
+    const assistant = assistantMessage(content, parsed, replayed);
     messages.push(assistant);
     // Recovered calls were never calls on the wire: what the model said is the text they came from.
-    await announce(assistant, step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls) });
+    await announce(assistant, step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls, replayed) });
 
-    const isAnswer = calls.length === 0;
     const ended = isAnswer ? undefined : await runCalls(calling, parsed, messages, step);
     if (ended) {
       const by = ended.reason ? `: ${ended.reason}` : '';
       notice(`${ended.name} ended the run${by}`);
     }
     if (isAnswer || ended) {
+      // The tool loop is over, so its scratchpads go; what came before the question is the host's.
+      if (reasoningReplay === ReasoningReplay.ToolLoop) {
+        messages = dropReasoning(messages, questionAt());
+      }
       // Not awaited: the answer is ready, and remembering it is not something to hold it for.
       // Handed back instead, for a host that wants its notes.
       const afterTurn =

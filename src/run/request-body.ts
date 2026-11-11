@@ -9,6 +9,7 @@ import {
 } from '../endpoint/capabilities.ts';
 import { relaxTools, sanitizeTools } from '../endpoint/schema-compat.ts';
 import { orderTools, type ToolOrder } from '../tools/tool-loading.ts';
+import { dropReasoning } from './run-calls.ts';
 
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and
@@ -20,13 +21,15 @@ import { orderTools, type ToolOrder } from '../tools/tool-loading.ts';
  * @param supports - What the endpoint has refused, as `negotiate` hands it to `send`.
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
- * @param messages - The request's messages, system prompt included, sent as they are.
+ * @param messages - The request's messages, system prompt included, sent as they are — less
+ * `reasoning_content` for a model that refused it.
  * @param [tools] - The tool definitions. Ordered by name, sanitised here — a lookup for a definition
  * seen before — and relaxed where the endpoint needs it. Empty sends no `tools` field at all.
  * @param [order] - How to order them before sending. `true` is by name, which keeps the cache
  * when the caller's array is assembled differently from one request to the next. See
  * `orderTools`.
- * @returns A fresh body, always streaming, around the caller's own `messages` array. `model`,
+ * @returns A fresh body, always streaming, around the caller's own `messages` array unless a
+ * scratchpad had to come off it. `model`,
  * `messages`, `stream` and `tools` are never `extraBody`'s to set.
  *
  * @remarks
@@ -54,7 +57,7 @@ export function buildBody(
     ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
     ...extraFields(refused, config.extraBody),
     model: config.model,
-    messages,
+    messages: refused?.reasoningContent === false ? dropReasoning(messages) : messages,
     stream: true,
     ...(declared.length ? { tools: declared } : {}),
   };

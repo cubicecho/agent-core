@@ -1,4 +1,10 @@
-import { type AgentConfig, type Endpoint, RESERVED_BODY_FIELDS, ToolDiscovery } from '../core/config.ts';
+import {
+  type AgentConfig,
+  type Endpoint,
+  RESERVED_BODY_FIELDS,
+  ReasoningReplay,
+  ToolDiscovery,
+} from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
 import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 
@@ -102,6 +108,8 @@ export interface ModelSpec {
   temperature?: number;
   /** `reasoning_effort`. `"off"` and `""` send nothing; any other string passes through. */
   reasoningEffort?: string;
+  /** Which assistant messages replay the scratchpad as `reasoning_content`. Absent is `tool-loop`. */
+  reasoningReplay?: ReasoningReplay;
   /** What the operator says this model reads, in tokens. Zero asks the endpoint. */
   contextLength?: number;
   /** Request fields the interface cannot spell. `model`, `messages`, `stream`, `tools` are dropped. */
@@ -525,9 +533,22 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (!isRecord(value)) {
     return void report.drop('model', 'must be an object');
   }
+  let reasoningReplay: ReasoningReplay | undefined;
+  if (!absent(value.reasoningReplay)) {
+    if (
+      value.reasoningReplay === ReasoningReplay.ToolLoop ||
+      value.reasoningReplay === ReasoningReplay.All ||
+      value.reasoningReplay === ReasoningReplay.None
+    ) {
+      reasoningReplay = value.reasoningReplay;
+    } else {
+      report.drop('model.reasoningReplay', 'must be "tool-loop", "all" or "none"');
+    }
+  }
   return kept({
     model: report.string('model.model', value.model),
     ...parseSampling(report, 'model', value),
+    reasoningReplay,
     contextLength: report.number('model.contextLength', value.contextLength, 0),
     extraBody: parseExtraBody(report, 'model.extraBody', value.extraBody),
   });
@@ -1185,6 +1206,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
       firstTokenSeconds: endpoint.firstTokenSeconds,
       loadingTimeoutSeconds: retry.loadingTimeoutSeconds,
       reasoningEffort: model.reasoningEffort,
+      reasoningReplay: model.reasoningReplay,
       extraBody: said(extraBody) ? extraBody : undefined,
       servers: tools.servers,
     }),

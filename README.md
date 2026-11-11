@@ -112,11 +112,29 @@ than zero otherwise:
 | `continuations` | `continueTurn` |
 | `cacheExpected`, `cacheBroken`, `cacheBreakReason`, `toolsDeclared`, `toolSchemaTokens`, `context` | `runAgentLoop`, below |
 
-`reasoning` is the scratchpad `onThinking` was told, kept because two common families want it
-back. gpt-oss and DeepSeek in thinking mode read the analysis behind a tool call off the assistant
-message on the next request: store it as `reasoning_content` on that message while it ends in a
-tool call, and drop it once the model has answered. Any other model is better off without it,
-since it is context paid for on every turn. `requestTokens` counts it either way.
+`reasoning` is the scratchpad `onThinking` was told, kept because some models want it back.
+`runAgentLoop` writes it onto the assistant message as `reasoning_content` — the field llama.cpp,
+vLLM and the Qwen and DeepSeek templates read — and `reasoningReplay` on its config says which
+messages get it:
+
+| `reasoningReplay` | Carries it | For |
+| --- | --- | --- |
+| `'tool-loop'` (default) | each message that ends in tool calls, until the answer is written; the answer carries none, and the result's `messages` drop it from the question's tool loop | gpt-oss, whose harmony format keeps the analysis behind a call until a final answer and drops it after; Qwen3 templates, which render thinking only after the last user message |
+| `'all'` | every assistant message, the answer included, never dropped | DeepSeek's API in thinking mode with tools, which wants every earlier turn's back and refuses a request without it; templates with `preserve_thinking`; a prefix cache that has to see the bytes it generated |
+| `'none'` | nothing, as before 4.22 | a model that does not want it, since it is context paid for on every turn |
+
+**This is a change of default.** Before 4.22 no message carried it, and a run against a reasoning
+model now sends its tool loop's thinking back unless the host sets `reasoningReplay: 'none'`.
+`ModelParams` and the spec's `model` section both take it, so a host exposes it as one setting. An
+endpoint that refuses the field on a message — Groq, Mistral and `deepseek-reasoner` validate
+messages strictly — is answered like any refusal here: latched off for that model as
+`reasoningContent`, and the request sent again without it. `requestTokens`, `planCompaction` and
+the ledger count it as part of the message it is on.
+
+A host storing rows from `onMessage` gets the message as replayed, field and all; under
+`'tool-loop'` the result's `messages` no longer carry it from the question on, and
+`dropReasoning(rows, from)` does the same to the stored copy. History before the question is sent as
+the host gave it.
 
 A server without a reasoning parser leaves the scratchpad in `content`, fenced, and then it is shown
 as output, stored and sent back. `streamTurn` routes text inside a fence to `onThinking` and
@@ -988,8 +1006,7 @@ try {
   await runAgentLoop({
     ...options,
     // Awaited: the row is written before the tools run, and before the next request is sent.
-    onMessage: (message, step, turn) =>
-      store.add(sessionId, turn?.reasoning ? { ...message, reasoning_content: turn.reasoning } : message),
+    onMessage: (message) => store.add(sessionId, message),
   });
 } catch (error) {
   const run = failedRun(error); // messages, partial, usage, toolCalls, loaded, used, preselected — or undefined
@@ -1046,7 +1063,7 @@ and trailing slashes, so a row saved before the rule still finds its own key.
 
 ## Fields this interface cannot spell
 
-`ModelParams` has `temperature`, `maxTokens` and `reasoningEffort`. Everything else a model card or
+`ModelParams` has `temperature`, `maxTokens`, `reasoningEffort` and `reasoningReplay`. Everything else a model card or
 a server asks for — `top_k`, `min_p`, `repeat_penalty`, llama.cpp's `id_slot`, `cache_prompt` and
 `reasoning_budget` — goes in `extraBody`, which `buildBody` merges in last. It can override
 `temperature` but not `model`, `messages`, `stream` or `tools`, which are the loop's.
@@ -1183,8 +1200,8 @@ only the average: a transcript is tool results, JSON arguments, code and prose, 
 ratio, plus whatever the chat template adds per message. The server has already said what they
 cost. A request that only appended to the one before it differs from it by exactly the cost of what
 was appended, so two reported prompts and a subtraction give a number with no tokenizer in it — the
-template's tokens and a tool result's real density included, and reasoning, which is never
-replayed, left out.
+template's tokens and a tool result's real density included, and reasoning counted only where it
+is replayed.
 
 `runAgentLoop` keeps that as a ledger — one `{ through, prompt, epoch }` per request: the index of
 the request's last message, the prompt it reported, and an epoch that changes whenever the prefix

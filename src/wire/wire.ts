@@ -74,6 +74,12 @@ export const FUNCTION_TOOL = 'function' as const;
 /** The `response_format` type that carries a schema the reply has to fit. */
 export const JSON_SCHEMA_FORMAT = 'json_schema' as const;
 
+/**
+ * The assistant message field a model's scratchpad is replayed in. Not in the OpenAI types; it is
+ * what llama.cpp, vLLM and the Qwen and DeepSeek templates read.
+ */
+export const REASONING_CONTENT = 'reasoning_content' as const;
+
 /** The HTTP statuses this package reads a meaning into. */
 export const HttpStatus = {
   Ok: 200,

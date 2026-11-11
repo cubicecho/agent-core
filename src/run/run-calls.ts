@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { ReasoningReplay } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
 import {
@@ -28,7 +29,7 @@ import {
   type ToolCallRequest,
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
-import { FUNCTION_TOOL, Role } from '../wire/wire.ts';
+import { FUNCTION_TOOL, REASONING_CONTENT, Role } from '../wire/wire.ts';
 import {
   type ArtifactFrom,
   declaredArtifact,
@@ -132,17 +133,40 @@ function readCall(call: ToolCall, finishReason: Turn['finishReason'], recovered:
 export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason'], recovered = false): ReadCall[] =>
   calls.map((call) => readCall(call, finishReason, recovered));
 
+/** An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay. */
+export type ReasonedMessage = OpenAI.ChatCompletionAssistantMessageParam & { [REASONING_CONTENT]?: string };
+
+/**
+ * The scratchpad as a field to spread onto a message.
+ *
+ * @param reasoning - The turn's reasoning, or `""` for none.
+ * @returns `{ reasoning_content }`, or an empty object where there is no reasoning.
+ */
+const reasoningField = (reasoning: string) => (reasoning ? { [REASONING_CONTENT]: reasoning } : {});
+
+/**
+ * Whether a turn's scratchpad is written onto its assistant message under a policy.
+ *
+ * @param policy - The run's `reasoningReplay`.
+ * @param endsInCalls - Whether the message carries tool calls, which is the tool loop's half.
+ * @returns `true` under `all`, and under `tool-loop` for a message with calls.
+ */
+export const replaysReasoning = (policy: ReasoningReplay, endsInCalls: boolean) =>
+  policy === ReasoningReplay.All || (policy === ReasoningReplay.ToolLoop && endsInCalls);
+
 /**
  * The assistant message a turn is written into the transcript as, its calls' arguments repaired.
  *
  * @param content - The turn's text. Empty is written as `null`.
  * @param parsed - The turn's calls as `readCalls` read them. Not written to. None leaves
  * `tool_calls` off the message rather than empty.
+ * @param [reasoning] - The scratchpad to replay as `reasoning_content`. Empty leaves the field off.
  * @returns A new message, each call on it a copy with `normal` for its arguments.
  */
-export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.ChatCompletionAssistantMessageParam => ({
+export const assistantMessage = (content: string, parsed: ReadCall[], reasoning = ''): ReasonedMessage => ({
   role: Role.Assistant,
   content: content || null,
+  ...reasoningField(reasoning),
   ...(parsed.length
     ? {
         tool_calls: parsed.map(({ call, normal }) => ({
@@ -159,13 +183,45 @@ export const assistantMessage = (content: string, parsed: ReadCall[]): OpenAI.Ch
  * @param content - The turn's text, recovered calls left in it. Empty is written as `null`.
  * @param calls - The calls the model sent as calls, with their arguments as streamed. Not written
  * to. None leaves `tool_calls` off the message rather than empty.
+ * @param [reasoning] - The scratchpad, written as `assistantMessage` was given it. Empty leaves the
+ * field off.
  * @returns A new message, each call on it a copy.
  */
-export const writtenMessage = (content: string, calls: ToolCall[]): OpenAI.ChatCompletionAssistantMessageParam => ({
+export const writtenMessage = (content: string, calls: ToolCall[], reasoning = ''): ReasonedMessage => ({
   role: Role.Assistant,
   content: content || null,
+  ...reasoningField(reasoning),
   ...(calls.length ? { tool_calls: calls.map((call) => ({ ...call, function: { ...call.function } })) } : {}),
 });
+
+/**
+ * The transcript with `reasoning_content` taken off its assistant messages from an index on.
+ *
+ * @param messages - The transcript. Not written to.
+ * @param [from] - The first index to drop it from. Negative reads as zero.
+ * @returns `messages` itself where no message from `from` on carries the field, otherwise a new
+ * array in which each such message is a copy without it and every other one the same object.
+ *
+ * @remarks
+ * What `runAgentLoop` does to the question's tool loop under `tool-loop` once the answer is
+ * written, and what a host storing rows from `onMessage` does to them for the same rule.
+ */
+export function dropReasoning(
+  messages: OpenAI.ChatCompletionMessageParam[],
+  from = 0,
+): OpenAI.ChatCompletionMessageParam[] {
+  let out: OpenAI.ChatCompletionMessageParam[] | undefined;
+  for (let at = Math.max(0, from); at < messages.length; at++) {
+    const message = messages[at];
+    if (message.role !== Role.Assistant || !(REASONING_CONTENT in message)) {
+      continue;
+    }
+    const { [REASONING_CONTENT]: _dropped, ...rest } = message as ReasonedMessage;
+    out ??= [...messages];
+    out[at] = rest;
+  }
+  return out ?? messages;
+}
 
 /**
  * The definitions the host gave for these names, in the order the names are given.

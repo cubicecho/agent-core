@@ -45,6 +45,18 @@ describe('pruneToolResults', () => {
     expect(pruneToolResults(messages, { keepLast: 1 })).toBe(messages);
   });
 
+  it("leaves an assistant message's scratchpad on it while clearing the results around it", () => {
+    const thought: Message = {
+      role: Role.Assistant,
+      content: null,
+      reasoning_content: 'read it',
+      tool_calls: [{ id: 'c', type: FUNCTION_TOOL, function: { name: 'read', arguments: '{}' } }],
+    } as Message;
+    const pruned = pruneToolResults([user('q'), thought, result('x'.repeat(1000)), result('kept')], { keepLast: 1 });
+    expect(pruned[1]).toBe(thought);
+    expect(pruned[2].content).toBe('[result cleared, 1,000 chars]');
+  });
+
   it('does not clear a stub again', () => {
     const messages = [result('x'.repeat(1000)), result('y')];
     const once = pruneToolResults(messages, { keepLast: 1, maxChars: 10 });
@@ -672,6 +684,22 @@ describe('a fold inside one question', () => {
     // not counted), plus 10 for the summary, is 50. The call at six leaves 70, over the 60.
     const plan = planCompaction(loop, { limit: 100, estimate, summaryTokens: 10, target: 0.6 });
     expect(plan).toMatchObject({ cut: 8, question: 1, after: 50 });
+  });
+
+  it('weighs a replayed scratchpad as part of its call, and keeps it on the tail it does not fold', async () => {
+    // A window of 600 holds the loop at four characters a token, until the calls think out loud.
+    const thinking = (message: Message): Message =>
+      message.role === Role.Assistant ? ({ ...message, reasoning_content: 'x'.repeat(400) } as Message) : message;
+    const reasoned = loop.map(thinking);
+    expect(planCompaction(loop, { limit: 600 })).toBeUndefined();
+    const plan = planCompaction(reasoned, { limit: 600 });
+    if (!plan) {
+      throw new Error('expected a plan');
+    }
+    const folded = await compactTranscript(reasoned, plan, async () => 'read some');
+    const kept = folded.slice(folded.indexOf(reasoned[1]) + 1);
+    expect(kept).toEqual(reasoned.slice(plan.cut));
+    expect(kept[0]).toHaveProperty('reasoning_content', 'x'.repeat(400));
   });
 
   it('plans as before wherever a user message can be cut at', () => {

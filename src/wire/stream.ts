@@ -318,11 +318,9 @@ export interface Turn {
    * not at all.
    *
    * @remarks
-   * Kept because some models want it back. gpt-oss and DeepSeek in thinking mode read the
-   * analysis behind a tool call off the assistant message on the next request, so a caller
-   * talking to one stores it as `reasoning_content` on that message for as long as the message
-   * ends in a tool call, and drops it once the model has given a final answer. A model that
-   * does not ask for it is better off without it: it is context, paid for on every turn.
+   * Kept because some models want it back, as `reasoning_content` on the assistant message:
+   * `runAgentLoop` writes it there as `reasoningReplay` says. A model that does not ask for it is
+   * better off without it, since it is context paid for on every turn.
    */
   reasoning: string;
 }

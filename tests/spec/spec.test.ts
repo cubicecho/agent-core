@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ToolDiscovery } from '../../src/core/config.ts';
+import { ReasoningReplay, ToolDiscovery } from '../../src/core/config.ts';
 import { HOOK_EVENTS, HookEvent } from '../../src/hooks/hook-events.ts';
 import type { AgentLoopOptions } from '../../src/run/agent-loop.ts';
 import {
@@ -59,6 +59,20 @@ describe('parseSpec', () => {
     const result = parseSpec(doc({ tools: { discovery: 'lazy', maxIterations: 3 } }));
     expect(result.spec?.tools).toEqual({ maxIterations: 3 });
     expect(result.warnings).toEqual(['tools.discovery: must be "eager", "ondemand" or "proxy", and was dropped']);
+  });
+
+  it('takes each reasoning replay policy, drops one it has not heard of, and resolves the last layer', () => {
+    for (const reasoningReplay of Object.values(ReasoningReplay)) {
+      expect(parsed(doc({ model: { reasoningReplay } })).model).toEqual({ reasoningReplay });
+    }
+    const result = parseSpec(doc({ model: { model: 'm', reasoningReplay: 'some' } }));
+    expect(result.spec?.model).toEqual({ model: 'm' });
+    expect(result.warnings).toEqual(['model.reasoningReplay: must be "tool-loop", "all" or "none", and was dropped']);
+    const base = parsed(doc({ model: { reasoningReplay: ReasoningReplay.None } }));
+    const over = parsed(doc({ model: { reasoningReplay: ReasoningReplay.All } }));
+    expect(resolveAgentSpec([base, over]).reasoningReplay).toBe(ReasoningReplay.All);
+    // Absent stays absent, which the loop reads as `tool-loop`.
+    expect(resolveAgentSpec([parsed(doc())])).not.toHaveProperty('reasoningReplay');
   });
 
   it('drops an out-of-range number instead of clamping it', () => {

@@ -49,6 +49,29 @@ const ANOTHER_FIELD_REFUSED = apiError(
   "Unsupported value: 'top_p' does not support 3 with this model. Adjust temperature instead.",
 );
 
+// A replayed scratchpad refused by servers that validate a message's fields, and asked for by
+// DeepSeek's, which a tool loop has to send it back to.
+
+/** Groq's wording for a message field it does not know. */
+const GROQ_NO_REASONING = apiError(
+  400,
+  "'messages.1' : for 'role:assistant' the following must be satisfied[('messages.1' : property 'reasoning_content' is unsupported)]",
+);
+/** A pydantic server's, Mistral's among them. */
+const MISTRAL_NO_REASONING = apiError(
+  422,
+  'body.messages.1.assistant.reasoning_content: Extra inputs are not permitted',
+);
+/** OpenAI's wording for a request field, which a proxy uses for a message's too. */
+const UNKNOWN_REASONING = apiError(400, 'Unrecognized request argument supplied: reasoning_content');
+/** DeepSeek in thinking mode, handed a tool loop without its scratchpad. */
+const DEEPSEEK_MISSING = apiError(400, 'Missing `reasoning_content` field in the assistant message at message index 1');
+/** The same, as its documentation words it. */
+const DEEPSEEK_PASS_BACK = apiError(
+  400,
+  'The `reasoning_content` in the thinking mode must be passed back to the API. Unsupported request otherwise.',
+);
+
 /** The same, for a model: refuses in order, recording what each attempt was built with. */
 const modelThatRefuses = (...refusals: Error[]) => {
   const asked: ModelCapabilities[] = [];
@@ -330,6 +353,7 @@ describe('modelCapabilitiesFor', () => {
       structuredOutput: true,
       refusedEfforts: new Set(),
       assistantPrefill: true,
+      reasoningContent: true,
     });
     model.reasoningEffort = false;
     expect(modelCapabilitiesFor(supports, 'gpt-5').reasoningEffort).toBe(false);
@@ -485,6 +509,27 @@ describe('negotiate, for a model', () => {
     }
   });
 
+  it('stops replaying the scratchpad to a model whose endpoint refuses the field', async () => {
+    for (const refusal of [GROQ_NO_REASONING, MISTRAL_NO_REASONING, UNKNOWN_REASONING]) {
+      resetCapabilities();
+      const supports = openai();
+      const { send } = modelThatRefuses(refusal);
+      await expect(negotiate(supports, send, { model: 'gpt-oss' })).resolves.toBe('answered');
+      expect(modelCapabilitiesFor(supports, 'gpt-oss').reasoningContent).toBe(false);
+    }
+  });
+
+  it('passes on a refusal that asks for the scratchpad, rather than dropping it', async () => {
+    // DeepSeek refuses a tool loop that left it out. Latched off, every later request would be
+    // the same refusal.
+    for (const refusal of [DEEPSEEK_MISSING, DEEPSEEK_PASS_BACK]) {
+      const supports = openai();
+      const { send } = modelThatRefuses(refusal);
+      await expect(negotiate(supports, send, { model: 'deepseek' })).rejects.toThrow(refusal.message);
+      expect(modelCapabilitiesFor(supports, 'deepseek').reasoningContent).toBe(true);
+    }
+  });
+
   it('keeps going after the first answer, since a reasoning model has two waiting', async () => {
     // The one that made this a loop rather than a retry: answering `max_tokens` and stopping
     // handed the caller the temperature refusal instead of the turn.
@@ -502,6 +547,7 @@ describe('negotiate, for a model', () => {
         structuredOutput: true,
         refusedEfforts: new Set(),
         assistantPrefill: true,
+        reasoningContent: true,
       })),
     );
   });
