@@ -127,6 +127,8 @@ export const RunEventKind = {
   ToolResult: 'tool-result',
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
   Notice: 'notice',
+  /** Input the host's `takeInput` handed over mid-run, now in the transcript. `text` is what it says. */
+  Input: 'input',
   /**
    * A tool call's answer linked to something the run had not produced before — or, where the run
    * collects them, a write was detected or a declaration believed at a new location. `id` is the

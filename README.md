@@ -859,6 +859,34 @@ await runAgentLoop({
 });
 ```
 
+### Input that arrives while it runs
+
+A person who types while the run is working — "use the other file", "also check the tests" — is
+steering it, and `takeInput` is how the loop hears them. The loop asks it at the top of every step,
+which is after the last step's calls have all answered and before the next request, and once more
+when the model answers without calls. A user message it hands back is appended, told to
+`onMessage` and as an `input` event, and the run goes on with it: a call already running is never
+cut short for it, and an answer the input arrived during is followed by another step that answers
+the input too.
+
+```ts
+const inbox: string[] = [];
+const result = await runAgentLoop({
+  config,
+  messages: history,
+  dispatch,
+  // Several typed between two boundaries go as one message: some chat templates refuse two
+  // user messages in a row.
+  takeInput: () =>
+    inbox.length ? { role: "user", content: inbox.splice(0).join("\n\n") } : undefined,
+});
+// Anything still in `inbox` came after the last boundary: the host's to send as the next turn.
+```
+
+Input that comes when no step is left, or after a call that ended the run, stays where it is: the
+loop returns without asking, and the host sends it as a turn of its own. The question the hooks
+were gathered onto is still the question after input lands behind it, rebuilt transcript or not.
+
 ### What the servers said on the way
 
 A server can log while a call runs — a warning that the cache was stale, an error it recovered
