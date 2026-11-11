@@ -1,3 +1,10 @@
+# [4.13.0](https://github.com/cubicecho/agent-core/compare/v4.12.0...v4.13.0) (2026-11-11)
+
+
+### Features
+
+* **spec:** a column table from a stored row to a spec layer and back ([1a5c934](https://github.com/cubicecho/agent-core/commit/1a5c934a47682c78d0d81eddf22896fc6120d21b)), closes [#172](https://github.com/cubicecho/agent-core/issues/172)
+
 # [4.12.0](https://github.com/cubicecho/agent-core/compare/v4.11.0...v4.12.0) (2026-11-11)
 
 
