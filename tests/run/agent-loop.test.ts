@@ -895,6 +895,192 @@ describe('runAgentLoop', () => {
     });
   });
 
+  describe('a call that ends the run', () => {
+    /** A dispatcher whose `done` ends the run, saying why, and whose other tools answer by name. */
+    const endingAt = () =>
+      vi.fn(async ({ name }: ToolCallRequest) =>
+        name === 'done' ? { text: 'handed off', end: { reason: 'handed to review' } } : `${name} ran`,
+      );
+
+    it('resolves with the call that ended it, sending nothing after its step', async () => {
+      create.mockReturnValueOnce(reportedCall(100, 0, 'a')).mockReturnValueOnce(reportedCall(130, 0, 'done'));
+      const events: RunEventInput[] = [];
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('a'), tool('done')],
+        dispatch: endingAt(),
+        onEvent: (event) => events.push(event),
+      });
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(result.ended).toEqual({ callId: 'c0', name: 'done', reason: 'handed to review' });
+      // The turn that made the call, with whatever it said beside it — here nothing.
+      expect(result.turn.content).toBe('');
+      expect(result.turn.toolCalls.map((call) => call.function.name)).toEqual(['done']);
+      expect(result.messages.map((m) => m.role)).toEqual([
+        Role.User,
+        Role.Assistant,
+        Role.Tool,
+        Role.Assistant,
+        Role.Tool,
+      ]);
+      expect(result.messages.at(-1)).toMatchObject({ content: 'handed off' });
+      expect(result.toolCalls).toEqual([
+        { id: 'c0', name: 'a', ok: true },
+        { id: 'c0', name: 'done', ok: true },
+      ]);
+      expect(result.usage).toMatchObject({ prompt: 230, completion: 20, total: 250 });
+      expect(result.metrics.outcome).toBe(RunOutcome.Ended);
+      expect(result.metrics.turns).toBe(2);
+      expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'done ended the run: handed to review' });
+    });
+
+    it('runs and answers the calls asked after the end, one after another as in parallel', async () => {
+      for (const parallel of [false, true]) {
+        create.mockReset();
+        const ending = endingAt();
+        create.mockReturnValueOnce(calls(['done', '{}'], ['a', '{}'], ['b', '{}']));
+        const result = await runAgentLoop({
+          config,
+          messages: question,
+          tools: [tool('a'), tool('b'), tool('done')],
+          dispatch: ending,
+          parallel,
+        });
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(ending).toHaveBeenCalledTimes(3);
+        expect(result.ended).toEqual({ callId: 'c0', name: 'done', reason: 'handed to review' });
+        expect(result.messages.filter((m) => m.role === Role.Tool).map((m) => m.content)).toEqual([
+          'handed off',
+          'a ran',
+          'b ran',
+        ]);
+      }
+    });
+
+    it('runs the batches after an end when parallel is a predicate', async () => {
+      create.mockReturnValueOnce(calls(['read', '{}'], ['done', '{}'], ['write', '{}'], ['read', '{"n":2}']));
+      const ending = endingAt();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('read'), tool('write'), tool('done')],
+        dispatch: ending,
+        parallel: (call) => call.name === 'read' || call.name === 'done',
+      });
+      expect(ending.mock.calls.map(([call]) => call.name)).toEqual(['read', 'done', 'write', 'read']);
+      expect(result.ended?.callId).toBe('c1');
+      expect(result.messages.filter((m) => m.role === Role.Tool)).toHaveLength(4);
+    });
+
+    it('names the first ending call in the order asked, not the first to finish', async () => {
+      create.mockReturnValueOnce(calls(['slow', '{}'], ['fast', '{}']));
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('slow'), tool('fast')],
+        dispatch: async ({ name }) => {
+          if (name === 'slow') {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          return { text: name, end: true };
+        },
+        parallel: true,
+      });
+      // `end: true` says no reason, so there is none to carry.
+      expect(result.ended).toEqual({ callId: 'c0', name: 'slow' });
+    });
+
+    it('ends on a deduplicated repeat once, under the call that was made', async () => {
+      create.mockReturnValueOnce(calls(['done', '{}'], ['done', '{}']));
+      const ending = endingAt();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('done')],
+        dispatch: ending,
+      });
+      expect(ending).toHaveBeenCalledTimes(1);
+      expect(result.ended?.callId).toBe('c0');
+      expect(result.messages.filter((m) => m.role === Role.Tool).map((m) => m.content)).toEqual([
+        'handed off',
+        'handed off',
+      ]);
+    });
+
+    it('takes no end from a string answer, an end of false, or a call that threw', async () => {
+      create.mockReturnValueOnce(calls(['a', '{}'], ['b', '{}'], ['c', '{}'])).mockReturnValueOnce(says('finished'));
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('a'), tool('b'), tool('c')],
+        dispatch: async ({ name }) => {
+          if (name === 'c') {
+            throw new Error('c broke');
+          }
+          return name === 'a' ? 'a ran' : { text: 'b ran', end: false };
+        },
+      });
+      expect(result).not.toHaveProperty('ended');
+      expect(result.turn.content).toBe('finished');
+      expect(result.metrics.outcome).toBe(RunOutcome.Answered);
+    });
+
+    it('resolves rather than throwing when the end comes in the last step the budget allows', async () => {
+      create.mockReturnValueOnce(calls(['done', '{}']));
+      const result = await runAgentLoop({
+        config: { ...config, maxToolIterations: 1 },
+        messages: question,
+        tools: [tool('done')],
+        dispatch: endingAt(),
+      });
+      expect(result.ended?.name).toBe('done');
+    });
+
+    it('names the tool a call_tool reached, and folds nothing after the end', async () => {
+      create.mockReturnValueOnce(calls([CALL_TOOL, '{"name":"done","arguments":{}}']));
+      const beforeStep = vi.fn(async () => undefined);
+      const result = await runAgentLoop({
+        config: { ...config, toolDiscovery: ToolDiscovery.Proxy },
+        messages: question,
+        tools: [tool('done')],
+        catalog: [{ id: 's', label: 's', tools: [{ name: 'done', description: 'hands off' }] }],
+        dispatch: endingAt(),
+        beforeStep,
+      });
+      expect(result.ended).toMatchObject({ callId: 'c0', name: 'done' });
+      expect(beforeStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('tells the hooks afterTurn with what the ending turn said', async () => {
+      create.mockReturnValueOnce(
+        chunks({
+          choices: [
+            {
+              delta: {
+                content: 'handing off',
+                tool_calls: [{ index: 0, id: 'c0', function: { name: 'done', arguments: '{}' } }],
+              },
+              finish_reason: FinishReason.ToolCalls,
+            },
+          ],
+        }),
+      );
+      const run = vi.fn<HookRunner>(async () => []);
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('done')],
+        dispatch: endingAt(),
+        hooks: { run, context: { session: { id: 's1' } } },
+      });
+      expect(result.turn.content).toBe('handing off');
+      await result.afterTurn;
+      expect(run.mock.calls.map(([event]) => event)).toEqual([HookEvent.BeforeTurn, HookEvent.AfterTurn]);
+      expect(run.mock.calls[1][1]).toMatchObject({ reply: 'handing off' });
+    });
+  });
+
   describe('server logs', () => {
     /** The run's `server-log` events, as a watcher would read them. */
     const logsOf = (events: RunEventInput[]) =>

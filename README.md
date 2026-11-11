@@ -532,6 +532,41 @@ its calls made on the error too, read off with `failedRun`.
 A link meant for the model alone — one whose MCP `audience` leaves out `"user"` — is the
 dispatcher's to drop, since that is MCP's rule and this package knows nothing of MCP.
 
+### A call that ends the run
+
+A tool whose call is the end of the job — handing off, asking a person — says so with `end` on
+its `ToolAnswer`, `true` or `{ reason }`. The loop answers every call of that step, sends no
+further request, and resolves with `ended`; aborting the run's signal from inside `dispatch` was
+the way out before, and that is a failure the host then has to dig the run back out of.
+
+```ts
+const result = await runAgentLoop({
+  // ...
+  dispatch: async ({ name, args }, signal) =>
+    name === "ask_person"
+      ? { text: "Asked. This run ends here.", end: { reason: String(args.question) } }
+      : pool.call(name, args, { signal }),
+});
+if (result.ended) {
+  // { callId, name: "ask_person", reason }
+  const { callId, name, reason = "" } = result.ended;
+  emit(runId, { kind: RunEventKind.Done, ok: true, id: callId, name, text: reason });
+}
+```
+
+The step's other calls still run, whichever side of the end the model asked for them and however
+`parallel` batches them: they were asked for in the same turn, and a model that says "write the
+file, then hand off" wants the file written in either order. Where two calls end it, `ended` is
+the first in the order asked. Everything else is a finished run's — `usage`, `metrics`,
+`messages`, `artifacts`, the `afterTurn` hooks — with `metrics.outcome` `ended` and a notice
+saying which tool ended it. `turn` is the turn that made the call, so its `content` is whatever
+the model wrote beside its calls, often nothing; the run's answer is what the ending tool took.
+The tool, its definition and its wording stay the host's: this is only the exit.
+
+A host's `done` that carries the call — `id`, `name` the tool, `text` the reason — is read by
+`runMetrics` as `ended` too, so the outcome is the same whether it is read off the result or the
+events.
+
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
 `True` and `None`, bare keys, a trailing comma — is repaired, without touching what is inside a

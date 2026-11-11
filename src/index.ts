@@ -301,6 +301,7 @@ export {
 export {
   ARGUMENTS_MALFORMED,
   ARGUMENTS_TRUNCATED,
+  type EndedBy,
   parseToolArguments,
   type ResourceLink,
   type RunArtifact,

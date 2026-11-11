@@ -163,7 +163,7 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
 - `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
 - `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
-- `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none.
+- `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none or a call's answer ends the run.
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 
 ### events
@@ -402,6 +402,7 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 
 - `ARGUMENTS_MALFORMED` — The `ToolArgumentsError` kind for a call the model wrote wrongly.
 - `ARGUMENTS_TRUNCATED` — The `ToolArgumentsError` kind for a call cut off at the reply ceiling.
+- `EndedBy` (type) — The call that ended a run through its answer's `end`, as `AgentLoopResult.ended` says it.
 - `parseToolArguments` — A tool call's arguments as the object the tool is handed.
 - `ResourceLink` (type) — A handle to something a tool call made or found — a document it wrote, a file it saved.
 - `RunArtifact` (type) — One thing a run's tool calls produced: the first link to a uri, and where it came from.

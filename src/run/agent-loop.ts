@@ -65,6 +65,7 @@ import { ContextOverflow } from '../wire/retry.ts';
 import { addCounts, noUsage, type Turn, type TurnUsage } from '../wire/stream.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
 import {
+  type EndedBy,
   type RunArtifact,
   recoverToolCalls,
   type ToolCall,
@@ -330,7 +331,8 @@ export interface AgentLoopOptions {
    * @remarks
    * A `ToolAnswer` in place of the string adds what the call produced: its `text` is the whole of
    * what goes into the transcript, and its `links` become the result's `artifacts`, an `artifact`
-   * event the first time each uri is seen, and `links` on what `onToolResult` is handed.
+   * event the first time each uri is seen, and `links` on what `onToolResult` is handed. Its `end`
+   * ends the run once the step's calls are answered; see `AgentLoopResult.ended`.
    */
   dispatch: ToolDispatch;
   /**
@@ -487,8 +489,29 @@ export interface AgentLoopOptions {
 
 /** What a finished loop hands back. */
 export interface AgentLoopResult {
-  /** The last turn: the one that asked for no tools, as `onTurn` was handed it. */
+  /**
+   * The last turn, as `onTurn` was handed it: the one that asked for no tools, or — where a call
+   * `ended` the run — the one that made that call.
+   *
+   * @remarks
+   * Ended by a call, its `content` is what the model wrote beside its calls, which is often
+   * nothing, and its `toolCalls` are not empty. The run's answer is then whatever the ending tool
+   * took — the question it asked, the work it handed off — and not this text.
+   */
   turn: Turn;
+  /**
+   * The call whose answer said `end`, where one did: the first in the order the model asked, once
+   * every call of its step was answered. Absent where the run ended on a turn that asked for no
+   * tools.
+   *
+   * @remarks
+   * Every other field is as a finished run has it: `messages` close on the step's tool results
+   * with no assistant turn after them, the hooks are told `afterTurn` with `turn.content`, and
+   * `metrics.outcome` is `ended`. No `beforeStep` or `compact` runs after the end, since no request
+   * follows it. A host saying `done` passes the call on it — `id` the call, `name` the tool, `text`
+   * the reason — which is how `runMetrics` reads the same outcome off the events.
+   */
+  ended?: EndedBy;
   /** The transcript, with every assistant turn and tool result the run added. No system prompt. */
   messages: OpenAI.ChatCompletionMessageParam[];
   /** Summed over every turn of the run. */
@@ -605,14 +628,16 @@ interface Standing {
 
 /**
  * Runs a question to its answer: one `runTurn` per step, the tools it asks for between them,
- * until a turn asks for none. Throws when `maxToolIterations` is spent, when stopped, and on
- * whatever `runTurn` throws — `ContextOverflow` among them, however it was found out.
+ * until a turn asks for none or a call's answer ends the run. Throws when `maxToolIterations` is
+ * spent, when stopped, and on whatever `runTurn` throws — `ContextOverflow` among them, however it
+ * was found out.
  *
  * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
- * @returns The turn that asked for no tools and the run around it: the transcript with what the
- * run added, usage, every call, what is loaded and used, the hooks' notes and context, metrics
- * and the ledger. See `AgentLoopResult`.
+ * @returns The turn that asked for no tools — or made the call that ended the run, with `ended`
+ * naming it — and the run around it: the transcript with what the run added, usage, every call,
+ * what is loaded and used, the hooks' notes and context, metrics and the ledger. See
+ * `AgentLoopResult`.
  *
  * @remarks
  * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded`, `used`
@@ -623,6 +648,11 @@ interface Standing {
  * reads the run off any of the three. A failure while a step's tools run leaves the transcript
  * well-formed: the results that came back are kept, and each call without one is answered with a
  * line saying it was stopped or never run, since a call with no result is refused on replay.
+ *
+ * A tool that finishes the job — a hand-off, a question for a person — ends the run with a
+ * `ToolAnswer` whose `end` is set, rather than by aborting it: the step's calls are all run and
+ * answered, no further request is sent, and the loop resolves with `ended`. An end in the last step
+ * `maxToolIterations` allows resolves too, since nothing was left undone.
  *
  * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system
  * prompt unchanged from step to step, a load adds to the tool array — which every request sends
@@ -1053,8 +1083,8 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
  * @param standing - Written to: once the steps have set themselves up, its `read` is theirs, so the
  * caller can read the run as it stands whether they return or throw.
  * @param [pin] - What the run's session adds to each request. Absent adds nothing.
- * @returns The result of the turn that asked for no tools, or `undefined` when `maxToolIterations`
- * is spent.
+ * @returns The result of the turn that asked for no tools or whose calls ended the run, or
+ * `undefined` when `maxToolIterations` is spent.
  */
 async function runSteps(
   options: AgentLoopOptions,
@@ -1321,13 +1351,26 @@ async function runSteps(
     messages.push(assistant);
     await announce(assistant, step, shown);
 
-    if (!calls.length) {
+    const isAnswer = calls.length === 0;
+    const ended = isAnswer ? undefined : await runCalls(calling, parsed, messages, step);
+    if (ended) {
+      const by = ended.reason ? `: ${ended.reason}` : '';
+      notice(`${ended.name} ended the run${by}`);
+    }
+    if (isAnswer || ended) {
       // Not awaited: the answer is ready, and remembering it is not something to hold it for.
       // Handed back instead, for a host that wants its notes.
       const afterTurn = hooks ? tellAfterTurn(hooks, messages, questionAt(), turn.content) : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
+      let outcome: RunOutcome = RunOutcome.Answered;
+      if (ended) {
+        outcome = RunOutcome.Ended;
+      } else if (turn.finishReason === FinishReason.Length) {
+        outcome = RunOutcome.Truncated;
+      }
       return {
         turn: shown,
+        ...(ended ? { ended } : {}),
         messages,
         usage,
         toolCalls,
@@ -1343,13 +1386,11 @@ async function runSteps(
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
-          outcome: turn.finishReason === FinishReason.Length ? RunOutcome.Truncated : RunOutcome.Answered,
+          outcome,
         },
         ledger,
       };
     }
-
-    await runCalls(calling, parsed, messages, step);
   }
 
   return undefined;
