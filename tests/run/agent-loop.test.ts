@@ -89,6 +89,50 @@ beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
 describe('runAgentLoop', () => {
+  it('marks a failed call in the text the model reads, and never leaves a result empty', async () => {
+    create
+      .mockReturnValueOnce(calls(['a', ''], ['b', ''], ['c', ''], ['d', '{nope']))
+      .mockReturnValueOnce(says('done'));
+    const dispatch = vi.fn(async ({ name }: { name: string }) => {
+      if (name === 'a') {
+        throw new Error('42');
+      }
+      if (name === 'b') {
+        throw new Error('');
+      }
+      return '';
+    });
+    const answered: ToolCallResult[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a'), tool('b'), tool('c'), tool('d')],
+      dispatch,
+      onToolResult: (answer) => answered.push(answer),
+    });
+    const contents = result.messages.flatMap((m) => (m.role === Role.Tool ? [m.content] : []));
+    expect(contents.slice(0, 3)).toEqual(['Error: 42', 'Error: (no output)', '(no output)']);
+    // Arguments the loop could not read are its own refusal, in its own words.
+    expect(contents[3]).toEqual(expect.stringContaining('invalid tool'));
+    expect(contents[3]).not.toMatch(/^Error: /);
+    expect(answered.map(({ ok }) => ok)).toEqual([false, false, true, false]);
+  });
+
+  it('words a failed call with the host formatToolError', async () => {
+    create.mockReturnValueOnce(calls(['a', ''])).mockReturnValueOnce(says('done'));
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => {
+        throw new Error('42');
+      },
+      formatToolError: (error) => JSON.stringify({ error: String(error) }),
+    });
+    expect(result.messages[2]).toMatchObject({ role: Role.Tool, content: '{"error":"Error: 42"}' });
+    expect(result.toolCalls).toEqual([{ id: 'c0', name: 'a', ok: false }]);
+  });
+
   it('runs the tools between turns and hands back the transcript', async () => {
     create.mockReturnValueOnce(calls(['a', '{"x":1}'], ['b', ''])).mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async ({ name, args }: { name: string; args: unknown }) => {
@@ -118,7 +162,7 @@ describe('runAgentLoop', () => {
       Role.Tool,
       Role.Assistant,
     ]);
-    expect(result.messages[3]).toMatchObject({ content: 'b broke' });
+    expect(result.messages[3]).toMatchObject({ content: 'Error: b broke' });
     // Stored as `{}` so a server that parses the replayed call does not refuse an empty one.
     expect(JSON.stringify(result.messages[1])).toContain('"arguments":"{}"');
     expect(question).toHaveLength(1);

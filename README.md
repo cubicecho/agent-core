@@ -38,7 +38,7 @@ only, Node >=22.
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. |
 | `request-body` | `buildBody`: the one place a streamed request's body is decided from a config and what the endpoint and the model have refused. |
-| `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher. |
+| `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher, and `formatToolError` words a failed call for the model. |
 | `preselect` | Choosing a run's tools before it starts: `preselect` asks a small model, `preselectByKeywords` scores the request's own words against the tool names without one, and `preselectSystem`, `preselectInput` and `preselection` are the prompt and the reading of the reply for a host that makes the call itself. |
 | `tool-calls` | Reading what a model meant by a tool call it did not write cleanly: `parseToolArguments` repairs almost-JSON arguments and says when they were cut off, `recoverToolCalls` finds calls written into the reply as text. Plus the shapes a call is handed round in: `ToolCallRequest`, `ToolCallResult`, `ToolCallOutcome`. |
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planPrune` moves a boundary for them that keeps the prompt cache, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
@@ -530,7 +530,11 @@ reads together and writes in order with a predicate (below).
 Either way an identical call — the same name and arguments, byte for byte — is made once and its
 answer handed to the repeat, and two still in flight share the request. A call that threw is
 forgotten rather than cached, so asking again is a real retry. What a tool throws is what the model
-reads, and so are arguments that did not parse.
+reads, behind `Error: ` — chat completions has no `is_error`, so a failure the text does not announce
+reads as an answer — unless the message opens with `error` already; `formatToolError` replaces that
+wording, and the default is exported under the same name. Arguments that did not parse, and the
+loop's other refusals, are read in their own words. A result is never empty: one with nothing in it,
+failed or not, is `(no output)`, as agent-mcp-pool writes an empty MCP result.
 
 The scope is the step, not the run: between steps other tools have run, and the file the model read
 may be the file it has since written. `dedupeToolCalls: false` dispatches everything, and a
