@@ -225,6 +225,7 @@ What a run is doing, while it is doing it.
 The tools between two turns: a step's calls read, run and written into the transcript.
 
 - `dropReasoning` — The transcript with `reasoning_content`, `reasoning` and `reasoning_details` taken off its assistant messages from an index on.
+- `formatToolError` — What the model reads for a dispatch that threw: the error's message, opening with `Error: `.
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 - `ReasonedMessage` (type) — An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay.
 - `Scratchpad` (type) — A scratchpad to write onto a message, and the field it goes under.

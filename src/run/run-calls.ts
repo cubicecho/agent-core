@@ -76,6 +76,51 @@ const STOPPED_CALL = 'Stopped before this call finished.';
 /** The same for a call of that step the loop never got to. */
 const UNRUN_CALL = 'Not run: the run stopped first.';
 
+/**
+ * What a tool's answer reads as where it said nothing: the words agent-mcp-pool uses for an MCP
+ * result with no content, so an empty answer reads the same whichever dispatcher gave it.
+ */
+const NO_OUTPUT = '(no output)';
+
+/** What opens a failed call's answer: chat completions has no `is_error`, so the text says it. */
+const TOOL_ERROR_LEAD = 'Error: ';
+
+/** A message that says it is an error already, which the lead would only repeat. */
+const OPENS_AS_ERROR = /^\s*error\b/i;
+
+/**
+ * A tool's answer as the transcript takes it: never empty, which most chat templates render as a
+ * turn with nothing in it.
+ *
+ * @param text - What the tool answered.
+ * @returns The text, or `(no output)` where it is empty or only whitespace.
+ */
+const nonEmpty = (text: string) => (text.trim() ? text : NO_OUTPUT);
+
+/**
+ * What the model reads for a dispatch that threw: the error's message, opening with `Error: `.
+ *
+ * @param error - What `dispatch` threw.
+ * @returns The message behind the lead, or as it was where it opens with `error` already, in
+ * either letter case. An empty message is `Error: (no output)`.
+ *
+ * @remarks
+ * The default of `AgentLoopOptions.formatToolError`. Chat completions has no `is_error` field, so
+ * a failure the text does not announce — an MCP tool that answers `isError` with `42` — reads the
+ * same as a success. The lead is LangGraph's, less its "please fix your mistakes": plain text an
+ * MCP tool's own error is already written as, where pydantic-ai's and Vercel's `{"error": …}`
+ * would wrap prose in JSON. Only a dispatcher's errors take it; the refusals the loop writes
+ * itself — arguments it could not read, a `call_tool` outside the catalogue, a stopped call —
+ * say what happened in their own words.
+ */
+export function formatToolError(error: unknown): string {
+  const message = errorMessage(error);
+  if (OPENS_AS_ERROR.test(message)) {
+    return message;
+  }
+  return `${TOOL_ERROR_LEAD}${nonEmpty(message)}`;
+}
+
 /** One of a turn's calls with its arguments read, or with the reason they could not be. */
 export interface ReadCall {
   call: ToolCall;
@@ -384,6 +429,8 @@ export interface Calling {
   detects: ((call: ToolCallRequest) => boolean) | undefined;
   dedupable: (call: ToolCallRequest) => boolean;
   dispatch: ToolDispatch;
+  /** What the model reads for a dispatch that threw. */
+  formatToolError: (error: unknown) => string;
   /** All of a step's calls together, each alone, or together in runs of the calls it passes. */
   parallel: boolean | ((call: ToolCallRequest) => boolean);
   signal: AbortSignal | undefined;
@@ -708,6 +755,9 @@ async function runCall(
   let loads: LoadCounts | undefined;
   // Answered from an earlier identical call of the step, whose links are already counted.
   let shared = false;
+  // Whether a throw came from the host's dispatcher, whose errors are worded for no model, or
+  // from a refusal the loop wrote itself.
+  let dispatched = false;
   try {
     if (!args) {
       throw unreadable;
@@ -729,18 +779,20 @@ async function runCall(
       run.used.add(name);
       // Read before `once` looks, which it does before it awaits anything.
       shared = dedupable && answered.has(key);
+      dispatched = true;
       // A repeat answered from the first call reports nothing of its own: the first call's
       // report is the one its dispatcher holds.
       const answer = dedupable
         ? await once(answered, key, () => run.dispatch(request, signal, report))
         : await run.dispatch(request, signal, report);
       ({ text: content, links, end } = answerOf(answer));
+      content = nonEmpty(content);
     }
   } catch (error) {
     if (signal?.aborted) {
       throw error;
     }
-    content = errorMessage(error);
+    content = dispatched ? nonEmpty(run.formatToolError(error)) : errorMessage(error);
     ok = false;
   } finally {
     close();

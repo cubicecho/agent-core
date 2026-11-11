@@ -175,6 +175,7 @@ export {
 export { buildBody } from './run/request-body.ts';
 export {
   dropReasoning,
+  formatToolError,
   preview,
   type ReasonedMessage,
   type Scratchpad,
