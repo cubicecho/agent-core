@@ -213,6 +213,11 @@ is worth another attempt. The content-free `{"role":"assistant"}` most servers o
 does not set it: nothing has been shown to anybody yet, so an endpoint that primes the stream and
 then wedges is retried like one that never answered at all.
 
+`inFlight` is the other box `streamTurn` takes, for what an attempt had said once it has thrown:
+each call sets its `read` as it starts, so after a retry it reads the attempt that failed last and
+nothing of the one before. `runTurn` and `continueTurn` pass it through, the second with the
+answer it is continuing joined on, and `runAgentLoop` reads it into a failure's `partial`.
+
 `idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is still
 talking is never cut off however long it takes, and one that has stopped answering raises
 `EndpointSilent` rather than hanging the run. `timeoutMs(config)` returns `undefined` for a
@@ -946,7 +951,7 @@ try {
       store.add(sessionId, turn?.reasoning ? { ...message, reasoning_content: turn.reasoning } : message),
   });
 } catch (error) {
-  const run = failedRun(error); // messages, usage, toolCalls, loaded, used, preselected — or undefined
+  const run = failedRun(error); // messages, partial, usage, toolCalls, loaded, used, preselected — or undefined
   if (run) await store.keep(sessionId, { usage: run.usage, loaded: run.loaded });
   if (signal.aborted) return; // a stop, told by the signal as it always was
   if (error instanceof ContextOverflow) return compactAndRetry(run?.messages);
@@ -973,9 +978,14 @@ A failure while a step's tools are running leaves a transcript that can be sent 
 that came back are kept, a call the run was stopped during is answered `Stopped before this call
 finished.`, and one the loop never reached `Not run: the run stopped first.` — a call with no
 result is a transcript an endpoint refuses. Those are announced through `onMessage` like any other
-result. The reply of a request that was in flight when the run stopped is not kept: the host has
-the deltas from its `output` and `thinking` events, and whether half an answer belongs in the
-history is its call.
+result. The reply of a request that was in flight when the run stopped or failed — a stop, the
+endpoint going silent, a stream that broke after its first token — is not in `messages`, because it
+is not a turn an endpoint will take back. It is on the failure as `partial`: its `content`, its
+`reasoning` and the `toolCalls` it had begun, assembled as far as they had arrived, with a
+continuation's piece joined onto the answer it was continuing and, after a retry, only the attempt
+that was in flight. A request that had said nothing leaves no `partial`, and neither does a
+failure while the tools run, since that step's reply is already in `messages`. Whether half an
+answer belongs in the history is the host's call.
 
 `resolveApiKey` is exported and not applied, because which key an endpoint gets is a rule a
 consumer states and a library guessing it could send one where it was not meant to go. The rule

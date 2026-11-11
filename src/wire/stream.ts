@@ -424,6 +424,61 @@ export interface Produced {
   any: boolean;
 }
 
+/**
+ * What a turn had said when it ended without coming back: the answer, the scratchpad and the calls,
+ * as far as each had arrived.
+ *
+ * @remarks
+ * It is not a `Turn`, and not a message an endpoint will take back: it has no usage, no reason it
+ * ended, and a call in it may stop mid-JSON. It is what a person watching had been shown, for a
+ * host to keep or to show.
+ */
+export interface PartialTurn {
+  /** The answer so far, fences taken out; `""` where it had not begun. */
+  content: string;
+  /** The scratchpad so far, from its own field or a fence. Absent where none had arrived. */
+  reasoning?: string;
+  /**
+   * The calls begun, assembled as `Turn.toolCalls` would have been — a name may be missing and
+   * arguments may stop mid-JSON. Absent where none had begun.
+   */
+  toolCalls?: ToolCall[];
+}
+
+/**
+ * Where the request in flight can be read from, after it has thrown.
+ *
+ * @remarks
+ * A box for the reason `Produced` is one: a rejected promise carries no stream state, and the
+ * error is often the signal's reason, which is shared by every run under it. Each `streamTurn`
+ * sets `read` as it starts, so after a retry or a downgrade it reads the latest attempt and
+ * nothing of the one before.
+ */
+export interface InFlight {
+  /** What the stream had said, or `undefined` where it had said nothing. */
+  read?: () => PartialTurn | undefined;
+}
+
+/**
+ * A partial turn from what a stream had put together, or nothing where it had put nothing.
+ *
+ * @param content - The answer so far.
+ * @param reasoning - The scratchpad so far.
+ * @param calls - The calls begun, as they arrived. Not written to.
+ * @returns `undefined` where all three are empty; otherwise the content, with `reasoning` and
+ * `toolCalls` only where they hold something.
+ */
+function partialTurn(content: string, reasoning: string, calls: readonly PartialCall[]): PartialTurn | undefined {
+  if (content === '' && reasoning === '' && calls.length === 0) {
+    return undefined;
+  }
+  return {
+    content,
+    ...(reasoning ? { reasoning } : {}),
+    ...(calls.length ? { toolCalls: assembledCalls(calls) } : {}),
+  };
+}
+
 /** What `streamTurn` takes besides the request body. */
 export interface StreamTurnOptions {
   /** Cancels the request and the stream being read from it. */
@@ -446,6 +501,11 @@ export interface StreamTurnOptions {
   firstChunkMs?: number;
   /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
   produced?: Produced;
+  /**
+   * Given a `read` of what this call has said so far, as the call starts. Read it once the call has
+   * thrown; a turn that came back has it all, and the box is not cleared.
+   */
+  inFlight?: InFlight;
   /**
    * The fences that mark a scratchpad written into `content`.
    *
@@ -502,6 +562,7 @@ export async function streamTurn(
     idleMs,
     firstChunkMs,
     produced,
+    inFlight,
     fences = DEFAULT_FENCES,
     startInReasoning,
     onThinking,
@@ -530,6 +591,10 @@ export async function streamTurn(
     }
   };
 
+  if (inFlight) {
+    // Before the request, so a box an earlier attempt filled reads nothing of it.
+    inFlight.read = () => undefined;
+  }
   try {
     rearm(false);
     const started = Date.now();
@@ -571,6 +636,11 @@ export async function streamTurn(
     // In arrival order, sorted by index at the end; a call from a server that sent none keeps
     // its place in the order they arrived.
     const calls: PartialCall[] = [];
+    if (inFlight) {
+      // Lazy, so a stream nobody stops pays nothing for it. Text held back as a possible tag is
+      // left out: it is a few characters that may yet be a marker.
+      inFlight.read = () => partialTurn(splitter.output, reasoning.join('') + splitter.reasoning, calls);
+    }
     const usage = noUsage();
     // The usage block's own cache count wins over llama.cpp's, which is the same number in the
     // servers that send both; kept apart so the order the two arrive in does not decide.

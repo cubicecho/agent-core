@@ -71,7 +71,7 @@ import {
   ToolIterationLimit,
 } from '../wire/errors.ts';
 import { ContextOverflow } from '../wire/retry.ts';
-import { addCounts, noUsage, type Turn, type TurnUsage } from '../wire/stream.ts';
+import { addCounts, type InFlight, noUsage, type Turn, type TurnUsage } from '../wire/stream.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
 import {
   type EndedBy,
@@ -729,7 +729,8 @@ interface Standing {
  * @remarks
  * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded`, `used`
  * and `preselected` — because the steps before a failure were real and a host that stores its
- * transcript has nothing else to store them from. A spent budget is a `ToolIterationLimit`, an
+ * transcript has nothing else to store them from. What the request in flight had said is on it
+ * as `partial`, and not in `messages`. A spent budget is a `ToolIterationLimit`, an
  * overflow is an `AgentLoopOverflow`, which is still a `ContextOverflow`, and anything else is an
  * `AgentLoopError` with what was caught as its `cause` and its message as its own; `failedRun`
  * reads the run off any of the three. A failure while a step's tools run leaves the transcript
@@ -1359,16 +1360,23 @@ async function runSteps(
   let usage = noUsage();
   const toolCalls: ToolCallOutcome[] = [];
   const artifacts = new Map<string, RunArtifact>();
-  standing.read = () => ({
-    messages,
-    usage,
-    toolCalls,
-    artifacts: [...artifacts.values()],
-    // As the result would have said it: proxied, nothing is loaded that the history does not hold.
-    loaded: proxied ? [] : [...loaded],
-    used: [...used],
-    preselected: [...preselected],
-  });
+  // A box per request, emptied once its turn is in `messages`: a failure while the tools run had
+  // no request in flight.
+  let inFlight: InFlight = {};
+  standing.read = () => {
+    const partial = inFlight.read?.();
+    return {
+      messages,
+      ...(partial ? { partial } : {}),
+      usage,
+      toolCalls,
+      artifacts: [...artifacts.values()],
+      // As the result would have said it: proxied, nothing is loaded that the history does not hold.
+      loaded: proxied ? [] : [...loaded],
+      used: [...used],
+      preselected: [...preselected],
+    };
+  };
   const announce = announcer(onMessage);
   // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
   // moves the question without losing it — and one that summarises the question away takes the
@@ -1498,8 +1506,10 @@ async function runSteps(
 
     const build = (supported: Capabilities, refused: ModelCapabilities | undefined) =>
       buildBody(sending, supported, refused, request, declared, toolOrder);
+    inFlight = {};
     const turnOptions = {
       model: config.model,
+      inFlight,
       droppable: Object.keys(extraBody ?? {}),
       ...(pin ? { headers: pin.headers } : {}),
       maxRetries,
@@ -1558,6 +1568,7 @@ async function runSteps(
       maxContinuations > 0
         ? await continueTurn(client, supports, build, first, { ...turnOptions, maxContinuations })
         : first;
+    inFlight = {};
     previous = {
       messages: request,
       tools: names,

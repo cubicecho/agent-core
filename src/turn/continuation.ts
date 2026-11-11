@@ -2,7 +2,7 @@ import type OpenAI from 'openai';
 import { type Capabilities, modelCapabilitiesFor } from '../endpoint/capabilities.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { ContextOverflow, refusesRequest } from '../wire/retry.ts';
-import { addCounts, type Turn, type TurnUsage } from '../wire/stream.ts';
+import { addCounts, type InFlight, type PartialTurn, type Turn, type TurnUsage } from '../wire/stream.ts';
 import { FinishReason, Role } from '../wire/wire.ts';
 import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from './run-turn.ts';
 
@@ -126,6 +126,23 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
 }
 
 /**
+ * The answer so far with the piece a continuation in flight had added to it.
+ *
+ * @param sofar - The turn being continued, which may itself be a joined one. Not written to.
+ * @param [piece] - What the continuation had said. Absent adds nothing.
+ * @returns The two joined as `continueTurn` joins turns: content and reasoning in order, and the
+ * continuation's own calls. `reasoning` and `toolCalls` are left out where empty.
+ */
+function joinPartial(sofar: Turn, piece: PartialTurn | undefined): PartialTurn {
+  const reasoning = sofar.reasoning + (piece?.reasoning ?? '');
+  return {
+    content: sofar.content + (piece?.content ?? ''),
+    ...(reasoning ? { reasoning } : {}),
+    ...(piece?.toolCalls ? { toolCalls: piece.toolCalls } : {}),
+  };
+}
+
+/**
  * Carries on an answer the token ceiling cut off, by sending the transcript again with the answer
  * so far as a trailing assistant message, and joins the pieces into one turn.
  *
@@ -152,7 +169,9 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
  * server that takes the request and ignores the prefill — hosted OpenAI among them — shows itself;
  * that check is only as good as a restart being word for word. Either way the answer so far is
  * kept, with a notice. So is it when the continuation fails any other way, since the tokens
- * already in hand are worth more than the error; only a stop is thrown.
+ * already in hand are worth more than the error; only a stop is thrown. An `inFlight` box reads
+ * the answer so far with the continuation's piece joined on, so a stop mid-continuation keeps it
+ * all.
  */
 export async function continueTurn(
   client: OpenAI,
@@ -163,12 +182,21 @@ export async function continueTurn(
 ): Promise<Turn> {
   const refused = options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
   const who = modelLabel(options.model);
+  // The caller's box reads the whole answer, not only the piece the continuation streams.
+  const outer = options.inFlight;
+  const piece: InFlight = {};
+  const told = outer ? { inFlight: piece } : {};
   let joined = turn;
   for (let count = 0; count < maxContinuations && isContinuable(joined); count++) {
     if (refused?.assistantPrefill === false) {
       break;
     }
     const answer = joined.content;
+    if (outer) {
+      const sofar = joined;
+      piece.read = undefined;
+      outer.read = () => joinPartial(sofar, piece.read?.());
+    }
     let next: Turn;
     try {
       next = await runTurn(
@@ -181,7 +209,7 @@ export async function continueTurn(
             messages: [...body.messages, { role: Role.Assistant, content: answer }],
           };
         },
-        { ...options, startInReasoning: false },
+        { ...options, ...told, startInReasoning: false },
       );
     } catch (error) {
       if (options.signal?.aborted) {

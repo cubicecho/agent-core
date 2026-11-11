@@ -290,6 +290,8 @@ export {
 } from './wire/retry.ts';
 export {
   CacheBreakReason,
+  type InFlight,
+  type PartialTurn,
   type Produced,
   type StreamTurnOptions,
   streamTurn,

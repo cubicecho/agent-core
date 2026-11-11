@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { apiError, type Body, chunks, config, type Message, says, tool } from '../helpers.ts';
+import { apiError, type Body, chunks, config, type Message, says, text, tool } from '../helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -282,6 +282,135 @@ describe('a run that throws', () => {
     expect(failedRun(new Error('something else'))).toBeUndefined();
     expect(failedRun(new ContextOverflow('too big'))).toBeUndefined();
     expect(failedRun(undefined)).toBeUndefined();
+  });
+});
+
+/** A stream that hands over its chunks and then waits for the stop, ending as an aborted one does. */
+const stalls = (signal: AbortSignal, ...list: unknown[]) => ({
+  async *[Symbol.asyncIterator]() {
+    yield* list;
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        return resolve();
+      }
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+  },
+});
+
+/** A stream that hands over its chunks and then breaks, as a dropped connection does. */
+const breaks = (...list: unknown[]) => breaksWith(new Error('the connection dropped'), ...list);
+
+/** A stream that hands over its chunks and then throws this. */
+const breaksWith = (error: unknown, ...list: unknown[]) => ({
+  async *[Symbol.asyncIterator]() {
+    yield* list;
+    throw error;
+  },
+});
+
+describe('the request in flight', () => {
+  it('is kept on a stop mid-stream, with its reasoning, and not in the transcript', async () => {
+    const controller = new AbortController();
+    create.mockImplementationOnce((_body: Body, { signal }: { signal: AbortSignal }) =>
+      stalls(
+        signal,
+        { choices: [{ delta: { reasoning_content: 'sky, light' } }] },
+        { choices: [{ delta: { content: 'The sky is ' } }] },
+        {
+          choices: [{ delta: { content: 'blue because' } }],
+        },
+      ),
+    );
+    const error = await thrown(
+      runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => '',
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.kind === RunEventKind.Output && event.text?.includes('because')) {
+            controller.abort();
+          }
+        },
+      }),
+    );
+    const run = failedRun(error);
+    expect(run?.partial).toEqual({ content: 'The sky is blue because', reasoning: 'sky, light' });
+    expect(run?.messages).toEqual(question);
+  });
+
+  it('has no partial where the request failed before its first token', async () => {
+    create.mockReturnValueOnce(breaks({ choices: [{ delta: { role: Role.Assistant } }] }));
+    const error = await thrown(runAgentLoop({ config, messages: question, dispatch: async () => '' }));
+    expect(failedRun(error)).toBeDefined();
+    expect(failedRun(error)?.partial).toBeUndefined();
+  });
+
+  it('keeps the calls a broken stream had begun, as they were assembled', async () => {
+    create.mockReturnValueOnce(
+      breaks({
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'c0', function: { name: 'a', arguments: '{"x":' } }] } }],
+      }),
+    );
+    const error = await thrown(
+      runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch: async () => '' }),
+    );
+    expect(failedRun(error)?.partial).toEqual({
+      content: '',
+      toolCalls: [{ id: 'c0', type: 'function', function: { name: 'a', arguments: '{"x":' } }],
+    });
+  });
+
+  it("reads the latest attempt's reply after a retry", async () => {
+    create
+      .mockReturnValueOnce(breaksWith(apiError(503, 'busy'), { choices: [{ delta: { role: Role.Assistant } }] }))
+      .mockReturnValueOnce(breaks(text('second')));
+    const error = await thrown(
+      runAgentLoop({ config: { ...config, maxRetries: 1 }, messages: question, dispatch: async () => '' }),
+    );
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(failedRun(error)?.partial).toEqual({ content: 'second' });
+  });
+
+  it('joins a continuation in flight onto the answer it was continuing', async () => {
+    const controller = new AbortController();
+    create
+      .mockReturnValueOnce(says('The sky is', FinishReason.Length))
+      .mockImplementationOnce((_body: Body, { signal }: { signal: AbortSignal }) => {
+        queueMicrotask(() => controller.abort());
+        return stalls(signal, text(' blue'));
+      });
+    const error = await thrown(
+      runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => '',
+        maxContinuations: 1,
+        signal: controller.signal,
+      }),
+    );
+    expect(failedRun(error)?.partial).toEqual({ content: 'The sky is blue' });
+  });
+
+  it('is gone once its turn is in the transcript', async () => {
+    create.mockReturnValueOnce(calls([['a', '{}']]));
+    const error = await thrown(
+      runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('a')],
+        dispatch: async () => 'ok',
+        onMessage: (message) => {
+          if (message.role === Role.Tool) {
+            throw new Error('the host fell over');
+          }
+        },
+      }),
+    );
+    expect((error as Error).message).toBe('the host fell over');
+    expect(failedRun(error)?.messages.map((message) => message.role)).toContain(Role.Assistant);
+    expect(failedRun(error)?.partial).toBeUndefined();
   });
 });
 
