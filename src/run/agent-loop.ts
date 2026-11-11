@@ -110,6 +110,7 @@ import {
   readCalls,
   runCalls,
   type ToolDispatch,
+  writtenMessage,
 } from './run-calls.ts';
 
 /**
@@ -122,6 +123,25 @@ import {
  * and two never did. What is here is the part that does not know what the run is for; the
  * prompts, the tools and what a run means stay with the caller.
  */
+
+/**
+ * What `onMessage` is handed beside an assistant message the model wrote: that message as the model
+ * produced it.
+ *
+ * @remarks
+ * The message `onMessage` is handed is what later requests replay — arguments repaired, `{}` for
+ * none, recovered calls taken out of the text and made calls — which is right to send and quietly
+ * wrong to show as the model's. Absent for a message the loop wrote itself, such as a proxied
+ * run's preselected load.
+ */
+export interface WrittenMessage {
+  /**
+   * The reply as it streamed: its text whole, a call written into it as text left there, and the
+   * calls it sent as calls with their arguments as streamed. A call that never got a name is left
+   * off, since nothing answers it. Ids are the turn's, so the tool results pair with either.
+   */
+  raw: OpenAI.ChatCompletionAssistantMessageParam;
+}
 
 /**
  * One step's request as `onRequest` is handed it: what the model is about to read.
@@ -569,8 +589,17 @@ export interface AgentLoopOptions {
    * a proxied run writes for its `preselected` shortlist, told as step zero's before any request.
    * What it returns is ignored: `beforeStep` is the one way to rewrite the transcript. What it
    * throws ends the run, and it is not called again for that run.
+   *
+   * Beside an assistant message the model wrote comes `written`, whose `raw` is the message as the
+   * model produced it, for a host that shows or stores what was said rather than what is replayed.
+   * See `WrittenMessage`.
    */
-  onMessage?: (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn) => void | Promise<void>;
+  onMessage?: (
+    message: OpenAI.ChatCompletionMessageParam,
+    step: number,
+    turn?: Turn,
+    written?: WrittenMessage,
+  ) => void | Promise<void>;
   /**
    * How many times an answer cut off at `maxTokens` is continued, zero for never. Opt-in because
    * it spends another request, and on a server that does not continue a trailing assistant
@@ -1220,8 +1249,8 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
  * Offers each message written into the transcript to the host.
  *
  * @param onMessage - The host's callback, awaited. Absent offers nothing.
- * @returns The offer, taking a message, its step and the turn it came with: it resolves once the
- * host has taken the message, and rejects with what the host threw — once.
+ * @returns The offer, taking a message, its step, the turn it came with and what the model wrote:
+ * it resolves once the host has taken the message, and rejects with what the host threw — once.
  *
  * @remarks
  * Once `onMessage` has thrown the run is ending on that, and the results still to be written are
@@ -1229,12 +1258,12 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
  */
 function announcer(onMessage: AgentLoopOptions['onMessage']) {
   let heard = true;
-  return async (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn) => {
+  return async (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn, written?: WrittenMessage) => {
     if (!onMessage || !heard) {
       return;
     }
     try {
-      await onMessage(message, step, turn);
+      await onMessage(message, step, turn, written);
     } catch (error) {
       heard = false;
       throw error;
@@ -1277,23 +1306,23 @@ const usageEvent = (usage: LoopUsage, turn: Turn, ledger: TokenLedger, contextLe
  * nothing is looked for in a turn that made a named call of its own or has no text.
  * @param notice - Told when calls were recovered, and how many.
  * @returns `calls`, the turn's own less any with no name, and `content`, its text as it was — or,
- * where calls were recovered, those calls and the text without them.
+ * where calls were recovered, those calls and the text without them, and `recovered` true.
  */
 function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNotice) {
   // A call with no name is a fragment the server never finished sending: nothing to run, and
   // an assistant message naming it would be answered by nothing.
   const calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
   if (!recoverable || calls.length || !turn.content) {
-    return { calls, content: turn.content };
+    return { calls, content: turn.content, recovered: false };
   }
   const recovered = recoverToolCalls(turn.content, { names: recoverable });
   if (!recovered.toolCalls.length) {
-    return { calls, content: turn.content };
+    return { calls, content: turn.content, recovered: false };
   }
   notice(
     `recovered ${counted(recovered.toolCalls.length, 'tool call')} the model wrote as text; the server's tool-call parser does not match this model's template`,
   );
-  return { calls: recovered.toolCalls, content: recovered.content };
+  return { calls: recovered.toolCalls, content: recovered.content, recovered: true };
 }
 
 /**
@@ -1603,16 +1632,17 @@ async function runSteps(
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
     const canRecover = recover && (tools.length > 0 || hostTools.length > 0 || onDemand);
-    const { calls, content } = turnCalls(turn, canRecover ? recoverable : undefined, notice);
+    const { calls, content, recovered } = turnCalls(turn, canRecover ? recoverable : undefined, notice);
     const shown: Turn = { ...turn, content, toolCalls: calls };
     onTurn?.(shown, step);
 
     // Read before the assistant message is written, so what is replayed on every later request
     // is the repaired JSON.
-    const parsed = readCalls(calls, turn.finishReason);
+    const parsed = readCalls(calls, turn.finishReason, recovered);
     const assistant = assistantMessage(content, parsed);
     messages.push(assistant);
-    await announce(assistant, step, shown);
+    // Recovered calls were never calls on the wire: what the model said is the text they came from.
+    await announce(assistant, step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls) });
 
     const isAnswer = calls.length === 0;
     const ended = isAnswer ? undefined : await runCalls(calling, parsed, messages, step);

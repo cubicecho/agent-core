@@ -378,9 +378,9 @@ describe('runAgentLoop', () => {
     // One dispatch: the second call repeats the first, and the third could not be read.
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(asked).toEqual([
-      { id: 'c0', name: 'a', args: { x: true }, raw: "{'x': True,}" },
-      { id: 'c1', name: 'a', args: { x: true }, raw: '{"x":true}' },
-      { id: 'c2', name: 'a', args: {}, raw: '{nope' },
+      { id: 'c0', name: 'a', args: { x: true }, raw: "{'x': True,}", repaired: true },
+      { id: 'c1', name: 'a', args: { x: true }, raw: '{"x":true}', repaired: false },
+      { id: 'c2', name: 'a', args: {}, raw: '{nope', repaired: false },
     ]);
     // The repeat gets a result of its own, carrying the answer it shares with the first.
     expect(answered).toEqual([
@@ -1300,8 +1300,8 @@ describe('runAgentLoop', () => {
       });
       expect(dispatch).not.toHaveBeenCalled();
       expect(asked).toEqual([
-        { id: 'c0', name: LOAD_TOOLS, args: { names: ['s__read'] }, raw: '{"names":["s__read"]}' },
-        { id: 'c1', name: LOAD_TOOLS, args: {}, raw: '{}' },
+        { id: 'c0', name: LOAD_TOOLS, args: { names: ['s__read'] }, raw: '{"names":["s__read"]}', repaired: false },
+        { id: 'c1', name: LOAD_TOOLS, args: {}, raw: '{}', repaired: false },
       ]);
       const stored = result.messages.flatMap((m) => (m.role === Role.Tool ? [m.content] : []));
       expect(answered).toEqual([
@@ -1681,6 +1681,7 @@ describe('runAgentLoop', () => {
         name: 's__read',
         args: { path: 'a' },
         raw: '{"path":"a"}',
+        repaired: false,
       });
       expect(result.used).toEqual(['s__read']);
       // Nothing carries: neither what was handed in nor what this run loaded.
@@ -1921,9 +1922,10 @@ describe('runAgentLoop', () => {
           name: LOAD_TOOLS,
           args: { names: ['s__read'] },
           raw: '{"names":["s__read"]}',
+          repaired: false,
         },
-        { id: 'c0', name: 's__read', args: { path: 'a' }, raw: '{"path":"a"}' },
-        { id: 'c1', name: 's__ghost', args: {}, raw: '{"path":"b"}' },
+        { id: 'c0', name: 's__read', args: { path: 'a' }, raw: '{"path":"a"}', repaired: false },
+        { id: 'c1', name: 's__ghost', args: {}, raw: '{"path":"b"}', repaired: false },
       ]);
       // What `dispatch` runs is the object the host was told of.
       expect(dispatch).toHaveBeenCalledTimes(1);

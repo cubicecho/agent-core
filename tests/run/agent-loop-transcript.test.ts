@@ -19,6 +19,8 @@ const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts'
 
 type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
+type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
+type WrittenMessage = import('../../src/run/agent-loop.ts').WrittenMessage;
 
 /** A turn that asks for these calls, thinking first where told to, and reports what it cost. */
 const calls = (list: [name: string, args: string][], reasoning = '') =>
@@ -101,6 +103,73 @@ describe('onMessage', () => {
     expect(heard[1].turn).toBeUndefined();
     expect(heard[2].turn).toBeUndefined();
     expect(heard[3].turn).toBe(result.turn);
+  });
+
+  it('hands the message as the model wrote it beside the one replayed, and each call says if it was repaired', async () => {
+    create
+      .mockReturnValueOnce(
+        calls([
+          ['a', "{'x': True,}"],
+          ['a', '{"x": 1}'],
+          ['a', ''],
+          ['a', '"{\\"x\\":2}"'],
+          ['a', '{nope'],
+        ]),
+      )
+      .mockReturnValueOnce(says('done'));
+    const heard: { message: Message; written?: WrittenMessage }[] = [];
+    const asked: ToolCallRequest[] = [];
+    await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      onToolCall: (call) => asked.push(call),
+      onMessage: (message, _step, _turn, written) => {
+        heard.push({ message, written });
+      },
+    });
+    const argumentsOf = (message: Message | undefined) =>
+      message?.role === Role.Assistant ? message.tool_calls?.map((call) => (call as ToolCall).function.arguments) : [];
+    // Replayed: every call as JSON an endpoint will take back, and an unreadable one as none.
+    expect(argumentsOf(heard[0].message)).toEqual(['{"x":true}', '{"x":1}', '{}', '{"x":2}', '{}']);
+    // Written: exactly what streamed, under the same ids, so the tool results pair with either.
+    expect(argumentsOf(heard[0].written?.raw)).toEqual(["{'x': True,}", '{"x": 1}', '', '"{\\"x\\":2}"', '{nope']);
+    expect(heard[0].written?.raw).toMatchObject({ role: Role.Assistant, content: null });
+    expect(asked.map(({ raw, repaired }) => ({ raw, repaired }))).toEqual([
+      { raw: "{'x': True,}", repaired: true },
+      // Whitespace is not a repair, nor is a blank that every reader takes as no arguments.
+      { raw: '{"x": 1}', repaired: false },
+      { raw: '', repaired: false },
+      { raw: '"{\\"x\\":2}"', repaired: true },
+      // Not read at all, so nothing was repaired: the call was answered with the error.
+      { raw: '{nope', repaired: false },
+    ]);
+    // Tool results are not the model's, and come with nothing beside them.
+    expect(heard.slice(1, -1).every(({ written }) => written === undefined)).toBe(true);
+    // An answer with no calls is the same message either way.
+    expect(heard.at(-1)?.written?.raw).toEqual(heard.at(-1)?.message);
+  });
+
+  it("hands a recovered call's message as the text it was written in, and the call as repaired", async () => {
+    const reply = 'Checking.\n<tool_call>\n{"name": "a", "arguments": {"x": 1}}\n</tool_call>';
+    create.mockReturnValueOnce(says(reply)).mockReturnValueOnce(says('done'));
+    const heard: { message: Message; written?: WrittenMessage }[] = [];
+    const asked: ToolCallRequest[] = [];
+    await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      onToolCall: (call) => asked.push(call),
+      onMessage: (message, _step, _turn, written) => {
+        heard.push({ message, written });
+      },
+    });
+    expect(heard[0].message).toMatchObject({ content: 'Checking.', tool_calls: [{ id: 'call_recovered_0' }] });
+    // The model sent no call: it wrote one into its reply, and that reply is what it said.
+    expect(heard[0].written?.raw).toEqual({ role: Role.Assistant, content: reply });
+    expect(asked).toEqual([{ id: 'call_recovered_0', name: 'a', args: { x: 1 }, raw: '{"x":1}', repaired: true }]);
   });
 
   it('is awaited before the tools run and before the next request is sent', async () => {
@@ -609,7 +678,7 @@ describe('a proxied run', () => {
 
   it('tells onMessage of the load it writes for a preselection, before any request', async () => {
     create.mockReturnValueOnce(says('done'));
-    const heard: { message: Message; step: number; turn?: Turn; sent: number }[] = [];
+    const heard: { message: Message; step: number; turn?: Turn; written?: WrittenMessage; sent: number }[] = [];
     const result = await runAgentLoop({
       config: proxied,
       messages: question,
@@ -617,16 +686,16 @@ describe('a proxied run', () => {
       catalog,
       preselected: ['s__read'],
       dispatch: async () => 'contents',
-      onMessage: (message, step, turn) => {
-        heard.push({ message, step, turn, sent: create.mock.calls.length });
+      onMessage: (message, step, turn, written) => {
+        heard.push({ message, step, turn, written, sent: create.mock.calls.length });
       },
     });
     expect(heard.map(({ message }) => message)).toEqual(result.messages.slice(1));
     expect(heard.map(({ message }) => message.role)).toEqual([Role.Assistant, Role.Tool, Role.Assistant]);
     // The pair no model wrote: step zero's, with no turn, and heard before the request went out.
-    expect(heard.slice(0, 2).map(({ step, turn, sent }) => ({ step, turn, sent }))).toEqual([
-      { step: 0, turn: undefined, sent: 0 },
-      { step: 0, turn: undefined, sent: 0 },
+    expect(heard.slice(0, 2).map(({ step, turn, written, sent }) => ({ step, turn, written, sent }))).toEqual([
+      { step: 0, turn: undefined, written: undefined, sent: 0 },
+      { step: 0, turn: undefined, written: undefined, sent: 0 },
     ]);
     expect(heard[2].turn?.content).toBe('done');
   });

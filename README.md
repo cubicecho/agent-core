@@ -610,8 +610,10 @@ string. What still is not an object throws a `ToolArgumentsError` whose `kind` i
 the turn stopped at the ceiling, with a message telling the model so, and `malformed` otherwise.
 The repaired JSON is what the transcript keeps, and an unreadable call is replayed as `{}`, because
 a server that parses replayed arguments refuses the originals on every later request. `dispatch`
-is still handed the model's own text as `raw`, and the dedupe compares repaired arguments,
-so `{'a': 1}` and `{"a": 1}` are one call.
+is still handed the model's own text as `raw`, with `repaired` true where reading it took a repair
+— whitespace and blank arguments do not count — and the dedupe compares repaired arguments, so
+`{'a': 1}` and `{"a": 1}` are one call. A call recovered from text, below, is always `repaired`,
+and its `raw` is the arguments recovery read out of the reply, as JSON.
 
 A server whose tool-call parser was written for another template streams the model's call as
 plain text, and the run ends on a reply that is nothing but a call nobody made. Unless
@@ -969,7 +971,11 @@ try {
 
 `onMessage` hears the assistant message as it will be replayed — recovered calls folded in, and
 arguments repaired, which the turn `onTurn` is handed does not show — together with that `Turn`,
-and then each tool result, in transcript order. `onTurn` is not awaited and never sees a tool
+and then each tool result, in transcript order. Beside an assistant message the model wrote comes a
+fourth argument, `{ raw }`: the same message as the model produced it, its text whole with any call
+written into it left there, and its calls' arguments exactly as streamed, under the same ids. Store
+or show `raw` to keep what the model said; replay `message` to keep what an endpoint will take back.
+The loop's own messages — a proxied run's preselected load — come without it. `onTurn` is not awaited and never sees a tool
 result; this is the one to store from. What it returns is ignored, since `beforeStep` is the one way to rewrite
 the transcript, and what it throws ends the run.
 

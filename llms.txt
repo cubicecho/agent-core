@@ -176,6 +176,7 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none or a call's answer ends the run.
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
+- `WrittenMessage` (type) — What `onMessage` is handed beside an assistant message the model wrote: that message as the model produced it.
 
 ### events
 
