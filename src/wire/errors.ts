@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import { ContextOverflow } from './retry.ts';
-import type { TurnUsage } from './stream.ts';
+import type { PartialTurn, TurnUsage } from './stream.ts';
 import type { RunArtifact, ToolCallOutcome } from './tool-calls.ts';
 
 /**
@@ -29,9 +29,19 @@ export interface AgentLoopFailure {
   /**
    * The transcript, as the result's `messages` would have been: every assistant turn and tool
    * result the run added, and no system prompt. Well-formed — a call the run was stopped during
-   * has a result saying so. The reply of a request that was in flight is not in it.
+   * has a result saying so. The reply of a request that was in flight is not in it: see `partial`.
    */
   messages: OpenAI.ChatCompletionMessageParam[];
+  /**
+   * What the request in flight had said when the run stopped or failed — a stop, the endpoint
+   * going silent, a stream that broke — continuations joined on. Absent where no request was in
+   * flight or it had said nothing.
+   *
+   * @remarks
+   * Not in `messages`, because it is not a turn an endpoint will take back. It is what a person
+   * watching had been shown, and whether it belongs in the history is the host's call.
+   */
+  partial?: PartialTurn;
   /** Summed over the turns that came back. A request that failed or was stopped adds nothing. */
   usage: TurnUsage;
   /** Every call that was made, in order. One the run was stopped during is `ok: false`. */
@@ -62,6 +72,7 @@ export interface AgentLoopFailure {
 export class AgentLoopError extends Error implements AgentLoopFailure {
   override readonly name: string = 'AgentLoopError';
   readonly messages: OpenAI.ChatCompletionMessageParam[];
+  readonly partial?: PartialTurn;
   readonly usage: TurnUsage;
   readonly toolCalls: ToolCallOutcome[];
   readonly artifacts: RunArtifact[];
@@ -77,6 +88,9 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
   constructor(message: string, run: AgentLoopFailure, options?: ErrorOptions) {
     super(message, options);
     this.messages = run.messages;
+    if (run.partial) {
+      this.partial = run.partial;
+    }
     this.usage = run.usage;
     this.toolCalls = run.toolCalls;
     this.artifacts = run.artifacts ?? [];
@@ -108,6 +122,7 @@ export class ToolIterationLimit extends AgentLoopError {
  */
 export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailure {
   readonly messages: OpenAI.ChatCompletionMessageParam[];
+  readonly partial?: PartialTurn;
   readonly usage: TurnUsage;
   readonly toolCalls: ToolCallOutcome[];
   readonly artifacts: RunArtifact[];
@@ -123,6 +138,9 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
   constructor(message: string, run: AgentLoopFailure, options?: ErrorOptions) {
     super(message, options);
     this.messages = run.messages;
+    if (run.partial) {
+      this.partial = run.partial;
+    }
     this.usage = run.usage;
     this.toolCalls = run.toolCalls;
     this.artifacts = run.artifacts ?? [];

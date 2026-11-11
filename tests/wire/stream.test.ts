@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EndpointSilent } from '../../src/wire/retry.ts';
-import { streamTurn } from '../../src/wire/stream.ts';
+import { type InFlight, streamTurn } from '../../src/wire/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import { type Chunk, chunk, chunks, clientOf, text } from '../helpers.ts';
 
@@ -591,6 +591,31 @@ describe('streamTurn', () => {
       body,
     );
     expect(turn.finishReason).toBe('');
+  });
+
+  it('leaves what a stopped stream had said in its inFlight box, and nothing of a call before', async () => {
+    const stop = new AbortController();
+    const inFlight: InFlight = {};
+    await streamTurn(
+      clientOf(() => chunks(text('an earlier answer'))),
+      body,
+      { inFlight },
+    );
+    const turn = streamTurn(
+      clientOf((_, { signal }) =>
+        stalls(
+          signal,
+          chunk({ choices: [{ delta: { reasoning_content: 'hmm' } }] }),
+          text('<think>aside</think>half an ans'),
+        ),
+      ),
+      body,
+      { signal: stop.signal, inFlight },
+    );
+    await vi.waitFor(() => expect(inFlight.read?.()?.content).toBe('half an ans'));
+    stop.abort();
+    await expect(turn).rejects.toThrow();
+    expect(inFlight.read?.()).toEqual({ content: 'half an ans', reasoning: 'hmmaside' });
   });
 
   it('does not return a turn that was cut off as though it were finished', async () => {
