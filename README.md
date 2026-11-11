@@ -803,7 +803,9 @@ the prompt and the whole transcript is prefilled again, on the very step that wa
 tokens. Proxied, every step declares `PROXY_TOOLS` and nothing else: `load_tools`, and `call_tool`,
 which takes `{ name, arguments }`. A load answers with each new tool's name, description and
 parameters as a line of JSON, since no request will ever declare them, and with a pointer back for
-one whose definition is already in the conversation. A `call_tool` is refused for a name outside
+one whose definition is already in the conversation. Whether it still is, after a `beforeStep`, a
+prune or a fold, is read off the transcript's text, so only a definition one of them took out is
+sent again. A `call_tool` is refused for a name outside
 the catalogue, takes `arguments` as an object or as JSON in a string, and reaches `dispatch` as the
 tool it names — the inner name and arguments, under the call's own id — so a dispatcher, a watcher
 and `used` see the same thing in every mode. The transcript keeps the `call_tool` the model wrote.
@@ -988,7 +990,7 @@ run's so far — `promptTokens`, `completionTokens`, `totalTokens`, `cachedToken
 `cacheReported`, the `UsageTotals` spelling that `result.usage` and a failed run's `usage` share
 (their older `prompt`, `completion`, `total` and `cached` are still there, deprecated). A
 `cachedTokens` of zero is a miss only where `cacheReported` is true; false is an endpoint that never
-said. Its `turn` is that turn's own `TurnUsage` and `finishReason`, with the `contextLength` the loop
+said; `reportsCache` asks the same of one turn's `TurnUsage`. Its `turn` is that turn's own `TurnUsage` and `finishReason`, with the `contextLength` the loop
 was told. The loop adds what only
 it can know: `toolsDeclared` and `toolSchemaTokens` for the tool block it sent, and, from the second
 request on, `cacheExpected` (the previous prompt plus its reply) and — where a cache count was
@@ -1115,8 +1117,8 @@ try {
     onMessage: (message) => store.add(sessionId, message),
   });
 } catch (error) {
-  const run = failedRun(error); // messages, partial, usage, toolCalls, loaded, used, preselected — or undefined
-  if (run) await store.keep(sessionId, { usage: run.usage, loaded: run.loaded });
+  const run = failedRun(error); // messages, partial, usage, toolCalls, loaded, used, preselected, ledger — or undefined
+  if (run) await store.keep(sessionId, { usage: run.usage, loaded: run.loaded, ledger: run.ledger });
   if (signal.aborted) return; // a stop, told by the signal as it always was
   if (error instanceof ContextOverflow) return compactAndRetry(run?.messages);
   if (error instanceof ToolIterationLimit) return outOfSteps();

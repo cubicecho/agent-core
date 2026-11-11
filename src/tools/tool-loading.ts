@@ -578,6 +578,34 @@ const PROXY_LOADED = /^Loaded \d+ tool\(s\)\. Run them with `call_tool`\./;
 export const holdsDefinitions = (result: string) => PROXY_LOADED.test(result);
 
 /**
+ * The tools a proxied load's result defines, by name.
+ *
+ * @param result - The tool message's text.
+ * @returns The name of each definition in it, in the order written; empty where the text is not
+ * a load that carried one.
+ *
+ * @remarks
+ * Read off the line of JSON `proxyLoadResult` writes for each definition, which `JSON.stringify`
+ * keeps on one line however the description was broken.
+ */
+export function definedNames(result: string): string[] {
+  if (holdsDefinitions(result) === false) {
+    return [];
+  }
+  return result.split('\n').flatMap((line) => {
+    if (line.startsWith('{') === false) {
+      return [];
+    }
+    try {
+      const parsed: unknown = JSON.parse(line);
+      return isRecord(parsed) && typeof parsed.name === 'string' ? [parsed.name] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
  * What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since
  * the result is the only place the model will ever see it.
  *

@@ -41,6 +41,7 @@ import {
   type HookRunner,
   notify,
   type OnNote,
+  textOf,
   turnIndex,
   turnMessages,
   withContext,
@@ -51,6 +52,7 @@ import { type KeywordPreselectOptions, preselect } from '../tools/preselect.ts';
 import {
   CALL_TOOL,
   catalogPrompt,
+  definedNames,
   inCatalog,
   LOAD_TOOLS,
   LOAD_TOOLS_DEFINITION,
@@ -827,10 +829,10 @@ interface Standing {
  * `AgentLoopResult`.
  *
  * @remarks
- * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded`, `used`
- * and `preselected` — because the steps before a failure were real and a host that stores its
- * transcript has nothing else to store them from. What the request in flight had said is on it
- * as `partial`, and not in `messages`. A spent budget is a `ToolIterationLimit`, an
+ * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded`, `used`,
+ * `preselected` and `ledger` — because the steps before a failure were real and a host that
+ * stores its transcript has nothing else to store them from. What the request in flight had said
+ * is on it as `partial`, and not in `messages`. A spent budget is a `ToolIterationLimit`, an
  * overflow is an `AgentLoopOverflow`, which is still a `ContextOverflow`, and anything else is an
  * `AgentLoopError` with what was caught as its `cause` and its message as its own; `failedRun`
  * reads the run off any of the three. A failure while a step's tools run leaves the transcript
@@ -885,6 +887,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       loaded: [],
       used: [],
       preselected: [],
+      ledger: options.ledger ?? [],
     }),
   };
   let result: AgentLoopResult | undefined;
@@ -1304,6 +1307,28 @@ async function discovery(options: AgentLoopOptions, notice: OnNotice) {
 }
 
 /**
+ * Forgets each proxied load whose definition is no longer anywhere in the transcript.
+ *
+ * @param loaded - What the run has put a definition in the history for. Written to: a name with
+ * no definition left in `messages` is taken out.
+ * @param messages - The transcript a `beforeStep`, a prune or a fold has just handed the step.
+ *
+ * @remarks
+ * Read from the tool results' text rather than from which array or message objects survived, so a
+ * host that rebuilds its transcript from a store each step keeps what it still sends.
+ */
+function forgetFolded(loaded: Set<string>, messages: readonly OpenAI.ChatCompletionMessageParam[]): void {
+  const present = new Set(
+    messages.flatMap((message) => (message.role === Role.Tool ? definedNames(textOf(message.content)) : [])),
+  );
+  for (const name of loaded) {
+    if (present.has(name) === false) {
+      loaded.delete(name);
+    }
+  }
+}
+
+/**
  * The host's definitions by name, the first kept where two share one.
  *
  * @param tools - Every definition the host gave. One that is not a function has no name and is
@@ -1496,6 +1521,8 @@ async function runSteps(
   // A box per request, emptied once its turn is in `messages`: a failure while the tools run had
   // no request in flight.
   let inFlight: InFlight = {};
+  // Declared before `standing.read`, which a failure in the hooks' gather already reads.
+  let ledger: TokenLedger = options.ledger ?? [];
   standing.read = () => {
     const partial = inFlight.read?.();
     return {
@@ -1508,6 +1535,7 @@ async function runSteps(
       loaded: proxied ? [] : [...loaded],
       used: [...used],
       preselected: [...preselected],
+      ledger,
     };
   };
   const announce = announcer(onMessage);
@@ -1525,7 +1553,6 @@ async function runSteps(
   // The loop's prune boundary. Its stubs stay in `messages`, so between moves each request only
   // extends the last; a rewrite or a fold renumbers the transcript, and it starts again from zero.
   let pruneBoundary = 0;
-  let ledger: TokenLedger = options.ledger ?? [];
   // The request the ledger's last entry came from, which is what the next one is measured against.
   // Nothing before this run's first: an earlier run's head is not something the loop can see.
   let measured: LedgerRequest | undefined;
@@ -1606,9 +1633,10 @@ async function runSteps(
       pruneBoundary = after.through;
     }
     // A rewrite may have folded a definition away, and a load answered "already loaded" would
-    // then point at nothing. Forgetting costs a definition sent twice at worst.
+    // then point at nothing. Only those are forgotten: a copy, or a prune that stubbed other
+    // results, left every definition where it was, and sending one again costs its tokens twice.
     if (proxied && next !== messages) {
-      loaded.clear();
+      forgetFolded(loaded, next);
     }
     messages = next;
     ledger = rebaseLedger(ledger, before, messages);

@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import type { TokenLedger } from '../context/ledger.ts';
 import { ContextOverflow } from './retry.ts';
 import type { LoopUsage, PartialTurn } from './stream.ts';
 import type { RunArtifact, ToolCallOutcome } from './tool-calls.ts';
@@ -61,6 +62,13 @@ export interface AgentLoopFailure {
   used: string[];
   /** The shortlist the run opened with, as the result's `preselected` would have said it. */
   preselected: string[];
+  /**
+   * What each step's request reported its prompt as, indexed into `messages` above, as the
+   * result's `ledger` would have said it: the entries of a `ledger` passed in come first. A request
+   * that failed reported nothing, and adds no entry. `runAgentLoop` always sets it; optional so a
+   * failure built before it existed still compiles.
+   */
+  ledger?: TokenLedger;
 }
 
 /**
@@ -82,6 +90,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
   readonly loaded: string[];
   readonly used: string[];
   readonly preselected: string[];
+  readonly ledger: TokenLedger;
 
   /**
    * @param message - What went wrong — the cause's own message, where there is a cause.
@@ -100,6 +109,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
     this.loaded = run.loaded;
     this.used = run.used;
     this.preselected = run.preselected;
+    this.ledger = run.ledger ?? [];
   }
 }
 
@@ -132,6 +142,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
   readonly loaded: string[];
   readonly used: string[];
   readonly preselected: string[];
+  readonly ledger: TokenLedger;
 
   /**
    * @param message - The overflow's own message.
@@ -150,6 +161,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
     this.loaded = run.loaded;
     this.used = run.used;
     this.preselected = run.preselected;
+    this.ledger = run.ledger ?? [];
   }
 }
 

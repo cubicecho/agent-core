@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EndpointSilent } from '../../src/wire/retry.ts';
-import { type InFlight, streamTurn } from '../../src/wire/stream.ts';
+import { type InFlight, reportsCache, streamTurn } from '../../src/wire/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import { type Chunk, chunk, chunks, clientOf, MINTED_ID, text } from '../helpers.ts';
 
@@ -735,5 +735,15 @@ describe('streamTurn', () => {
     );
     stop.abort();
     await expect(turn).rejects.toThrow();
+  });
+});
+
+describe('reportsCache', () => {
+  it('is true of a usage that carries `uncached`, and is exported from the package root', async () => {
+    const usage = { prompt: 10, completion: 1, total: 11, cached: 0 };
+    expect(reportsCache(usage)).toBe(false);
+    expect(reportsCache({ ...usage, uncached: 10 })).toBe(true);
+    const root = await import('../../src/index.ts');
+    expect(root.reportsCache).toBe(reportsCache);
   });
 });
