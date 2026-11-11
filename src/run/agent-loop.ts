@@ -126,9 +126,10 @@ export interface AgentLoopRequest {
  * The hooks a loop runs around one question. See `hooks.ts`.
  *
  * @remarks
- * The loop gathers before its first request and nothing else can run beside that, so a host with
- * pre-turn work of its own to overlap with the hooks — compaction, a preselection — calls `gather`
- * itself, puts the context on with `withContext`, calls `notify` after, and passes no `hooks`.
+ * The loop gathers before its first request, beside its own preselection where it was asked for
+ * one, and nothing else runs beside the two. A host with pre-turn work of its own to overlap with
+ * the hooks — a compaction — calls `gather` itself, puts the context on with `withContext`, calls
+ * `notify` after, passes no `hooks`, and hands `preselectQuery` the question as it was written.
  */
 export interface AgentLoopHooks {
   run: HookRunner;
@@ -196,7 +197,8 @@ export interface AgentLoopOptions {
    * @remarks
    * `tasks` is a resolved agent's, and is read only for the side tasks the loop was asked to run:
    * `tasks.toolSelect` under `preselect` and `tasks.compaction` under `compact`. `toolSelectModel`
-   * is the flattened spelling of the first, for a host that is not on the spec.
+   * is the flattened spelling of the first, for a host that is not on the spec. With neither
+   * naming a model, `preselect` asks `model` itself; `compact` never does.
    */
   config: Endpoint &
     ModelParams &
@@ -291,17 +293,34 @@ export interface AgentLoopOptions {
    * The preselector is `config.tasks.toolSelect` with everything it states — its endpoint, model,
    * ceiling, temperature and reasoning effort, keyed as `taskCall` keys a task against `config` —
    * and otherwise `config.toolSelectModel` on the config's own endpoint at `preselect`'s defaults.
-   * What it is asked about is the text of the last user message. Nothing is asked in eager mode,
-   * with neither preselector named, with no user message, or when `preselected` is given — an
-   * empty one included, which is how a host says it has already decided.
+   * With neither naming a model it is `config.model` itself, on the same terms as
+   * `toolSelectModel`: a host that opted in has asked for a preselection, and an empty name is a
+   * setting nobody filled in rather than a refusal. A host that wants none passes no `preselect`.
+   *
+   * What it is asked about is `preselectQuery`, and otherwise the text of the last user message as
+   * the host gave it — the hooks' context is put on the request, never on `messages`, so the
+   * tools are picked on what was asked rather than on what was recalled. Nothing is asked in eager
+   * mode, with no question, or when `preselected` is given — an empty one included, which is how
+   * a host says it has already decided.
    *
    * `true` takes `preselect`'s defaults; an object passes `keywords` and `maxPerLoad` through.
    * Its notices arrive as `notice` events, and a preselection that fails picks nothing rather
    * than ending the run. What it picked is a notice too, `PRESELECTED_NOTICE` and the names,
-   * before the first `turn` event, and is the result's `preselected`. It runs before the hooks
-   * gather, not beside them.
+   * before the first `turn` event, and is the result's `preselected`. It runs beside the hooks'
+   * `gather` rather than before it, since neither reads what the other returns, and the first
+   * request waits for both.
    */
   preselect?: boolean | { keywords?: boolean | KeywordPreselectOptions; maxPerLoad?: number };
+  /**
+   * What the loop's own preselection is asked about, in place of the last user message's text.
+   * Read only under `preselect`.
+   *
+   * @remarks
+   * For a host that gathered its hooks itself and sent the question with `withContext` already on
+   * it: the loop cannot tell the context from the question, and a preselector shown both picks
+   * tools for whatever memory recalled. Blank asks nothing, as a blank question does.
+   */
+  preselectQuery?: string;
   /**
    * Has the loop fold the transcript itself before a step, once `planCompaction` says the window
    * is filling, with the summary written by `config.tasks.compaction` on its own settings. Off by
@@ -796,17 +815,18 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
  * name on its own endpoint where it does not.
  *
  * @param options - The run's options. Read for the config, the catalogue, the signal, what
- * `preselect` passes through, and the last user message, whose text is what is asked about.
+ * `preselect` passes through, and `preselectQuery` or else the last user message, whose text is
+ * what is asked about.
  * @param notice - Hears the preselector's notices, a failure among them.
- * @returns The names picked. Empty where there is no user message or its text is blank — nothing
+ * @returns The names picked. Empty where the query is blank or there is no user message — nothing
  * is asked — and where the preselection picked nothing or failed. An aborted request still rejects.
  *
  * @remarks
- * `preselect` answers an empty model with nothing, so a config that names neither asks nothing.
+ * With no preselector named the main model is asked, on the config's own endpoint.
  */
 async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise<string[]> {
   const { config, catalog = [], signal } = options;
-  const prompt = userText(options.messages.findLast((message) => message.role === Role.User));
+  const prompt = options.preselectQuery ?? userText(options.messages.findLast((message) => message.role === Role.User));
   if (!prompt.trim()) {
     return [];
   }
@@ -817,7 +837,7 @@ async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise
   };
   const selector = config.tasks?.toolSelect;
   if (!selector?.model) {
-    return preselect(config, config.toolSelectModel ?? '', catalog, prompt, asked);
+    return preselect(config, config.toolSelectModel || config.model, catalog, prompt, asked);
   }
   const call = taskCall(selector, asked, config);
   return preselect(call.endpoint, call.model, catalog, prompt, call.options);
@@ -1118,6 +1138,18 @@ async function runSteps(
   const extraBody = pin ? { ...pin.fields, ...config.extraBody } : config.extraBody;
   const sending = { ...config, extraBody };
 
+  // Started before the preselection rather than after it: neither reads the other, and in a row
+  // they cost the first request two round trips where one will do. A failing runner is a note, but
+  // a host's `onNote` that throws rejects the gather, perhaps while the preselection is still out:
+  // handled at once so that is no unhandled rejection, and still thrown below, where it always was.
+  const gathering: Promise<Gathered> = hooks
+    ? gather(hooks.run, hooks.events ?? [HookEvent.BeforeTurn], hooks.context, {
+        signal,
+        onNote: hooks.onNote,
+        maxTokens: hooks.maxTokens,
+      })
+    : Promise.resolve({ context: '', notes: [] });
+  gathering.catch(() => undefined);
   const { proxied, onDemand, loaded, preselected } = await discovery(options, notice);
   const instructions =
     serverInstructions === false
@@ -1157,13 +1189,7 @@ async function runSteps(
   // hooks' context with it, which is right.
   const question = messages.findLast((message) => message.role === Role.User);
   const questionAt = () => (question ? messages.indexOf(question) : -1);
-  const gathered: Gathered = hooks
-    ? await gather(hooks.run, hooks.events ?? [HookEvent.BeforeTurn], hooks.context, {
-        signal,
-        onNote: hooks.onNote,
-        maxTokens: hooks.maxTokens,
-      })
-    : { context: '', notes: [] };
+  const gathered = await gathering;
   // Read once, so what the result hands back is what every step of this run said.
   const preface = hooks?.preface ?? configureHooks().preface;
 

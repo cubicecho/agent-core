@@ -171,7 +171,10 @@ export type ToolDiscovery = (typeof ToolDiscovery)[keyof typeof ToolDiscovery];
 export interface ToolPolicy {
   /** How tool definitions reach the model. */
   toolDiscovery: ToolDiscovery;
-  /** The model that does the preselection pass. Empty means don't preselect. */
+  /**
+   * The model that does the preselection pass. Empty means don't preselect, to `preselect` itself;
+   * `runAgentLoop`, asked to preselect, reads empty as the run's own `model`.
+   */
   toolSelectModel: string;
   /** Hard stop on runaway tool loops. */
   maxToolIterations: number;
