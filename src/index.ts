@@ -175,6 +175,7 @@ export {
 export { buildBody } from './run/request-body.ts';
 export {
   dropReasoning,
+  oneCallPerMessage,
   preview,
   type ReasonedMessage,
   type Scratchpad,
@@ -377,6 +378,7 @@ export {
   FinishReason,
   FUNCTION_TOOL,
   JSON_SCHEMA_FORMAT,
+  PARALLEL_TOOL_CALLS,
   PartType,
   REASONING,
   REASONING_CONTENT,

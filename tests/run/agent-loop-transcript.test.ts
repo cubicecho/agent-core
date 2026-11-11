@@ -3,7 +3,20 @@ import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
-import { apiError, type Body, chunks, config, type Message, MINTED_ID, says, text, tool, user } from '../helpers.ts';
+import {
+  apiError,
+  type Body,
+  chunks,
+  config,
+  type Message,
+  MINTED_ID,
+  pairsByPosition,
+  says,
+  singleCallRefusal,
+  text,
+  tool,
+  user,
+} from '../helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -968,6 +981,149 @@ describe('reasoning replay', () => {
     expect(scratchpads(sent[1])).toEqual(['look it up']);
     expect(scratchpads(sent[2])).toEqual([undefined]);
     expect(notices).toContain('m does not take its reasoning back; replaying without it');
+  });
+});
+
+describe('one call per message', () => {
+  const LLAMA_ONE_CALL = 'This model only supports single tool-calls at once!';
+  /** Each message as its role, with a call's or a result's id after it. */
+  const shape = (messages: readonly Message[]) =>
+    messages.map((message) => {
+      if (message.role === Role.Tool) {
+        return `tool ${message.tool_call_id}`;
+      }
+      const ids = message.role === Role.Assistant ? (message.tool_calls ?? []).map(({ id }) => id) : [];
+      return ids.length ? `${message.role} ${ids.join(' ')}` : message.role;
+    });
+  const sentBodies = () => create.mock.calls.map(([body]) => body as Body);
+
+  it('writes two calls as two pairs, runs them one at a time, and replays them that way', async () => {
+    create
+      .mockReturnValueOnce(
+        calls(
+          [
+            ['a', '{}'],
+            ['b', '{}'],
+          ],
+          'both',
+        ),
+      )
+      .mockReturnValueOnce(says('done'));
+    const order: string[] = [];
+    const heard: { message: Message; turn?: Turn; written?: WrittenMessage }[] = [];
+    const result = await runAgentLoop({
+      config: { ...config, singleCallMessages: true },
+      messages: question,
+      tools: [tool('a'), tool('b')],
+      parallel: true,
+      dispatch: async ({ name }) => {
+        order.push(`${name} starts`);
+        await Promise.resolve();
+        order.push(`${name} ends`);
+        return `${name} ran`;
+      },
+      onMessage: (message, _step, turn, written) => {
+        heard.push({ message, turn, written });
+      },
+    });
+    expect(shape(result.messages)).toEqual(['user', 'assistant c0', 'tool c0', 'assistant c1', 'tool c1', 'assistant']);
+    expect(result.messages[1]).toHaveProperty('reasoning_content', 'both');
+    expect(result.messages[3]).toEqual({ role: Role.Assistant, content: null, tool_calls: [expect.anything()] });
+    // In the order asked, each after the one before, whatever `parallel` says.
+    expect(order).toEqual(['a starts', 'a ends', 'b starts', 'b ends']);
+    expect(heard.map((entry) => entry.message)).toEqual(result.messages.slice(1));
+    // The first piece is the turn's, and its `raw` is still the whole reply.
+    expect(heard[0].turn?.toolCalls).toHaveLength(2);
+    expect(heard[0].written?.raw.tool_calls).toHaveLength(2);
+    expect(heard[2].turn).toBeUndefined();
+    expect(heard[2].written).toBeUndefined();
+    const [first, second] = sentBodies();
+    expect(first).toHaveProperty('parallel_tool_calls', false);
+    expect(second.messages.slice(1)).toEqual(result.messages.slice(1, 5));
+    expect(singleCallRefusal(second.messages)).toBeUndefined();
+    expect(pairsByPosition(second.messages)).toBe(true);
+  });
+
+  it('splits calls recovered from the text the same way', async () => {
+    const written = ['a', 'b'].map((name) => `<tool_call>{"name": "${name}", "arguments": {}}</tool_call>`).join('');
+    create.mockReturnValueOnce(says(written)).mockReturnValueOnce(says('done'));
+    const result = await runAgentLoop({
+      config: { ...config, singleCallMessages: true },
+      messages: question,
+      tools: [tool('a'), tool('b')],
+      dispatch: async ({ name }) => `${name} ran`,
+    });
+    expect(result.messages).toHaveLength(6);
+    expect(singleCallRefusal(result.messages)).toBeUndefined();
+    expect(pairsByPosition(result.messages)).toBe(true);
+    expect(singleCallRefusal(sentBodies()[1].messages)).toBeUndefined();
+  });
+
+  it('learns it from the template refusing, replays what it wrote before split, and writes split after', async () => {
+    const both = () =>
+      calls([
+        ['a', '{}'],
+        ['b', '{}'],
+      ]);
+    create
+      .mockReturnValueOnce(both())
+      .mockRejectedValueOnce(apiError(400, LLAMA_ONE_CALL))
+      .mockReturnValueOnce(both())
+      .mockReturnValueOnce(says('done'));
+    const notices: string[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a'), tool('b')],
+      dispatch: async ({ name }) => `${name} ran`,
+      mintCallId: callIdMinter(3),
+      onEvent: (event) => {
+        if (event.kind === RunEventKind.Notice) {
+          notices.push(event.text ?? '');
+        }
+      },
+    });
+    expect(result.turn.content).toBe('done');
+    expect(notices).toContain('m takes one tool call per message; replaying its calls one to a message');
+    const [first, refused, retried, last] = sentBodies();
+    expect(first).not.toHaveProperty('parallel_tool_calls');
+    expect(singleCallRefusal(refused.messages)).toBe(LLAMA_ONE_CALL);
+    expect(singleCallRefusal(retried.messages)).toBeUndefined();
+    expect(retried).toHaveProperty('parallel_tool_calls', false);
+    // The step before the latch stays as it was written; the one after is written split.
+    expect(shape(result.messages).slice(1, 4)).toEqual(['assistant c0 c1', 'tool c0', 'tool c1']);
+    expect(singleCallRefusal(result.messages.slice(4))).toBeUndefined();
+    expect(singleCallRefusal(last.messages)).toBeUndefined();
+    expect(pairsByPosition(last.messages)).toBe(true);
+  });
+
+  it('ends a stopped step at the last pair, and never writes the call it did not reach', async () => {
+    const controller = new AbortController();
+    create.mockReturnValueOnce(
+      calls([
+        ['a', '{}'],
+        ['b', '{}'],
+      ]),
+    );
+    const error = await thrown(
+      runAgentLoop({
+        config: { ...config, singleCallMessages: true },
+        messages: question,
+        tools: [tool('a'), tool('b')],
+        dispatch: async () => {
+          controller.abort();
+          throw new Error('stopped');
+        },
+        signal: controller.signal,
+      }),
+    );
+    const failure = error as InstanceType<typeof AgentLoopError>;
+    expect(outline(failure.messages)).toEqual([
+      'user: hi',
+      'assistant: null',
+      'tool c0: Stopped before this call finished.',
+    ]);
+    expect(pairsByPosition(failure.messages)).toBe(true);
   });
 });
 

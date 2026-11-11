@@ -229,6 +229,10 @@ and the newer spelling is exactly the one an older model or a llama.cpp-shaped e
 `modelCapabilitiesFor` starts a model at `legacyTokenLimit: true`, and an absent model has to read
 the same way it does.
 
+`multiCallMessages` is the model's template refusing an assistant message with several tool calls,
+answered by replaying one call per message — see
+[A template that takes one call per message](#a-template-that-takes-one-call-per-message).
+
 One more model flag is never answered by `negotiate`: `assistantPrefill`, whether the model
 carries on a trailing assistant message rather than answering afresh after it. Only `continueTurn`
 sends one, so only it latches the flag, and it is persisted in a snapshot like the rest.
@@ -552,6 +556,43 @@ every time — for everything else:
 const reads = (call: ToolCallRequest) => pool.readsOnly(call.name, { servers });
 await runAgentLoop({ ...options, parallel: reads, dedupeToolCalls: reads });
 ```
+
+### A template that takes one call per message
+
+Some chat templates cannot render an assistant message with several calls. Llama 3.1, 3.2 and
+3.3 raise `This model only supports single tool-calls at once!`, and gpt-oss's HF jinja reads
+`tool_calls[0]` and answers every result as that call. A turn with two calls — which vLLM's
+`llama3_json` parser hands back by default, and which recovery can find in the text on any server —
+then fails the *next* request, after its calls have already run.
+
+`singleCallMessages: true` on the config writes each call as an `assistant`/`tool` pair of its own,
+in the order asked, and runs them one at a time whatever `parallel` says. The first message keeps
+the text and the scratchpad, and each one after it is `content: null` and one call, under the id
+the model gave it:
+
+```
+assistant [A, B], tool A, tool B   →   assistant [A], tool A, assistant [B], tool B
+```
+
+Every request then also sends `parallel_tool_calls: false` beside its tools — vLLM acts only on an
+explicit `false`, and OpenAI refuses the field with no tools — and replays any earlier message with
+several calls split the same way (`oneCallPerMessage`, exported for a host's stored transcript).
+A refusal that names the field, in whatever words, drops it for the model and sends again, since
+vLLM's `hf` parser refuses `false`. An `extraBody` that sets it wins.
+
+Without the option the template's refusal is answered the way the others in this file are: it
+latches `multiCallMessages` off for that model on that endpoint, says so in a notice, and sends the
+same step again split. From then on the run writes split, and the latch rides in the snapshot.
+
+The split is made as each call is written, not only as the request is built, so the result's
+`messages` and every row a host stores from `onMessage` are already a transcript the model can be
+sent, and each later request replays the same messages byte for byte, which keeps the prefix cache.
+The split on send is the same function, idempotent on a split transcript, so it costs nothing
+there and only reshapes what was written before the latch. Each pair is one call and its result,
+so templates that pair results by position rather than by id — Qwen, GLM, DeepSeek V3.2 — read the
+same exchange. `onMessage` hears the first piece with the turn and `written`, whose `raw` is still
+the whole reply, and the rest without either. A run stopped part-way ends at the last pair: a call
+whose message was never written is not answered either.
 
 Three kinds of call never reach `dispatch`: `load_tools`, which the loop answers itself, a call
 whose arguments could not be read, and that identical repeat. A host that draws each call as a
@@ -1107,7 +1148,7 @@ and trailing slashes, so a row saved before the rule still finds its own key.
 
 ## Fields this interface cannot spell
 
-`ModelParams` has `temperature`, `maxTokens`, `reasoningEffort` and `reasoningReplay`. Everything else a model card or
+`ModelParams` has `temperature`, `maxTokens`, `reasoningEffort`, `reasoningReplay` and `singleCallMessages`. Everything else a model card or
 a server asks for — `top_k`, `min_p`, `repeat_penalty`, llama.cpp's `id_slot`, `cache_prompt` and
 `reasoning_budget` — goes in `extraBody`, which `buildBody` merges in last. It can override
 `temperature` but not `model`, `messages`, `stream` or `tools`, which are the loop's.

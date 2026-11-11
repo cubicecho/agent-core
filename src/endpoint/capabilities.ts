@@ -3,6 +3,7 @@ import { getOrCreate } from '../core/guards.ts';
 import { scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
 import type { Produced } from '../wire/stream.ts';
+import { PARALLEL_TOOL_CALLS } from '../wire/wire.ts';
 import { endpointId } from './client.ts';
 import { isGrammarError } from './schema-compat.ts';
 
@@ -137,6 +138,13 @@ export interface ModelCapabilities {
    * whole request over the field, and the answer is to replay the transcript without it.
    */
   reasoningContent: boolean;
+  /**
+   * Takes a replayed assistant message with several `tool_calls`. Llama 3.x's chat templates raise
+   * `This model only supports single tool-calls at once!` on one, and the answer is to replay each
+   * call as an `assistant`/`tool` pair of its own and ask for no more than one at a time, which is
+   * what `ModelParams.singleCallMessages` does from the start.
+   */
+  multiCallMessages: boolean;
 }
 
 /** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
@@ -159,6 +167,7 @@ export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
   structuredOutput: true,
   assistantPrefill: true,
   reasoningContent: true,
+  multiCallMessages: true,
 };
 
 /** The names of those flags, for a caller that reads or latches each in turn. */
@@ -740,6 +749,45 @@ const refusesReasoningContent = (detail: string) =>
   ) &&
   !/missing|must be passed|required/i.test(detail);
 
+/**
+ * A chat template that renders one tool call per assistant message, refusing a replayed one with
+ * several.
+ *
+ * @param detail - The server's error text.
+ * @returns `true` for Llama 3.x's `This model only supports single tool-calls at once!`, as
+ * vLLM and llama.cpp pass the template's exception on.
+ */
+const refusesSeveralCalls = (detail: string) => /only supports? single tool[- ]calls?/i.test(detail);
+
+/**
+ * `parallel_tool_calls` refused in whatever words, where it was sent and may be dropped.
+ *
+ * @param refusal - The refusal. Its named model is written to: the field joins `refusedFields`.
+ * @returns The notice; `undefined`, having latched nothing, where no model was named, the field is
+ * not droppable or is refused already, or the text does not name it.
+ *
+ * @remarks
+ * Answered on its name alone, unlike the fields `unknownFields` reads, because vLLM's `hf` parser
+ * refuses an explicit `false` rather than an unknown field. The field only asks for less, and the
+ * transcript is kept to one call per message whether it is sent or not, so a false positive costs
+ * nothing a request needs.
+ */
+const parallelCallsAnswer: Answer = ({ detail, named, droppable }) => {
+  if (named === undefined) {
+    return undefined;
+  }
+  const { refusedFields } = named.refused;
+  const isRefusal =
+    droppable.has(PARALLEL_TOOL_CALLS) &&
+    refusedFields.has(PARALLEL_TOOL_CALLS) === false &&
+    detail.includes(PARALLEL_TOOL_CALLS);
+  if (isRefusal === false) {
+    return undefined;
+  }
+  refusedFields.add(PARALLEL_TOOL_CALLS);
+  return `${named.name} does not take ${PARALLEL_TOOL_CALLS}; retrying without it`;
+};
+
 /** What `negotiate` takes besides the request. All optional. */
 export interface NegotiateOptions {
   /**
@@ -931,6 +979,12 @@ const ANSWERS: readonly Answer[] = [
     refusesReasoningContent,
     (name) => `${name} does not take its reasoning back; replaying without it`,
   ),
+  modelAnswer(
+    'multiCallMessages',
+    refusesSeveralCalls,
+    (name) => `${name} takes one tool call per message; replaying its calls one to a message`,
+  ),
+  parallelCallsAnswer,
   droppedFieldsAnswer,
 ];
 

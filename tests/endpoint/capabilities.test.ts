@@ -10,6 +10,7 @@ import {
   resetCapabilities,
 } from '../../src/endpoint/capabilities.ts';
 import type { Produced } from '../../src/wire/stream.ts';
+import { PARALLEL_TOOL_CALLS } from '../../src/wire/wire.ts';
 import { apiError } from '../helpers.ts';
 import { NO_EFFORT, NO_GRAMMAR, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from '../refusals.ts';
 
@@ -354,6 +355,7 @@ describe('modelCapabilitiesFor', () => {
       refusedEfforts: new Set(),
       assistantPrefill: true,
       reasoningContent: true,
+      multiCallMessages: true,
     });
     model.reasoningEffort = false;
     expect(modelCapabilitiesFor(supports, 'gpt-5').reasoningEffort).toBe(false);
@@ -551,6 +553,7 @@ describe('negotiate, for a model', () => {
         refusedEfforts: new Set(),
         assistantPrefill: true,
         reasoningContent: true,
+        multiCallMessages: true,
       })),
     );
   });
@@ -673,6 +676,45 @@ describe('negotiate, for a field the caller can do without', () => {
     const { send } = modelThatRefuses(UNRECOGNIZED, UNRECOGNIZED);
     await expect(negotiate(vllm(), send, { model: 'qwen', droppable: ['min_p'] })).rejects.toThrow('min_p');
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops parallel_tool_calls on a refusal that names it in any words, where it is droppable', async () => {
+    const supports = vllm();
+    const notices: string[] = [];
+    const refusal = apiError(400, 'parallel_tool_calls=False is not supported by the hf tool parser');
+    const { send, asked } = modelThatRefuses(refusal);
+    await expect(
+      negotiate(supports, send, {
+        model: 'llama',
+        droppable: [PARALLEL_TOOL_CALLS],
+        onNotice: (message) => notices.push(message),
+      }),
+    ).resolves.toBe('answered');
+    expect(asked.map((model) => [...model.refusedFields])).toEqual([[], [PARALLEL_TOOL_CALLS]]);
+    expect(notices).toEqual(['llama does not take parallel_tool_calls; retrying without it']);
+    const { send: again } = modelThatRefuses(refusal);
+    await expect(negotiate(vllm(), again, { model: 'qwen' })).rejects.toThrow('hf tool parser');
+  });
+});
+
+describe('a template that renders one call per message', () => {
+  const LLAMA_ONE_CALL = apiError(400, 'This model only supports single tool-calls at once!');
+
+  it('latches the model to one call a message, with a notice, and sends again', async () => {
+    const supports = capabilitiesFor('http://vllm:8000/v1');
+    const notices: string[] = [];
+    const { send, asked } = modelThatRefuses(LLAMA_ONE_CALL);
+    await expect(
+      negotiate(supports, send, { model: 'llama', onNotice: (message) => notices.push(message) }),
+    ).resolves.toBe('answered');
+    expect(asked.map((model) => model.multiCallMessages)).toEqual([true, false]);
+    expect(notices).toEqual(['llama takes one tool call per message; replaying its calls one to a message']);
+    expect(modelCapabilitiesFor(supports, 'qwen').multiCallMessages).toBe(true);
+  });
+
+  it('passes the refusal on where no model was named', async () => {
+    const { send } = modelThatRefuses(LLAMA_ONE_CALL);
+    await expect(negotiate(capabilitiesFor('http://vllm:8000/v1'), send)).rejects.toThrow('single tool-calls');
   });
 });
 

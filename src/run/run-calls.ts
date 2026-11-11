@@ -221,6 +221,79 @@ export const writtenMessage = (content: string, calls: ToolCall[], scratchpad?: 
 });
 
 /**
+ * An assistant message as one message per call, in the order it made them.
+ *
+ * @param message - The message. Not written to.
+ * @returns `[message]` itself where it carries one call or none; otherwise one message per call,
+ * the first a copy keeping the text, the scratchpad and every other field, and each after it only
+ * `role`, `content: null` and its call.
+ *
+ * @remarks
+ * The text and the scratchpad came before every call, so they stay on the first, which is where a
+ * model that writes one call a turn would have put them.
+ */
+export function splitCalls(message: ReasonedMessage): ReasonedMessage[] {
+  const [first, ...rest] = message.tool_calls ?? [];
+  if (first === undefined || rest.length === 0) {
+    return [message];
+  }
+  return [
+    { ...message, tool_calls: [first] },
+    ...rest.map((call): ReasonedMessage => ({ role: Role.Assistant, content: null, tool_calls: [call] })),
+  ];
+}
+
+/**
+ * A transcript with every assistant message that carries several calls replayed as consecutive
+ * single-call `assistant`/`tool` pairs, for a chat template that renders one call per message.
+ *
+ * @param messages - The transcript. Not written to.
+ * @returns `messages` itself where no assistant message carries more than one call; otherwise a new
+ * array in which each such message is `splitCalls`' pieces, each followed by the results that
+ * answer its call's id, and every other message the same object in the same place.
+ *
+ * @remarks
+ * The results read are the `tool` messages straight after the message, which is where the loop
+ * writes them. One whose id answers none of its calls goes after the last pair rather than being
+ * dropped. Each call keeps its id and each pair is one call and its result, so a template that
+ * pairs by id and one that pairs by position — Qwen, GLM, DeepSeek V3.2 — read the same exchange.
+ *
+ * What `buildBody` sends under `singleCallMessages` or a latched `multiCallMessages`, so a
+ * transcript written before either still renders; a host holding a stored transcript for such a
+ * model can call it too. The same split on every request, so the prefix stays the same.
+ */
+export function oneCallPerMessage(messages: OpenAI.ChatCompletionMessageParam[]): OpenAI.ChatCompletionMessageParam[] {
+  let out: OpenAI.ChatCompletionMessageParam[] | undefined;
+  let at = 0;
+  while (at < messages.length) {
+    const message = messages[at];
+    const pieces = message.role === Role.Assistant ? splitCalls(message) : [];
+    if (pieces.length < 2) {
+      out?.push(message);
+      at++;
+      continue;
+    }
+    out ??= messages.slice(0, at);
+    let end = at + 1;
+    while (end < messages.length && messages[end].role === Role.Tool) {
+      end++;
+    }
+    const results = messages
+      .slice(at + 1, end)
+      .filter((result): result is OpenAI.ChatCompletionToolMessageParam => result.role === Role.Tool);
+    const ids = new Set<string>();
+    for (const piece of pieces) {
+      const id = piece.tool_calls?.[0]?.id ?? '';
+      ids.add(id);
+      out.push(piece, ...results.filter((result) => result.tool_call_id === id));
+    }
+    out.push(...results.filter((result) => ids.has(result.tool_call_id) === false));
+    at = end;
+  }
+  return out ?? messages;
+}
+
+/**
  * The transcript with `reasoning_content` and `reasoning` taken off its assistant messages from an
  * index on.
  *
@@ -753,6 +826,9 @@ async function runCall(
  * @param parsed - The step's calls, with their arguments read.
  * @param messages - The transcript the results are written into.
  * @param step - Which step this is, for the host told of each result.
+ * @param [opens] - Writes the single-call assistant message that call `at` is made under, for each
+ * call after the first, whose message is written already. Given, the calls run one at a time,
+ * each after its message and before the next, whatever `parallel` says.
  * @returns The first call, in the order asked, whose answer ended the run, or `undefined` where
  * none did.
  *
@@ -766,12 +842,16 @@ async function runCall(
  * schedules calls is not what they mean: a reply that says "write the file, then hand off" in one
  * turn wants the file written whichever order it named the two in, and a call batched beside the
  * end was running already. A tool that must have nothing after it says so in its description.
+ *
+ * With `opens`, a call whose message was never written is not answered either: it is not in the
+ * transcript, which ends at the last pair and is well-formed as it stands.
  */
 export async function runCalls(
   run: Calling,
   parsed: ReadCall[],
   messages: OpenAI.ChatCompletionMessageParam[],
   step: number,
+  opens?: (at: number) => Promise<void>,
 ): Promise<EndedBy | undefined> {
   const { signal, toolCalls } = run;
   // Per step, not per run: the answer to a call made two steps ago was true before the tools in
@@ -784,6 +864,8 @@ export async function runCalls(
   // transcript. Both count from the front, since results are written in the order asked.
   let begun = 0;
   let kept = 0;
+  // How many of the calls are in the transcript: all of them, unless each is written as it runs.
+  let asked = opens ? 1 : parsed.length;
   const keep = async (id: string, content: string) => {
     const result: OpenAI.ChatCompletionToolMessageParam = {
       role: Role.Tool,
@@ -807,7 +889,13 @@ export async function runCalls(
     while (from < parsed.length) {
       signal?.throwIfAborted();
       const start = from;
-      const to = batchEnd(run, ready, start, parsed.length, answered);
+      const to = opens ? start + 1 : batchEnd(run, ready, start, parsed.length, answered);
+      if (opens && start > 0) {
+        // Counted before it is awaited: the message is in the transcript once `opens` has pushed
+        // it, and a host that throws on hearing of it leaves a call to answer as never run.
+        asked = to;
+        await opens(start);
+      }
       begun = to;
       const runAt = async (at: number) => {
         const { result, end } = await runCall(run, ready(at), answered, step);
@@ -839,7 +927,7 @@ export async function runCalls(
     // Only a call that was made counts in `toolCalls`.
     for (const [at, entry] of parsed.entries()) {
       const { call } = entry;
-      if (at < kept) {
+      if (at < kept || at >= asked) {
         continue;
       }
       const outcome = outcomes[at];
