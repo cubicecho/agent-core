@@ -146,6 +146,22 @@ export interface ModelParams {
    */
   reasoningReplay?: ReasoningReplay;
   /**
+   * Writes and replays one tool call per assistant message, for a model whose chat template
+   * cannot render more.
+   *
+   * @defaultValue `false`
+   *
+   * @remarks
+   * Llama 3.x's templates raise `This model only supports single tool-calls at once!` on a
+   * message with several calls, and gpt-oss's HF jinja silently answers each result as the
+   * first call. On, `runAgentLoop` writes a turn's calls as consecutive `assistant`/`tool` pairs
+   * in the order asked and runs them one at a time, and `buildBody` sends
+   * `parallel_tool_calls: false` beside any tools and replays an earlier message with several
+   * calls split the same way (`oneCallPerMessage`). A model whose template refuses in those
+   * words latches the same behaviour without it (`ModelCapabilities.multiCallMessages`).
+   */
+  singleCallMessages?: boolean;
+  /**
    * Request fields this interface cannot spell, merged into the body last by `buildBody`.
    *
    * @remarks

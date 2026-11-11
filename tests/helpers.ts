@@ -198,6 +198,42 @@ export const templateRefusal = (messages: Message[]): string | undefined => {
 };
 
 /**
+ * What Llama 3.x's chat template raises over a request with an assistant message of several calls.
+ *
+ * @param messages - The request's messages, as sent.
+ * @returns The exception's text, or `undefined` where every assistant message with calls has one.
+ *
+ * @remarks
+ * Transcribed, as `templateRefusal` is: the 3.1, 3.2 and 3.3 templates read
+ * `{%- if not message.tool_calls|length == 1 %}` for any message with a `tool_calls` key and raise.
+ */
+export const singleCallRefusal = (messages: Message[]): string | undefined =>
+  messages.some((message) => 'tool_calls' in message && message.tool_calls?.length !== 1)
+    ? 'This model only supports single tool-calls at once!'
+    : undefined;
+
+/**
+ * Whether every assistant message's results come straight after it, in the order of its calls,
+ * which is the only pairing a template that matches by position — Qwen, GLM, DeepSeek V3.2 — reads.
+ *
+ * @param messages - The transcript.
+ * @returns `true` where each run of `tool` messages answers, id for id and in order, the calls of
+ * the assistant message just before it.
+ */
+export const pairsByPosition = (messages: Message[]): boolean =>
+  messages.every((message, at) => {
+    if (message.role !== Role.Assistant || (message.tool_calls?.length ?? 0) === 0) {
+      return true;
+    }
+    const ids = message.tool_calls?.map((call) => call.id) ?? [];
+    const answers = messages.slice(at + 1, at + 1 + ids.length);
+    return (
+      answers.length === ids.length &&
+      answers.every((answer, index) => answer.role === Role.Tool && answer.tool_call_id === ids[index])
+    );
+  });
+
+/**
  * What a hook's runner reports for one hook, whole, so a fake runner can be typed as a real one.
  *
  * @param [given] - The fields the test is about. The rest describe a memory hook that ran before

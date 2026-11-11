@@ -2,8 +2,18 @@ import type OpenAI from 'openai';
 import { afterEach, describe, expect, it } from 'vitest';
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../../src/endpoint/capabilities.ts';
 import { buildBody, singleSystem } from '../../src/run/request-body.ts';
-import { FUNCTION_TOOL, Role, SchemaType } from '../../src/wire/wire.ts';
-import { assistant, type Body, config, type Message, templateRefusal, tool, user } from '../helpers.ts';
+import { FUNCTION_TOOL, PARALLEL_TOOL_CALLS, Role, SchemaType } from '../../src/wire/wire.ts';
+import {
+  assistant,
+  type Body,
+  config,
+  type Message,
+  pairsByPosition,
+  singleCallRefusal,
+  templateRefusal,
+  tool,
+  user,
+} from '../helpers.ts';
 
 afterEach(() => resetCapabilities());
 
@@ -98,6 +108,58 @@ describe('buildBody', () => {
     );
     expect(body).toMatchObject({ id_slot: 2, temperature: 0.9, model: 'm', stream: true });
     expect(body).not.toHaveProperty('min_p');
+  });
+
+  describe('one call per message', () => {
+    const asking: Message = {
+      role: Role.Assistant,
+      content: null,
+      tool_calls: ['a', 'b'].map((id) => ({ id, type: FUNCTION_TOOL, function: { name: id, arguments: '{}' } })),
+    };
+    const transcript: Message[] = [
+      user('read a and b'),
+      asking,
+      { role: Role.Tool, tool_call_id: 'a', content: 'A' },
+      { role: Role.Tool, tool_call_id: 'b', content: 'B' },
+    ];
+
+    it('sends neither the field nor a split by default', () => {
+      const body = buildBody(config, capabilitiesFor('http://local/v1'), undefined, transcript, [tool('a')]);
+      expect(body).not.toHaveProperty(PARALLEL_TOOL_CALLS);
+      expect(body.messages).toBe(transcript);
+    });
+
+    it('asks for one call at a time beside tools and replays each call as a pair of its own', () => {
+      const single = { ...config, singleCallMessages: true };
+      const body = buildBody(single, capabilitiesFor('http://local/v1'), undefined, transcript, [tool('a')]);
+      expect(body).toHaveProperty(PARALLEL_TOOL_CALLS, false);
+      expect(singleCallRefusal(transcript)).toBeDefined();
+      expect(singleCallRefusal(body.messages)).toBeUndefined();
+      expect(pairsByPosition(body.messages)).toBe(true);
+      // OpenAI refuses the field on a request with no tools.
+      const bare = buildBody(single, capabilitiesFor('http://local/v1'), undefined, transcript);
+      expect(bare).not.toHaveProperty(PARALLEL_TOOL_CALLS);
+      expect(singleCallRefusal(bare.messages)).toBeUndefined();
+    });
+
+    it('does the same for a model whose template refused, and drops the field once it is refused', () => {
+      const supports = capabilitiesFor('http://local/v1');
+      const refused = modelCapabilitiesFor(supports, 'm');
+      refused.multiCallMessages = false;
+      const body = buildBody(config, supports, refused, transcript, [tool('a')]);
+      expect(body).toHaveProperty(PARALLEL_TOOL_CALLS, false);
+      expect(singleCallRefusal(body.messages)).toBeUndefined();
+      refused.refusedFields.add(PARALLEL_TOOL_CALLS);
+      const without = buildBody(config, supports, refused, transcript, [tool('a')]);
+      expect(without).not.toHaveProperty(PARALLEL_TOOL_CALLS);
+      expect(singleCallRefusal(without.messages)).toBeUndefined();
+    });
+
+    it("lets extraBody's own parallel_tool_calls win", () => {
+      const single = { ...config, singleCallMessages: true, extraBody: { [PARALLEL_TOOL_CALLS]: true } };
+      const body = buildBody(single, capabilitiesFor('http://local/v1'), undefined, transcript, [tool('a')]);
+      expect(body).toHaveProperty(PARALLEL_TOOL_CALLS, true);
+    });
   });
 
   it('relaxes schemas where the endpoint could not build a grammar', () => {

@@ -59,6 +59,7 @@ describe('capability snapshots', () => {
             structuredOutput: true,
             assistantPrefill: true,
             reasoningContent: true,
+            multiCallMessages: true,
             thinkingHints: true,
           },
           small: {
@@ -70,6 +71,7 @@ describe('capability snapshots', () => {
             structuredOutput: true,
             assistantPrefill: true,
             reasoningContent: true,
+            multiCallMessages: true,
             thinkingHints: false,
           },
         },

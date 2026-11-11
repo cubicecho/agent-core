@@ -10,8 +10,8 @@ import {
 import { relaxTools, sanitizeTools } from '../endpoint/schema-compat.ts';
 import { textOf } from '../hooks/hooks.ts';
 import { orderTools, type ToolOrder } from '../tools/tool-loading.ts';
-import { Role } from '../wire/wire.ts';
-import { dropReasoning } from './run-calls.ts';
+import { PARALLEL_TOOL_CALLS, Role } from '../wire/wire.ts';
+import { dropReasoning, oneCallPerMessage } from './run-calls.ts';
 
 /** What the texts of several leading system messages are joined with when they become one. */
 const SYSTEM_JOIN = '\n\n';
@@ -48,6 +48,17 @@ export function singleSystem(messages: OpenAI.ChatCompletionMessageParam[]): Ope
 }
 
 /**
+ * Whether a model is sent and written one tool call per assistant message.
+ *
+ * @param config - The run's, read for `singleCallMessages`.
+ * @param refused - What the model has refused. Absent is a model that has refused nothing.
+ * @returns `true` where the config asks for it or the model's template refused a message with
+ * several.
+ */
+export const singleCalls = (config: ModelParams, refused: ModelCapabilities | undefined) =>
+  config.singleCallMessages === true || refused?.multiCallMessages === false;
+
+/**
  * The one place a streamed request's body is decided from a config and what the endpoint and
  * the model have refused.
  *
@@ -58,21 +69,23 @@ export function singleSystem(messages: OpenAI.ChatCompletionMessageParam[]): Ope
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
  * @param messages - The request's messages, system prompt included, sent as they are — less
- * their scratchpads for a model that refused them.
+ * their scratchpads for a model that refused them, and one call to a message (`oneCallPerMessage`)
+ * for one that takes no more.
  * @param [tools] - The tool definitions. Ordered by name, sanitised here — a lookup for a definition
  * seen before — and relaxed where the endpoint needs it. Empty sends no `tools` field at all.
  * @param [order] - How to order them before sending. `true` is by name, which keeps the cache
  * when the caller's array is assembled differently from one request to the next. See
  * `orderTools`.
  * @returns A fresh body, always streaming, around the caller's own `messages` array unless a
- * scratchpad had to come off it. `model`,
+ * scratchpad had to come off it or a message had to be split. `model`,
  * `messages`, `stream` and `tools` are never `extraBody`'s to set.
  *
  * @remarks
  * Every field that negotiates lives here: the ceiling's two spellings, a temperature only a
  * model that takes ours is sent, a reasoning effort only one that takes it is, `stream_options`
  * only where the server has heard of it, relaxed schemas only where it could not build a grammar,
- * and `extraBody` last, less whatever the model refused by name. The ceiling is tested
+ * `parallel_tool_calls: false` beside tools for a model sent one call to a message, and
+ * `extraBody` last, less whatever the model refused by name. The ceiling is tested
  * `=== false` — `modelCapabilitiesFor` starts a model at `legacyTokenLimit: true` and an absent
  * one has to read the same — which is the test one of the three copies had inverted.
  */
@@ -87,13 +100,17 @@ export function buildBody(
   const sorted = orderTools(tools, order);
   const declared = supports.strictSchemas ? sanitizeTools(sorted) : relaxTools(sanitizeTools(sorted));
   const effort = effortFor(refused, config.reasoningEffort);
+  const isSingle = singleCalls(config, refused);
+  // Beside tools only: OpenAI refuses the field on a request without them.
+  const oneAtATime = isSingle && declared.length > 0 ? { [PARALLEL_TOOL_CALLS]: false } : {};
+  const replayed = isSingle ? oneCallPerMessage(messages) : messages;
   return {
     ...ceilingAndTemperature(refused, config.maxTokens, config.temperature),
     ...(effort ? { reasoning_effort: effort as OpenAI.ReasoningEffort } : {}),
     ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
-    ...extraFields(refused, config.extraBody),
+    ...extraFields(refused, { ...oneAtATime, ...config.extraBody }),
     model: config.model,
-    messages: refused?.reasoningContent === false ? dropReasoning(messages) : messages,
+    messages: refused?.reasoningContent === false ? dropReasoning(replayed) : replayed,
     stream: true,
     ...(declared.length ? { tools: declared } : {}),
   };

@@ -93,7 +93,7 @@ import {
   type ToolCallRequest,
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
-import { FinishReason, PartType, Role } from '../wire/wire.ts';
+import { FinishReason, PARALLEL_TOOL_CALLS, PartType, Role } from '../wire/wire.ts';
 import { type ArtifactOptions, RECORD_ARTIFACT_TOOL, RunArtifacts } from './artifacts.ts';
 import {
   endingOf,
@@ -105,7 +105,7 @@ import {
   runMetrics,
   stamp,
 } from './events.ts';
-import { buildBody, singleSystem } from './request-body.ts';
+import { buildBody, singleCalls, singleSystem } from './request-body.ts';
 import {
   assistantMessage,
   type Calling,
@@ -116,6 +116,7 @@ import {
   readCalls,
   replaysReasoning,
   runCalls,
+  splitCalls,
   type ToolDispatch,
   writtenMessage,
 } from './run-calls.ts';
@@ -1649,7 +1650,8 @@ async function runSteps(
     const turnOptions = {
       model: config.model,
       inFlight,
-      droppable: Object.keys(extraBody ?? {}),
+      // `parallel_tool_calls` too, which `buildBody` adds for a model sent one call at a time.
+      droppable: [...Object.keys(extraBody ?? {}), PARALLEL_TOOL_CALLS],
       ...(pin ? { headers: pin.headers } : {}),
       maxRetries,
       loadingTimeoutMs: loadingMs(config),
@@ -1764,11 +1766,26 @@ async function runSteps(
       ? { reasoning: turn.reasoning, field: turn.reasoningField, details: turn.reasoningDetails }
       : undefined;
     const assistant = assistantMessage(content, parsed, replayed);
-    messages.push(assistant);
+    // Split as it is written rather than only as it is sent, so the result's `messages` and the
+    // host's stored rows are a transcript the model can be sent, and every later request replays
+    // the same messages byte for byte. Read per step: the latch may have flipped on this request.
+    const pieces = singleCalls(config, modelCapabilitiesFor(supports, config.model))
+      ? splitCalls(assistant)
+      : [assistant];
+    messages.push(pieces[0]);
     // Recovered calls were never calls on the wire: what the model said is the text they came from.
-    await announce(assistant, step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls, replayed) });
+    await announce(pieces[0], step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls, replayed) });
+    // The rest are the loop's rewriting of that one reply, so they come without the turn, whose
+    // whole message the first piece's `raw` already is.
+    const opens =
+      pieces.length > 1
+        ? async (at: number) => {
+            messages.push(pieces[at]);
+            await announce(pieces[at], step);
+          }
+        : undefined;
 
-    const ended = isAnswer ? undefined : await runCalls(calling, parsed, messages, step);
+    const ended = isAnswer ? undefined : await runCalls(calling, parsed, messages, step, opens);
     if (ended) {
       const by = ended.reason ? `: ${ended.reason}` : '';
       notice(`${ended.name} ended the run${by}`);

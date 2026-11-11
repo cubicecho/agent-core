@@ -87,6 +87,13 @@ export const REASONING_CONTENT = 'reasoning_content' as const;
  */
 export const REASONING = 'reasoning' as const;
 
+/**
+ * The request field that asks for at most one tool call per reply. vLLM acts only on an explicit
+ * `false` and llama.cpp defaults it to what the template can render; OpenAI refuses it on a
+ * request with no `tools`, and Ollama ignores it.
+ */
+export const PARALLEL_TOOL_CALLS = 'parallel_tool_calls' as const;
+
 /** Either field a scratchpad travels in. */
 export type ReasoningField = typeof REASONING_CONTENT | typeof REASONING;
 

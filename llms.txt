@@ -226,6 +226,7 @@ The tools between two turns: a step's calls read, run and written into the trans
 
 - `dropReasoning` — The transcript with `reasoning_content`, `reasoning` and `reasoning_details` taken off its assistant messages from an index on.
 - `formatToolError` — What the model reads for a dispatch that threw: the error's message, opening with `Error: `.
+- `oneCallPerMessage` — A transcript with every assistant message that carries several calls replayed as consecutive single-call `assistant`/`tool` pairs, for a chat template that renders one call per message.
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 - `ReasonedMessage` (type) — An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay.
 - `Scratchpad` (type) — A scratchpad to write onto a message, and the field it goes under.
@@ -492,6 +493,7 @@ The words the chat-completions wire is written in, each under a name.
 - `FinishReason` — Any one of the reasons in `FinishReason`.
 - `FUNCTION_TOOL` — The one `type` a tool definition or a tool call has on this wire.
 - `JSON_SCHEMA_FORMAT` — The `response_format` type that carries a schema the reply has to fit.
+- `PARALLEL_TOOL_CALLS` — The request field that asks for at most one tool call per reply.
 - `PartType` — Any one of the part types in `PartType`.
 - `REASONING` — The other spelling of that field: what Ollama's `/v1` sends and the only one it reads back, and OpenRouter's own.
 - `REASONING_CONTENT` — The assistant message field a model's scratchpad is replayed in where it did not arrive as `reasoning`.
