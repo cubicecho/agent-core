@@ -4,7 +4,7 @@ import { ToolDiscovery } from '../../src/core/config.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { answer, apiError, type Message, outcome, says, tool } from '../helpers.ts';
+import { answer, apiError, type Message, outcome, says, summarised, templateRefusal, tool } from '../helpers.ts';
 
 const create = vi.fn();
 /** Every endpoint a client was asked for, in order, so a test can say where a request went. */
@@ -567,8 +567,8 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(reached).toContainEqual({ baseUrl: 'http://side/v1', apiKey: NO_KEY });
     // Then the turn, on the folded transcript.
     expect(body(1)).toMatchObject({ model: 'big', temperature: 1 });
-    expect(body(1).messages).toEqual([{ role: Role.System, content: `${SUMMARY_LEAD}what was said` }, long[2]]);
-    expect(result.messages.slice(0, 2)).toEqual(body(1).messages);
+    expect(body(1).messages).toEqual([...summarised('what was said'), long[2]]);
+    expect(result.messages.slice(0, 3)).toEqual(body(1).messages);
     expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'compacted 2 messages into a summary' });
   });
 
@@ -586,7 +586,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const run = vi.fn(async () => []);
     const events: RunEventInput[] = [];
     create.mockResolvedValueOnce(answer('read a to d')).mockResolvedValueOnce(says('done'));
-    await runAgentLoop({
+    const result = await runAgentLoop({
       config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: loop,
       tools: [tool('s__read')],
@@ -596,8 +596,8 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       onEvent: (event) => events.push(event),
     });
     const sent = body(1).messages as Message[];
-    expect(sent.slice(0, 2)).toEqual([{ role: Role.System, content: `${SUMMARY_LEAD}read a to d` }, question]);
-    expect(sent[2].role).toBe(Role.Assistant);
+    expect(sent.slice(0, 3)).toEqual([...summarised('read a to d'), question]);
+    expect(sent[3].role).toBe(Role.Assistant);
     expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'compacted 8 messages into a summary' });
     const compacting = (run.mock.calls as unknown[][]).find((args) => args[0] === 'beforeCompact')?.[1] as {
       compacting: { text: string; uuid: string }[];
@@ -609,6 +609,54 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       'reading d',
     ]);
     expect(compacting.compacting[0].uuid).toMatch(/^s:41:/);
+    // The summary is a user message, and is not counted as a turn of its own.
+    await result.afterTurn;
+    const told = (run.mock.calls as unknown[][]).find((args) => args[0] === 'afterTurn')?.[1] as {
+      turn: { index: number };
+    };
+    expect(told.turn.index).toBe(0);
+  });
+
+  it('sends one system message, first, once a fold has happened', async () => {
+    create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
+    await runAgentLoop({
+      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      system: 'be brief',
+      messages: long,
+      dispatch: async () => 'done',
+      compact: true,
+    });
+    const sent = body(1).messages as Message[];
+    expect(sent.filter((message) => message.role === Role.System)).toEqual([
+      { role: Role.System, content: 'be brief' },
+    ]);
+    expect(sent.slice(0, 3)).toEqual([{ role: Role.System, content: 'be brief' }, ...summarised('what was said')]);
+    expect(templateRefusal(sent)).toBeUndefined();
+  });
+
+  it("sends a host's own leading system messages as one with the loop's prompt", async () => {
+    create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
+    const stored: Message[] = [
+      { role: Role.System, content: 'the house rules' },
+      // A fold an earlier version stored, before it was written as conversation.
+      { role: Role.System, content: `${SUMMARY_LEAD}older notes` },
+      ...long,
+    ];
+    await runAgentLoop({
+      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      system: 'be brief',
+      messages: stored,
+      dispatch: async () => 'done',
+      compact: true,
+    });
+    // The summariser continued the older notes rather than being shown them as conversation.
+    expect((body(0).messages as Message[]).at(-1)?.content).toMatch(/^Notes so far:\nolder notes/);
+    const sent = body(1).messages as Message[];
+    expect(sent.slice(0, 3)).toEqual([
+      { role: Role.System, content: 'be brief\n\nthe house rules' },
+      ...summarised('what was said'),
+    ]);
+    expect(templateRefusal(sent)).toBeUndefined();
   });
 
   it("tells beforeCompact alone when fire names only it, for a host that fires the turn's own events", async () => {
@@ -636,7 +684,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeTurn, HookEvent.AfterTurn] },
     });
     await result.afterTurn;
-    expect((body(1).messages as Message[])[0]).toEqual({ role: Role.System, content: `${SUMMARY_LEAD}what was said` });
+    expect((body(1).messages as Message[]).slice(0, 2)).toEqual(summarised('what was said'));
     expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([
       HookEvent.BeforeTurn,
       HookEvent.AfterTurn,
@@ -677,10 +725,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     });
     expect(create).toHaveBeenCalledTimes(3);
     expect(body(1)).toMatchObject({ model: 'tiny', temperature: 0.3 });
-    expect((body(2).messages as Message[])[0]).toEqual({
-      role: Role.System,
-      content: `${SUMMARY_LEAD}what was said`,
-    });
+    expect((body(2).messages as Message[]).slice(0, 2)).toEqual(summarised('what was said'));
   });
 
   it('leaves the transcript whole when the summary fails, and says so', async () => {

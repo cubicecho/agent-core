@@ -63,9 +63,19 @@ export const SUMMARY_PROMPT =
   'anything already superseded. Write compact prose or bullets — no preamble, no sign-off.';
 
 /**
- * How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
+ * How a summary message opens, which is also how `planCompaction` knows one from the conversation.
  */
 export const SUMMARY_LEAD = 'Summary of the earlier part of this conversation, which is no longer shown in full:\n\n';
+
+/**
+ * The assistant's reply to a summary, which closes the pair `applyCompaction` writes.
+ *
+ * @remarks
+ * There so the conversation still alternates. A summary followed straight by the kept question is
+ * two user messages in a row, and the templates that insist on user and assistant taking turns
+ * (Mistral's v0.3 among them) refuse that as firmly as Qwen3.5 refuses a second system message.
+ */
+export const SUMMARY_ACK = 'Understood. I will continue from these notes.';
 
 /**
  * What the summariser reads for one message: its text and the calls it made.
@@ -85,34 +95,56 @@ const messageText = (message: Message): string => {
 };
 
 /**
- * Whether a message is a summary an earlier fold left, rather than a system prompt.
+ * Whether a message is a summary an earlier fold left, rather than a system prompt or a question.
  *
  * @param message - Any message of the transcript.
- * @returns `true` for a `system` message whose text opens with `SUMMARY_LEAD`, which is what
- * `summaryMessage` writes.
+ * @returns `true` for a `user` message whose text opens with `SUMMARY_LEAD`, which is what
+ * `summaryMessages` writes, and for a `system` one, which is what earlier versions wrote and what a
+ * host may still have stored.
  */
-const isSummary = (message: Message) =>
-  message.role === Role.System && textOf(message.content).startsWith(SUMMARY_LEAD);
+export const isSummary = (message: Message) =>
+  (message.role === Role.User || message.role === Role.System) && textOf(message.content).startsWith(SUMMARY_LEAD);
+
+/**
+ * Whether a message is the reply that closes a summary pair.
+ *
+ * @param message - Any message of the transcript.
+ * @returns `true` for an `assistant` message that is `SUMMARY_ACK` and calls nothing.
+ */
+const isAck = (message: Message) => {
+  const calls = 'tool_calls' in message ? (message.tool_calls?.length ?? 0) : 0;
+  return message.role === Role.Assistant && calls === 0 && textOf(message.content) === SUMMARY_ACK;
+};
 
 /**
  * The summary as it sits in a transcript, which is the one shape `isSummary` recognises again.
  *
  * @param summary - The notes, without the lead. Trimmed here.
- * @returns A new `system` message: `SUMMARY_LEAD`, then the notes.
+ * @returns A `user` message, `SUMMARY_LEAD` then the notes, and the `assistant` reply
+ * `SUMMARY_ACK`.
+ *
+ * @remarks
+ * Conversation rather than a second system message, because the Qwen3.5 and later templates, and
+ * Devstral's, raise on any `system` message that is not the first — and the loop puts its own
+ * system prompt ahead of this one. The run's system prompt then stays the same text across a fold,
+ * so the prefix a server cached for it, and for the tool block rendered beside it, still matches.
  */
-const summaryMessage = (summary: string): Message => ({
-  role: Role.System,
-  content: `${SUMMARY_LEAD}${summary.trim()}`,
-});
+const summaryMessages = (summary: string): Message[] => [
+  { role: Role.User, content: `${SUMMARY_LEAD}${summary.trim()}` },
+  { role: Role.Assistant, content: SUMMARY_ACK },
+];
+
+/** How many messages a summary takes in a transcript, which every index after it is moved by. */
+const SUMMARY_SIZE = summaryMessages('').length;
 
 /**
- * The leading system messages a fold never touches, and the summary an earlier one left among
- * them.
+ * The head of a transcript a fold never takes: its leading system messages, and the summary an
+ * earlier fold left after them.
  *
  * @param messages - The transcript. Not written to.
- * @returns `from` is the index of the first message that is not `system` — the length when all of
- * them are. `previous` is the text of the last summary among those ahead of it, lead removed, and
- * absent when there is none.
+ * @returns `from` is the index of the first message after the leading `system` messages and the
+ * summary pair behind them — the length when there is nothing else. `previous` is the text of the
+ * last summary there, lead removed, and absent when there is none.
  *
  * @remarks
  * What a caller who keeps its system prompt out of the array knows already, and passes.
@@ -120,11 +152,24 @@ const summaryMessage = (summary: string): Message => ({
 const systemHead = (messages: Message[]): { from: number; previous?: string } => {
   let from = 0;
   let previous: string | undefined;
+  const readSummary = () => {
+    previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
+    from++;
+  };
   while (from < messages.length && messages[from].role === Role.System) {
     if (isSummary(messages[from])) {
-      previous = textOf(messages[from].content).slice(SUMMARY_LEAD.length);
+      readSummary();
+    } else {
+      from++;
     }
-    from++;
+  }
+  const opensWithSummary = from < messages.length && isSummary(messages[from]);
+  if (opensWithSummary) {
+    readSummary();
+    const isAcked = from < messages.length && isAck(messages[from]);
+    if (isAcked) {
+      from++;
+    }
   }
   return { from, previous };
 };
@@ -471,14 +516,17 @@ export interface CompactionOptions {
   from?: number;
   /**
    * The summary an earlier fold left, which this one continues. Absent, it is recovered from a
-   * `SUMMARY_LEAD` system message at the head, if there is one.
+   * `SUMMARY_LEAD` message at the head, if there is one.
    */
   previous?: string;
 }
 
 /** Where to cut, as `compactTranscript` takes it. */
 export interface CompactionPlan {
-  /** The first message folded away. Everything before it is a system prompt and stays. */
+  /**
+   * The first message folded away. Everything before it is a system prompt and stays, apart from
+   * an earlier summary, which the new one replaces.
+   */
   from: number;
   /**
    * The first message kept whole: a user message, or an assistant message on a fold made inside
@@ -882,14 +930,20 @@ export async function runCompaction(
  * Absent, the leading `system` messages are found by scanning, and zero of them is the ordinary
  * case for a host whose system prompt is a separate argument.
  * @returns `messages` itself when there is no record or its summary is blank, otherwise a new
- * array: the kept head, one summary message, the record's `question` when it has one and the head
- * does not already hold it, then everything from the record's `through` on.
+ * array: the kept head, the summary as a `user` message and its `assistant` reply `SUMMARY_ACK`,
+ * the record's `question` when it has one and the head does not already hold it, then everything
+ * from the record's `through` on.
  *
  * @remarks
  * The inverse of storing a `CompactionRecord`, and the shape `planCompaction` expects to meet
- * again — the same `SUMMARY_LEAD`, in a `system` message at the same place — so the next fold
- * continues these notes rather than summarising them a second time. Any earlier summary message in
- * the kept head is dropped, since the record's already contains it.
+ * again — the same `SUMMARY_LEAD`, in a `user` message straight after the system prompts — so the
+ * next fold continues these notes rather than summarising them a second time. Any earlier summary
+ * in the kept head is dropped, since the record's already contains it.
+ *
+ * Nothing it writes is a `system` message, so a request that puts one system prompt ahead of it has
+ * exactly one, at index 0, which is all the Qwen3.5 and later templates accept. The summary sits
+ * before the question, never after it, because those templates also take the last user message as
+ * the query their reasoning is kept for.
  */
 export function applyCompaction(
   messages: Message[],
@@ -902,8 +956,8 @@ export function applyCompaction(
   const head = clamp(from ?? systemHead(messages).from, record.through);
   const question = keptQuestion(record, head);
   return [
-    ...messages.slice(0, head).filter((message) => !isSummary(message)),
-    summaryMessage(record.summary),
+    ...messages.slice(0, head).filter((message) => isSummary(message) === false && isAck(message) === false),
+    ...summaryMessages(record.summary),
     ...(question === undefined ? [] : [messages[question]]),
     ...messages.slice(record.through),
   ];
@@ -931,7 +985,7 @@ const keptQuestion = ({ question, through }: Pick<CompactionRecord, 'through' | 
  * where the summary is the request's first message.
  * @returns The index in the request. One before the record's `through` gives `head`, where the
  * summary sits — an index among the kept head messages themselves included — except the record's
- * `question`, which is sent whole right after the summary.
+ * `question`, which is sent whole right after the summary and its reply.
  *
  * @remarks
  * A transcript that stays append-only and a request that does not are two numberings of the same
@@ -949,14 +1003,14 @@ export const requestIndex = (
   }
   const question = keptQuestion(record, head);
   if (index === question) {
-    return head + 1;
+    return head + SUMMARY_SIZE;
   }
-  const afterSummary = question === undefined ? 1 : 2;
+  const afterSummary = question === undefined ? SUMMARY_SIZE : SUMMARY_SIZE + 1;
   return index < record.through ? head : index - record.through + head + afterSummary;
 };
 
 /**
- * The transcript with the plan's stretch replaced by one system message holding its summary.
+ * The transcript with the plan's stretch replaced by its summary, as `applyCompaction` writes it.
  *
  * @param messages - The transcript the plan was made for. Not written to.
  * @param plan - What `planCompaction` returned for it.

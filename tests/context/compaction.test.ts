@@ -13,10 +13,10 @@ import {
   summaryInput,
 } from '../../src/context/compaction.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
-import { type HookRunner, turnMessages } from '../../src/hooks/hooks.ts';
+import { type HookRunner, textOf, turnMessages } from '../../src/hooks/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../../src/tools/tool-loading.ts';
 import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
-import { assistant, type Message, outcome, result, user } from '../helpers.ts';
+import { assistant, type Message, outcome, result, summarised, templateRefusal, user } from '../helpers.ts';
 
 /** Every message costs ten, so the arithmetic below can be read off the counts. */
 const estimate = () => 10;
@@ -394,11 +394,8 @@ describe('compactTranscript', () => {
     const out = await compactTranscript(messages, plan, summarise, {
       hooks: { run, context: { session: { id: 's' } } },
     });
-    expect(out).toEqual([
-      { role: Role.System, content: 'prompt' },
-      { role: Role.System, content: `${SUMMARY_LEAD}new notes` },
-      user('2'),
-    ]);
+    expect(out).toEqual([{ role: Role.System, content: 'prompt' }, ...summarised('new notes'), user('2')]);
+    expect(templateRefusal(out)).toBeUndefined();
     expect(summarise.mock.calls[0][0]).toContain('Notes so far:\nold');
     expect(run).toHaveBeenCalledWith(
       'beforeCompact',
@@ -496,7 +493,7 @@ describe('compactTranscript', () => {
         hooks: { run, context: { session: { id: 's' } }, honourVeto: true },
       });
       expect(order).toEqual(['hooks', 'summary']);
-      expect(out.at(1)).toEqual({ role: Role.System, content: `${SUMMARY_LEAD}notes` });
+      expect(out.slice(1, 3)).toEqual(summarised('notes'));
     });
 
     it('does not stop a compaction forced by an overflow', async () => {
@@ -519,6 +516,65 @@ describe('compactTranscript', () => {
 
   it('folds nothing on an empty summary', async () => {
     expect(await compactTranscript(messages, plan, async () => '  ')).toBe(messages);
+  });
+});
+
+/**
+ * Qwen3.5 and later raise on a `system` message anywhere but first, and a request is a system
+ * prompt put ahead of whatever `applyCompaction` returns. So nothing a fold writes may be one.
+ */
+describe('a fold and the one system message', () => {
+  const prompt: Message = { role: Role.System, content: 'prompt' };
+  /** A system prompt, then eight exchanges. */
+  const long: Message[] = [
+    prompt,
+    ...Array.from({ length: 16 }, (_, at) => (at % 2 === 0 ? user(`q${at}`) : assistant(`a${at}`))),
+  ];
+  const window = { limit: 100, used: 100, estimate };
+
+  it('leaves the system prompt the only system message across two folds', async () => {
+    const fold = async (messages: Message[], notes: string) => {
+      const plan = planCompaction(messages, window);
+      if (!plan) {
+        throw new Error('expected a plan');
+      }
+      return compactTranscript(messages, plan, async () => notes);
+    };
+    const once = await fold(long, 'first notes');
+    const twice = await fold([...once, user('more'), assistant('ok'), user('again'), assistant('ok')], 'second notes');
+    for (const sent of [once, twice]) {
+      expect(sent.filter((message) => message.role === Role.System)).toEqual([prompt]);
+      expect(templateRefusal(sent)).toBeUndefined();
+    }
+    // The second summary replaced the first rather than sitting beside it.
+    expect(twice.slice(0, 3)).toEqual([prompt, ...summarised('second notes')]);
+    expect(twice.filter((message) => textOf(message.content).startsWith(SUMMARY_LEAD))).toHaveLength(1);
+  });
+
+  it('leaves no system message at all for a host whose prompt is a separate argument', () => {
+    const request = applyCompaction(long.slice(1), { summary: 'notes', through: 8 });
+    expect(request.some((message) => message.role === Role.System)).toBe(false);
+    expect(templateRefusal([prompt, ...request])).toBeUndefined();
+  });
+
+  it('continues a summary stored as a system message, and writes the next as conversation', async () => {
+    const stored = [prompt, { role: Role.System, content: `${SUMMARY_LEAD}old notes` } as Message, ...long.slice(1)];
+    expect(templateRefusal(stored)).toBe('System message must be at the beginning.');
+    const plan = planCompaction(stored, window);
+    expect(plan).toMatchObject({ from: 2, previous: 'old notes' });
+    if (!plan) {
+      throw new Error('expected a plan');
+    }
+    const folded = await compactTranscript(stored, plan, async () => 'new notes');
+    expect(folded.slice(0, 3)).toEqual([prompt, ...summarised('new notes')]);
+    expect(templateRefusal(folded)).toBeUndefined();
+  });
+
+  it('takes a user message that only opens like a summary for a question when it is not at the head', () => {
+    const quoted = user(`${SUMMARY_LEAD}pasted by the user`);
+    const plan = planCompaction([prompt, user('first'), assistant('a'), quoted, ...long.slice(1)], window);
+    expect(plan).toMatchObject({ from: 1 });
+    expect(plan).not.toHaveProperty('previous');
   });
 });
 
@@ -601,7 +657,8 @@ describe('a stored fold', () => {
     expect(record.through).toBe(6);
 
     const request = applyCompaction(stored, record);
-    expect(request).toEqual([{ role: Role.System, content: `${SUMMARY_LEAD}first notes` }, ...stored.slice(6)]);
+    expect(request).toEqual([...summarised('first notes'), ...stored.slice(6)]);
+    expect(templateRefusal([{ role: Role.System, content: 'prompt' }, ...request])).toBeUndefined();
     expect(applyCompaction(stored, undefined)).toBe(stored);
 
     // The same second fold, planned over the request by scanning and over the transcript by hand.
@@ -627,22 +684,23 @@ describe('a stored fold', () => {
     const request = applyCompaction(stored, record);
     const before = turnMessages('s', stored, 6, 8);
     const after = turnMessages('s', request, requestIndex(6, record), requestIndex(8, record), {
-      offset: record.through - 1,
+      offset: record.through - requestIndex(record.through, record),
     });
     expect(after).toEqual(before);
     // Without it, the same two messages arrive as two new memories.
-    expect(turnMessages('s', request, 1, 3)[0].uuid).not.toBe(before[0].uuid);
+    expect(turnMessages('s', request, 2, 4)[0].uuid).not.toBe(before[0].uuid);
   });
 
   it('maps a stored index onto the request the fold left', () => {
     const record = { through: 6 };
     expect(requestIndex(7, undefined)).toBe(7);
-    expect(requestIndex(6, record)).toBe(1);
-    expect(requestIndex(11, record)).toBe(6);
+    // The summary and its reply sit at zero and one.
+    expect(requestIndex(6, record)).toBe(2);
+    expect(requestIndex(11, record)).toBe(7);
     // Inside the folded stretch, the summary message is what now stands for it.
     expect(requestIndex(2, record)).toBe(0);
     // A host that keeps its system prompt in the array says how much sits ahead of the summary.
-    expect(requestIndex(6, record, 1)).toBe(2);
+    expect(requestIndex(6, record, 1)).toBe(3);
   });
 });
 
@@ -721,18 +779,14 @@ describe('a fold inside one question', () => {
       throw new Error('expected a plan');
     }
     const folded = await compactTranscript(loop, plan, async () => 'read c0 to c2');
-    expect(folded).toEqual([
-      prompt,
-      { role: Role.System, content: `${SUMMARY_LEAD}read c0 to c2` },
-      user('task'),
-      ...loop.slice(8),
-    ]);
+    expect(folded).toEqual([prompt, ...summarised('read c0 to c2'), user('task'), ...loop.slice(8)]);
+    expect(templateRefusal(folded)).toBeUndefined();
 
-    // Five more steps later the window is full again, and the only user message is the question.
+    // Five more steps later the window is full again, and the only real question is the task.
     const grown = [...folded, ...steps(5, 4)];
     const again = planCompaction(grown, { limit: 100, used: 100, estimate });
-    expect(again).toMatchObject({ from: 2, question: 2, previous: 'read c0 to c2' });
-    expect(again?.toSummarise).not.toContain(grown[2]);
+    expect(again).toMatchObject({ from: 3, question: 3, previous: 'read c0 to c2' });
+    expect(again?.toSummarise).not.toContain(grown[3]);
     expect(grown[again?.cut ?? 0].role).toBe(Role.Assistant);
   });
 
@@ -764,11 +818,7 @@ describe('a fold inside one question', () => {
       }
       const record = await runCompaction(stored, plan, async () => 'notes');
       expect(record).toMatchObject({ through: 9, question: 0 });
-      expect(applyCompaction(stored, record)).toEqual([
-        { role: Role.System, content: `${SUMMARY_LEAD}notes` },
-        user('task'),
-        ...stored.slice(9),
-      ]);
+      expect(applyCompaction(stored, record)).toEqual([...summarised('notes'), user('task'), ...stored.slice(9)]);
     });
 
     it('folds again from where the last fold ended, keeping the same question', () => {
@@ -780,11 +830,11 @@ describe('a fold inside one question', () => {
 
     it('maps a stored index onto the request, the question right after the summary', () => {
       const record = { through: 9, question: 0 };
-      expect(requestIndex(0, record)).toBe(1);
-      expect(requestIndex(9, record)).toBe(2);
-      expect(requestIndex(10, record)).toBe(3);
+      expect(requestIndex(0, record)).toBe(2);
+      expect(requestIndex(9, record)).toBe(3);
+      expect(requestIndex(10, record)).toBe(4);
       expect(requestIndex(4, record)).toBe(0);
-      expect(requestIndex(1, { through: 9, question: 1 }, 1)).toBe(2);
+      expect(requestIndex(1, { through: 9, question: 1 }, 1)).toBe(3);
     });
   });
 });

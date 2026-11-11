@@ -1132,6 +1132,17 @@ mid-exchange is one servers refuse; leading system prompts are never folded, and
 summary is continued rather than summarised. `compactTranscript` writes the summary and tells
 `beforeCompact` hooks what is going while it does.
 
+The summary is written as conversation, not as a second system prompt: a `user` message opening
+with `SUMMARY_LEAD`, then an `assistant` reply, `SUMMARY_ACK`, ahead of the kept tail. The Qwen3.5
+and later templates, and Devstral's, raise "System message must be at the beginning." on any
+`system` message after the first, and a request is a system prompt put ahead of whatever the fold
+returned. As conversation, the system prompt stays the same text across a fold, so a server's
+cached prefix for it and its tool block still matches; the reply is there because Mistral's v0.3
+template refuses two user messages in a row. A summary stored as a `system` message by an earlier
+version is still read back and continued. `runAgentLoop` also sends a host's leading `system`
+messages as one with its own `system` prompt, a blank line apart. A `system` message further down
+a host's transcript is sent where the host put it, and is the host's to move.
+
 A run that is one question and a long tool loop has no user message to cut at, so there the plan
 cuts inside the loop instead: the question is kept whole (the plan's `question`), the calls and
 results after it are folded up to an assistant message, and the request becomes the summary, the
@@ -1303,7 +1314,7 @@ leading `system` messages, and reads an earlier summary back out of a `SUMMARY_L
 them. A host whose system prompt is a separate argument and whose summary is a column has neither
 in the array, and knows both exactly. Given them, nothing is scanned.
 
-`applyCompaction(messages, fold)` is the way back — the summary as a `system` message, then the
+`applyCompaction(messages, fold)` is the way back — the summary and its reply, then the
 fold's `question` if it was made inside one, then everything from `through` — and it writes the same `SUMMARY_LEAD` `planCompaction` looks for, so
 the next fold continues those notes rather than summarising them a second time. No fold yet hands
 back the messages themselves.
@@ -1315,6 +1326,8 @@ const request = [systemMessage, ...applyCompaction(session.messages, session.fol
 **Two numberings.** A stored transcript keeps its indexes and a folded request does not, so
 anything naming a position has to say which one it means. `requestIndex(index, fold)` maps the
 stored index onto the request — for `withContext`'s index, or a range being shown to a hook.
+The summary takes two places in the request, so with nothing kept ahead of it the first message
+kept whole is at index 2.
 `turnMessages` takes an `offset`, the stored index of the array's first message, so a message keeps
 the uuid it had before the fold and a memory server deduping on it files that turn once rather than
 twice; `turnIndex` takes one too, for the turns a fold took out of the array it is counting.

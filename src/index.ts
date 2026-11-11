@@ -30,6 +30,7 @@ export {
   pruneToolResults,
   requestIndex,
   runCompaction,
+  SUMMARY_ACK,
   SUMMARY_LEAD,
   SUMMARY_PROMPT,
   summariser,
