@@ -1,3 +1,10 @@
+## [4.23.9](https://github.com/cubicecho/agent-core/compare/v4.23.8...v4.23.9) (2026-11-11)
+
+
+### Bug Fixes
+
+* **run:** keep proxied loads a rewrite left in place, and give a failure its ledger ([8334eeb](https://github.com/cubicecho/agent-core/commit/8334eeb6e4ea8165e40cedba9b2731f4d4efa41b)), closes [#217](https://github.com/cubicecho/agent-core/issues/217)
+
 ## [4.23.8](https://github.com/cubicecho/agent-core/compare/v4.23.7...v4.23.8) (2026-11-11)
 
 
