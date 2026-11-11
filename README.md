@@ -184,9 +184,14 @@ The effort is the exception, because there the model has said what it *would* ta
 `Unsupported value: 'reasoning_effort' does not support 'none' with this model. Supported values
 are: 'minimal', 'low', 'medium', and 'high'.` `negotiate` latches the rung that was refused and
 re-sends at the cheapest one above it, which is a request rather than a failure. Where the refusal
-lists nothing it walks `EFFORT_LADDER` — `none`, `minimal`, `low`, `medium`, `high` — a rung per
-refusal. Both latch per `(endpoint, model)` and ride in the snapshot, so a restart does not walk
-the ladder again.
+lists nothing it walks `EFFORT_LADDER` — `none`, `minimal`, `low`, `medium`, `high`, `xhigh` — a
+rung per refusal. Both latch per `(endpoint, model)` and ride in the snapshot, so a restart does
+not walk the ladder again.
+
+A chat template's raise is read the same way, whether llama.cpp passes it on as a 500 or vLLM as a
+400. Qwen3.8's says `Unexpected reasoning effort high. Supported types are xhigh (default), medium,
+and low.` — so `high` is re-sent as `xhigh` and `minimal` as `low`, and the model's list is
+latched. A generic `must be one of [...]` list is read too.
 
 Only ever upward, and only from a value on the ladder. Answering a refused `xhigh` with `high`
 would quietly reason less than whoever typed it asked for; stepping up from `none` only costs
