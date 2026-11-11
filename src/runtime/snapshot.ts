@@ -33,6 +33,11 @@ export interface ModelSnapshot {
    * latched lacks it, which `importCapabilities` reads as not refused.
    */
   assistantPrefill: boolean;
+  /**
+   * Takes `reasoning_content` on a replayed assistant message. Always written; a stored snapshot
+   * from before it was latched lacks it, which `importCapabilities` reads as not refused.
+   */
+  reasoningContent: boolean;
   /** Takes the no-thinking hints `ask` sends. */
   thinkingHints: boolean;
   /**

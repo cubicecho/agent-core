@@ -11,8 +11,8 @@ import { Role } from '../wire/wire.ts';
  * arguments, code and prose, each at its own ratio, plus whatever the chat template adds per
  * message. But a request that only appended to the one before it differs from it by exactly the
  * cost of what was appended, so two reported prompts and a subtraction say what no estimate can —
- * the template's tokens and a tool result's real density included, and reasoning, which is never
- * replayed, left out.
+ * the template's tokens and a tool result's real density included, and reasoning counted only
+ * where it is replayed.
  *
  * Everything here is a pure function over a plain array, so a host with its own loop keeps a ledger
  * the same way `runAgentLoop` does, and stores it however it stores the transcript.

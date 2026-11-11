@@ -131,6 +131,12 @@ export interface ModelCapabilities {
    * never by `negotiate`, since the refusal is about a request only a continuation sends.
    */
   assistantPrefill: boolean;
+  /**
+   * Takes `reasoning_content` on a replayed assistant message. A server that validates messages
+   * strictly — Groq, Mistral, `deepseek-reasoner` — refuses the whole request over the field, and
+   * the answer is to replay the transcript without it, which is what every run did before.
+   */
+  reasoningContent: boolean;
 }
 
 /** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
@@ -152,6 +158,7 @@ export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
   chosenTemperature: true,
   structuredOutput: true,
   assistantPrefill: true,
+  reasoningContent: true,
 };
 
 /** The names of those flags, for a caller that reads or latches each in turn. */
@@ -713,6 +720,24 @@ function unknownFields(detail: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * `reasoning_content` refused as a field a message may not carry, rather than demanded.
+ *
+ * @param detail - The server's error text.
+ * @returns `true` where the text names the field in a refusal's words and not in a demand's.
+ *
+ * @remarks
+ * DeepSeek in thinking mode refuses a request for the opposite reason — `Missing reasoning_content`,
+ * or that it `must be passed back` — and latching the field off there would make every later
+ * request fail the same way, so those words rule a match out.
+ */
+const refusesReasoningContent = (detail: string) =>
+  /reasoning_content/i.test(detail) &&
+  /unsupported|not supported|unrecognized|unknown|unexpected|not allowed|not permitted|extra (?:inputs|fields)/i.test(
+    detail,
+  ) &&
+  !/missing|must be passed|required/i.test(detail);
+
 /** What `negotiate` takes besides the request. All optional. */
 export interface NegotiateOptions {
   /**
@@ -898,6 +923,11 @@ const ANSWERS: readonly Answer[] = [
     'structuredOutput',
     rejectsResponseFormat,
     (name) => `${name} does not take response_format; asking for JSON in words instead`,
+  ),
+  modelAnswer(
+    'reasoningContent',
+    refusesReasoningContent,
+    (name) => `${name} does not take reasoning_content; replaying without it`,
   ),
   droppedFieldsAnswer,
 ];

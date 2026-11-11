@@ -49,6 +49,7 @@ export {
   type Endpoint,
   type ModelParams,
   normalizeBaseUrl,
+  ReasoningReplay,
   type RetryPolicy,
   ToolDiscovery,
   type ToolPolicy,
@@ -171,7 +172,7 @@ export {
   watch,
 } from './run/events.ts';
 export { buildBody } from './run/request-body.ts';
-export { preview, type ToolDispatch } from './run/run-calls.ts';
+export { dropReasoning, preview, type ReasonedMessage, type ToolDispatch } from './run/run-calls.ts';
 export { resetAll } from './runtime/reset.ts';
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from './runtime/runtime.ts';
 export {
@@ -356,4 +357,12 @@ export {
   type ToolCallRequest,
   type ToolCallResult,
 } from './wire/tool-calls.ts';
-export { FinishReason, FUNCTION_TOOL, JSON_SCHEMA_FORMAT, PartType, Role, SchemaType } from './wire/wire.ts';
+export {
+  FinishReason,
+  FUNCTION_TOOL,
+  JSON_SCHEMA_FORMAT,
+  PartType,
+  REASONING_CONTENT,
+  Role,
+  SchemaType,
+} from './wire/wire.ts';

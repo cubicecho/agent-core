@@ -41,6 +41,21 @@ describe('buildBody', () => {
     expect(body).not.toHaveProperty('tools');
   });
 
+  it('replays the scratchpad until the model refuses it, and leaves the caller its own messages', () => {
+    const supports = capabilitiesFor('https://api.groq.com/openai/v1');
+    const reasoned = [
+      ...messages,
+      { role: Role.Assistant, content: null, reasoning_content: 'look it up', tool_calls: [] } as Message,
+    ];
+    expect(buildBody(config, supports, undefined, reasoned).messages).toBe(reasoned);
+    const refused = modelCapabilitiesFor(supports, 'm');
+    refused.reasoningContent = false;
+    const body = buildBody(config, supports, refused, reasoned);
+    expect(body.messages[1]).not.toHaveProperty('reasoning_content');
+    expect(body.messages[0]).toBe(reasoned[0]);
+    expect(reasoned[1]).toHaveProperty('reasoning_content', 'look it up');
+  });
+
   it('steps an effort the model refused by value up to one it takes', () => {
     // The refusal that means the opposite of the one above: the model reasons, it just does not
     // reason at `none`. Sending nothing would run at its own default, which is neither what the

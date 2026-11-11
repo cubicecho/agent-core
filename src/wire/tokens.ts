@@ -84,9 +84,8 @@ const REFUSAL_PART = 32;
  * The same for `"reasoning_content":"",` around an assistant message's scratchpad.
  *
  * @remarks
- * Not in the SDK's types, and passed back by the caller who keeps it: gpt-oss and DeepSeek in
- * thinking mode want the analysis behind a tool call on the next request. Left uncounted, the
- * guard came up short by the whole scratchpad on exactly the runs that follow that rule.
+ * Not in the SDK's types, and written back by `runAgentLoop` as `reasoningReplay` says. Left
+ * uncounted, the guard came up short by the whole scratchpad on exactly the runs that replay it.
  */
 const REASONING_KEY = 23;
 

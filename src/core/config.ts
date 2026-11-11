@@ -136,6 +136,16 @@ export interface ModelParams {
    */
   reasoningEffort?: string;
   /**
+   * Which assistant messages carry the model's scratchpad back to it as `reasoning_content`.
+   *
+   * @defaultValue `ReasoningReplay.ToolLoop`
+   *
+   * @remarks
+   * Read by `runAgentLoop` as it writes each turn into the transcript. See `ReasoningReplay` for
+   * which model wants which.
+   */
+  reasoningReplay?: ReasoningReplay;
+  /**
    * Request fields this interface cannot spell, merged into the body last by `buildBody`.
    *
    * @remarks
@@ -150,6 +160,33 @@ export interface ModelParams {
    */
   extraBody?: Record<string, unknown>;
 }
+
+/**
+ * Which assistant messages a run writes the model's scratchpad onto, as `reasoning_content`.
+ *
+ * @remarks
+ * A model that reasons before a tool call may want that reasoning on the next request, and a model
+ * that does not want it pays for it as context on every turn, so a host picks per model. The field
+ * name is the one llama.cpp, vLLM and the Qwen and DeepSeek templates read.
+ */
+export const ReasoningReplay = {
+  /**
+   * On each message that ends in tool calls, while the run is in its tool loop. The final answer
+   * carries none, and once it is written the run's `messages` drop it from the loop's messages
+   * too. The rule gpt-oss's harmony format states, and what Qwen3 templates render on their own.
+   */
+  ToolLoop: 'tool-loop',
+  /**
+   * On every assistant message, the final answer included, and never dropped. What DeepSeek's API
+   * asks for in thinking mode with tools, and what a template that preserves thinking renders.
+   */
+  All: 'all',
+  /** On none of them: the scratchpad stays on the `Turn` and never reaches the transcript. */
+  None: 'none',
+} as const;
+
+/** Any one of the policies in `ReasoningReplay`. */
+export type ReasoningReplay = (typeof ReasoningReplay)[keyof typeof ReasoningReplay];
 
 /** How tool definitions reach the model. See `tool-loading.ts`. */
 export const ToolDiscovery = {

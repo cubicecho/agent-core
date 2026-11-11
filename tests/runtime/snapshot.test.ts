@@ -58,6 +58,7 @@ describe('capability snapshots', () => {
             refusedFields: ['min_p'],
             structuredOutput: true,
             assistantPrefill: true,
+            reasoningContent: true,
             thinkingHints: true,
           },
           small: {
@@ -68,6 +69,7 @@ describe('capability snapshots', () => {
             refusedFields: [],
             structuredOutput: true,
             assistantPrefill: true,
+            reasoningContent: true,
             thinkingHints: false,
           },
         },
