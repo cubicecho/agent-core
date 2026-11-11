@@ -603,6 +603,26 @@ export interface ToolAnswer {
   text: string;
   /** What the call produced, in the order the tool gave them. Never sent to the model. */
   links?: ResourceLink[];
+  /**
+   * Ends the run once this step's calls are answered: no further request is sent, and the loop
+   * resolves with `ended` rather than throwing. An object says why, for the host and its `done`.
+   *
+   * @remarks
+   * The step's other calls still run and are answered, so the transcript stays one an endpoint
+   * will take back. For a tool whose call is the end of the job — handing off, asking a person —
+   * where the alternative is an abort, which the loop reads as a failure.
+   */
+  end?: boolean | { reason: string };
+}
+
+/** The call that ended a run through its answer's `end`, as `AgentLoopResult.ended` says it. */
+export interface EndedBy {
+  /** The call's id. */
+  callId: string;
+  /** The tool, under the name it was announced by: for a `call_tool`, the tool it names. */
+  name: string;
+  /** Why, where the answer said: absent for `end: true`. */
+  reason?: string;
 }
 
 /**

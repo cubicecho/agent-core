@@ -146,7 +146,10 @@ export const RunEventKind = {
    * measured either way.
    */
   Usage: 'usage',
-  /** The run ended. Always last, and always sent. */
+  /**
+   * The run ended. Always last, and always sent. A run a tool call ended carries that call: `id`
+   * the call's, `name` the tool, and `text` the reason, as `AgentLoopResult.ended` has them.
+   */
   Done: 'done',
 } as const;
 
@@ -212,7 +215,7 @@ export interface RunEvent {
   kind: RunEventKind;
   /** The delta, the arguments, the result, or the reason — whatever the kind carries. */
   text: string;
-  /** Tool name on the tool kinds, otherwise empty. */
+  /** Tool name on the tool kinds, and on a `done` the tool that ended the run; otherwise empty. */
   name: string;
   /**
    * The call's id on the tool kinds, which pairs a `tool-result` with its `tool-call` when one
@@ -761,6 +764,11 @@ export const RunOutcome = {
   /** The run did not fail, and its last turn is an answer the reply ceiling cut off. */
   Truncated: 'truncated',
   /**
+   * The run did not fail, and a tool call ended it: `AgentLoopResult.ended` says which, and so
+   * does a `done` that names the tool.
+   */
+  Ended: 'ended',
+  /**
    * `done` said the run was not ok. Whether that was an error, a stop or the tool budget is in
    * the host's own `done` text and not here.
    */
@@ -773,14 +781,20 @@ export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
 /**
  * How a run that reported `done` ended.
  *
- * @param ok - What the `done` event said. Only `false` is a failure; anything else is read off the turn.
+ * @param done - The `done` event. Only an `ok` of `false` is a failure; one that names a tool was
+ * ended by it; anything else is read off the turn.
  * @param last - The last turn a `usage` event reported, if any did.
- * @returns `failed` for a `done` that was not ok, `truncated` where the last turn ran into the
- * reply ceiling, and `answered` otherwise.
+ * @returns `failed` for a `done` that was not ok, `ended` for one that names the tool that ended
+ * the run, `truncated` where the last turn ran into the reply ceiling, and `answered` otherwise.
  */
-function outcomeOf(ok: boolean | null, last: TurnReport | undefined): RunOutcome {
+function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOutcome {
   if (ok === false) {
     return RunOutcome.Failed;
+  }
+  // Read as a truthy string, so an event put together by hand without one is not ended.
+  const isEnded = Boolean(name);
+  if (isEnded) {
+    return RunOutcome.Ended;
   }
   if (last?.finishReason === FinishReason.Length) {
     return RunOutcome.Truncated;
@@ -908,7 +922,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
         metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
       }
     } else if (event.kind === RunEventKind.Done) {
-      metrics.outcome = outcomeOf(event.ok, last);
+      metrics.outcome = outcomeOf(event, last);
     }
   }
 

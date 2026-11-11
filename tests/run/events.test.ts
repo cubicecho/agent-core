@@ -611,6 +611,13 @@ describe('runMetrics', () => {
     expect(runMetrics(history('running'))).not.toHaveProperty('outcome');
   });
 
+  it('reads a run as ended by a tool where its done names one, and as failed where it was not ok', () => {
+    emit('asked', { kind: RunEventKind.Done, ok: true, id: 'c0', name: 'ask_person', text: 'needs a key' });
+    expect(runMetrics(history('asked')).outcome).toBe(RunOutcome.Ended);
+    emit('ended-badly', { kind: RunEventKind.Done, ok: false, name: 'ask_person' });
+    expect(runMetrics(history('ended-badly')).outcome).toBe(RunOutcome.Failed);
+  });
+
   it('counts the turns a session run served on no slot of its own, and only where any said', () => {
     const turn = (pinned?: boolean) => ({
       kind: RunEventKind.Usage,

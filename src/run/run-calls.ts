@@ -15,6 +15,7 @@ import {
 import { errorMessage } from '../wire/errors.ts';
 import type { Turn } from '../wire/stream.ts';
 import {
+  type EndedBy,
   parseToolArguments,
   type ResourceLink,
   type RunArtifact,
@@ -188,14 +189,26 @@ function reportFor(run: Calling, id: string, name: string): { report: ToolCallRe
   };
 }
 
+/** Whether an answer ends the run, and why where it said: `false`, or what `EndedBy` adds. */
+type Ending = false | Pick<EndedBy, 'reason'>;
+
 /**
  * A dispatcher's answer in the one shape, whichever it gave.
  *
  * @param answer - What `dispatch` resolved to.
- * @returns The text and the links, a string answer's being none.
+ * @returns The text, the links and whether it ends the run, a string answer having no links and
+ * ending nothing.
  */
-const answerOf = (answer: string | ToolAnswer): Required<ToolAnswer> =>
-  typeof answer === 'string' ? { text: answer, links: [] } : { text: answer.text, links: answer.links ?? [] };
+function answerOf(answer: string | ToolAnswer): { text: string; links: ResourceLink[]; end: Ending } {
+  if (typeof answer === 'string') {
+    return { text: answer, links: [], end: false };
+  }
+  const { text, links = [], end = false } = answer;
+  if (typeof end === 'object') {
+    return { text, links, end: { reason: end.reason } };
+  }
+  return { text, links, end: end ? {} : false };
+}
 
 /**
  * What running a step's calls reads of the run and writes back into it. One per run, shared by
@@ -443,6 +456,12 @@ function batchEnd(
   return total;
 }
 
+/** One call run: the result the host is handed, and whether its answer ends the run. */
+interface Ran {
+  result: ToolCallResult;
+  end: Ending;
+}
+
 /**
  * Runs one call to its result, telling the host of both. A tool that throws is that call's answer
  * rather than the run's end, unless the run was stopped.
@@ -451,16 +470,16 @@ function batchEnd(
  * @param prepared - The call, with its request built.
  * @param answered - The step's calls already made, by tool and arguments, for `dedupeToolCalls`.
  * @param step - Which step this is, for the artifacts the call's links become.
- * @returns The call's id, the name it was shown under, whether it worked, the whole of what the
- * model reads, and the links its answer carried, where it carried any. Rejects where the run was
- * stopped or a host callback threw.
+ * @returns The result — the call's id, the name it was shown under, whether it worked, the whole
+ * of what the model reads, and the links its answer carried, where it carried any — and whether
+ * the answer ended the run. Rejects where the run was stopped or a host callback threw.
  */
 async function runCall(
   run: Calling,
   prepared: Prepared,
   answered: Map<string, Promise<string | ToolAnswer>>,
   step: number,
-): Promise<ToolCallResult> {
+): Promise<Ran> {
   const { catalog, onDemand, proxied, signal } = run;
   const { entry, request, load, refused, dedupable, key } = prepared;
   const { call, args, error: unreadable } = entry;
@@ -470,6 +489,7 @@ async function runCall(
   const { report, close } = reportFor(run, call.id, name);
   let content: string;
   let links: ResourceLink[] = [];
+  let end: Ending = false;
   let ok = true;
   // Answered from an earlier identical call of the step, whose links are already counted.
   let shared = false;
@@ -497,7 +517,7 @@ async function runCall(
       const answer = dedupable
         ? await once(answered, key, () => run.dispatch(request, signal, report))
         : await run.dispatch(request, signal, report);
-      ({ text: content, links } = answerOf(answer));
+      ({ text: content, links, end } = answerOf(answer));
     }
   } catch (error) {
     if (signal?.aborted) {
@@ -515,7 +535,7 @@ async function runCall(
   }
   const result: ToolCallResult = { id: call.id, name, ok, content, ...(links.length ? { links } : {}) };
   run.onToolResult?.(result);
-  return result;
+  return { result, end };
 }
 
 /**
@@ -525,24 +545,33 @@ async function runCall(
  * @param parsed - The step's calls, with their arguments read.
  * @param messages - The transcript the results are written into.
  * @param step - Which step this is, for the host told of each result.
+ * @returns The first call, in the order asked, whose answer ended the run, or `undefined` where
+ * none did.
  *
  * @remarks
  * A failure part-way leaves the transcript well-formed before it is rethrown: a call with no
  * result is a transcript no endpoint takes back, so every call of the step is answered — with what
  * it returned where it had, and otherwise with a line saying it was stopped, or never run.
+ *
+ * An answer that ends the run does not end the step. The calls after it still run, in whatever
+ * batch `parallel` puts them, because the model asked for them in the same breath and how a host
+ * schedules calls is not what they mean: a reply that says "write the file, then hand off" in one
+ * turn wants the file written whichever order it named the two in, and a call batched beside the
+ * end was running already. A tool that must have nothing after it says so in its description.
  */
 export async function runCalls(
   run: Calling,
   parsed: ReadCall[],
   messages: OpenAI.ChatCompletionMessageParam[],
   step: number,
-): Promise<void> {
+): Promise<EndedBy | undefined> {
   const { signal, toolCalls } = run;
   // Per step, not per run: the answer to a call made two steps ago was true before the tools in
   // between ran, and the file the model read may be the file it has since written.
   const answered = new Map<string, Promise<string | ToolAnswer>>();
   // By position, so a call that came back while another was being stopped is still found.
-  const outcomes: (Awaited<ReturnType<typeof runCall>> | undefined)[] = parsed.map(() => undefined);
+  const outcomes: (ToolCallResult | undefined)[] = parsed.map(() => undefined);
+  const ends: Ending[] = parsed.map(() => false);
   // How many of the step's calls were handed off, and how many have their result in the
   // transcript. Both count from the front, since results are written in the order asked.
   let begun = 0;
@@ -574,7 +603,9 @@ export async function runCalls(
       begun = to;
       await Promise.all(
         parsed.slice(start, to).map(async (_, offset) => {
-          outcomes[start + offset] = await runCall(run, ready(start + offset), answered, step);
+          const { result, end } = await runCall(run, ready(start + offset), answered, step);
+          outcomes[start + offset] = result;
+          ends[start + offset] = end;
         }),
       );
       for (const { id, name, ok, content } of outcomes.slice(from, to).flatMap((outcome) => outcome ?? [])) {
@@ -583,6 +614,15 @@ export async function runCalls(
       }
       from = to;
     }
+    // The first by position rather than by finishing: a batch's calls end in no order worth
+    // reporting, and a deduplicated repeat shares its answer's `end` with the call before it.
+    const at = ends.findIndex((end) => end !== false);
+    const end = ends[at];
+    const outcome = outcomes[at];
+    if (end === undefined || end === false || outcome === undefined) {
+      return undefined;
+    }
+    return { callId: outcome.id, name: outcome.name, ...(end.reason === undefined ? {} : { reason: end.reason }) };
   } catch (error) {
     // Only a call that was made counts in `toolCalls`.
     for (const [at, entry] of parsed.entries()) {
