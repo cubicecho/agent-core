@@ -1,3 +1,10 @@
+## [4.23.4](https://github.com/cubicecho/agent-core/compare/v4.23.3...v4.23.4) (2026-11-11)
+
+
+### Bug Fixes
+
+* **turn:** send vLLM the fields that make a continuation a prefill ([3bf9da3](https://github.com/cubicecho/agent-core/commit/3bf9da3aa0f2d12081c5cf8a464c7160321f0390)), closes [#203](https://github.com/cubicecho/agent-core/issues/203)
+
 ## [4.23.3](https://github.com/cubicecho/agent-core/compare/v4.23.2...v4.23.3) (2026-11-11)
 
 
