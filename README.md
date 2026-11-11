@@ -686,8 +686,20 @@ plain text, and the run ends on a reply that is nothing but a call nobody made. 
 `recoverToolCalls`, which finds `<tool_call>` blocks (Hermes, Qwen, Qwen3-Coder's markup),
 `[TOOL_CALLS]` (Mistral, both spellings) and `<|python_tag|>` (Llama 3) after the last `</think>`,
 and — naming only tools that exist — a reply that is only a JSON call or holds one fenced one.
-Found calls are run as `call_recovered_0` onward, the text is what is left, `onTurn` and the
+Found calls are run under ids of their own, the text is what is left, `onTurn` and the
 result see the turn that way, and a notice says so, since the real fix is the server's parser.
+
+Every id the loop makes up — for a call recovered from text, a streamed call the server sent
+without one, and a proxied preselection's load — is nine characters from `[A-Za-z0-9]`, which is
+the strictest rule any server holds them to (Mistral's tokenizers before V13 refuse anything else)
+and inside every other's. Each is checked against every id in the transcript, the host's history
+included, so one id answers for one call across the whole run: vLLM's harmony path and Ollama find
+a result's tool by its id across the history, and Anthropic behind a proxy refuses a repeat. A
+server's own id is kept as sent unless it is empty or the transcript already uses it, as a server
+that numbers its calls from zero on every turn does; then it is replaced once, before the message
+is stored, so the call and its result carry the new id on every later request. `mintCallId` takes
+the source of ids — `callIdMinter(seed)` gives a repeatable sequence for a test — and
+`distinctCallIds` is the same check for a host with its own loop.
 
 Every request declares its tools in name order, whichever way the caller assembled the array. A
 chat template renders the tool block ahead of the system prompt, so the tool array is the first
@@ -750,15 +762,16 @@ transcript after the question as a `load_tools` call the model did not make, and
 call would have had:
 
 ```ts
-{ role: "assistant", content: null, tool_calls: [{ id: "preselect-3", type: "function",
+{ role: "assistant", content: null, tool_calls: [{ id: "q7Rk2mXa9", type: "function",
     function: { name: "load_tools", arguments: '{"names":["files__read_file"]}' } }] },
-{ role: "tool", tool_call_id: "preselect-3", content: "Loaded 1 tool(s). Run them with `call_tool`.\n\n{...}" },
+{ role: "tool", tool_call_id: "q7Rk2mXa9", content: "Loaded 1 tool(s). Run them with `call_tool`.\n\n{...}" },
 ```
 
 The pair is in the `messages` the loop hands back, to be stored like any other, and is reported as
 a `tool-call` and a `tool-result` event, told to `onToolCall` and `onToolResult`, and counted in
 `toolCalls` and in the `load_tools` metrics. The
-id is numbered by where the call lands in the transcript, so two questions do not share one. A name
+id is minted like any other the loop makes up, and checked against the transcript, so two questions
+do not share one. A name
 with no definition in `tools`, or outside the catalogue, is left out, and none left is no exchange.
 
 A host with tools of its own — a question for a person, a resource read — passes them as

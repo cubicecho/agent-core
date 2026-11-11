@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { MS_PER_SECOND } from '../core/platform.ts';
+import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { EndpointSilent } from './retry.ts';
 import { DEFAULT_FENCES, type Fence, FenceSplitter, SPLIT_REASONING, type Split } from './thinking.ts';
 import type { ContextBreakdown } from './tokens.ts';
@@ -360,6 +361,11 @@ interface PartialCall {
   id: string;
   name: string;
   arguments: string;
+  /**
+   * The id made up for it where the server gave none or a repeated one, kept so that a second
+   * read of the same stream names the call the same.
+   */
+  minted: string;
 }
 
 /** What one chunk says of the turn's usage, with the cache count kept apart by where it came from. */
@@ -459,25 +465,28 @@ function ownerOf(
  * A turn's calls as they are handed back: in the order their indexes give, arrival order where a
  * server sent none, each under an id of its own.
  *
- * @param calls - The calls as the stream left them, in arrival order. Not written to or reordered.
+ * @param calls - The calls as the stream left them, in arrival order. Not reordered; a call given an
+ * id is written to, to keep it.
+ * @param mint - Where a made-up id comes from.
  * @returns One function call per entry. An id is made up for a call the server gave none, and for
- * one whose id an earlier call in the result already has.
+ * one whose id an earlier call in the result already has, once: a second read gives the same one.
  */
-function assembledCalls(calls: readonly PartialCall[]): ToolCall[] {
+function assembledCalls(calls: readonly PartialCall[], mint: CallIdMinter): ToolCall[] {
   const ordered = calls
     .map((call, order) => ({ call, order }))
     .sort((a, b) => (a.call.index ?? a.order) - (b.call.index ?? b.order) || a.order - b.order);
 
-  const minted = new Set<string>();
+  const taken = new Set<string>();
   const assembled: ToolCall[] = [];
-  for (const [position, { call }] of ordered.entries()) {
+  for (const { call } of ordered) {
     // A server that streams a call without an id still needs one for the result to answer,
     // and two calls it put under one index must not be answered as one.
-    let id = call.id || `call_${call.index ?? position}`;
-    if (minted.has(id)) {
-      id = `call_${position}_${minted.size}`;
+    const isFree = call.id !== '' && taken.has(call.id) === false;
+    if (isFree === false && call.minted === '') {
+      call.minted = freshCallId(taken, mint);
     }
-    minted.add(id);
+    const id = isFree ? call.id : call.minted;
+    taken.add(id);
     assembled.push({
       id,
       type: FUNCTION_TOOL,
@@ -550,18 +559,24 @@ export interface InFlight {
  *
  * @param content - The answer so far.
  * @param reasoning - The scratchpad so far.
- * @param calls - The calls begun, as they arrived. Not written to.
+ * @param calls - The calls begun, as they arrived. Written to only to keep an id made up for one.
+ * @param mint - Where a made-up id comes from.
  * @returns `undefined` where all three are empty; otherwise the content, with `reasoning` and
  * `toolCalls` only where they hold something.
  */
-function partialTurn(content: string, reasoning: string, calls: readonly PartialCall[]): PartialTurn | undefined {
+function partialTurn(
+  content: string,
+  reasoning: string,
+  calls: readonly PartialCall[],
+  mint: CallIdMinter,
+): PartialTurn | undefined {
   if (content === '' && reasoning === '' && calls.length === 0) {
     return undefined;
   }
   return {
     content,
     ...(reasoning ? { reasoning } : {}),
-    ...(calls.length ? { toolCalls: assembledCalls(calls) } : {}),
+    ...(calls.length ? { toolCalls: assembledCalls(calls, mint) } : {}),
   };
 }
 
@@ -618,6 +633,17 @@ export interface StreamTurnOptions {
    * keeps a session on one provider. Never refused, so never negotiated.
    */
   headers?: Record<string, string>;
+  /**
+   * Makes up the id of a call the server sent without one, or under one an earlier call in the
+   * turn already has. A server's own id is otherwise kept as sent.
+   *
+   * @defaultValue `mintCallId`, nine random characters from `[A-Za-z0-9]`
+   *
+   * @remarks
+   * Unique within the turn. `runAgentLoop` also keeps each id unique across the transcript; a host
+   * calling this itself does that with `distinctCallIds`.
+   */
+  mintCallId?: CallIdMinter;
 }
 
 /**
@@ -654,6 +680,7 @@ export async function streamTurn(
     onThinking,
     onOutput,
     headers,
+    mintCallId = defaultMinter,
   }: StreamTurnOptions = {},
 ): Promise<Turn> {
   // Silence, not duration: the timer is rearmed on every chunk, so a model that is still
@@ -726,7 +753,7 @@ export async function streamTurn(
     if (inFlight) {
       // Lazy, so a stream nobody stops pays nothing for it. Text held back as a possible tag is
       // left out: it is a few characters that may yet be a marker.
-      inFlight.read = () => partialTurn(splitter.output, reasoning.join('') + splitter.reasoning, calls);
+      inFlight.read = () => partialTurn(splitter.output, reasoning.join('') + splitter.reasoning, calls, mintCallId);
     }
     const usage = noUsage();
     // The usage block's own cache count wins over llama.cpp's, which is the same number in the
@@ -795,7 +822,7 @@ export async function streamTurn(
       for (const part of delta.tool_calls ?? []) {
         let call = ownerOf(calls, part);
         if (!call) {
-          call = { index: fragmentIndex(part), id: '', name: '', arguments: '' };
+          call = { index: fragmentIndex(part), id: '', name: '', arguments: '', minted: '' };
           calls.push(call);
         }
         if (part.id) {
@@ -830,7 +857,7 @@ export async function streamTurn(
 
     return {
       content: splitter.output,
-      toolCalls: assembledCalls(calls),
+      toolCalls: assembledCalls(calls, mintCallId),
       usage,
       finishReason,
       reasoning: reasoning.join('') + splitter.reasoning,

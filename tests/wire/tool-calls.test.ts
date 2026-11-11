@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { callIdMinter } from '../../src/wire/call-ids.ts';
 import {
   ARGUMENTS_MALFORMED,
   ARGUMENTS_TRUNCATED,
@@ -7,6 +8,7 @@ import {
   ToolArgumentsError,
 } from '../../src/wire/tool-calls.ts';
 import { FinishReason, FUNCTION_TOOL } from '../../src/wire/wire.ts';
+import { MINTED_ID } from '../helpers.ts';
 
 describe('parseToolArguments', () => {
   it('reads an object, and reads empty as none', () => {
@@ -71,16 +73,17 @@ describe('recoverToolCalls', () => {
   it('takes Hermes and Qwen tool_call blocks out of the text', () => {
     const text =
       'Reading both.\n<tool_call>\n{"name": "read", "arguments": {"path": "a"}}\n</tool_call>\n<tool_call>{"name": "read", "arguments": "{\\"path\\": \\"b\\"}"}</tool_call>';
-    expect(recoverToolCalls(text)).toEqual({
+    const expected = callIdMinter(1);
+    expect(recoverToolCalls(text, { mintCallId: callIdMinter(1) })).toEqual({
       content: 'Reading both.',
       toolCalls: [
         {
-          id: 'call_recovered_0',
+          id: expected(),
           type: FUNCTION_TOOL,
           function: { name: 'read', arguments: '{"path":"a"}' },
         },
         {
-          id: 'call_recovered_1',
+          id: expected(),
           type: FUNCTION_TOOL,
           function: { name: 'read', arguments: '{"path": "b"}' },
         },
@@ -100,7 +103,7 @@ describe('recoverToolCalls', () => {
       content: '',
       toolCalls: [
         {
-          id: 'call_recovered_0',
+          id: expect.stringMatching(MINTED_ID),
           type: FUNCTION_TOOL,
           function: { name: 'write', arguments: '{"path":"notes.md","lines":3}' },
         },

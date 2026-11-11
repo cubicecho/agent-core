@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { isRecord } from '../core/guards.ts';
+import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { THINK_FENCE } from './thinking.ts';
 import { FinishReason, FUNCTION_TOOL } from './wire.ts';
 
@@ -463,8 +464,10 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  *
  * @param content - The turn's text.
  * @param [options] - `names`, the tools that exist. Without them only the templates' markers count.
- * @returns The text with the calls taken out, and the calls, numbered `call_recovered_0` onward.
- * No calls leaves the text as it was.
+ * `mintCallId`, where each call's id comes from: `mintCallId` by default, nine random characters
+ * from `[A-Za-z0-9]`.
+ * @returns The text with the calls taken out, and the calls, each under an id of its own. No calls
+ * leaves the text as it was.
  *
  * @remarks
  * A server whose tool-call parser does not match the model's chat template streams the call as
@@ -477,7 +480,7 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  */
 export function recoverToolCalls(
   content: string,
-  { names = [] }: { names?: Iterable<string> } = {},
+  { names = [], mintCallId = defaultMinter }: { names?: Iterable<string>; mintCallId?: CallIdMinter } = {},
 ): { content: string; toolCalls: ToolCall[] } {
   const thought = content.toLowerCase().lastIndexOf(THINK_FENCE.close);
   const from = thought < 0 ? 0 : thought + THINK_FENCE.close.length;
@@ -494,6 +497,7 @@ export function recoverToolCalls(
   let rest = '';
   let cursor = 0;
   const toolCalls: ToolCall[] = [];
+  const taken = new Set<string>();
   for (const span of found) {
     if (span.start < cursor) {
       continue;
@@ -502,7 +506,7 @@ export function recoverToolCalls(
     cursor = span.end;
     for (const call of span.calls) {
       toolCalls.push({
-        id: `call_recovered_${toolCalls.length}`,
+        id: freshCallId(taken, mintCallId),
         type: FUNCTION_TOOL,
         function: call,
       });

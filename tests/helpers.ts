@@ -14,6 +14,9 @@ import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire/wire.
  */
 
 export type Body = OpenAI.ChatCompletionCreateParamsStreaming;
+
+/** The shape of every id the loop makes up: what Mistral's tokenizers before V13 accept. */
+export const MINTED_ID = /^[A-Za-z0-9]{9}$/;
 export type Chunk = OpenAI.ChatCompletionChunk;
 export type Message = OpenAI.ChatCompletionMessageParam;
 

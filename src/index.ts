@@ -292,6 +292,14 @@ export {
   tryAsk,
 } from './turn/side-task.ts';
 export {
+  type CallIdMinter,
+  callIdMinter,
+  callIdsIn,
+  distinctCallIds,
+  freshCallId,
+  mintCallId,
+} from './wire/call-ids.ts';
+export {
   AgentLoopError,
   type AgentLoopFailure,
   AgentLoopOverflow,

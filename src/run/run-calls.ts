@@ -14,6 +14,7 @@ import {
   shownCall,
   toolName,
 } from '../tools/tool-loading.ts';
+import { type CallIdMinter, callIdsIn, freshCallId } from '../wire/call-ids.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { reasoningEntry, type Turn } from '../wire/stream.ts';
 import {
@@ -356,6 +357,8 @@ export interface Calling {
   onToolResult: ((result: ToolCallResult) => void) | undefined;
   /** Offers a message just written into the transcript to the host. */
   announce: (message: OpenAI.ChatCompletionMessageParam, step: number) => Promise<void>;
+  /** Where the id of a call the loop writes itself comes from. */
+  mintCallId: CallIdMinter;
 }
 
 /**
@@ -851,8 +854,8 @@ export async function loadShortlist(
 ): Promise<void> {
   const { catalog } = run;
   const names = shortlist.map((tool) => toolName(tool) ?? '');
-  // Numbered by where the call lands, so two questions in one transcript do not share an id.
-  const id = `preselect-${messages.length}`;
+  // Checked against the transcript, so two questions in one history do not share an id.
+  const id = freshCallId(callIdsIn(messages), run.mintCallId);
   const args = JSON.stringify({ names });
   // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and a
   // host that shortlisted more has already chosen.

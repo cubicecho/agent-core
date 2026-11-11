@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
-import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { apiError, type Body, chunks, config, type Message, says, text, tool, user } from '../helpers.ts';
+import { callIdMinter } from '../../src/wire/call-ids.ts';
+import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
+import { apiError, type Body, chunks, config, type Message, MINTED_ID, says, text, tool, user } from '../helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -168,10 +169,15 @@ describe('onMessage', () => {
         heard.push({ message, written });
       },
     });
-    expect(heard[0].message).toMatchObject({ content: 'Checking.', tool_calls: [{ id: 'call_recovered_0' }] });
+    expect(heard[0].message).toMatchObject({
+      content: 'Checking.',
+      tool_calls: [{ id: expect.stringMatching(MINTED_ID) }],
+    });
     // The model sent no call: it wrote one into its reply, and that reply is what it said.
     expect(heard[0].written?.raw).toEqual({ role: Role.Assistant, content: reply });
-    expect(asked).toEqual([{ id: 'call_recovered_0', name: 'a', args: { x: 1 }, raw: '{"x":1}', repaired: true }]);
+    const { message } = heard[0];
+    const made = message.role === Role.Assistant ? message.tool_calls?.[0] : undefined;
+    expect(asked).toEqual([{ id: made?.id, name: 'a', args: { x: 1 }, raw: '{"x":1}', repaired: true }]);
   });
 
   it('is awaited before the tools run and before the next request is sent', async () => {
@@ -254,12 +260,13 @@ describe('a run that throws', () => {
     expect(limit.name).toBe('ToolIterationLimit');
     expect(limit.message).toBe('Stopped after 2 tool iterations.');
     expect(limit.cause).toBeUndefined();
+    // The server named both steps' calls `c0`; the second is given an id of its own.
     expect(outline(limit.messages)).toEqual([
       'user: hi',
       'assistant: null',
       'tool c0: ok',
       'assistant: null',
-      'tool c0: ok',
+      expect.stringMatching(/^tool [A-Za-z0-9]{9}: ok$/),
     ]);
     expect(limit.usage).toMatchObject({
       promptTokens: 20,
@@ -270,7 +277,7 @@ describe('a run that throws', () => {
     });
     expect(limit.toolCalls).toEqual([
       { id: 'c0', name: 'a', ok: true },
-      { id: 'c0', name: 'a', ok: true },
+      { id: expect.stringMatching(MINTED_ID), name: 'a', ok: true },
     ]);
     expect(limit.used).toEqual(['a']);
     expect(limit.loaded).toEqual([]);
@@ -347,7 +354,7 @@ describe('a run that throws', () => {
     expect(failedRun(error)?.used).toEqual(['s__read']);
     expect(failedRun(error)?.toolCalls).toEqual([
       { id: 'c0', name: LOAD_TOOLS, ok: true },
-      { id: 'c0', name: 's__read', ok: true },
+      { id: expect.stringMatching(MINTED_ID), name: 's__read', ok: true },
     ]);
   });
 
@@ -712,6 +719,7 @@ describe('a proxied run', () => {
         catalog,
         preselected: ['s__read'],
         dispatch: async () => 'contents',
+        mintCallId: callIdMinter(7),
         onMessage: () => {
           throw refused;
         },
@@ -721,7 +729,8 @@ describe('a proxied run', () => {
     const failure = error as InstanceType<typeof AgentLoopError>;
     expect(failure.cause).toBe(refused);
     expect(failure.messages.map((message) => message.role)).toEqual([Role.User, Role.Assistant, Role.Tool]);
-    expect(failure.toolCalls).toEqual([{ id: 'preselect-1', name: LOAD_TOOLS, ok: true }]);
+    // Seeded, so the id is the first of the sequence a minter on the same seed gives.
+    expect(failure.toolCalls).toEqual([{ id: callIdMinter(7)(), name: LOAD_TOOLS, ok: true }]);
     // As a result says it: proxied, the definitions are in the history and nothing is carried.
     expect(failure.loaded).toEqual([]);
     expect(create).not.toHaveBeenCalled();
@@ -959,5 +968,78 @@ describe('reasoning replay', () => {
     expect(scratchpads(sent[1])).toEqual(['look it up']);
     expect(scratchpads(sent[2])).toEqual([undefined]);
     expect(notices).toContain('m does not take its reasoning back; replaying without it');
+  });
+});
+
+describe('call ids', () => {
+  /** A turn that asks for two calls to `a` and sends an id for neither. */
+  const unnamed = () =>
+    chunks(
+      {
+        choices: [
+          {
+            delta: { tool_calls: [0, 1].map((index) => ({ index, function: { name: 'a', arguments: '{}' } })) },
+            finish_reason: FinishReason.ToolCalls,
+          },
+        ],
+      },
+      { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
+    );
+  /** A turn that writes its call into the reply, for recovery to find. */
+  const written = () => says('<tool_call>{"name": "a", "arguments": {}}</tool_call>');
+  /** The ids of every call in a transcript, in order. */
+  const callIds = (messages: readonly Message[]) =>
+    messages.flatMap((message) =>
+      (message.role === Role.Assistant ? (message.tool_calls ?? []) : []).map(({ id }) => id),
+    );
+  /** The ids every tool result in a transcript answers, in order. */
+  const resultIds = (messages: readonly Message[]) =>
+    messages.flatMap((message) => (message.role === Role.Tool ? [message.tool_call_id] : []));
+
+  it('are Mistral-shaped and unique across every step and the host history, and never minted twice', async () => {
+    const steps = 24;
+    for (let step = 0; step < steps; step++) {
+      create.mockReturnValueOnce(step % 2 ? written() : unnamed());
+    }
+    create.mockReturnValueOnce(says('done'));
+    // The first id drawn is one the host's history already holds, so it has to be stepped over.
+    const seeded = callIdMinter(11);
+    const draws = ['kept00001'];
+    const history: Message[] = [
+      user('earlier'),
+      {
+        role: Role.Assistant,
+        content: null,
+        tool_calls: [{ id: 'kept00001', type: FUNCTION_TOOL, function: { name: 'a', arguments: '{}' } }],
+      },
+      { role: Role.Tool, tool_call_id: 'kept00001', content: 'ok' },
+      user('again'),
+    ];
+    const result = await runAgentLoop({
+      config: { ...config, maxToolIterations: steps + 1 },
+      messages: history,
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      mintCallId: () => draws.shift() ?? seeded(),
+    });
+    const minted = callIds(result.messages.slice(history.length));
+    expect(minted).toHaveLength((steps / 2) * 2 + steps / 2);
+    expect(minted.every((id) => MINTED_ID.test(id))).toBe(true);
+    expect(new Set([...minted, 'kept00001']).size).toBe(minted.length + 1);
+    // Every request replays the ids the one before it sent, so none is ever made up again.
+    const sent = create.mock.calls.map(([body]) => (body as Body).messages);
+    for (const [at, request] of sent.entries()) {
+      expect(callIds(sent[at + 1] ?? result.messages).slice(0, callIds(request).length)).toEqual(callIds(request));
+    }
+  });
+
+  it('pair every result with the call it answers, as the call is replayed', async () => {
+    create.mockReturnValueOnce(unnamed()).mockReturnValueOnce(written()).mockReturnValueOnce(says('done'));
+    const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch: async () => 'ok' });
+    expect(resultIds(result.messages)).toEqual(callIds(result.messages));
+    const [body] = create.mock.calls.at(-1) ?? [];
+    const last = (body as Body).messages;
+    expect(resultIds(last)).toEqual(callIds(last));
+    expect(callIds(last)).toEqual(callIds(result.messages));
   });
 });
