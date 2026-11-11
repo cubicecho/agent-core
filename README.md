@@ -826,7 +826,12 @@ failure short of a stop, the cut-off answer is kept with a notice. The cap is on
 continue, one to find out.
 
 Every turn ends in a `usage` event, whether or not the endpoint reported tokens. Its totals are the
-run's so far; its `turn` is that turn's own `TurnUsage` and `finishReason`. The loop adds what only
+run's so far — `promptTokens`, `completionTokens`, `totalTokens`, `cachedTokens` and
+`cacheReported`, the `UsageTotals` spelling that `result.usage` and a failed run's `usage` share
+(their older `prompt`, `completion`, `total` and `cached` are still there, deprecated). A
+`cachedTokens` of zero is a miss only where `cacheReported` is true; false is an endpoint that never
+said. Its `turn` is that turn's own `TurnUsage` and `finishReason`, with the `contextLength` the loop
+was told. The loop adds what only
 it can know: `toolsDeclared` and `toolSchemaTokens` for the tool block it sent, and, from the second
 request on, `cacheExpected` (the previous prompt plus its reply) and — where a cache count was
 reported — `cacheBroken`, a hit short of 90% of the previous prompt. A broken cache is given a
@@ -855,10 +860,12 @@ a lesser body and a continuation with the reply so far on the end, and neither i
 
 `runMetrics(events)` adds a run up from those events — tokens, cache hit ratio and breaks by
 reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft
-acceptance, the largest prompt against a `contextLength`, turns cut off, tool errors by name, and
-an `outcome`. The loop returns it as `metrics`, with the `load_tools` counts only it can see
-(`toolsLoaded`, `redundantLoads`, `unknownToolNames`). It is a sibling of `fold` rather than part
-of it, since `fold`'s blocks are for display and a summary is not one:
+acceptance, the largest prompt against its window, turns cut off, tool errors by name, what
+`load_tools` resolved to (`toolsLoaded`, `redundantLoads`, `unknownToolNames`, off each load's
+result as `loads`), and an `outcome`. The loop returns it as `metrics`. Every turn carries its own
+window and every load its own counts, so a host that runs one loop per step gets the whole run from
+`runMetrics` over all the loops' events, with no per-loop result to merge. It is a sibling of `fold`
+rather than part of it, since `fold`'s blocks are for display and a summary is not one:
 
 ```ts
 const metrics = runMetrics(history(runId), { contextLength: config.contextLength });

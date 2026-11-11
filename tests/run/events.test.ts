@@ -591,6 +591,50 @@ describe('runMetrics', () => {
     expect(metrics).not.toHaveProperty('predictedMs');
   });
 
+  it('adds up a run of several loops from their events alone, each turn over its own window', () => {
+    const turn = (prompt: number, contextLength?: number) =>
+      emit('r', {
+        kind: RunEventKind.Usage,
+        usage: {
+          promptTokens: prompt,
+          completionTokens: 0,
+          totalTokens: prompt,
+          turn: { prompt, completion: 0, total: prompt, cached: 0, finishReason: FinishReason.Stop, contextLength },
+        },
+      });
+    const load = (toolsLoaded: number, redundantLoads: number, unknownToolNames: number) => {
+      emit('r', { kind: RunEventKind.ToolCall, name: LOAD_TOOLS });
+      emit('r', {
+        kind: RunEventKind.ToolResult,
+        name: LOAD_TOOLS,
+        ok: true,
+        loads: { toolsLoaded, redundantLoads, unknownToolNames },
+      });
+    };
+    // A first step's loop on a big window, then a second on a small one.
+    load(2, 0, 1);
+    turn(300, 1000);
+    load(1, 1, 0);
+    turn(200, 250);
+    // A turn a host reported itself, with no window of its own: the one given covers it.
+    turn(100);
+
+    const metrics = runMetrics(history('r'), { contextLength: 1000 });
+    expect(metrics).toMatchObject({ loadCalls: 2, toolsLoaded: 3, redundantLoads: 1, unknownToolNames: 1 });
+    // The second loop's 200 of 250, not the run's largest 300 over one window.
+    expect(metrics.largestPromptShare).toBe(0.8);
+    expect(metrics.largestPrompt).toBe(300);
+  });
+
+  it('leaves the load counts out where no result carried any', () => {
+    emit('r', { kind: RunEventKind.ToolCall, name: LOAD_TOOLS });
+    emit('r', { kind: RunEventKind.ToolResult, name: LOAD_TOOLS, ok: false });
+    const metrics = runMetrics(history('r'));
+    expect(metrics.loadCalls).toBe(1);
+    expect(metrics).not.toHaveProperty('toolsLoaded');
+    expect(metrics).not.toHaveProperty('largestPromptShare');
+  });
+
   it("reads the outcome off the last turn and the run's end", () => {
     const turn = (finishReason: string) => ({
       kind: RunEventKind.Usage,

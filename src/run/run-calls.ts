@@ -28,7 +28,7 @@ import {
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
 import { FUNCTION_TOOL, Role } from '../wire/wire.ts';
-import type { RunEventInput } from './events.ts';
+import type { LoadCounts, RunEventInput } from './events.ts';
 import { RunEventKind } from './events.ts';
 
 /**
@@ -226,7 +226,7 @@ export interface Calling {
   /** The host's own tools by name: declared on every step, and never reached through `call_tool`. */
   hostNames: ReadonlySet<string>;
   loaded: Set<string>;
-  loads: { toolsLoaded: number; redundantLoads: number; unknownToolNames: number };
+  loads: LoadCounts;
   used: Set<string>;
   toolCalls: ToolCallOutcome[];
   /** What the run's calls linked to, by uri, in the order first seen. */
@@ -260,16 +260,28 @@ const shownAs = (run: Calling, { call, args, normal }: ReadCall) =>
     : { name: call.function.name, input: call.function.arguments };
 
 /**
+ * Adds one call's load counts to the run's.
+ *
+ * @param into - The run's counts. Written to.
+ * @param counts - The call's. Not written to.
+ */
+function addLoads(into: LoadCounts, counts: LoadCounts) {
+  into.toolsLoaded += counts.toolsLoaded;
+  into.redundantLoads += counts.redundantLoads;
+  into.unknownToolNames += counts.unknownToolNames;
+}
+
+/**
  * Answers a `load_tools`, counting what it loaded.
  *
  * @param run - The run. Written to: the names this call loads are added to `loaded`, and `loads`
  * counts the new ones, the ones already loaded and the ones not in the catalogue.
  * @param args - The call's arguments, read as `requestedNames` reads them.
- * @returns The text the model reads, and `ok`: false where nothing it named was loadable, true
- * where it named even one tool that was loaded already.
+ * @returns The text the model reads; `ok`, false where nothing it named was loadable and true
+ * where it named even one tool that was loaded already; and `counts`, this call's alone.
  */
 function answerLoad(run: Calling, args: Record<string, unknown>) {
-  const { catalog, proxied, definitions, loaded, loads } = run;
+  const { catalog, proxied, definitions, loaded } = run;
   const resolved = expandNames(requestedNames(args), catalog);
   const content = proxied
     ? proxyLoadResult(resolved, catalog, definedAs(definitions, resolved.matched), loaded)
@@ -277,14 +289,15 @@ function answerLoad(run: Calling, args: Record<string, unknown>) {
   // Proxied, a load is only of what the result could define: a catalogued name the host
   // gave no definition for was not loaded, and is not counted or remembered as though it was.
   const hits = proxied ? resolved.matched.filter((hit) => definitions.has(hit)) : resolved.matched;
+  const counts: LoadCounts = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: resolved.unknown.length };
   for (const hit of hits) {
-    loads[loaded.has(hit) ? 'redundantLoads' : 'toolsLoaded']++;
+    counts[loaded.has(hit) ? 'redundantLoads' : 'toolsLoaded']++;
   }
-  loads.unknownToolNames += resolved.unknown.length;
+  addLoads(run.loads, counts);
   for (const hit of hits) {
     loaded.add(hit);
   }
-  return { content, ok: hits.length > 0 };
+  return { content, ok: hits.length > 0, counts };
 }
 
 /**
@@ -497,6 +510,7 @@ async function runCall(
   let links: ResourceLink[] = [];
   let end: Ending = false;
   let ok = true;
+  let loads: LoadCounts | undefined;
   // Answered from an earlier identical call of the step, whose links are already counted.
   let shared = false;
   try {
@@ -504,7 +518,7 @@ async function runCall(
       throw unreadable;
     }
     if (load) {
-      ({ content, ok } = answerLoad(run, args));
+      ({ content, ok, counts: loads } = answerLoad(run, args));
     } else {
       if (refused) {
         throw refused.error;
@@ -534,7 +548,14 @@ async function runCall(
   } finally {
     close();
   }
-  run.onEvent({ kind: RunEventKind.ToolResult, id: call.id, name, ok, text: preview(content) });
+  run.onEvent({
+    kind: RunEventKind.ToolResult,
+    id: call.id,
+    name,
+    ok,
+    text: preview(content),
+    ...(loads ? { loads } : {}),
+  });
   const isFirstAnswer = shared === false;
   if (isFirstAnswer) {
     collect(run, links, { callId: call.id, tool: name, step });
@@ -674,10 +695,11 @@ export async function loadShortlist(
   const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
   run.onEvent({ kind: RunEventKind.ToolCall, id, name: LOAD_TOOLS, text: preview(args) });
   run.onToolCall?.({ id, name: LOAD_TOOLS, args: { names }, raw: args });
-  run.onEvent({ kind: RunEventKind.ToolResult, id, name: LOAD_TOOLS, ok: true, text: preview(content) });
+  const loads: LoadCounts = { toolsLoaded: names.length, redundantLoads: 0, unknownToolNames: 0 };
+  run.onEvent({ kind: RunEventKind.ToolResult, id, name: LOAD_TOOLS, ok: true, text: preview(content), loads });
   run.onToolResult?.({ id, name: LOAD_TOOLS, ok: true, content });
   run.toolCalls.push({ id, name: LOAD_TOOLS, ok: true });
-  run.loads.toolsLoaded += names.length;
+  addLoads(run.loads, loads);
   for (const name of names) {
     run.loaded.add(name);
   }

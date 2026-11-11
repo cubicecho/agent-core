@@ -160,6 +160,10 @@ export type RunEventKind = (typeof RunEventKind)[keyof typeof RunEventKind];
  * What a run has spent, counted from the start of the run rather than for the turn that
  * carried it: a client draws the latest one it has seen and needs no arithmetic of its own,
  * and one lost to the backlog cap costs nothing because the next supersedes it.
+ *
+ * @remarks
+ * The counts are `UsageTotals`, the spelling `AgentLoopResult.usage` shares, with the cache's two
+ * fields optional so a host emitting usage of its own need not know them.
  */
 export interface RunUsage {
   promptTokens: number;
@@ -170,6 +174,12 @@ export interface RunUsage {
    * emitting usage before this field existed still compiles; absent reads the same as zero.
    */
   cachedTokens?: number;
+  /**
+   * Whether any turn so far reported a cache count, as `UsageTotals.cacheReported` says it — so a
+   * `cachedTokens` of zero reads as a miss or as nothing said. `runAgentLoop` always sets it;
+   * optional for the reason `cachedTokens` is, and absent reads as not known.
+   */
+  cacheReported?: boolean;
   /**
    * The turn that carried this report, on its own rather than added in — the half `runMetrics`
    * reads, since a total says nothing about which turn was slow or where the cache broke. Absent
@@ -188,6 +198,31 @@ export interface RunUsage {
 export interface TurnReport extends TurnUsage {
   /** Why the model stopped, as `Turn.finishReason` says it; `length` is a turn cut short. */
   finishReason: string;
+  /**
+   * The window the turn was served, where the loop was told one, for `largestPromptShare`.
+   *
+   * @remarks
+   * On the turn rather than only in `runMetrics`' options, because a run of several loops can put
+   * them on models with different windows, and one window for the whole run misstates how close
+   * any of them came.
+   */
+  contextLength?: number;
+}
+
+/**
+ * What `load_tools` calls resolved to: new tools, ones already loaded, and names in no catalogue.
+ *
+ * @remarks
+ * Carried on each `load_tools` result as `loads`, so `runMetrics` over every loop's events adds
+ * them up without the loops' results beside it.
+ */
+export interface LoadCounts {
+  /** Tools loaded that were not loaded already. */
+  toolsLoaded: number;
+  /** Tools asked for that were loaded already. */
+  redundantLoads: number;
+  /** Names asked for that are in no catalogue. */
+  unknownToolNames: number;
 }
 
 /**
@@ -243,6 +278,11 @@ export interface RunEvent {
    * `id` is.
    */
   level?: string;
+  /**
+   * What the call loaded, on a `load_tools` `tool-result` and on no other event. Absent from one
+   * whose arguments did not parse, which loaded nothing. Optional for the reason `id` is.
+   */
+  loads?: LoadCounts;
 }
 
 /**
@@ -692,13 +732,14 @@ export interface RunMetrics {
   /** `server-log` events at `error` or above: `critical`, `alert` and `emergency` with it. */
   serverErrors: number;
   /**
-   * Tools `load_tools` loaded that were not loaded already. Filled by `runAgentLoop`, which sees
-   * the resolution; the events carry only its text.
+   * Tools `load_tools` loaded that were not loaded already, summed from each result's `loads`.
+   * Absent where no result carried any; `runAgentLoop` fills all three with zero in a run on
+   * demand that loaded nothing.
    */
   toolsLoaded?: number;
-  /** Tools the model asked `load_tools` for that it already had, filled the same way. */
+  /** Tools the model asked `load_tools` for that it already had, summed the same way. */
   redundantLoads?: number;
-  /** Names the model asked `load_tools` for that are in no catalogue, filled the same way. */
+  /** Names the model asked `load_tools` for that are in no catalogue, summed the same way. */
   unknownToolNames?: number;
   promptTokens: number;
   completionTokens: number;
@@ -740,7 +781,10 @@ export interface RunMetrics {
   draftAcceptance?: number;
   /** The biggest prompt any turn reported. */
   largestPrompt?: number;
-  /** `largestPrompt` over the window `runMetrics` was told, for how close the run came. */
+  /**
+   * The highest share of its window any turn's prompt took, for how close the run came: each
+   * turn over its own `contextLength`, or over the one `runMetrics` was told where it has none.
+   */
   largestPromptShare?: number;
   /** How it ended, read off `done` and the last turn. */
   outcome?: RunOutcome;
@@ -804,7 +848,10 @@ function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOut
 
 /** What `runMetrics` takes besides the events. */
 export interface RunMetricsOptions {
-  /** The window the run was served, for `largestPromptShare`. Absent or zero leaves it out. */
+  /**
+   * The window the run was served, for `largestPromptShare` over the turns that do not carry
+   * their own. Absent or zero leaves those out.
+   */
   contextLength?: number;
 }
 
@@ -822,7 +869,9 @@ export interface RunMetricsOptions {
  * what it returns as blocks; a summary is another shape, and folding one in would give every
  * consumer of `fold` a block it does not know how to draw. Derived from the `usage` reports' own
  * `turn` rather than the running totals, so a run with several loops in it — a question per loop —
- * adds up the same as one with a single loop.
+ * adds up the same as one with a single loop. That holds for everything here: what `load_tools`
+ * resolved to rides on its results, and each turn carries the window it was served, so the events
+ * of every loop of a run, concatenated, are a complete account of it.
  */
 export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOptions = {}): RunMetrics {
   const metrics: RunMetrics = {
@@ -868,6 +917,11 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       metrics.toolCalls++;
       if (event.ok === false) {
         metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
+      }
+      if (event.loads) {
+        add('toolsLoaded', event.loads.toolsLoaded);
+        add('redundantLoads', event.loads.redundantLoads);
+        add('unknownToolNames', event.loads.unknownToolNames);
       }
       const called = pending.get(event.name)?.shift();
       if (called !== undefined) {
@@ -920,6 +974,10 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       }
       if (turn.prompt > 0) {
         metrics.largestPrompt = Math.max(metrics.largestPrompt ?? 0, turn.prompt);
+        const window = turn.contextLength ?? contextLength ?? 0;
+        if (window > 0) {
+          metrics.largestPromptShare = Math.max(metrics.largestPromptShare ?? 0, turn.prompt / window);
+        }
       }
     } else if (event.kind === RunEventKind.Done) {
       metrics.outcome = outcomeOf(event, last);
@@ -937,9 +995,6 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   }
   if (metrics.draftTotal && metrics.draftAccepted !== undefined) {
     metrics.draftAcceptance = metrics.draftAccepted / metrics.draftTotal;
-  }
-  if (metrics.largestPrompt !== undefined && contextLength && contextLength > 0) {
-    metrics.largestPromptShare = metrics.largestPrompt / contextLength;
   }
   return metrics;
 }

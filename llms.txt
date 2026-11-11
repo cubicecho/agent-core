@@ -187,6 +187,7 @@ What a run is doing, while it is doing it.
 - `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
 - `fold` — A run's events with each stretch of `thinking` or of `output` joined into one block, for a reader that takes a run in snapshots.
 - `history` — The backlog alone, for a caller that wants a snapshot rather than a subscription.
+- `LoadCounts` (type) — What `load_tools` calls resolved to: new tools, ones already loaded, and names in no catalogue.
 - `RunEvent` (type) — One thing that happened in a run, as a watcher receives it.
 - `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
 - `RunEventKind` — Any one of the kinds in `RunEventKind`.
@@ -388,12 +389,14 @@ Reading one streamed turn back into a message.
 
 - `CacheBreakReason` — Any one of the reasons in `CacheBreakReason`.
 - `InFlight` (type) — Where the request in flight can be read from, after it has thrown.
+- `LoopUsage` (type) — What a loop spent, as `AgentLoopResult.usage` and a failed run's `usage` carry it.
 - `PartialTurn` (type) — What a turn had said when it ended without coming back: the answer, the scratchpad and the calls, as far as each had arrived.
 - `Produced` (type) — Whether the model has said anything a second attempt would say twice.
 - `StreamTurnOptions` (type) — What `streamTurn` takes besides the request body.
 - `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
 - `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.
 - `TurnUsage` (type) — What a turn cost, and how it went.
+- `UsageTotals` (type) — A run's token totals, in the spelling every run-level usage shares.
 
 ### thinking
 
