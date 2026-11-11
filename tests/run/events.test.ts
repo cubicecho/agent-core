@@ -648,6 +648,9 @@ describe('runMetrics', () => {
     emit('cut', turn(FinishReason.Length));
     emit('cut', { kind: RunEventKind.Done, ok: true });
     expect(runMetrics(history('cut')).outcome).toBe(RunOutcome.Truncated);
+    emit('withheld', turn(FinishReason.ContentFilter));
+    emit('withheld', { kind: RunEventKind.Done, ok: true });
+    expect(runMetrics(history('withheld')).outcome).toBe(RunOutcome.Filtered);
     emit('broke', turn(FinishReason.Stop));
     emit('broke', { kind: RunEventKind.Done, ok: false });
     expect(runMetrics(history('broke')).outcome).toBe(RunOutcome.Failed);

@@ -96,6 +96,7 @@ import {
 import { FinishReason, PartType, Role } from '../wire/wire.ts';
 import { type ArtifactOptions, RECORD_ARTIFACT_TOOL, RunArtifacts } from './artifacts.ts';
 import {
+  endingOf,
   type RunEvent,
   type RunEventInput,
   RunEventKind,
@@ -1549,6 +1550,9 @@ async function runSteps(
     await loadShortlist(calling, shortlist, messages);
   }
 
+  // Whether the turn before this one said it was calling tools and sent none, and was asked again.
+  let askedAgain = false;
+
   for (let step = 0; step < config.maxToolIterations; step++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
     // end — so the signal is read between steps as well.
@@ -1703,6 +1707,8 @@ async function runSteps(
     onEvent(usageEvent(loopUsage(usage, cacheReported), turn, ledger, config.contextLength));
     if (turn.finishReason === FinishReason.Length) {
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
+    } else if (turn.finishReason === FinishReason.ContentFilter) {
+      notice("the provider's content filter withheld the reply");
     }
     const canRecover = recover && (tools.length > 0 || hostTools.length > 0 || onDemand);
     const read = turnCalls(turn, canRecover ? recoverable : undefined, notice, mintCallId);
@@ -1712,6 +1718,26 @@ async function runSteps(
     const calls = distinctCallIds(read.calls, messages, mintCallId);
     const shown: Turn = { ...turn, content, toolCalls: calls };
     onTurn?.(shown, step);
+
+    // Calls are run from their presence, never from the finish reason. A `tool_calls` finish with
+    // none assembled is a reply that went wrong on the way — a parser that missed the model's
+    // template, a stream cut between the reason and the calls — and not an answer, so with nothing
+    // said either the same request is sent once more, unwritten, while a step is left to send it.
+    const isCallless = turn.finishReason === FinishReason.ToolCalls && calls.length === 0;
+    const isSilent = content.trim() === '';
+    if (isCallless) {
+      const canAskAgain = isSilent && askedAgain === false && step + 1 < config.maxToolIterations;
+      if (canAskAgain) {
+        notice('the model said it was calling tools but sent none; asking again');
+        askedAgain = true;
+        continue;
+      }
+      notice('the model said it was calling tools but sent none; taking its reply as the answer');
+    } else if (isSilent && calls.length === 0 && turn.finishReason !== FinishReason.ContentFilter) {
+      // Kept as the answer, written as `""`, so a stored transcript stays sendable: the host is told.
+      notice('the model ended its turn with no answer');
+    }
+    askedAgain = false;
 
     // Read before the assistant message is written, so what is replayed on every later request
     // is the repaired JSON.
@@ -1740,12 +1766,7 @@ async function runSteps(
       const afterTurn =
         hooks && fired?.afterTurn ? tellAfterTurn(hooks, messages, questionAt(), turn.content) : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
-      let outcome: RunOutcome = RunOutcome.Answered;
-      if (ended) {
-        outcome = RunOutcome.Ended;
-      } else if (turn.finishReason === FinishReason.Length) {
-        outcome = RunOutcome.Truncated;
-      }
+      const outcome: RunOutcome = ended ? RunOutcome.Ended : endingOf(turn.finishReason);
       return {
         turn: shown,
         ...(ended ? { ended } : {}),

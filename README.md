@@ -880,6 +880,18 @@ at all, words included. `preselect` also takes a `temperature` and a
 `reasoningEffort` and an `extraBody`, read as `ask` reads them, and `runAgentLoop({ preselect: true })` makes the call
 itself — see "Its side tasks" below.
 
+A turn with nothing to say is still written as a message the next request can carry: `content` is
+`null` only beside `tool_calls`, and `""` without them, any reasoning kept on it. A turn that
+thought and stopped, or said nothing, is the answer, with the notice `the model ended its turn with
+no answer`; `{ role: "assistant", content: null }` with no calls is what Ollama refuses as `invalid
+message content type`, and a host's stored transcript would carry it into the next run. A turn the
+provider's content filter withheld (`finish_reason: "content_filter"`) is said so as a notice, and a
+run that ends on one has `metrics.outcome` `filtered`, not `answered`. A turn that finished for
+`tool_calls` and sent none is not an answer: with nothing said either, the same request is sent once
+more and nothing of the empty turn is written, while a step is left to send it in; a second one, or
+one that said something, is taken as the answer with a notice. Calls are run from their presence,
+never from the finish reason.
+
 A turn cut off at `maxTokens` is said so as a notice, and with `maxContinuations` above zero it is
 continued first. `continueTurn` is the same thing for a caller with its own loop:
 
@@ -943,7 +955,7 @@ a lesser body and a continuation with the reply so far on the end, and neither i
 reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft
 acceptance, the largest prompt against its window, turns cut off, tool errors by name, what
 `load_tools` resolved to (`toolsLoaded`, `redundantLoads`, `unknownToolNames`, off each load's
-result as `loads`), and an `outcome`. The loop returns it as `metrics`. Every turn carries its own
+result as `loads`), and an `outcome` — `answered`, `truncated`, `filtered`, `ended` or `failed`. The loop returns it as `metrics`. Every turn carries its own
 window and every load its own counts, so a host that runs one loop per step gets the whole run from
 `runMetrics` over all the loops' events, with no per-loop result to merge. It is a sibling of `fold`
 rather than part of it, since `fold`'s blocks are for display and a summary is not one:
