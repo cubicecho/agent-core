@@ -1080,10 +1080,36 @@ turn is remembered, awaits it once the answer is out.
 
 The loop gathers before its first request, beside its own preselection when `preselect` asked for
 one, and nothing else of the host's can run beside those. A host with pre-turn work to overlap with
-the hooks — a compaction — calls `gather` itself, applies `withContext` to the current question as
-well, and calls `notify` after (see [Hooks](#hooks)). Such a host passes the question as it was
-typed as `preselectQuery` too, or the preselector is shown the context in front of it and picks
-tools for what was recalled rather than what was asked.
+the hooks — a compaction — calls `gather` itself and applies `withContext` to the current question
+as well (see [Hooks](#hooks)). Such a host passes the question as it was typed as `preselectQuery`
+too, or the preselector is shown the context in front of it and picks tools for what was recalled
+rather than what was asked.
+
+It can still leave `afterTurn` to the loop, with three things the transcript it handed over cannot
+say. `hooks.question` is the question as typed, which the hooks are told in place of the one with
+the recall on it — at the same position, so its uuid is the stored question's — and as `prompt`
+where the context has none. `hooks.turnBase` is the user messages of the host's transcript that the
+loop's does not hold, added to `turn.index`: what a fold took and did not send again, or the turns
+before a run that starts from a transcript of its own. `hooks.offset` numbers the messages, as it
+does for `beforeCompact`. The question is found by reference, and by role — the last user message
+that is not a summary — where `beforeStep` rebuilt the transcript from a store and the object went
+with it.
+
+```ts
+await runAgentLoop({
+  ...options,
+  messages: request, // from the store, the recall already on the question
+  beforeStep: () => rebuild(),
+  hooks: {
+    run,
+    context,
+    fire: [HookEvent.BeforeCompact, HookEvent.AfterTurn], // beforeTurn is the host's
+    question: prompt,
+    turnBase: foldedQuestions, // stored user messages the fold took and did not send again
+    offset: turnStart - requestIndex(turnStart, fold), // the request's numbering onto the store's
+  },
+});
+```
 
 `hooks.fire` says which events the loop fires itself, and it fires no others: `sessionStart` and
 `beforeTurn` gathered before the first request, `beforeCompact` beside each fold `compact` makes,

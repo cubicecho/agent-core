@@ -20,7 +20,8 @@ const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
 const { preview } = await import('../../src/run/run-calls.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
-const { configureHooks, resetHooks, withContext } = await import('../../src/hooks/hooks.ts');
+const { configureHooks, resetHooks, turnMessages, withContext } = await import('../../src/hooks/hooks.ts');
+const { SUMMARY_ACK, SUMMARY_LEAD } = await import('../../src/context/compaction.ts');
 const { tokensBetween } = await import('../../src/context/ledger.ts');
 const { errorMessage, failedRun } = await import('../../src/wire/errors.ts');
 
@@ -2284,6 +2285,96 @@ describe('runAgentLoop', () => {
       });
       await result.afterTurn;
       expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.AfterTurn]);
+    });
+  });
+
+  describe('afterTurn for a host that rebuilds its transcript', () => {
+    /** A runner whose `beforeTurn` recalls a line, as an injecting hook would. */
+    const remembering = () =>
+      vi.fn<HookRunner>(async (event) =>
+        event === HookEvent.BeforeTurn ? [outcome({ event, text: 'you like tea', inject: true, maxTokens: 500 })] : [],
+      );
+    const toldAfter = (run: ReturnType<typeof remembering>) =>
+      run.mock.calls.find(([event]) => event === HookEvent.AfterTurn)?.[1];
+
+    it('tells the question as it was typed, numbered as the host stores it', async () => {
+      create.mockReturnValueOnce(says('tea'));
+      const run = remembering();
+      // A folded request, as a host builds it from its store: the summary in place of six stored
+      // messages, three of them questions, then an earlier turn and this one with its recall on it.
+      const typed = 'what do I like?';
+      const asked = withContext([{ role: Role.User, content: typed }], 0, 'you like tea')[0];
+      const messages: Message[] = [
+        { role: Role.User, content: `${SUMMARY_LEAD}notes` },
+        { role: Role.Assistant, content: SUMMARY_ACK },
+        { role: Role.User, content: 'earlier' },
+        { role: Role.Assistant, content: 'sure' },
+        asked,
+      ];
+      const result = await runAgentLoop({
+        config,
+        messages,
+        dispatch: async () => 'ok',
+        hooks: {
+          run,
+          context: { session: { id: 's1' } },
+          fire: [HookEvent.AfterTurn],
+          question: typed,
+          turnBase: 3,
+          // The stored index of the summary's first slot: six folded messages less the two sent.
+          offset: 4,
+        },
+      });
+      await result.afterTurn;
+      const stored = [...Array(8).fill({ role: Role.Tool, content: '' }), { role: Role.User, content: typed }];
+      stored.push({ role: Role.Assistant, content: 'tea' });
+      expect(toldAfter(run)).toEqual({
+        session: { id: 's1' },
+        prompt: typed,
+        reply: 'tea',
+        // Three folded away and one sent before it.
+        turn: { index: 4, messages: turnMessages('s1', stored, 8) },
+      });
+    });
+
+    it("keeps the host's own prompt over the question", async () => {
+      create.mockReturnValueOnce(says('tea'));
+      const run = remembering();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => 'ok',
+        hooks: { run, context: { session: { id: 's1' }, prompt: 'as stored' }, question: 'as typed' },
+      });
+      await result.afterTurn;
+      expect(toldAfter(run)).toMatchObject({ prompt: 'as stored', turn: { messages: [{ text: 'as typed' }, {}] } });
+    });
+
+    it('finds the question by role once beforeStep has handed over new objects', async () => {
+      create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('the answer'));
+      const run = remembering();
+      const result = await runAgentLoop({
+        config,
+        messages: [
+          { role: Role.User, content: 'earlier' },
+          { role: Role.Assistant, content: 'sure' },
+          { role: Role.User, content: 'what do I like?' },
+        ],
+        tools: [tool('a')],
+        dispatch: async () => 'ok',
+        hooks: { run, context: { session: { id: 's1' } } },
+        // Rebuilt from a store: every message a copy.
+        beforeStep: (messages, step) =>
+          step === 1 ? messages.map((message) => ({ ...message }) as Message) : undefined,
+      });
+      await result.afterTurn;
+      // The recall is still on the question the second request sends.
+      const second = (create.mock.calls[1][0] as Body).messages;
+      expect(second[2].content).toContain('you like tea');
+      expect(toldAfter(run)).toMatchObject({
+        reply: 'the answer',
+        turn: { index: 1, messages: [{ text: 'what do I like?' }, {}] },
+      });
     });
   });
 

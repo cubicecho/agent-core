@@ -176,14 +176,19 @@ export interface AgentLoopRequest {
  * @remarks
  * The loop gathers before its first request, beside its own preselection where it was asked for
  * one, and nothing else runs beside the two. A host with pre-turn work of its own to overlap with
- * the hooks — a compaction — calls `gather` itself, puts the context on with `withContext`, calls
- * `notify` after, and hands `preselectQuery` the question as it was written. It still passes
- * `hooks` when the loop folds for it, with `fire` naming only `beforeCompact`, so what it fires
- * itself is not fired a second time.
+ * the hooks — a compaction — calls `gather` itself, puts the context on with `withContext`, and
+ * hands `preselectQuery` the question as it was written. It still passes `hooks`, with `fire`
+ * leaving out what it fires itself: `[HookEvent.BeforeCompact, HookEvent.AfterTurn]` has the loop
+ * fold for it and tell the answer, with `question`, `turnBase` and `offset` saying what the
+ * transcript it handed over does not — the question as typed, and where the host's numbering
+ * starts.
  */
 export interface AgentLoopHooks {
   run: HookRunner;
-  /** What the hooks are told. `reply` and `turn` are filled in for `afterTurn`. */
+  /**
+   * What the hooks are told. `reply` and `turn` are filled in for `afterTurn`, and `prompt` from
+   * `question` where it has none.
+   */
   context: HookContext;
   /**
    * The events the loop fires, and the only ones: `sessionStart` and `beforeTurn` gathered before
@@ -233,6 +238,27 @@ export interface AgentLoopHooks {
    * @defaultValue `0`
    */
   offset?: number;
+  /**
+   * The question as it was asked, for `afterTurn`: the text its `turn.messages` gives the
+   * question, and the `prompt` it is told where `context` has none.
+   *
+   * @defaultValue The question as the transcript holds it.
+   *
+   * @remarks
+   * For a host that put gathered context on the question before the loop saw it, so a memory
+   * server files what was asked rather than what it recalled. Only the text is replaced: where the
+   * question is is still read off the transcript, and its uuid's position with it.
+   */
+  question?: string;
+  /**
+   * The user messages of the host's transcript that `messages` does not hold, added to the
+   * `turn.index` `afterTurn` is told — `turnIndex`'s `offset`. A host that hands the loop a folded
+   * transcript passes those the fold took and did not send again; one that runs each turn from a
+   * transcript of its own passes how many turns came before it.
+   *
+   * @defaultValue `0`
+   */
+  turnBase?: number;
 }
 
 /** How full the window is as a step is about to be sent, as `beforeStep` is told it. */
@@ -1151,7 +1177,8 @@ function firing(hooks: AgentLoopHooks): { before: readonly HookEvent[]; afterTur
  * Tells the `afterTurn` hooks what was answered, with the turn it closed where the question is
  * still in the transcript.
  *
- * @param hooks - The run's hooks: the runner, the context the hooks are told, and who hears a note.
+ * @param hooks - The run's hooks: the runner, the context the hooks are told, who hears a note,
+ * and the `question`, `turnBase` and `offset` that put the turn in the host's terms.
  * @param messages - The transcript as the run ended, the answer on the end.
  * @param at - Where the question is in `messages`. Negative — there was none, or it has been
  * folded away — tells the hooks the reply and no `turn`.
@@ -1163,25 +1190,40 @@ const tellAfterTurn = (
   messages: OpenAI.ChatCompletionMessageParam[],
   at: number,
   reply: string,
-): Promise<HookNote[]> =>
-  notify(
+): Promise<HookNote[]> => {
+  const { question, turnBase = 0 } = hooks;
+  // At the question's own position, so its uuid is the one the host's stored question has.
+  const told = question === undefined || at < 0 ? messages : messages.with(at, { role: Role.User, content: question });
+  const prompt = hooks.context.prompt ?? question;
+  return notify(
     hooks.run,
     HookEvent.AfterTurn,
     {
       ...hooks.context,
+      ...(prompt === undefined ? {} : { prompt }),
       reply,
       ...(at >= 0
         ? {
             turn: {
               // A fold's summary is a user message, and stands for turns rather than being one.
-              index: turnIndex(messages, at) - messages.slice(0, at).filter(isSummary).length,
-              messages: turnMessages(hooks.context.session.id, messages, at, undefined, { offset: hooks.offset }),
+              index: turnIndex(told, at, turnBase) - told.slice(0, at).filter(isSummary).length,
+              messages: turnMessages(hooks.context.session.id, told, at, undefined, { offset: hooks.offset }),
             },
           }
         : {}),
     },
     hooks.onNote,
   );
+};
+
+/**
+ * Whether a message is a question: a user message that is not a fold's summary.
+ *
+ * @param message - One message of the transcript.
+ * @returns True of a `user` message `isSummary` does not claim.
+ */
+const isQuestion = (message: OpenAI.ChatCompletionMessageParam) =>
+  message.role === Role.User && isSummary(message) === false;
 
 /**
  * The loop's own record of what it emitted, less the token deltas, for `runMetrics` at the end.
@@ -1539,11 +1581,16 @@ async function runSteps(
     };
   };
   const announce = announcer(onMessage);
-  // Held by reference rather than by index, so a `beforeStep` that folds the head into a summary
-  // moves the question without losing it — and one that summarises the question away takes the
-  // hooks' context with it, which is right.
-  const question = messages.findLast((message) => message.role === Role.User);
-  const questionAt = () => (question ? messages.indexOf(question) : -1);
+  // Held by reference, so a `beforeStep` that folds the head into a summary moves the question
+  // without losing it, and found again by role where a host rebuilt the transcript and the object
+  // went with it: nothing the loop writes is a user message, so the question is still the last one
+  // that is not a summary. One that summarises the question away took every user message before it
+  // too, and the hooks' context goes with it, which is right.
+  const question = messages.findLast(isQuestion);
+  const questionAt = () => {
+    const at = question ? messages.indexOf(question) : -1;
+    return at >= 0 || question === undefined ? at : messages.findLastIndex(isQuestion);
+  };
   const gathered = await gathering;
   // Read once, so what the result hands back is what every step of this run said.
   const preface = hooks?.preface ?? configureHooks().preface;
