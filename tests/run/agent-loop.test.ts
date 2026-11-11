@@ -2010,6 +2010,82 @@ describe('runAgentLoop', () => {
     }
   });
 
+  describe('fire', () => {
+    /** A runner whose every event recalls a line naming it, as an injecting hook would. */
+    const recalling = () =>
+      vi.fn<HookRunner>(async (event) => [
+        outcome({ event, hookId: event, text: `from ${event}`, inject: true, maxTokens: 500 }),
+      ]);
+    const fired = (run: ReturnType<typeof recalling>) => run.mock.calls.map(([event]) => event);
+
+    it('fires only the events it lists, and hands back an empty afterTurn for one it leaves out', async () => {
+      create.mockReturnValueOnce(says('the answer'));
+      const run = recalling();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => 'ok',
+        hooks: { run, context: { session: { id: 's1' } }, fire: [HookEvent.BeforeCompact] },
+      });
+      expect(await result.afterTurn).toEqual([]);
+      expect(fired(run)).toEqual([]);
+      expect(result.context).toBe('');
+      expect(result.notes).toEqual([]);
+      expect((create.mock.calls[0][0] as Body).messages[0].content).toBe('hi');
+    });
+
+    it('gathers the injecting events it lists in their order, and tells afterTurn where it is listed', async () => {
+      create.mockReturnValueOnce(says('the answer'));
+      const run = recalling();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => 'ok',
+        hooks: {
+          run,
+          context: { session: { id: 's1' } },
+          fire: [HookEvent.SessionStart, HookEvent.BeforeTurn, HookEvent.AfterTurn, HookEvent.SessionEnd],
+        },
+      });
+      await result.afterTurn;
+      // `sessionEnd` is the host's: the loop has no point that is the end of a session.
+      expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.BeforeTurn, HookEvent.AfterTurn]);
+      expect(result.context.indexOf('from sessionStart')).toBeLessThan(result.context.indexOf('from beforeTurn'));
+    });
+
+    it('wins over events, and never gathers afterTurn before the request', async () => {
+      create.mockReturnValueOnce(says('the answer'));
+      const run = recalling();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => 'ok',
+        hooks: {
+          run,
+          context: { session: { id: 's1' } },
+          events: [HookEvent.SessionStart],
+          fire: [HookEvent.AfterTurn, HookEvent.BeforeTurn],
+        },
+      });
+      await result.afterTurn;
+      expect(fired(run)).toEqual([HookEvent.BeforeTurn, HookEvent.AfterTurn]);
+      expect(run.mock.calls[1][1]).toMatchObject({ reply: 'the answer' });
+    });
+
+    it('fires what it always did when absent: events before the request, then afterTurn', async () => {
+      create.mockReturnValueOnce(says('the answer'));
+      const run = recalling();
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => 'ok',
+        hooks: { run, context: { session: { id: 's1' } }, events: [HookEvent.SessionStart] },
+      });
+      await result.afterTurn;
+      expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.AfterTurn]);
+    });
+  });
+
   describe("the hooks' context on past questions", () => {
     /** A runner whose `beforeTurn` hook recalls this, and whose other events do nothing. */
     const recalls =

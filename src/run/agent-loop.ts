@@ -21,7 +21,7 @@ import {
 } from '../endpoint/capabilities.ts';
 import { firstTokenMs, getClient, loadingMs, servedSlots, timeoutMs } from '../endpoint/client.ts';
 import { CACHE_PROMPT_FIELD, SESSION_HEADER, SLOT_FIELD, slotAllocator } from '../endpoint/slots.ts';
-import { HookEvent } from '../hooks/hook-events.ts';
+import { HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 import {
   configureHooks,
   type Gathered,
@@ -129,16 +129,38 @@ export interface AgentLoopRequest {
  * The loop gathers before its first request, beside its own preselection where it was asked for
  * one, and nothing else runs beside the two. A host with pre-turn work of its own to overlap with
  * the hooks — a compaction — calls `gather` itself, puts the context on with `withContext`, calls
- * `notify` after, passes no `hooks`, and hands `preselectQuery` the question as it was written.
+ * `notify` after, and hands `preselectQuery` the question as it was written. It still passes
+ * `hooks` when the loop folds for it, with `fire` naming only `beforeCompact`, so what it fires
+ * itself is not fired a second time.
  */
 export interface AgentLoopHooks {
   run: HookRunner;
   /** What the hooks are told. `reply` and `turn` are filled in for `afterTurn`. */
   context: HookContext;
   /**
-   * Run before the first request.
+   * The events the loop fires, and the only ones: `sessionStart` and `beforeTurn` gathered before
+   * the first request, in the order listed; `beforeCompact` beside each fold `compact` makes; and
+   * `afterTurn` once the run has its answer. `sessionEnd` and `sessionDelete` are the host's, since
+   * the loop has no point that is either, and are ignored here.
+   *
+   * @defaultValue `events`, then `afterTurn` and `beforeCompact` — everything the loop has a point
+   * for, as it fired before this existed.
+   *
+   * @remarks
+   * For a host that fires some of them around the loop rather than inside it: one that tells
+   * `beforeTurn` and `afterTurn` around a whole step of its own, and wants only the fold's
+   * `beforeCompact` from the loop, passes `[HookEvent.BeforeCompact]`. With `afterTurn` left out the
+   * result's `afterTurn` is resolved and empty, and `notes` and `context` are empty with no
+   * injecting event listed — the host's own `gather` and `notify` hold those instead.
+   */
+  fire?: readonly HookEvent[];
+  /**
+   * Run before the first request, when `fire` is not given. Ignored beside `fire`, which says the
+   * same thing with the other events in it.
    *
    * @defaultValue `[HookEvent.BeforeTurn]`
+   * @deprecated List them in `fire` instead, with `afterTurn` and `beforeCompact` where the loop
+   * should fire those too.
    */
   events?: readonly HookEvent[];
   /**
@@ -153,7 +175,7 @@ export interface AgentLoopHooks {
    * @defaultValue The preface `configureHooks` holds.
    */
   preface?: string;
-  /** Hears each note, from before the request and from `afterTurn`. */
+  /** Hears each note, from before the request, from `beforeCompact` and from `afterTurn`. */
   onNote?: OnNote;
   /**
    * What the run's first message is numbered as in the uuids hooks are told — the host's stored
@@ -414,7 +436,8 @@ export interface AgentLoopOptions {
    */
   onToolResult?: (result: ToolCallResult) => void;
   /**
-   * Hooks gathered onto the question before the first request, and told the reply after.
+   * Hooks gathered onto the question before the first request, and told the reply after — or
+   * whichever of those `fire` names.
    *
    * @remarks
    * Only this question is touched — the last user message of `messages` — and the context is on
@@ -559,12 +582,13 @@ export interface AgentLoopResult {
    * preselection picked it. Empty in eager mode, and where nothing was picked.
    */
   preselected: string[];
-  /** The hooks' notes from before the first request. */
+  /** The hooks' notes from before the first request. Empty where `fire` lists no injecting event. */
   notes: HookNote[];
   /**
    * The `<context>` blocks the hooks added to this question, as `withContext` takes them. Empty
-   * when no hook added any, and without `hooks`. Not in `messages`, so a host that wants the next
-   * turn's request to begin with this one's stores it beside the question; see `hooks`.
+   * when no hook added any, without `hooks`, and where `fire` lists no injecting event. Not in
+   * `messages`, so a host that wants the next turn's request to begin with this one's stores it
+   * beside the question; see `hooks`.
    */
   context: string;
   /**
@@ -579,8 +603,9 @@ export interface AgentLoopResult {
    * The `afterTurn` hooks' notes, once they have run — failures only, as `notify` returns them.
    * The loop does not wait for it, so the answer is never held for a hook; a host that stores the
    * notes with the turn, or must not exit before the turn is remembered, awaits it. Each note
-   * reaches `onNote` as well. Already resolved and empty without `hooks`, and rejects only if
-   * `onNote` throws.
+   * reaches `onNote` as well. Already resolved and empty without `hooks`, and where `fire` leaves
+   * `afterTurn` out — a host that tells it itself has the notes from its own `notify`. Rejects only
+   * if `onNote` throws.
    */
   afterTurn: Promise<HookNote[]>;
   /**
@@ -885,6 +910,7 @@ async function foldBeforeStep(
   { options, charsPerToken, notice }: { options: AgentLoopOptions; charsPerToken: number; notice: OnNotice },
 ): Promise<OpenAI.ChatCompletionMessageParam[]> {
   const { config, hooks } = options;
+  const told = hooks && firing(hooks).beforeCompact ? hooks : undefined;
   const compactor = config.tasks?.compaction;
   const plan = planCompaction(transcript, {
     ...(typeof options.compact === 'object' ? options.compact : {}),
@@ -897,12 +923,37 @@ async function foldBeforeStep(
     return transcript;
   }
   const folded = await compactTranscript(transcript, plan, summarise, {
-    ...(hooks ? { hooks: { run: hooks.run, context: hooks.context, onNote: hooks.onNote, offset: hooks.offset } } : {}),
+    ...(told ? { hooks: { run: told.run, context: told.context, onNote: told.onNote, offset: told.offset } } : {}),
   });
   if (folded !== transcript) {
     notice(`compacted ${plan.toSummarise.length} messages into a summary`);
   }
   return folded;
+}
+
+/**
+ * Which events the loop fires for these hooks, read from `fire`, or from `events` without it.
+ *
+ * @param hooks - The run's hooks.
+ * @returns The events to gather before the first request, and whether `afterTurn` and
+ * `beforeCompact` are the loop's to fire.
+ *
+ * @remarks
+ * Without `fire`, `events` goes to `gather` as it was given, unfiltered, so a host that had put
+ * something odd in it sees what it saw before. With `fire`, only the injecting events are gathered:
+ * a list that names every event is the whole of the loop's firing, and `afterTurn` gathered before
+ * the request would be the hooks told a reply that does not exist yet.
+ */
+function firing(hooks: AgentLoopHooks): { before: readonly HookEvent[]; afterTurn: boolean; beforeCompact: boolean } {
+  if (!hooks.fire) {
+    return { before: hooks.events ?? [HookEvent.BeforeTurn], afterTurn: true, beforeCompact: true };
+  }
+  const fire = new Set(hooks.fire);
+  return {
+    before: [...fire].filter((event) => INJECT_EVENTS.has(event)),
+    afterTurn: fire.has(HookEvent.AfterTurn),
+    beforeCompact: fire.has(HookEvent.BeforeCompact),
+  };
 }
 
 /**
@@ -1142,8 +1193,9 @@ async function runSteps(
   // they cost the first request two round trips where one will do. A failing runner is a note, but
   // a host's `onNote` that throws rejects the gather, perhaps while the preselection is still out:
   // handled at once so that is no unhandled rejection, and still thrown below, where it always was.
+  const fired = hooks && firing(hooks);
   const gathering: Promise<Gathered> = hooks
-    ? gather(hooks.run, hooks.events ?? [HookEvent.BeforeTurn], hooks.context, {
+    ? gather(hooks.run, fired?.before ?? [], hooks.context, {
         signal,
         onNote: hooks.onNote,
         maxTokens: hooks.maxTokens,
@@ -1386,7 +1438,8 @@ async function runSteps(
     if (isAnswer || ended) {
       // Not awaited: the answer is ready, and remembering it is not something to hold it for.
       // Handed back instead, for a host that wants its notes.
-      const afterTurn = hooks ? tellAfterTurn(hooks, messages, questionAt(), turn.content) : Promise.resolve([]);
+      const afterTurn =
+        hooks && fired?.afterTurn ? tellAfterTurn(hooks, messages, questionAt(), turn.content) : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
       let outcome: RunOutcome = RunOutcome.Answered;
       if (ended) {

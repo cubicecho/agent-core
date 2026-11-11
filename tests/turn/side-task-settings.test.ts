@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
+import { HookEvent } from '../../src/hooks/hook-events.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
 import { answer, apiError, type Message, outcome, says, tool } from '../helpers.ts';
@@ -608,6 +609,38 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       'reading d',
     ]);
     expect(compacting.compacting[0].uuid).toMatch(/^s:41:/);
+  });
+
+  it("tells beforeCompact alone when fire names only it, for a host that fires the turn's own events", async () => {
+    const run = vi.fn(async () => []);
+    create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
+    const result = await runAgentLoop({
+      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      messages: long,
+      dispatch: async () => 'done',
+      compact: true,
+      hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeCompact] },
+    });
+    await result.afterTurn;
+    expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([HookEvent.BeforeCompact]);
+  });
+
+  it('folds without telling the hooks when fire leaves beforeCompact out', async () => {
+    const run = vi.fn(async () => []);
+    create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
+    const result = await runAgentLoop({
+      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      messages: long,
+      dispatch: async () => 'done',
+      compact: true,
+      hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeTurn, HookEvent.AfterTurn] },
+    });
+    await result.afterTurn;
+    expect((body(1).messages as Message[])[0]).toEqual({ role: Role.System, content: `${SUMMARY_LEAD}what was said` });
+    expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([
+      HookEvent.BeforeTurn,
+      HookEvent.AfterTurn,
+    ]);
   });
 
   it('does not fold without the task, however full the window', async () => {
