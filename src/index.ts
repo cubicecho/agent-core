@@ -327,6 +327,7 @@ export {
   type ReasoningDetail,
   reasoningDetailsEntry,
   reasoningEntry,
+  reportsCache,
   type StreamTurnOptions,
   streamTurn,
   type Turn,

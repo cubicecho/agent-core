@@ -22,7 +22,7 @@ const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts')
 const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
 const { configureHooks, resetHooks, withContext } = await import('../../src/hooks/hooks.ts');
 const { tokensBetween } = await import('../../src/context/ledger.ts');
-const { failedRun } = await import('../../src/wire/errors.ts');
+const { errorMessage, failedRun } = await import('../../src/wire/errors.ts');
 
 type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
@@ -1874,6 +1874,49 @@ describe('runAgentLoop', () => {
       expect(results(result.messages)).toEqual([definition]);
     });
 
+    it('keeps a definition loaded across a rewrite that left it in the transcript', async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(says('done'));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => 'ok',
+        // A new array, and new message objects, with nothing taken out: a host rebuilding its
+        // transcript from a store each step.
+        beforeStep: (messages, step) =>
+          step === 1 ? messages.map((message) => ({ ...message }) as Message) : undefined,
+      });
+      const [first, second] = results(result.messages);
+      expect(first).toBe(definition);
+      expect(second).toContain('Already loaded earlier in this conversation: s__read.');
+      expect(result.metrics).toMatchObject({ toolsLoaded: 1, redundantLoads: 1 });
+    });
+
+    it('forgets only the definitions a rewrite took out of the transcript', async () => {
+      create
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
+        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write"]}']))
+        .mockReturnValueOnce(says('done'));
+      const result = await runAgentLoop({
+        config: proxied,
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => 'ok',
+        // Drops the first load's exchange and keeps the second's.
+        beforeStep: (messages, step) => (step === 2 ? [messages[0], ...messages.slice(3)] : undefined),
+      });
+      const third = results(result.messages).at(-1) ?? '';
+      expect(third).toContain('"name":"s__read"');
+      expect(third).not.toContain('"name":"s__write"');
+      expect(third).toContain('Already loaded earlier in this conversation: s__write.');
+    });
+
     it('writes a preselection into the transcript as a load the model did not make', async () => {
       create
         .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
@@ -2487,6 +2530,51 @@ describe('runAgentLoop', () => {
       { used: 100, limit: 8000, ledger: result.ledger.slice(0, 2) },
       { used: 160, limit: 8000, ledger: result.ledger.slice(0, 3) },
     ]);
+  });
+
+  it('hands the ledger it had kept to a failure, so a host can still record what was paid for', async () => {
+    create
+      .mockReturnValueOnce(reportedCall(100, 0, 'a'))
+      .mockReturnValueOnce(reportedCall(160, 100, 'a'))
+      .mockRejectedValueOnce(apiError(401, 'no such key'));
+    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
+    const error = await runAgentLoop({
+      config,
+      messages: [{ role: Role.User, content: 'before' }, { role: Role.Assistant, content: 'yes' }, ...question],
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      ledger: earlier,
+    }).catch((caught: unknown) => caught);
+    // The refused request reported nothing, so it has no entry.
+    expect(failedRun(error)?.ledger).toEqual([
+      { through: 0, prompt: 40, epoch: 3 },
+      { through: 2, prompt: 100, epoch: 4 },
+      { through: 4, prompt: 160, epoch: 4 },
+    ]);
+  });
+
+  it('hands a failure before any step the ledger it was given', async () => {
+    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
+    // A failing hook is a note, and a host that throws on the note rejects the gather, which the
+    // loop reads before its first request.
+    const error = await runAgentLoop({
+      config,
+      messages: question,
+      dispatch: async () => 'ok',
+      ledger: earlier,
+      hooks: {
+        run: async () => {
+          throw new Error('memory is down');
+        },
+        context: { session: { id: 's' } },
+        onNote: () => {
+          throw new Error('the host would not take a note');
+        },
+      },
+    }).catch((caught: unknown) => caught);
+    expect(errorMessage(error)).toBe('the host would not take a note');
+    expect(failedRun(error)?.ledger).toEqual(earlier);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('starts a new epoch when beforeStep rewrites the history, and records nothing unreported', async () => {
