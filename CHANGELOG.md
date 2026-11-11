@@ -1,3 +1,10 @@
+# [4.10.0](https://github.com/cubicecho/agent-core/compare/v4.9.0...v4.10.0) (2026-11-11)
+
+
+### Features
+
+* a server-log run event, and a report argument on dispatch to emit it ([93c1712](https://github.com/cubicecho/agent-core/commit/93c17121a789bec5db38d80c9ad3c4ba452df882)), closes [#169](https://github.com/cubicecho/agent-core/issues/169)
+
 # [4.9.0](https://github.com/cubicecho/agent-core/compare/v4.8.0...v4.9.0) (2026-11-10)
 
 
