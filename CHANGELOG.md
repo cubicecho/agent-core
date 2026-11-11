@@ -1,3 +1,10 @@
+## [4.23.2](https://github.com/cubicecho/agent-core/compare/v4.23.1...v4.23.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* mint every made-up tool-call id as nine alphanumerics, unique in the run ([dc9cd47](https://github.com/cubicecho/agent-core/commit/dc9cd47b8d1e3935b79a7ff831949110e877938b)), closes [#201](https://github.com/cubicecho/agent-core/issues/201)
+
 ## [4.23.1](https://github.com/cubicecho/agent-core/compare/v4.23.0...v4.23.1) (2026-11-11)
 
 
