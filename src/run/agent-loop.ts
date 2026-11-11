@@ -586,8 +586,9 @@ export interface AgentLoopResult {
   notes: HookNote[];
   /**
    * The `<context>` blocks the hooks added to this question, as `withContext` takes them. Empty
-   * when no hook added any, without `hooks`, and where `fire` lists no injecting event. Not in `messages`, so a host that wants the next
-   * turn's request to begin with this one's stores it beside the question; see `hooks`.
+   * when no hook added any, without `hooks`, and where `fire` lists no injecting event. Not in
+   * `messages`, so a host that wants the next turn's request to begin with this one's stores it
+   * beside the question; see `hooks`.
    */
   context: string;
   /**
