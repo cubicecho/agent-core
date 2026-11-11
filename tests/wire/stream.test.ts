@@ -226,6 +226,73 @@ describe('streamTurn', () => {
     expect(inFlight.read?.()?.toolCalls?.[0]?.id).toBe(id);
   });
 
+  it("keeps Gemini's thought signature on its call as the first fragment sent it, and no key it was not asked for", async () => {
+    const signature = { google: { thought_signature: 'sig' } };
+    const call = (index: number, part: Record<string, unknown>): Chunk =>
+      chunk({ choices: [{ delta: { tool_calls: [{ index, ...part }] } }] });
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          call(0, { id: 'a', function: { name: 'first', arguments: '{' }, extra_content: signature, vendor: 1 }),
+          call(0, { function: { arguments: '}' }, extra_content: { google: { thought_signature: 'later' } } }),
+          call(1, { id: 'b', function: { name: 'second', arguments: '{}' }, extra_content: null }),
+        ),
+      ),
+      body,
+    );
+    expect(turn.toolCalls).toEqual([
+      { id: 'a', type: FUNCTION_TOOL, function: { name: 'first', arguments: '{}' }, extra_content: signature },
+      { id: 'b', type: FUNCTION_TOOL, function: { name: 'second', arguments: '{}' } },
+    ]);
+  });
+
+  it("puts OpenRouter's reasoning blocks back together in order, joining only a block's own pieces", async () => {
+    const details = (...blocks: Record<string, unknown>[]): Chunk =>
+      chunk({ choices: [{ delta: { reasoning_details: blocks } }] });
+    const produced = { any: false };
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          details({ type: 'reasoning.text', text: 'Let me ', format: 'anthropic-claude-v1', index: 0 }),
+          details({ type: 'reasoning.text', text: 'think.' }),
+          details({ type: 'reasoning.text', text: '', signature: 'sha256:abc', index: 0 }),
+          details({ type: 'reasoning.text', text: 'Again.', index: 1 }),
+          details({ type: 'reasoning.encrypted', data: 'AAA', index: 2 }, { type: 'reasoning.encrypted', data: 'BBB' }),
+          details(
+            { type: 'reasoning.summary', summary: 'Sum', index: 3 },
+            { type: 'reasoning.summary', summary: 'med' },
+          ),
+        ),
+      ),
+      body,
+      { produced },
+    );
+    expect(turn.reasoningDetails).toEqual([
+      {
+        type: 'reasoning.text',
+        text: 'Let me think.',
+        format: 'anthropic-claude-v1',
+        index: 0,
+        signature: 'sha256:abc',
+      },
+      { type: 'reasoning.text', text: 'Again.', index: 1 },
+      { type: 'reasoning.encrypted', data: 'AAA', index: 2 },
+      { type: 'reasoning.encrypted', data: 'BBB' },
+      { type: 'reasoning.summary', summary: 'Summed', index: 3 },
+    ]);
+    // The blocks alone are the model having spoken: an encrypted one is state a retry would lose.
+    expect(turn.reasoning).toBe('');
+    expect(produced.any).toBe(true);
+  });
+
+  it('reports no reasoning blocks from a server that sends none', async () => {
+    const turn = await streamTurn(
+      clientOf(() => chunks(text('hi'))),
+      body,
+    );
+    expect(turn).not.toHaveProperty('reasoningDetails');
+  });
+
   it('takes the last usage report rather than a sum of them', async () => {
     // A server that reports cumulatively per chunk — which llama.cpp does — makes a sum of sums
     // out of an accumulator. Against `stream_options.include_usage`, which sends one final

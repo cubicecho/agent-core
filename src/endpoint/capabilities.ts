@@ -132,7 +132,7 @@ export interface ModelCapabilities {
    */
   assistantPrefill: boolean;
   /**
-   * Takes a scratchpad, `reasoning_content` or `reasoning`, on a replayed assistant message. A
+   * Takes a scratchpad, `reasoning_content`, `reasoning` or `reasoning_details`, on a replayed assistant message. A
    * server that validates messages strictly — Groq, Mistral, `deepseek-reasoner` — refuses the
    * whole request over the field, and the answer is to replay the transcript without it.
    */
@@ -746,7 +746,7 @@ function unknownFields(detail: string): string[] {
  * A replayed scratchpad refused as a field a message may not carry, rather than demanded.
  *
  * @param detail - The server's error text.
- * @returns `true` where the text names `reasoning_content`, or `reasoning` quoted as a field or a
+ * @returns `true` where the text names `reasoning_content` or `reasoning_details`, or `reasoning` quoted as a field or a
  * path's last step, in a refusal's words and not in a demand's.
  *
  * @remarks
@@ -756,7 +756,7 @@ function unknownFields(detail: string): string[] {
  * since `reasoning` is also the English a refusal of `reasoning_effort` is written in.
  */
 const refusesReasoningContent = (detail: string) =>
-  /reasoning_content|[.'"`]reasoning['"`]/i.test(detail) &&
+  /reasoning_(?:content|details)|[.'"`]reasoning['"`]/i.test(detail) &&
   /unsupported|not supported|unrecognized|unknown|unexpected|not allowed|not permitted|extra (?:inputs|fields)/i.test(
     detail,
   ) &&

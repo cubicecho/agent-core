@@ -224,7 +224,7 @@ What a run is doing, while it is doing it.
 
 The tools between two turns: a step's calls read, run and written into the transcript.
 
-- `dropReasoning` — The transcript with `reasoning_content` and `reasoning` taken off its assistant messages from an index on.
+- `dropReasoning` — The transcript with `reasoning_content`, `reasoning` and `reasoning_details` taken off its assistant messages from an index on.
 - `formatToolError` — What the model reads for a dispatch that threw: the error's message, opening with `Error: `.
 - `preview` — A long tool argument or result cut to what a watcher needs, with the full length said.
 - `ReasonedMessage` (type) — An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay.
@@ -423,6 +423,8 @@ Reading one streamed turn back into a message.
 - `LoopUsage` (type) — What a loop spent, as `AgentLoopResult.usage` and a failed run's `usage` carry it.
 - `PartialTurn` (type) — What a turn had said when it ended without coming back: the answer, the scratchpad and the calls, as far as each had arrived.
 - `Produced` (type) — Whether the model has said anything a second attempt would say twice.
+- `ReasoningDetail` (type) — One of OpenRouter's reasoning blocks: `reasoning.summary` with a `summary`, `reasoning.text` with a `text` and maybe a `signature`, or `reasoning.encrypted` with `data`.
+- `reasoningDetailsEntry` — OpenRouter's reasoning blocks as the field to spread onto an assistant message.
 - `reasoningEntry` — A scratchpad as the field to spread onto an assistant message.
 - `StreamTurnOptions` (type) — What `streamTurn` takes besides the request body.
 - `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
@@ -485,12 +487,15 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 
 The words the chat-completions wire is written in, each under a name.
 
+- `CALL_EXTRA_KEYS` — The keys of a streamed tool call, besides `index`, `id`, `type` and `function`, that are kept on the call and sent back as they came.
+- `CallExtraKey` (type) — Any one of `CALL_EXTRA_KEYS`.
 - `FinishReason` — Any one of the reasons in `FinishReason`.
 - `FUNCTION_TOOL` — The one `type` a tool definition or a tool call has on this wire.
 - `JSON_SCHEMA_FORMAT` — The `response_format` type that carries a schema the reply has to fit.
 - `PartType` — Any one of the part types in `PartType`.
 - `REASONING` — The other spelling of that field: what Ollama's `/v1` sends and the only one it reads back, and OpenRouter's own.
 - `REASONING_CONTENT` — The assistant message field a model's scratchpad is replayed in where it did not arrive as `reasoning`.
+- `REASONING_DETAILS` — OpenRouter's field for reasoning as blocks: summaries, raw text with a signature, or encrypted data.
 - `ReasoningField` (type) — Either field a scratchpad travels in.
 - `Role` — Any one of the roles in `Role`.
 - `SchemaType` — Any one of the types in `SchemaType`.

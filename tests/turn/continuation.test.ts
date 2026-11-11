@@ -95,6 +95,36 @@ describe('continueTurn', () => {
     expect(await prefill(cut())).not.toHaveProperty('reasoning_content');
   });
 
+  it("prefills OpenRouter's blocks with the answer, and keeps each response's blocks after the last", async () => {
+    const before = [{ type: 'reasoning.encrypted', data: 'first', index: 0 }];
+    const after = { type: 'reasoning.encrypted', data: 'second', index: 0 };
+    const create = vi
+      .fn()
+      .mockReturnValue(
+        chunks(
+          { choices: [{ delta: { reasoning_details: [after] } }] },
+          { choices: [{ delta: { content: ' more' }, finish_reason: FinishReason.Stop }] },
+        ),
+      );
+    const turn = await continueTurn(
+      clientOf(create),
+      supports(),
+      request,
+      cut(undefined, { reasoningDetails: before }),
+      {
+        model: 'm',
+      },
+    );
+    expect((create.mock.calls[0][0] as Body).messages.at(-1)).toHaveProperty('reasoning_details', before);
+    expect(turn.reasoningDetails).toEqual([...before, after]);
+    create.mockClear();
+    await continueTurn(clientOf(create), supports(), request, cut(undefined, { reasoningDetails: before }), {
+      model: 'm',
+      replayReasoning: false,
+    });
+    expect((create.mock.calls[0][0] as Body).messages.at(-1)).not.toHaveProperty('reasoning_details');
+  });
+
   it('drops a field only one request reported, and weights the rates by the time they held', async () => {
     const create = vi
       .fn()

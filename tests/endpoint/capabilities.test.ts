@@ -590,7 +590,8 @@ describe('negotiate, for a model', () => {
 
   it('stops replaying the scratchpad to a model whose endpoint refuses the field', async () => {
     const ollamaSpelling = apiError(400, "Unknown parameter: 'messages[1].reasoning'.");
-    for (const refusal of [GROQ_NO_REASONING, MISTRAL_NO_REASONING, UNKNOWN_REASONING, ollamaSpelling]) {
+    const blocks = apiError(422, 'body.messages.1.assistant.reasoning_details: Extra inputs are not permitted');
+    for (const refusal of [GROQ_NO_REASONING, MISTRAL_NO_REASONING, UNKNOWN_REASONING, ollamaSpelling, blocks]) {
       resetCapabilities();
       const supports = openai();
       const { send } = modelThatRefuses(refusal);

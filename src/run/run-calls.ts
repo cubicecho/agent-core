@@ -16,7 +16,7 @@ import {
 } from '../tools/tool-loading.ts';
 import { type CallIdMinter, callIdsIn, freshCallId } from '../wire/call-ids.ts';
 import { errorMessage } from '../wire/errors.ts';
-import { reasoningEntry, type Turn } from '../wire/stream.ts';
+import { type ReasoningDetail, reasoningDetailsEntry, reasoningEntry, type Turn } from '../wire/stream.ts';
 import {
   type EndedBy,
   parseToolArguments,
@@ -30,7 +30,14 @@ import {
   type ToolCallRequest,
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
-import { FUNCTION_TOOL, REASONING, REASONING_CONTENT, type ReasoningField, Role } from '../wire/wire.ts';
+import {
+  FUNCTION_TOOL,
+  REASONING,
+  REASONING_CONTENT,
+  REASONING_DETAILS,
+  type ReasoningField,
+  Role,
+} from '../wire/wire.ts';
 import {
   type ArtifactFrom,
   declaredArtifact,
@@ -183,6 +190,7 @@ export const readCalls = (calls: ToolCall[], finishReason: Turn['finishReason'],
 export type ReasonedMessage = OpenAI.ChatCompletionAssistantMessageParam & {
   [REASONING_CONTENT]?: string;
   [REASONING]?: string;
+  [REASONING_DETAILS]?: ReasoningDetail[];
 };
 
 /** A scratchpad to write onto a message, and the field it goes under. */
@@ -195,6 +203,8 @@ export interface Scratchpad {
    * @defaultValue `REASONING_CONTENT`
    */
   field?: ReasoningField;
+  /** OpenRouter's reasoning blocks, as `Turn.reasoningDetails` has them. None writes no field. */
+  details?: ReasoningDetail[];
 }
 
 /**
@@ -238,6 +248,7 @@ export const assistantMessage = (content: string, parsed: ReadCall[], scratchpad
   role: Role.Assistant,
   content: spokenContent(content, parsed.length > 0),
   ...reasoningEntry(scratchpad?.reasoning ?? '', scratchpad?.field),
+  ...reasoningDetailsEntry(scratchpad?.details),
   ...(parsed.length
     ? {
         tool_calls: parsed.map(({ call, normal }) => ({
@@ -262,12 +273,13 @@ export const writtenMessage = (content: string, calls: ToolCall[], scratchpad?: 
   role: Role.Assistant,
   content: spokenContent(content, calls.length > 0),
   ...reasoningEntry(scratchpad?.reasoning ?? '', scratchpad?.field),
+  ...reasoningDetailsEntry(scratchpad?.details),
   ...(calls.length ? { tool_calls: calls.map((call) => ({ ...call, function: { ...call.function } })) } : {}),
 });
 
 /**
- * The transcript with `reasoning_content` and `reasoning` taken off its assistant messages from an
- * index on.
+ * The transcript with `reasoning_content`, `reasoning` and `reasoning_details` taken off its
+ * assistant messages from an index on.
  *
  * @param messages - The transcript. Not written to.
  * @param [from] - The first index to drop it from. Negative reads as zero.
@@ -286,11 +298,16 @@ export function dropReasoning(
   let out: OpenAI.ChatCompletionMessageParam[] | undefined;
   for (let at = Math.max(0, from); at < messages.length; at++) {
     const message = messages[at];
-    const carries = REASONING_CONTENT in message || REASONING in message;
+    const carries = REASONING_CONTENT in message || REASONING in message || REASONING_DETAILS in message;
     if (message.role !== Role.Assistant || !carries) {
       continue;
     }
-    const { [REASONING_CONTENT]: _content, [REASONING]: _alias, ...rest } = message as ReasonedMessage;
+    const {
+      [REASONING_CONTENT]: _content,
+      [REASONING]: _alias,
+      [REASONING_DETAILS]: _details,
+      ...rest
+    } = message as ReasonedMessage;
     out ??= [...messages];
     out[at] = rest;
   }

@@ -104,6 +104,18 @@ describe('requestTokens', () => {
     expect(sized(thought) - sized(plain)).toBe(serialized(thought) - serialized(plain));
     const routed = many({ role: Role.Assistant, content: 'hi', reasoning: 'because' } as never);
     expect(sized(routed) - sized(plain)).toBe(serialized(routed) - serialized(plain));
+    // OpenRouter's blocks, and Gemini's signature on a call, which are opaque and priced as JSON.
+    const blocks = [{ type: 'reasoning.encrypted', data: 'x'.repeat(64), index: 0 }];
+    const detailed = many({ role: Role.Assistant, content: 'hi', reasoning_details: blocks } as never);
+    expect(sized(detailed) - sized(plain)).toBe(serialized(detailed) - serialized(plain));
+    const call = { id: 'c', type: FUNCTION_TOOL, function: { name: 'a', arguments: '{}' } };
+    const signed = many({
+      role: Role.Assistant,
+      content: null,
+      tool_calls: [{ ...call, extra_content: { google: { thought_signature: 'sig' } } }],
+    } as never);
+    const unsigned = many({ role: Role.Assistant, content: null, tool_calls: [call] });
+    expect(sized(signed) - sized(unsigned)).toBe(serialized(signed) - serialized(unsigned));
 
     // And the whole shape, end to end: twenty tool results is what a real run is mostly made of,
     // and the body the omission was worth ninety tokens on.
