@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EndpointSilent } from '../../src/wire/retry.ts';
 import { type InFlight, streamTurn } from '../../src/wire/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
-import { type Chunk, chunk, chunks, clientOf, text } from '../helpers.ts';
+import { type Chunk, chunk, chunks, clientOf, MINTED_ID, text } from '../helpers.ts';
 
 /**
  * A stream that yields what it has and then stops answering, the way an endpoint that dies
@@ -181,12 +181,49 @@ describe('streamTurn', () => {
     expect(new Set(turn.toolCalls.map((call) => call.id)).size).toBe(3);
   });
 
-  it('mints an id for a server that streams a call without one', async () => {
+  it('mints an id Mistral accepts for a server that streams a call without one, new on every turn', async () => {
+    const unnamed = () =>
+      chunks(chunk({ choices: [{ delta: { tool_calls: [{ index: 3, function: { name: 't' } }] } }] }));
+    const first = await streamTurn(clientOf(unnamed), body);
+    const second = await streamTurn(clientOf(unnamed), body);
+    const ids = [first, second].map((turn) => turn.toolCalls[0]?.id);
+    expect(ids[0]).toMatch(MINTED_ID);
+    expect(ids[1]).toMatch(MINTED_ID);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("keeps a server's id as sent, and mints one for a second call under the same id", async () => {
+    const whole = (fields: Record<string, unknown>): Chunk =>
+      chunk({ choices: [{ delta: { tool_calls: [{ index: 0, ...fields }] } }] });
     const turn = await streamTurn(
-      clientOf(() => chunks(chunk({ choices: [{ delta: { tool_calls: [{ index: 3, function: { name: 't' } }] } }] }))),
+      clientOf(() =>
+        chunks(
+          whole({ id: 'chatcmpl-tool-1f', function: { name: 'first', arguments: '{}' } }),
+          whole({ id: 'chatcmpl-tool-1f', function: { name: 'second', arguments: '{}' } }),
+        ),
+      ),
       body,
     );
-    expect(turn.toolCalls[0]?.id).toBe('call_3');
+    expect(turn.toolCalls[0]?.id).toBe('chatcmpl-tool-1f');
+    expect(turn.toolCalls[1]?.id).toMatch(MINTED_ID);
+  });
+
+  it("names a stopped stream's call the same on every read of its inFlight box", async () => {
+    const stop = new AbortController();
+    const inFlight: InFlight = {};
+    const turn = streamTurn(
+      clientOf((_, { signal }) =>
+        stalls(signal, chunk({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 't' } }] } }] })),
+      ),
+      body,
+      { signal: stop.signal, inFlight },
+    );
+    await vi.waitFor(() => expect(inFlight.read?.()?.toolCalls).toHaveLength(1));
+    stop.abort();
+    await expect(turn).rejects.toThrow();
+    const id = inFlight.read?.()?.toolCalls?.[0]?.id;
+    expect(id).toMatch(MINTED_ID);
+    expect(inFlight.read?.()?.toolCalls?.[0]?.id).toBe(id);
   });
 
   it('takes the last usage report rather than a sum of them', async () => {

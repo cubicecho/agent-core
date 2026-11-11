@@ -381,6 +381,17 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
 - `tryAsk` — Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
 
+### call-ids
+
+The ids of tool calls the loop makes up itself, and keeping every id in a transcript its own.
+
+- `CallIdMinter` (type) — Makes up the id of a tool call: nine characters from `[A-Za-z0-9]` each time it is called.
+- `callIdMinter` — A source of tool-call ids, each nine characters from `[A-Za-z0-9]`: random, or the same sequence on every run for one seed.
+- `callIdsIn` — Every tool-call id a transcript already uses: on an assistant message's calls, and on the tool results that answer them.
+- `distinctCallIds` — A turn's calls under ids no other call in the transcript has: the server's own kept wherever it is free, and a minted one in place of a missing or repeated one.
+- `freshCallId` — An id from `mint` that `taken` does not hold, added to it.
+- `mintCallId` — The minter used where none is given.
+
 ### errors
 
 - `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.

@@ -64,6 +64,7 @@ import {
 import { continueTurn } from '../turn/continuation.ts';
 import { runTurn } from '../turn/run-turn.ts';
 import { type SideTask, taskCall, tryAsk } from '../turn/side-task.ts';
+import { type CallIdMinter, mintCallId as defaultMinter, distinctCallIds } from '../wire/call-ids.ts';
 import {
   AgentLoopError,
   type AgentLoopFailure,
@@ -585,6 +586,19 @@ export interface AgentLoopOptions {
    * @defaultValue `true`
    */
   recoverToolCalls?: boolean;
+  /**
+   * Makes up the id of a call nobody gave one: a streamed call the server sent without an id, a call
+   * recovered from text, and a proxied run's preselected load. A server's id is kept as sent unless
+   * the transcript already uses it.
+   *
+   * @defaultValue `mintCallId`, nine random characters from `[A-Za-z0-9]`
+   *
+   * @remarks
+   * Whatever it returns is checked against every id in the transcript, the host's history
+   * included, and asked again on a clash, so an id answers for one call across the run. Pass
+   * `callIdMinter(seed)` for ids a test can predict. See `distinctCallIds`.
+   */
+  mintCallId?: CallIdMinter;
   /**
    * Each step's request as first built, before it goes out — for measuring what was sent, not for
    * changing it, which is `beforeStep`'s.
@@ -1350,17 +1364,18 @@ const usageEvent = (usage: LoopUsage, turn: Turn, ledger: TokenLedger, contextLe
  * @param recoverable - The names a call written as text may use. Absent recovers nothing, and
  * nothing is looked for in a turn that made a named call of its own or has no text.
  * @param notice - Told when calls were recovered, and how many.
+ * @param mint - Where a recovered call's id comes from.
  * @returns `calls`, the turn's own less any with no name, and `content`, its text as it was — or,
  * where calls were recovered, those calls and the text without them, and `recovered` true.
  */
-function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNotice) {
+function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNotice, mint: CallIdMinter) {
   // A call with no name is a fragment the server never finished sending: nothing to run, and
   // an assistant message naming it would be answered by nothing.
   const calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
   if (!recoverable || calls.length || !turn.content) {
     return { calls, content: turn.content, recovered: false };
   }
-  const recovered = recoverToolCalls(turn.content, { names: recoverable });
+  const recovered = recoverToolCalls(turn.content, { names: recoverable, mintCallId: mint });
   if (!recovered.toolCalls.length) {
     return { calls, content: turn.content, recovered: false };
   }
@@ -1395,6 +1410,7 @@ async function runSteps(
     beforeStep,
     parallel = false,
     recoverToolCalls: recover = true,
+    mintCallId = defaultMinter,
     maxContinuations = 0,
     toolOrder = true,
     dedupeToolCalls = true,
@@ -1526,6 +1542,7 @@ async function runSteps(
     onToolCall,
     onToolResult,
     announce,
+    mintCallId,
   };
 
   if (shortlist.length) {
@@ -1620,6 +1637,7 @@ async function runSteps(
       idleMs: timeoutMs(config),
       firstChunkMs: firstTokenMs(config) ?? 0,
       onNotice: notice,
+      mintCallId,
       onThinking: (text: string) => onEvent({ kind: RunEventKind.Thinking, text }),
       onOutput: (text: string) => onEvent({ kind: RunEventKind.Output, text }),
     };
@@ -1687,7 +1705,11 @@ async function runSteps(
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
     const canRecover = recover && (tools.length > 0 || hostTools.length > 0 || onDemand);
-    const { calls, content, recovered } = turnCalls(turn, canRecover ? recoverable : undefined, notice);
+    const read = turnCalls(turn, canRecover ? recoverable : undefined, notice, mintCallId);
+    const { content, recovered } = read;
+    // Once, before the message is stored: every later request replays these ids, and each tool
+    // result answers one of them.
+    const calls = distinctCallIds(read.calls, messages, mintCallId);
     const shown: Turn = { ...turn, content, toolCalls: calls };
     onTurn?.(shown, step);
 

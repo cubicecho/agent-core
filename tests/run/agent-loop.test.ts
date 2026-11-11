@@ -5,8 +5,9 @@ import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookOutcome, HookRunner } from '../../src/hooks/hooks.ts';
 import { PRESELECT_APPEND } from '../../src/run/agent-loop.ts';
 import { RunEventKind, RunOutcome } from '../../src/run/events.ts';
+import { callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
-import { apiError, type Body, chunks, config, type Message, outcome, says, tool } from '../helpers.ts';
+import { apiError, type Body, chunks, config, type Message, MINTED_ID, outcome, says, tool } from '../helpers.ts';
 
 const create = vi.fn();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -439,13 +440,15 @@ describe('runAgentLoop', () => {
       onTurn: (turn) => turns.push(turn),
       onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
     });
-    expect(dispatch.mock.calls[0][0]).toMatchObject({
-      id: 'call_recovered_0',
-      name: 'a',
-      args: { x: 1 },
+    const { id } = dispatch.mock.calls[0][0];
+    expect(id).toMatch(MINTED_ID);
+    expect(dispatch.mock.calls[0][0]).toMatchObject({ name: 'a', args: { x: 1 } });
+    expect(result.messages[1]).toMatchObject({
+      role: Role.Assistant,
+      content: 'Checking.',
+      tool_calls: [{ id, function: { name: 'a' } }],
     });
-    expect(result.messages[1]).toMatchObject({ role: Role.Assistant, content: 'Checking.' });
-    expect(result.messages[2]).toMatchObject({ role: Role.Tool, tool_call_id: 'call_recovered_0' });
+    expect(result.messages[2]).toMatchObject({ role: Role.Tool, tool_call_id: id });
     expect(turns[0].toolCalls).toHaveLength(1);
     expect(notices[0]).toContain('recovered 1 tool call the model wrote as text');
   });
@@ -522,9 +525,10 @@ describe('runAgentLoop', () => {
       parallel: true,
     });
     expect(dispatch).toHaveBeenCalledTimes(2);
+    // The server reused `c0` on the second step, which is given an id of its own.
     expect(result.toolCalls).toEqual([
       { id: 'c0', name: 'a', ok: false },
-      { id: 'c0', name: 'a', ok: true },
+      { id: expect.stringMatching(MINTED_ID), name: 'a', ok: true },
     ]);
   });
 
@@ -960,7 +964,10 @@ describe('runAgentLoop', () => {
         onEvent: (event) => events.push(event),
       });
       expect(create).toHaveBeenCalledTimes(2);
-      expect(result.ended).toEqual({ callId: 'c0', name: 'done', reason: 'handed to review' });
+      // Both steps' calls came as `c0`, so the second is under an id of its own.
+      const callId = result.toolCalls[1]?.id;
+      expect(callId).toMatch(MINTED_ID);
+      expect(result.ended).toEqual({ callId, name: 'done', reason: 'handed to review' });
       // The turn that made the call, with whatever it said beside it — here nothing.
       expect(result.turn.content).toBe('');
       expect(result.turn.toolCalls.map((call) => call.function.name)).toEqual(['done']);
@@ -974,8 +981,9 @@ describe('runAgentLoop', () => {
       expect(result.messages.at(-1)).toMatchObject({ content: 'handed off' });
       expect(result.toolCalls).toEqual([
         { id: 'c0', name: 'a', ok: true },
-        { id: 'c0', name: 'done', ok: true },
+        { id: callId, name: 'done', ok: true },
       ]);
+      expect(result.messages.at(-1)).toMatchObject({ tool_call_id: callId });
       expect(result.usage).toMatchObject({ prompt: 230, completion: 20, total: 250 });
       expect(result.metrics.outcome).toBe(RunOutcome.Ended);
       expect(result.metrics.turns).toBe(2);
@@ -1676,8 +1684,11 @@ describe('runAgentLoop', () => {
       expect(results(result.messages)).toEqual([definition, 'contents']);
       // The dispatcher is handed the tool the model meant, exactly as a native call would be.
       expect(dispatch).toHaveBeenCalledTimes(1);
+      // The server named this step's call `c0` again, so it is under an id of its own.
+      const { id } = dispatch.mock.calls[0][0];
+      expect(id).toMatch(MINTED_ID);
       expect(dispatch.mock.calls[0][0]).toEqual({
-        id: 'c0',
+        id,
         name: 's__read',
         args: { path: 'a' },
         raw: '{"path":"a"}',
@@ -1688,7 +1699,7 @@ describe('runAgentLoop', () => {
       expect(result.loaded).toEqual([]);
       expect(result.toolCalls).toEqual([
         { id: 'c0', name: LOAD_TOOLS, ok: true },
-        { id: 'c0', name: 's__read', ok: true },
+        { id, name: 's__read', ok: true },
       ]);
       expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 1, toolCalls: 2 });
       // The transcript keeps the call the model wrote, which the next request has to repeat.
@@ -1837,8 +1848,11 @@ describe('runAgentLoop', () => {
         // One the host has no definition for and one that is in no catalogue are left out.
         preselected: ['s__read', 's__read', 'gone', 's__ghost'],
         dispatch: async () => 'contents',
+        mintCallId: callIdMinter(3),
         onEvent: (event) => events.push(event),
       });
+      // Seeded, so the load's id is the first a minter on the same seed gives.
+      const loadId = callIdMinter(3)();
 
       const exchange: Message[] = [
         {
@@ -1846,13 +1860,13 @@ describe('runAgentLoop', () => {
           content: null,
           tool_calls: [
             {
-              id: 'preselect-3',
+              id: loadId,
               type: FUNCTION_TOOL,
               function: { name: LOAD_TOOLS, arguments: '{"names":["s__read"]}' },
             },
           ],
         },
-        { role: Role.Tool, tool_call_id: 'preselect-3', content: definition },
+        { role: Role.Tool, tool_call_id: loadId, content: definition },
       ];
       // After the question, ahead of anything the model does, and handed back like any other.
       expect(result.messages.slice(0, 5)).toEqual([...history, ...exchange]);
@@ -1884,7 +1898,7 @@ describe('runAgentLoop', () => {
         events.findIndex((event) => event.kind === RunEventKind.Turn),
       );
       expect(result.toolCalls).toEqual([
-        { id: 'preselect-3', name: LOAD_TOOLS, ok: true },
+        { id: loadId, name: LOAD_TOOLS, ok: true },
         { id: 'c0', name: 's__read', ok: true },
       ]);
       expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 1, redundantLoads: 0 });
@@ -1914,11 +1928,13 @@ describe('runAgentLoop', () => {
         onToolCall: (call) => asked.push(call),
         onToolResult: (result) => answers.push(result),
       });
+      const loadId = asked[0]?.id;
+      expect(loadId).toMatch(MINTED_ID);
       // The shortlist's load first, under the id the transcript gives it; then each `call_tool`
       // under the inner name, with the inner arguments where the call was let through.
       expect(asked).toEqual([
         {
-          id: 'preselect-1',
+          id: loadId,
           name: LOAD_TOOLS,
           args: { names: ['s__read'] },
           raw: '{"names":["s__read"]}',
@@ -1931,7 +1947,7 @@ describe('runAgentLoop', () => {
       expect(dispatch).toHaveBeenCalledTimes(1);
       expect(dispatch.mock.calls[0][0]).toBe(asked[1]);
       expect(answers).toEqual([
-        { id: 'preselect-1', name: LOAD_TOOLS, ok: true, content: definition },
+        { id: loadId, name: LOAD_TOOLS, ok: true, content: definition },
         { id: 'c0', name: 's__read', ok: true, content: 'contents' },
         {
           id: 'c1',
