@@ -1,3 +1,10 @@
+## [4.23.6](https://github.com/cubicecho/agent-core/compare/v4.23.5...v4.23.6) (2026-11-11)
+
+
+### Bug Fixes
+
+* **run:** mark a failed tool call in its text, and never send it empty ([2933a41](https://github.com/cubicecho/agent-core/commit/2933a41534a4550734bba6cae51ea70e500931d4)), closes [#207](https://github.com/cubicecho/agent-core/issues/207)
+
 ## [4.23.5](https://github.com/cubicecho/agent-core/compare/v4.23.4...v4.23.5) (2026-11-11)
 
 
