@@ -1,3 +1,10 @@
+# [4.17.0](https://github.com/cubicecho/agent-core/compare/v4.16.0...v4.17.0) (2026-11-11)
+
+
+### Features
+
+* **run:** declare a host's own tools in every discovery mode ([e9ab891](https://github.com/cubicecho/agent-core/commit/e9ab8919c63615c8b41653bf2f551e76a0476f00)), closes [#176](https://github.com/cubicecho/agent-core/issues/176)
+
 # [4.16.0](https://github.com/cubicecho/agent-core/compare/v4.15.0...v4.16.0) (2026-11-11)
 
 
