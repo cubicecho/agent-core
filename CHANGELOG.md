@@ -1,3 +1,10 @@
+# [4.19.0](https://github.com/cubicecho/agent-core/compare/v4.18.0...v4.19.0) (2026-11-11)
+
+
+### Features
+
+* **run:** one usage spelling, a cacheReported flag, and metrics complete across loops ([d0524b6](https://github.com/cubicecho/agent-core/commit/d0524b6ff538aee7f44e82eb1b6632ee5493ab5f)), closes [#178](https://github.com/cubicecho/agent-core/issues/178)
+
 # [4.18.0](https://github.com/cubicecho/agent-core/compare/v4.17.0...v4.18.0) (2026-11-11)
 
 
