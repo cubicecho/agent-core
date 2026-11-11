@@ -1,5 +1,11 @@
 import OpenAI from 'openai';
-import type { Endpoint, EndpointIdentity, RetryPolicy } from '../core/config.ts';
+import {
+  baseUrlKey,
+  type Endpoint,
+  type EndpointIdentity,
+  normalizeBaseUrl,
+  type RetryPolicy,
+} from '../core/config.ts';
 import { digestOf } from '../core/digest.ts';
 import { byCodeUnit, isPositive } from '../core/guards.ts';
 import { MS_PER_SECOND } from '../core/platform.ts';
@@ -230,7 +236,14 @@ export function getClient(config: Endpoint): OpenAI {
  * reporting the same number twice. llama.cpp puts its number under `meta` instead, and LM Studio
  * and Ollama put none on this route at all; see `servedWindow`.
  */
-const CONTEXT_KEYS = ['context_length', 'max_context_window', 'max_model_len', 'context_window', 'n_ctx'];
+const CONTEXT_KEYS = [
+  'context_length',
+  'max_context_length',
+  'max_context_window',
+  'max_model_len',
+  'context_window',
+  'n_ctx',
+];
 
 /**
  * A number above zero as itself and anything else as zero, which here means "not stated".
@@ -332,20 +345,23 @@ const misses = scoped(() => new Map<string, number>());
  * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
  * config, and absent and empty already mean the same thing. The timeout is deliberately not in
  * it; see `listings`.
- * @returns The URL and the key as one JSON string, the key in the clear.
+ * @returns The URL as `baseUrlKey` writes it and the key, as one JSON string, the key in the clear.
  *
  * @remarks
  * The URL and the key together, because the key is part of what is on the other end rather than
  * only how it is paid for: a router is free to send two keys to two different backends, and then
  * what one of them refused is not a fact about the other. Absent reads as `NO_KEY`, so an
- * endpoint with no key and one that passes `undefined` are one entry rather than two.
+ * endpoint with no key and one that passes `undefined` are one entry rather than two. The URL is
+ * normalised for the same reason: `…/v1/` and `…/v1` are one server, and two entries for it would
+ * learn every refusal twice.
  *
  * Stringified rather than joined on a separator, for the reason `getClient` gives: no character
  * is impossible in a URL or a key, and two endpoints must never collide on one entry. A host
  * keeping its own per-endpoint state keys it on this rather than on a copy of it, so the two
  * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
  */
-export const endpointKey = (config: EndpointIdentity) => JSON.stringify([config.baseUrl, config.apiKey || NO_KEY]);
+export const endpointKey = (config: EndpointIdentity) =>
+  JSON.stringify([baseUrlKey(config.baseUrl), config.apiKey || NO_KEY]);
 
 /**
  * One model on one endpoint, as every per-model cache keys it: stringified, so neither half runs
@@ -472,26 +488,44 @@ const NOT_THERE: ReadonlySet<number> = new Set([
 ]);
 
 /**
+ * The headers that carry an endpoint's key, and none where it has none.
+ *
+ * @param apiKey - The key as configured. Empty, absent and `NO_KEY` all mean there is none.
+ * @returns A bearer `authorization` header, or no headers at all.
+ *
+ * @remarks
+ * `NO_KEY` is the SDK's placeholder, not a credential, and a request made outside the SDK has no
+ * reason to send it: a server that checks keys refuses `Bearer agent-core` as it refuses a wrong
+ * one, where it might have answered an unauthenticated route.
+ */
+const authHeaders = (apiKey?: string): Record<string, string> =>
+  apiKey && apiKey !== NO_KEY ? { authorization: `Bearer ${apiKey}` } : {};
+
+/**
  * Asks one native endpoint.
  *
- * @param config - The endpoint. Its key goes as a bearer token where it has one.
+ * @param config - The endpoint. Its key goes as a bearer token where it has one other than `NO_KEY`.
  * @param path - The route and its query, from the server root rather than from the base URL.
  * @param within - The lookup's signal. Fired, the request throws as an unreachable server does.
  * @returns How the server answered, with `body` only for a 2xx that parsed as JSON.
  *
  * @remarks
- * `failed` is any answer that was not a 2xx and `missing` the ones among them that mean a server
- * without the route; `body` is absent for both, and for a 2xx that was not JSON. A server that
- * could not be reached throws.
+ * `failed` is any answer that was not a 2xx, or was not JSON, and `missing` the ones among them
+ * that mean a server without the route; `body` is absent for all of them. A server that could not
+ * be reached throws.
+ *
+ * A 2xx that is not JSON is a missing route rather than a route with nothing to say. It is what a
+ * proxy with a web app of its own answers on every path it does not route — llm-router serves its
+ * `index.html` for `/props` with a 200 — and read as "no window" it was asked again every
+ * `listingMissMs` instead of being latched as a server without the route.
  */
 async function probe(
   config: Endpoint,
   path: string,
   within: AbortSignal,
 ): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
-  const apiKey = config.apiKey || undefined;
   const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
-    headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+    headers: authHeaders(config.apiKey),
     signal: within,
   });
   if (!response.ok) {
@@ -500,7 +534,9 @@ async function probe(
   try {
     return { failed: false, missing: false, body: await response.json() };
   } catch {
-    return { failed: false, missing: false };
+    // A fired signal surfaces here too, mid-body, and is a server that stopped answering.
+    within.throwIfAborted();
+    return { failed: true, missing: true };
   }
 }
 
@@ -683,6 +719,177 @@ async function readListing(config: Endpoint, within: AbortSignal): Promise<Model
   return models;
 }
 
+/** Why `probeEndpoint` could not list an endpoint's models, in words a form can branch on. */
+export const ProbeFailure = {
+  /** Not an http or https URL, or one with credentials, a query or a fragment in it. */
+  InvalidUrl: 'invalid-url',
+  /** Nothing answered: no such host, a refused connection, a TLS failure. */
+  Unreachable: 'unreachable',
+  /** Something answered, but not inside the lookup's bound. */
+  Timeout: 'timeout',
+  /** A 401 or a 403: the key is wrong, or one is needed. */
+  Unauthorized: 'unauthorized',
+  /** A redirect, which is not followed, so the key is never carried to a host nobody typed. */
+  Redirected: 'redirected',
+  /** An answer that is not a model listing: no such route, a web page, JSON of another shape. */
+  NotOpenAi: 'not-openai',
+  /** Any other error status, which is on the error as `status`. */
+  Failed: 'failed',
+} as const;
+export type ProbeFailure = (typeof ProbeFailure)[keyof typeof ProbeFailure];
+
+/**
+ * `probeEndpoint` could not list an endpoint's models; `kind` says why.
+ *
+ * @remarks
+ * The message is a sentence for a person, naming the endpoint by its origin only, so it can go
+ * under a form field as it is. `kind` is for a form that words it itself.
+ */
+export class EndpointProbeError extends Error {
+  override readonly name: string = 'EndpointProbeError';
+  readonly kind: ProbeFailure;
+  /** The HTTP status, where the endpoint answered with one. */
+  readonly status?: number;
+
+  /**
+   * @param kind - Why the listing failed.
+   * @param message - The same, as a sentence.
+   * @param [status] - The status the endpoint answered with, where it answered.
+   */
+  constructor(kind: ProbeFailure, message: string, status?: number) {
+    super(message);
+    this.kind = kind;
+    if (status !== undefined) {
+      this.status = status;
+    }
+  }
+}
+
+/** What `probeEndpoint` takes besides the endpoint. */
+export interface ProbeOptions extends LookupOptions {
+  /** How many models come back at most, the first by id. Defaults to `PROBE_MODEL_LIMIT`. */
+  limit?: number;
+}
+
+/** How many models `probeEndpoint` hands back unless told otherwise: enough for any picker. */
+const PROBE_MODEL_LIMIT = 500;
+
+/** The statuses that mean the key, not the server, is what is wrong. */
+const UNAUTHORIZED: ReadonlySet<number> = new Set([HttpStatus.Unauthorized, HttpStatus.Forbidden]);
+
+/** The range a redirect is answered in. */
+const REDIRECT_MIN = 300;
+const REDIRECT_MAX = 399;
+
+/**
+ * Asks an endpoint nobody has saved yet which models it serves, for a form a person is typing it
+ * into.
+ *
+ * @param endpoint - The endpoint as typed. Its key goes as a bearer token where it has one other
+ * than `NO_KEY`; its `requestTimeoutSeconds` bounds the request where that is shorter than
+ * `lookupTimeoutMs`.
+ * @param [options] - Cancellation, and how many models to hand back. See `ProbeOptions`.
+ * @returns The models in order of id, one entry per id, at most `options.limit` of them. Rejects
+ * with the reason of `options.signal` where that stopped it, and with an `EndpointProbeError`
+ * for every other failure.
+ *
+ * @remarks
+ * `listModels` is for an endpoint that is configured: it pools a client per URL and remembers the
+ * listing, and a form asking at every keystroke would leave a client and a listing behind for
+ * each half-typed URL. This makes one plain request and remembers nothing, so asking again asks
+ * again.
+ *
+ * Redirects are not followed, so a typed key is never carried on to a host nobody typed. Both
+ * listing shapes are read: OpenAI's `{ data: [...] }` by `id`, and Ollama's native
+ * `{ models: [...] }` by `name` where an entry has no `id`. A window is read from the keys
+ * `contextLimitFor` reads, and an id listed twice keeps the window one of its entries stated.
+ */
+export async function probeEndpoint(
+  endpoint: EndpointIdentity & Pick<Endpoint, 'requestTimeoutSeconds'>,
+  { signal, limit = PROBE_MODEL_LIMIT }: ProbeOptions = {},
+): Promise<ModelInfo[]> {
+  const baseUrl = normalizeBaseUrl(endpoint.baseUrl);
+  if (baseUrl === null) {
+    throw new EndpointProbeError(
+      ProbeFailure.InvalidUrl,
+      'A base URL is http:// or https://, with no credentials, query or fragment in it.',
+    );
+  }
+  const url = new URL(`${baseUrl}/models`);
+  const within = lookupSignal(endpoint, signal);
+  /** The failure for a request that threw: the caller's stop, the bound, or no answer at all. */
+  const thrown = () => {
+    signal?.throwIfAborted();
+    return within.aborted
+      ? new EndpointProbeError(ProbeFailure.Timeout, `${url.origin} did not answer in time.`)
+      : new EndpointProbeError(ProbeFailure.Unreachable, `Could not reach ${url.origin}.`);
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: authHeaders(endpoint.apiKey), signal: within, redirect: 'manual' });
+  } catch {
+    throw thrown();
+  }
+  const { status } = response;
+  // A browser hands a refused redirect back as an opaque response with status zero.
+  if (response.type === 'opaqueredirect' || (status >= REDIRECT_MIN && status <= REDIRECT_MAX)) {
+    const location = response.headers.get('location');
+    throw new EndpointProbeError(
+      ProbeFailure.Redirected,
+      `${url.origin} redirected the request${location ? ` to ${location}` : ''}; use the URL it redirects to.`,
+      status || undefined,
+    );
+  }
+  if (UNAUTHORIZED.has(status)) {
+    throw new EndpointProbeError(ProbeFailure.Unauthorized, `${url.origin} refused the key (${status}).`, status);
+  }
+  if (NOT_THERE.has(status)) {
+    throw new EndpointProbeError(
+      ProbeFailure.NotOpenAi,
+      `${url.origin} has no model listing there (${status}); is the base URL missing a /v1?`,
+      status,
+    );
+  }
+  if (response.ok === false) {
+    throw new EndpointProbeError(
+      ProbeFailure.Failed,
+      `${url.origin} answered ${status} when asked for its models.`,
+      status,
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    if (within.aborted) {
+      throw thrown();
+    }
+    body = undefined;
+  }
+  const { data, models } = (body ?? {}) as { data?: unknown; models?: unknown };
+  const rows = Array.isArray(data) ? data : Array.isArray(models) ? models : undefined;
+  if (rows === undefined) {
+    throw new EndpointProbeError(ProbeFailure.NotOpenAi, `${url.origin} did not answer with a list of models.`);
+  }
+
+  const found = new Map<string, ModelInfo>();
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object') {
+      continue;
+    }
+    const entry = row as { id?: unknown; name?: unknown };
+    const id = typeof entry.id === 'string' ? entry.id : typeof entry.name === 'string' ? entry.name : '';
+    if (id === '') {
+      continue;
+    }
+    const { contextLength } = contextLengthOf(row);
+    found.set(id, { id, contextLength: contextLength || (found.get(id)?.contextLength ?? 0) });
+  }
+  return [...found.values()].sort((a, b) => byCodeUnit(a.id, b.id)).slice(0, limit);
+}
+
 /**
  * How much a model will read, in tokens. Zero means nobody knows.
  *
@@ -790,14 +997,14 @@ export function resetClients() {
 }
 
 /**
- * A base URL as two settings rows would agree on it: trimmed, without the trailing slash.
+ * Whether two base URLs are one endpoint, by `baseUrlKey`.
  *
  * @param a - The URL as one row has it.
  * @param b - The URL as the other has it.
- * @returns `true` where the two differ in nothing but surrounding whitespace and trailing slashes.
- * Case counts, and so does a `/v1`.
+ * @returns `true` where the two differ in nothing but surrounding whitespace, trailing slashes, the
+ * case of the scheme and host, and a default port. A path's case counts, and so does a `/v1`.
  */
-export const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '');
+export const sameUrl = (a: string, b: string) => baseUrlKey(a) === baseUrlKey(b);
 
 /**
  * The key to send, where an endpoint may inherit one from the settings it overrides.
