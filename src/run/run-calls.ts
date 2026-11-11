@@ -68,6 +68,9 @@ const STOPPED_CALL = 'Stopped before this call finished.';
 /** The same for a call of that step the loop never got to. */
 const UNRUN_CALL = 'Not run: the run stopped first.';
 
+/** A dispatch that returned no text still occupies a tool turn. */
+const NO_TOOL_OUTPUT = '(no output)';
+
 /** One of a turn's calls with its arguments read, or with the reason they could not be. */
 export interface ReadCall {
   call: ToolCall;
@@ -703,10 +706,15 @@ async function runCall(
       throw error;
     }
     content = errorMessage(error);
+    const dispatchFailed = args !== undefined && !load && !record && refused === undefined;
+    if (dispatchFailed && !/^error/i.test(content)) {
+      content = `Error: ${content || NO_TOOL_OUTPUT}`;
+    }
     ok = false;
   } finally {
     close();
   }
+  content ||= NO_TOOL_OUTPUT;
   run.onEvent({
     kind: RunEventKind.ToolResult,
     id: call.id,
