@@ -43,6 +43,9 @@ const SUMMARY_SLICE = 4000;
 /** The fewest messages worth folding: a summary of one costs a round trip and saves nothing. */
 const FEWEST_FOLDED = 2;
 
+/** How many of the latest tool results a prune leaves whole when the caller does not say. */
+const KEEP_LAST = 5;
+
 /** The locale a cleared result's length is written in, so the stub reads the same on every host. */
 const COUNT_LOCALE = 'en-US';
 
@@ -160,7 +163,10 @@ export interface PruneOptions {
  * few. Returns the same array when there was nothing to clear. Rewrites the prefix;
  * see the module comment on when to run it.
  */
-export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars = 256 }: PruneOptions = {}): Message[] {
+export function pruneToolResults(
+  messages: Message[],
+  { keepLast = KEEP_LAST, maxChars = 256 }: PruneOptions = {},
+): Message[] {
   let kept = 0;
   let out: Message[] | undefined;
   for (let at = messages.length - 1; at >= 0; at--) {
@@ -187,6 +193,228 @@ export function pruneToolResults(messages: Message[], { keepLast = 5, maxChars =
     };
   }
   return out ?? messages;
+}
+
+/**
+ * The share of the window a prune has to win back on its own before it is worth the prompt cache
+ * it costs. Below it the request after a prune is barely smaller than the one before, and every
+ * token of it is processed again anyway.
+ */
+export const PRUNE_SHARE = 0.1;
+
+/** What `planPrune` takes beside the transcript and the window. */
+export interface PrunePlanOptions extends PruneOptions {
+  /**
+   * The boundary in force: results before it are already sent as stubs. A plan only ever moves it
+   * forward.
+   *
+   * @defaultValue `0`
+   */
+  through?: number;
+  /**
+   * The share of the window a move has to clear, in tokens, to be made on its own. Zero makes any
+   * move that clears something.
+   *
+   * @defaultValue `PRUNE_SHARE`
+   */
+  minShare?: number;
+  /**
+   * The share of the window in use before a move is considered at all. Zero considers one on every
+   * step, and the hysteresis is `minShare`'s alone.
+   *
+   * @defaultValue `COMPACT_AT`, so a prune is paid for when a fold would be
+   */
+  at?: number;
+  /**
+   * What the transcript costs now — the last request's reported prompt tokens. The fill weighed
+   * against `at` is the larger of it and the estimate, since a report does not count the results
+   * that arrived after it, which are what fills a window.
+   */
+  used?: number;
+  /**
+   * The first message still sent. Results before it were folded into a summary and are no saving
+   * of this one, so they are not counted.
+   *
+   * @defaultValue `0`
+   */
+  from?: number;
+  /**
+   * The head of the request was rewritten on this step anyway — a fold was just stored — so the
+   * cache is lost whatever a move does: `at` and `minShare` are not asked, and a move that clears
+   * anything is made, with a window known or not.
+   *
+   * @defaultValue `false`
+   */
+  compacted?: boolean;
+  /**
+   * One message's tokens.
+   *
+   * @defaultValue `messageTokens` divided by `charsPerToken`
+   */
+  estimate?: (message: Message) => number;
+  /**
+   * The divisor the default `estimate` uses. Ignored beside an `estimate` of the caller's own.
+   *
+   * @defaultValue `4`
+   */
+  charsPerToken?: number;
+}
+
+/** Where `planPrune` puts the boundary, and what moving it there clears. */
+export interface PrunePlan {
+  /**
+   * The new boundary: tool results before it are sent as stubs (`pruneThrough`), results at or
+   * after it whole. Always greater than the one in force. An index into the transcript the plan
+   * was made for, which the host stores.
+   */
+  through: number;
+  /** How many results the move stubs that were being sent whole. */
+  cleared: number;
+  /** Their estimated tokens, less the stubs', rounded. */
+  tokens: number;
+}
+
+/**
+ * The transcript with every tool result before `through` replaced by a stub.
+ *
+ * @param messages - The transcript. Not written to.
+ * @param through - The boundary, as a `PrunePlan` has it. Clamped to the transcript, so one left
+ * past its end cannot reach messages not yet written.
+ * @param [options] - `maxChars`, as `pruneToolResults` reads it.
+ * @returns `messages` itself when nothing was cleared, otherwise a new array of the same length in
+ * which each cleared result is a new message and every other one the same object.
+ *
+ * @remarks
+ * `pruneToolResults` over the head, keeping none of it — so a result that is short or carries
+ * definitions stays whole here as it does there. A function of the messages before `through` and
+ * nothing else: while the boundary stays put, what this sends for them does not change however
+ * many results arrive after it, which is what keeps the prompt cache.
+ */
+export function pruneThrough(
+  messages: Message[],
+  through: number,
+  { maxChars }: Pick<PruneOptions, 'maxChars'> = {},
+): Message[] {
+  const end = clamp(through, messages.length);
+  if (end <= 0) {
+    return messages;
+  }
+  const head = messages.slice(0, end);
+  const stubbed = pruneToolResults(head, { keepLast: 0, ...(maxChars === undefined ? {} : { maxChars }) });
+  return stubbed === head ? messages : [...stubbed, ...messages.slice(end)];
+}
+
+/**
+ * Where the latest `keepLast` tool results begin, which is where a move puts the boundary.
+ *
+ * @param messages - The transcript.
+ * @param keepLast - How many of the latest results stay whole.
+ * @returns The index of the earliest of them; the length when `keepLast` is zero; and zero when
+ * there are not that many results, which is nowhere.
+ */
+const keepBoundary = (messages: Message[], keepLast: number): number => {
+  if (keepLast <= 0) {
+    return messages.length;
+  }
+  let kept = 0;
+  for (let at = messages.length - 1; at >= 0; at--) {
+    if (messages[at].role === Role.Tool && ++kept === keepLast) {
+      return at;
+    }
+  }
+  return 0;
+};
+
+/**
+ * Where to move the prune boundary, or `undefined` when it should stay where it is.
+ *
+ * @param messages - The transcript as the host keeps it — whole, or with earlier stubs in it.
+ * @param window - The model's window, in tokens. Zero or less moves nothing on its own.
+ * @param [options] - The boundary in force, the gate, what to keep, and how to weigh a message.
+ * See `PrunePlanOptions`.
+ * @returns The plan, or `undefined`. `messages` is not written to.
+ *
+ * @remarks
+ * `pruneToolResults` keeps a sliding window of results: applied on every step, each new result
+ * pushes an older one out, rewrites a message in the middle of the history and loses the prompt
+ * cache from there on, once per tool call. A plan is a boundary instead. The host stores
+ * `through` and sends `pruneThrough(messages, through)` on every request, and between moves a
+ * request is the one before it with only its tail added.
+ *
+ * The rule, in the order it is asked:
+ *
+ * - **Never backwards, and never for nothing.** The target is the earliest of the latest
+ *   `keepLast` results. If that is not past `through`, or moving there would clear nothing still
+ *   being sent, there is no plan.
+ * - **With a fold, for free.** Given `compacted`, the move is made.
+ * - **Otherwise once the window is filling**, past `at` of it, and only when what it clears is at
+ *   least `minShare` of it. A run sitting just over the line would otherwise slide the boundary
+ *   forward and lose the cache on every step for a few hundred tokens each time.
+ *
+ * What is weighed is what the move would *clear*, by `estimate`: a short result and a proxied
+ * load's definitions stay whole wherever the boundary is, a stub is not cleared twice, and a
+ * result before `from` is not being sent.
+ */
+export function planPrune(
+  messages: Message[],
+  window: number,
+  {
+    through = 0,
+    minShare = PRUNE_SHARE,
+    at = COMPACT_AT,
+    used,
+    from = 0,
+    compacted = false,
+    keepLast = KEEP_LAST,
+    maxChars,
+    charsPerToken,
+    estimate = (message) => messageTokens(message, { charsPerToken }),
+  }: PrunePlanOptions = {},
+): PrunePlan | undefined {
+  const hasWindow = window > 0;
+  if (hasWindow === false && compacted === false) {
+    return undefined;
+  }
+  if (compacted === false) {
+    const estimated = messages.reduce((total, message) => total + estimate(message), 0);
+    const isFilling = Math.max(used ?? 0, estimated) >= window * at;
+    if (isFilling === false) {
+      return undefined;
+    }
+  }
+  const current = clamp(through, messages.length);
+  const target = keepBoundary(messages, keepLast);
+  if (target <= current) {
+    return undefined;
+  }
+  const sent = pruneThrough(messages, target, { maxChars });
+  let cleared = 0;
+  let tokens = 0;
+  for (let index = Math.max(current, from); index < target; index++) {
+    if (sent[index] !== messages[index]) {
+      cleared++;
+      tokens += estimate(messages[index]) - estimate(sent[index]);
+    }
+  }
+  if (cleared === 0) {
+    return undefined;
+  }
+  const isWorthIt = compacted || tokens >= window * minShare;
+  return isWorthIt ? { through: target, cleared, tokens: Math.round(tokens) } : undefined;
+}
+
+/**
+ * What a host says when a plan is applied, so every host says it the same way.
+ *
+ * @param plan - The plan that was applied.
+ * @param [compacted] - Whether it was made alongside a fold rather than because the window filled.
+ * @returns One line with the counts: `cleared 3 old tool results (~12,345 tokens) as the window
+ * filled`.
+ */
+export function pruneNotice({ cleared, tokens }: PrunePlan, compacted = false): string {
+  const results = cleared === 1 ? 'result' : 'results';
+  const why = compacted ? 'alongside a fold' : 'as the window filled';
+  return `cleared ${cleared} old tool ${results} (~${tokens.toLocaleString(COUNT_LOCALE)} tokens) ${why}`;
 }
 
 /** What `planCompaction` takes. */

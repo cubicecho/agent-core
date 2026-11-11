@@ -21,8 +21,14 @@ Keeping a long run inside its window: stale tool results cleared, and the oldest
 - `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
 - `compactTranscript` — The transcript with the plan's stretch replaced by one system message holding its summary.
 - `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
+- `PRUNE_SHARE` — The share of the window a prune has to win back on its own before it is worth the prompt cache it costs.
 - `PruneOptions` (type) — What `pruneToolResults` takes.
+- `PrunePlan` (type) — Where `planPrune` puts the boundary, and what moving it there clears.
+- `PrunePlanOptions` (type) — What `planPrune` takes beside the transcript and the window.
 - `planCompaction` — Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
+- `planPrune` — Where to move the prune boundary, or `undefined` when it should stay where it is.
+- `pruneNotice` — What a host says when a plan is applied, so every host says it the same way.
+- `pruneThrough` — The transcript with every tool result before `through` replaced by a stub.
 - `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
 - `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted everything after it.
 - `runCompaction` — The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
