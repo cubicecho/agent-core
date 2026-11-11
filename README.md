@@ -887,9 +887,29 @@ turn is remembered, awaits it once the answer is out.
 The loop gathers before its first request, beside its own preselection when `preselect` asked for
 one, and nothing else of the host's can run beside those. A host with pre-turn work to overlap with
 the hooks — a compaction — calls `gather` itself, applies `withContext` to the current question as
-well, calls `notify` after, and passes no `hooks` (see [Hooks](#hooks)). Such a host passes the
-question as it was typed as `preselectQuery` too, or the preselector is shown the context in front
-of it and picks tools for what was recalled rather than what was asked.
+well, and calls `notify` after (see [Hooks](#hooks)). Such a host passes the question as it was
+typed as `preselectQuery` too, or the preselector is shown the context in front of it and picks
+tools for what was recalled rather than what was asked.
+
+`hooks.fire` says which events the loop fires itself, and it fires no others: `sessionStart` and
+`beforeTurn` gathered before the first request, `beforeCompact` beside each fold `compact` makes,
+`afterTurn` once answered. Left out, it is all of them — `events` (`beforeTurn` by default), then
+`afterTurn` and `beforeCompact` — which is what the loop always did. A host that fires the turn's
+events around a step of its own still hands the loop its hooks for the fold:
+
+```ts
+await runAgentLoop({
+  ...options,
+  compact: true,
+  hooks: { run, context, fire: [HookEvent.BeforeCompact] }, // beforeTurn and afterTurn are the host's
+});
+```
+
+An event left out of `fire` is one the result has nothing for: `afterTurn` is resolved and empty
+without `afterTurn`, and `notes` and `context` are empty without an injecting event, since the
+host's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
+loop and are ignored there. `events` is deprecated: it is the injecting half of `fire`, and is
+ignored once `fire` is given.
 
 A host that stores its transcript — a row per message, so a crash or a stop mid-run still leaves
 readable history — gets each message as the loop appends it, and the run as it stood when the loop
