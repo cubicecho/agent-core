@@ -1,3 +1,10 @@
+# [4.11.0](https://github.com/cubicecho/agent-core/compare/v4.10.0...v4.11.0) (2026-11-11)
+
+
+### Features
+
+* **run:** let a tool call end the run cleanly, without an abort ([975fb4b](https://github.com/cubicecho/agent-core/commit/975fb4bd27a34815d765bd5403f1ef0088889384)), closes [#170](https://github.com/cubicecho/agent-core/issues/170)
+
 # [4.10.0](https://github.com/cubicecho/agent-core/compare/v4.9.0...v4.10.0) (2026-11-11)
 
 
