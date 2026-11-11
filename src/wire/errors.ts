@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import { ContextOverflow } from './retry.ts';
-import type { PartialTurn, TurnUsage } from './stream.ts';
+import type { LoopUsage, PartialTurn } from './stream.ts';
 import type { RunArtifact, ToolCallOutcome } from './tool-calls.ts';
 
 /**
@@ -42,8 +42,11 @@ export interface AgentLoopFailure {
    * watching had been shown, and whether it belongs in the history is the host's call.
    */
   partial?: PartialTurn;
-  /** Summed over the turns that came back. A request that failed or was stopped adds nothing. */
-  usage: TurnUsage;
+  /**
+   * Summed over the turns that came back, as the result's `usage` would have said it. A request
+   * that failed or was stopped adds nothing.
+   */
+  usage: LoopUsage;
   /** Every call that was made, in order. One the run was stopped during is `ok: false`. */
   toolCalls: ToolCallOutcome[];
   /**
@@ -73,7 +76,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
   override readonly name: string = 'AgentLoopError';
   readonly messages: OpenAI.ChatCompletionMessageParam[];
   readonly partial?: PartialTurn;
-  readonly usage: TurnUsage;
+  readonly usage: LoopUsage;
   readonly toolCalls: ToolCallOutcome[];
   readonly artifacts: RunArtifact[];
   readonly loaded: string[];
@@ -123,7 +126,7 @@ export class ToolIterationLimit extends AgentLoopError {
 export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailure {
   readonly messages: OpenAI.ChatCompletionMessageParam[];
   readonly partial?: PartialTurn;
-  readonly usage: TurnUsage;
+  readonly usage: LoopUsage;
   readonly toolCalls: ToolCallOutcome[];
   readonly artifacts: RunArtifact[];
   readonly loaded: string[];

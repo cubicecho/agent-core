@@ -71,7 +71,16 @@ import {
   ToolIterationLimit,
 } from '../wire/errors.ts';
 import { ContextOverflow } from '../wire/retry.ts';
-import { addCounts, type InFlight, noUsage, type Turn, type TurnUsage } from '../wire/stream.ts';
+import {
+  addCounts,
+  type InFlight,
+  type LoopUsage,
+  loopUsage,
+  noUsage,
+  reportsCache,
+  type Turn,
+  type TurnUsage,
+} from '../wire/stream.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
 import {
   type EndedBy,
@@ -599,8 +608,11 @@ export interface AgentLoopResult {
   ended?: EndedBy;
   /** The transcript, with every assistant turn and tool result the run added. No system prompt. */
   messages: OpenAI.ChatCompletionMessageParam[];
-  /** Summed over every turn of the run. */
-  usage: TurnUsage;
+  /**
+   * Summed over every turn of the run, in the spelling the `usage` events use, with whether any
+   * turn reported a cache count. The four counts are also under their older names.
+   */
+  usage: LoopUsage;
   /**
    * Every call, `load_tools` included, in the order they were made, each under its call id — a
    * proxied preselection's among them, first.
@@ -652,8 +664,10 @@ export interface AgentLoopResult {
    */
   afterTurn: Promise<HookNote[]>;
   /**
-   * The run summed and derived: what `runMetrics` makes of the events this loop emitted, plus the
-   * `load_tools` findings only the loop sees, `wallMs` from the call to the return, and `outcome`.
+   * The run summed and derived: what `runMetrics` makes of the events this loop emitted, with the
+   * `load_tools` counts at zero rather than absent in a run on demand, `wallMs` from the call to
+   * the return, and `outcome`. A host running several loops for one run gets its counts from
+   * `runMetrics` over all their events, without these results beside it.
    */
   metrics: RunMetrics;
   /**
@@ -779,7 +793,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   const standing: Standing = {
     read: () => ({
       messages: [...options.messages],
-      usage: noUsage(),
+      usage: loopUsage(noUsage(), false),
       toolCalls: [],
       artifacts: [],
       loaded: [],
@@ -1234,19 +1248,25 @@ function announcer(onMessage: AgentLoopOptions['onMessage']) {
  * @param usage - The run's totals, this turn's already added.
  * @param turn - The turn just finished, read for its usage and why it ended.
  * @param ledger - The ledger as it stands. Carried on the event as it is, not copied.
+ * @param [contextLength] - The window the turn was served. Absent or zero leaves it off the report.
  * @returns The event, for the caller to emit.
  */
-const usageEvent = (usage: TurnUsage, turn: Turn, ledger: TokenLedger): RunEventInput => ({
-  kind: RunEventKind.Usage,
-  usage: {
-    promptTokens: usage.prompt,
-    completionTokens: usage.completion,
-    totalTokens: usage.total,
-    cachedTokens: usage.cached,
-    turn: { ...turn.usage, finishReason: turn.finishReason },
-    ledger,
-  },
-});
+const usageEvent = (usage: LoopUsage, turn: Turn, ledger: TokenLedger, contextLength?: number): RunEventInput => {
+  const { promptTokens, completionTokens, totalTokens, cachedTokens, cacheReported } = usage;
+  const window = contextLength ? { contextLength } : {};
+  return {
+    kind: RunEventKind.Usage,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      cachedTokens,
+      cacheReported,
+      turn: { ...turn.usage, finishReason: turn.finishReason, ...window },
+      ledger,
+    },
+  };
+};
 
 /**
  * The calls a turn made and the answer beside them, with calls the model wrote as text taken out
@@ -1358,6 +1378,7 @@ async function runSteps(
 
   let messages = [...options.messages];
   let usage = noUsage();
+  let cacheReported = false;
   const toolCalls: ToolCallOutcome[] = [];
   const artifacts = new Map<string, RunArtifact>();
   // A box per request, emptied once its turn is in `messages`: a failure while the tools run had
@@ -1368,7 +1389,7 @@ async function runSteps(
     return {
       messages,
       ...(partial ? { partial } : {}),
-      usage,
+      usage: loopUsage(usage, cacheReported),
       toolCalls,
       artifacts: [...artifacts.values()],
       // As the result would have said it: proxied, nothing is loaded that the history does not hold.
@@ -1576,7 +1597,8 @@ async function runSteps(
       completion: turn.usage.completion,
     };
     usage = addCounts(usage, turn.usage);
-    onEvent(usageEvent(usage, turn, ledger));
+    cacheReported ||= reportsCache(turn.usage);
+    onEvent(usageEvent(loopUsage(usage, cacheReported), turn, ledger, config.contextLength));
     if (turn.finishReason === FinishReason.Length) {
       notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
     }
@@ -1614,7 +1636,7 @@ async function runSteps(
         turn: shown,
         ...(ended ? { ended } : {}),
         messages,
-        usage,
+        usage: loopUsage(usage, cacheReported),
         toolCalls,
         artifacts: [...artifacts.values()],
         loaded: proxied ? [] : [...loaded],

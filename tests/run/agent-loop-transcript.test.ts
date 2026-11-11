@@ -190,7 +190,13 @@ describe('a run that throws', () => {
       'assistant: null',
       'tool c0: ok',
     ]);
-    expect(limit.usage).toEqual({ prompt: 20, completion: 4, total: 24, cached: 0 });
+    expect(limit.usage).toMatchObject({
+      promptTokens: 20,
+      completionTokens: 4,
+      totalTokens: 24,
+      cachedTokens: 0,
+      cacheReported: false,
+    });
     expect(limit.toolCalls).toEqual([
       { id: 'c0', name: 'a', ok: true },
       { id: 'c0', name: 'a', ok: true },
@@ -218,7 +224,13 @@ describe('a run that throws', () => {
     expect(failure.message).toBe('401 no such key');
     expect(failure.cause).toBe(refused);
     expect(outline(failure.messages)).toEqual(['user: hi', 'assistant: null', 'tool c0: ok']);
-    expect(failure.usage).toEqual({ prompt: 10, completion: 2, total: 12, cached: 0 });
+    expect(failure.usage).toMatchObject({
+      promptTokens: 10,
+      completionTokens: 2,
+      totalTokens: 12,
+      cachedTokens: 0,
+      cacheReported: false,
+    });
     expect(failure.toolCalls).toEqual([{ id: 'c0', name: 'a', ok: true }]);
   });
 
@@ -275,7 +287,13 @@ describe('a run that throws', () => {
     const run = failedRun(error);
     expect(run?.messages).toEqual(question);
     expect(run?.messages).not.toBe(question);
-    expect(run?.usage).toEqual({ prompt: 0, completion: 0, total: 0, cached: 0 });
+    expect(run?.usage).toMatchObject({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cachedTokens: 0,
+      cacheReported: false,
+    });
   });
 
   it('reads no run off an error the loop did not throw', () => {

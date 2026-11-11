@@ -146,6 +146,7 @@ export {
   endRun,
   fold,
   history,
+  type LoadCounts,
   type RunEvent,
   type RunEventInput,
   RunEventKind,
@@ -291,12 +292,14 @@ export {
 export {
   CacheBreakReason,
   type InFlight,
+  type LoopUsage,
   type PartialTurn,
   type Produced,
   type StreamTurnOptions,
   streamTurn,
   type Turn,
   type TurnUsage,
+  type UsageTotals,
 } from './wire/stream.ts';
 export {
   ALL_FENCES,

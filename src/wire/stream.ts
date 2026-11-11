@@ -155,6 +155,74 @@ export interface TurnUsage {
 export const noUsage = (): TurnUsage => ({ prompt: 0, completion: 0, total: 0, cached: 0 });
 
 /**
+ * A run's token totals, in the spelling every run-level usage shares.
+ *
+ * @remarks
+ * The spelling of `RunUsage`, which is what the `usage` events carry and what hosts persist, so a
+ * host reads a loop's result and its events with one mapping rather than two. A single turn's own
+ * report, `TurnUsage`, keeps its shorter names: it is a different thing, a turn's measurements,
+ * and every field on it is that turn's.
+ */
+export interface UsageTotals {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** How much of `promptTokens` came from the endpoint's prompt cache. Zero where none said. */
+  cachedTokens: number;
+  /**
+   * Whether any turn of the run reported a cache count, which is what tells a `cachedTokens` of
+   * zero that is a miss from one the endpoint never reports. A turn reported one where its usage
+   * carries `uncached`.
+   */
+  cacheReported: boolean;
+}
+
+/**
+ * What a loop spent, as `AgentLoopResult.usage` and a failed run's `usage` carry it.
+ *
+ * @remarks
+ * `UsageTotals`, with the four counts also under the names this field had before it: a host that
+ * reads `usage.prompt` keeps compiling and reads the same number as `usage.promptTokens`.
+ */
+export interface LoopUsage extends TurnUsage, UsageTotals {
+  /** @deprecated Read `promptTokens`, the same number. */
+  prompt: number;
+  /** @deprecated Read `completionTokens`, the same number. */
+  completion: number;
+  /** @deprecated Read `totalTokens`, the same number. */
+  total: number;
+  /** @deprecated Read `cachedTokens`, the same number, and `cacheReported` for whether it was reported. */
+  cached: number;
+}
+
+/**
+ * Whether a turn's usage says the endpoint reported its cache.
+ *
+ * @param usage - One turn's report.
+ * @returns True where it carries `uncached`, which is present only where a cache count was.
+ */
+export const reportsCache = (usage: TurnUsage): boolean => usage.uncached !== undefined;
+
+/**
+ * A loop's summed counts in both spellings, for its result and its `usage` events.
+ *
+ * @param counts - The four counts summed over the loop's turns. Not written to.
+ * @param cacheReported - Whether any of those turns reported a cache count.
+ * @returns A new usage holding the four counts under both names, and the flag.
+ */
+export const loopUsage = (counts: TurnUsage, cacheReported: boolean): LoopUsage => ({
+  prompt: counts.prompt,
+  completion: counts.completion,
+  total: counts.total,
+  cached: counts.cached,
+  promptTokens: counts.prompt,
+  completionTokens: counts.completion,
+  totalTokens: counts.total,
+  cachedTokens: counts.cached,
+  cacheReported,
+});
+
+/**
  * The four token counts of two usages, added.
  *
  * @param a - One usage. Neither is changed.

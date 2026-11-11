@@ -125,7 +125,18 @@ describe('runAgentLoop', () => {
       role: Role.System,
       content: 'be brief',
     });
-    expect(result.usage).toEqual({ prompt: 10, completion: 2, total: 12, cached: 0 });
+    expect(result.usage).toEqual({
+      promptTokens: 10,
+      completionTokens: 2,
+      totalTokens: 12,
+      cachedTokens: 0,
+      cacheReported: false,
+      // The names the field had before, kept beside the ones it shares with the events.
+      prompt: 10,
+      completion: 2,
+      total: 12,
+      cached: 0,
+    });
     expect(events.map((e) => e.kind)).toEqual([
       RunEventKind.Turn,
       RunEventKind.Usage,
@@ -791,6 +802,42 @@ describe('runAgentLoop', () => {
     });
   });
 
+  it('says whether the cache was reported, so a zero hit is not read as nothing said', async () => {
+    create.mockReturnValueOnce(reportedCall(100, 0, 'a')).mockReturnValueOnce(reported(150, 0, { content: 'done' }));
+    const usages: RunUsage[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      onEvent: (event) => {
+        if (event.usage) {
+          usages.push(event.usage);
+        }
+      },
+    });
+    expect(result.usage).toMatchObject({ promptTokens: 250, cachedTokens: 0, cacheReported: true });
+    expect(usages.map((usage) => usage.cacheReported)).toEqual([true, true]);
+  });
+
+  it('reads a run as cache reported once any turn of it was', async () => {
+    create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(reported(150, 40, { content: 'done' }));
+    const usages: RunUsage[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      onEvent: (event) => {
+        if (event.usage) {
+          usages.push(event.usage);
+        }
+      },
+    });
+    expect(usages.map((usage) => usage.cacheReported)).toEqual([false, true]);
+    expect(result.usage).toMatchObject({ cachedTokens: 40, cached: 40, cacheReported: true });
+  });
+
   describe('artifacts', () => {
     /** A link to this uri, named after it. */
     const link = (uri: string, title?: string) => ({ uri, name: uri, ...(title ? { title } : {}) });
@@ -1296,6 +1343,54 @@ describe('runAgentLoop', () => {
         cacheBreaks: 1,
         cacheBreakReasons: { 'tools-changed': 1 },
       });
+    });
+
+    it('puts each load on its result, so the events of two loops add up to both results', async () => {
+      const { runMetrics, stamp } = await import('../../src/run/events.ts');
+      const heard: RunEventInput[] = [];
+      const onEvent = (event: RunEventInput) => heard.push(event);
+      create
+        .mockReturnValueOnce(reportedCall(100, 0, LOAD_TOOLS, '{"names":["s__read","nope"]}'))
+        .mockReturnValueOnce(reported(150, 100, { content: 'one' }));
+      const first = await runAgentLoop({
+        config: { ...onDemand, contextLength: 1000 },
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => 'ok',
+        onEvent,
+      });
+      create
+        .mockReturnValueOnce(reportedCall(100, 0, LOAD_TOOLS, '{"names":["s__write"]}'))
+        .mockReturnValueOnce(reportedCall(160, 100, LOAD_TOOLS, '{"names":["s__write"]}'))
+        .mockReturnValueOnce(reported(200, 160, { content: 'two' }));
+      const second = await runAgentLoop({
+        config: { ...onDemand, contextLength: 400 },
+        messages: question,
+        tools,
+        catalog,
+        dispatch: async () => 'ok',
+        onEvent,
+      });
+      const loads = heard.filter((e) => e.kind === RunEventKind.ToolResult).map((e) => e.loads);
+      expect(loads).toEqual([
+        { toolsLoaded: 1, redundantLoads: 0, unknownToolNames: 1 },
+        { toolsLoaded: 1, redundantLoads: 0, unknownToolNames: 0 },
+        { toolsLoaded: 0, redundantLoads: 1, unknownToolNames: 0 },
+      ]);
+      // No window and no results beside them: each turn carries its own.
+      const metrics = runMetrics(heard.map((event, at) => stamp(event, 'r', at + 1, at)));
+      expect(metrics).toMatchObject({
+        loadCalls: 3,
+        toolsLoaded: 2,
+        redundantLoads: 1,
+        unknownToolNames: 1,
+        turns: 5,
+        promptTokens: first.metrics.promptTokens + second.metrics.promptTokens,
+        // 200 of the second loop's 400, against 150 of the first one's 1000.
+        largestPromptShare: 0.5,
+      });
+      expect(first.metrics.largestPromptShare).toBe(0.15);
     });
 
     it('declares loads in name order however they happened, and answers a repeat load', async () => {
