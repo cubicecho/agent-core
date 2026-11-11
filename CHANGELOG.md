@@ -1,3 +1,10 @@
+# [4.25.0](https://github.com/cubicecho/agent-core/compare/v4.24.0...v4.25.0) (2026-11-11)
+
+
+### Features
+
+* **loop:** take a person's input mid-run with takeInput ([64c717a](https://github.com/cubicecho/agent-core/commit/64c717a5f897c25446bf939c8732aba540acb240))
+
 # [4.24.0](https://github.com/cubicecho/agent-core/compare/v4.23.9...v4.24.0) (2026-11-11)
 
 
