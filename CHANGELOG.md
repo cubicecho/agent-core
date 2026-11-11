@@ -1,3 +1,10 @@
+# [4.21.0](https://github.com/cubicecho/agent-core/compare/v4.20.0...v4.21.0) (2026-11-11)
+
+
+### Features
+
+* **run:** collect declared and detected artifacts, opt-in ([7c67348](https://github.com/cubicecho/agent-core/commit/7c673486cabba7ef05b1708f1a21d9fce2d5e7ef)), closes [#165](https://github.com/cubicecho/agent-core/issues/165) [#180](https://github.com/cubicecho/agent-core/issues/180)
+
 # [4.20.0](https://github.com/cubicecho/agent-core/compare/v4.19.0...v4.20.0) (2026-11-11)
 
 
