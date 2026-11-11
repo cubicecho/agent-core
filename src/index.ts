@@ -172,7 +172,13 @@ export {
   watch,
 } from './run/events.ts';
 export { buildBody } from './run/request-body.ts';
-export { dropReasoning, preview, type ReasonedMessage, type ToolDispatch } from './run/run-calls.ts';
+export {
+  dropReasoning,
+  preview,
+  type ReasonedMessage,
+  type Scratchpad,
+  type ToolDispatch,
+} from './run/run-calls.ts';
 export { resetAll } from './runtime/reset.ts';
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from './runtime/runtime.ts';
 export {
@@ -307,6 +313,7 @@ export {
   type LoopUsage,
   type PartialTurn,
   type Produced,
+  reasoningEntry,
   type StreamTurnOptions,
   streamTurn,
   type Turn,
@@ -362,7 +369,9 @@ export {
   FUNCTION_TOOL,
   JSON_SCHEMA_FORMAT,
   PartType,
+  REASONING,
   REASONING_CONTENT,
+  type ReasoningField,
   Role,
   SchemaType,
 } from './wire/wire.ts';

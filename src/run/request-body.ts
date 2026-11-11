@@ -22,7 +22,7 @@ import { dropReasoning } from './run-calls.ts';
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
  * @param messages - The request's messages, system prompt included, sent as they are — less
- * `reasoning_content` for a model that refused it.
+ * their scratchpads for a model that refused them.
  * @param [tools] - The tool definitions. Ordered by name, sanitised here — a lookup for a definition
  * seen before — and relaxed where the endpoint needs it. Empty sends no `tools` field at all.
  * @param [order] - How to order them before sending. `true` is by name, which keeps the cache

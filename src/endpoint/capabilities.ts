@@ -132,9 +132,9 @@ export interface ModelCapabilities {
    */
   assistantPrefill: boolean;
   /**
-   * Takes `reasoning_content` on a replayed assistant message. A server that validates messages
-   * strictly — Groq, Mistral, `deepseek-reasoner` — refuses the whole request over the field, and
-   * the answer is to replay the transcript without it, which is what every run did before.
+   * Takes a scratchpad, `reasoning_content` or `reasoning`, on a replayed assistant message. A
+   * server that validates messages strictly — Groq, Mistral, `deepseek-reasoner` — refuses the
+   * whole request over the field, and the answer is to replay the transcript without it.
    */
   reasoningContent: boolean;
 }
@@ -721,18 +721,20 @@ function unknownFields(detail: string): string[] {
 }
 
 /**
- * `reasoning_content` refused as a field a message may not carry, rather than demanded.
+ * A replayed scratchpad refused as a field a message may not carry, rather than demanded.
  *
  * @param detail - The server's error text.
- * @returns `true` where the text names the field in a refusal's words and not in a demand's.
+ * @returns `true` where the text names `reasoning_content`, or `reasoning` quoted as a field or a
+ * path's last step, in a refusal's words and not in a demand's.
  *
  * @remarks
  * DeepSeek in thinking mode refuses a request for the opposite reason — `Missing reasoning_content`,
  * or that it `must be passed back` — and latching the field off there would make every later
- * request fail the same way, so those words rule a match out.
+ * request fail the same way, so those words rule a match out. The bare spelling has to be quoted,
+ * since `reasoning` is also the English a refusal of `reasoning_effort` is written in.
  */
 const refusesReasoningContent = (detail: string) =>
-  /reasoning_content/i.test(detail) &&
+  /reasoning_content|[.'"`]reasoning['"`]/i.test(detail) &&
   /unsupported|not supported|unrecognized|unknown|unexpected|not allowed|not permitted|extra (?:inputs|fields)/i.test(
     detail,
   ) &&
@@ -927,7 +929,7 @@ const ANSWERS: readonly Answer[] = [
   modelAnswer(
     'reasoningContent',
     refusesReasoningContent,
-    (name) => `${name} does not take reasoning_content; replaying without it`,
+    (name) => `${name} does not take its reasoning back; replaying without it`,
   ),
   droppedFieldsAnswer,
 ];

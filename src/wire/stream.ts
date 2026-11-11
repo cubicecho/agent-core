@@ -4,7 +4,7 @@ import { EndpointSilent } from './retry.ts';
 import { DEFAULT_FENCES, type Fence, FenceSplitter, SPLIT_REASONING, type Split } from './thinking.ts';
 import type { ContextBreakdown } from './tokens.ts';
 import type { ToolCall } from './tool-calls.ts';
-import { FUNCTION_TOOL } from './wire.ts';
+import { FUNCTION_TOOL, REASONING, REASONING_CONTENT, type ReasoningField } from './wire.ts';
 
 /**
  * Reading one streamed turn back into a message.
@@ -318,12 +318,32 @@ export interface Turn {
    * not at all.
    *
    * @remarks
-   * Kept because some models want it back, as `reasoning_content` on the assistant message:
-   * `runAgentLoop` writes it there as `reasoningReplay` says. A model that does not ask for it is
-   * better off without it, since it is context paid for on every turn.
+   * Kept because some models want it back on the assistant message: `runAgentLoop` writes it
+   * there as `reasoningReplay` says, under `reasoningField`.
    */
   reasoning: string;
+  /**
+   * The delta field the scratchpad arrived in, which is the one to write it back under: llama.cpp
+   * reads back only `reasoning_content`, Ollama only `reasoning`. `reasoning_content` wins where a
+   * server sent both.
+   *
+   * @remarks
+   * Absent where no field carried any: a scratchpad split out of fenced `content` is written back
+   * as `reasoning_content`, the llama.cpp and Qwen convention, rather than glued back into the text.
+   */
+  reasoningField?: ReasoningField;
 }
+
+/**
+ * A scratchpad as the field to spread onto an assistant message.
+ *
+ * @param reasoning - The scratchpad, or `""` for none.
+ * @param [field] - The field to write it under, as `Turn.reasoningField` names it.
+ * @returns `{ [field]: reasoning }`, or an empty object for no reasoning: never a `null` or an empty
+ * string, which llama.cpp throws on and Kimi's template renders as `<think>None</think>`.
+ */
+export const reasoningEntry = (reasoning: string, field: ReasoningField = REASONING_CONTENT) =>
+  reasoning ? { [field]: reasoning } : {};
 
 /**
  * Reasoning deltas are not in the OpenAI types and have two spellings in the wild:
@@ -693,6 +713,7 @@ export async function streamTurn(
     // The field's reasoning here, the fenced kind in the splitter, which can still move text
     // already read as answer into reasoning when a closing tag turns up with no opening one.
     const reasoning: string[] = [];
+    let reasoningField: ReasoningField | undefined;
     const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
     const report = (parts: Split[]) => {
       for (const part of parts) {
@@ -761,6 +782,11 @@ export async function streamTurn(
         reasoning.push(thinking);
         onThinking?.(thinking);
       }
+      if (delta.reasoning_content) {
+        reasoningField = REASONING_CONTENT;
+      } else if (delta.reasoning) {
+        reasoningField ??= REASONING;
+      }
       if (delta.content) {
         report(splitter.push(delta.content));
       }
@@ -808,6 +834,7 @@ export async function streamTurn(
       usage,
       finishReason,
       reasoning: reasoning.join('') + splitter.reasoning,
+      ...(reasoningField ? { reasoningField } : {}),
     };
   }
 }

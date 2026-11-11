@@ -136,9 +136,9 @@ export interface ModelParams {
    */
   reasoningEffort?: string;
   /**
-   * Which assistant messages carry the model's scratchpad back to it as `reasoning_content`.
+   * Which assistant messages carry the model's scratchpad back to it.
    *
-   * @defaultValue `ReasoningReplay.ToolLoop`
+   * @defaultValue `ReasoningReplay.All`
    *
    * @remarks
    * Read by `runAgentLoop` as it writes each turn into the transcript. See `ReasoningReplay` for
@@ -162,25 +162,26 @@ export interface ModelParams {
 }
 
 /**
- * Which assistant messages a run writes the model's scratchpad onto, as `reasoning_content`.
+ * Which assistant messages a run writes the model's scratchpad onto, under the field it arrived in.
  *
  * @remarks
- * A model that reasons before a tool call may want that reasoning on the next request, and a model
- * that does not want it pays for it as context on every turn, so a host picks per model. The field
- * name is the one llama.cpp, vLLM and the Qwen and DeepSeek templates read.
+ * Sending it and leaving the template to drop what its model does not want is the default, because
+ * each template already encodes its model's rule and a client that strips earlier ones breaks the
+ * models that keep them, and the prefix cache with them. The field is `Turn.reasoningField`.
  */
 export const ReasoningReplay = {
   /**
-   * On each message that ends in tool calls, while the run is in its tool loop. The final answer
-   * carries none, and once it is written the run's `messages` drop it from the loop's messages
-   * too. The rule gpt-oss's harmony format states, and what Qwen3 templates render on their own.
-   */
-  ToolLoop: 'tool-loop',
-  /**
-   * On every assistant message, the final answer included, and never dropped. What DeepSeek's API
-   * asks for in thinking mode with tools, and what a template that preserves thinking renders.
+   * On every assistant message, the final answer included, and never dropped. DeepSeek's API in
+   * thinking mode with tools refuses a request that leaves any out; Qwen3.8 and GLM-5.3 keep every
+   * turn's by default; Qwen3, GLM-4.x, gpt-oss and Kimi templates drop the earlier ones themselves.
    */
   All: 'all',
+  /**
+   * On each message that ends in tool calls, while the run is in its tool loop. The final answer
+   * carries none, and once it is written the run's `messages` drop it from the loop's messages
+   * too. gpt-oss harmony's rule written client-side, for a server that renders whatever it is sent.
+   */
+  ToolLoop: 'tool-loop',
   /** On none of them: the scratchpad stays on the `Turn` and never reaches the transcript. */
   None: 'none',
 } as const;

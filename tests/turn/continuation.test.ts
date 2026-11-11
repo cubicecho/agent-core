@@ -58,7 +58,7 @@ describe('continueTurn', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect((create.mock.calls[0][0] as Body).messages).toEqual([
       ...question.messages,
-      { role: Role.Assistant, content: 'The sky is blue because' },
+      { role: Role.Assistant, content: 'The sky is blue because', reasoning_content: 'thought' },
     ]);
     // Read as answer even though the fresh reply started in a scratchpad.
     expect(turn.content).toBe('The sky is blue because of the way light scatters.');
@@ -71,6 +71,26 @@ describe('continueTurn', () => {
       cached: 30,
       continuations: 1,
     });
+  });
+
+  it('writes the reasoning back under the field it came in, without it when asked or refused', async () => {
+    const prefill = async (turn: Turn, options: { replayReasoning?: boolean } = {}) => {
+      const create = vi.fn().mockReturnValue(replies(' more', FinishReason.Stop));
+      await continueTurn(clientOf(create), supports(), request, turn, { model: 'm', ...options });
+      return (create.mock.calls[0][0] as Body).messages.at(-1);
+    };
+    expect(await prefill(cut(undefined, { reasoningField: 'reasoning' }))).toEqual({
+      role: Role.Assistant,
+      content: 'The sky is blue because',
+      reasoning: 'thought',
+    });
+    expect(await prefill(cut(), { replayReasoning: false })).toEqual({
+      role: Role.Assistant,
+      content: 'The sky is blue because',
+    });
+    expect(await prefill(cut(undefined, { reasoning: '' }))).not.toHaveProperty('reasoning_content');
+    modelCapabilitiesFor(supports(), 'm').reasoningContent = false;
+    expect(await prefill(cut())).not.toHaveProperty('reasoning_content');
   });
 
   it('drops a field only one request reported, and weights the rates by the time they held', async () => {

@@ -604,7 +604,7 @@ export interface AgentLoopOptions {
    *
    * @remarks
    * The assistant message is the one replayed on later requests — arguments repaired, recovered
-   * calls folded in, `reasoning_content` on it where `reasoningReplay` says — and comes with its
+   * calls folded in, the scratchpad on it where `reasoningReplay` says — and comes with its
    * `turn`, as `onTurn` was handed it. Under `tool-loop` the result's `messages` drop that field
    * once the answer is written, so a host storing these rows drops it too (`dropReasoning`).
    * A tool result comes without one, and so do the two messages
@@ -659,7 +659,7 @@ export interface AgentLoopResult {
   ended?: EndedBy;
   /**
    * The transcript, with every assistant turn and tool result the run added. No system prompt.
-   * Under `tool-loop`, no assistant message from the question on carries `reasoning_content`.
+   * Under `tool-loop`, no assistant message from the question on carries a scratchpad.
    */
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
@@ -1410,7 +1410,7 @@ async function runSteps(
   // The host's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.
   const extraBody = pin ? { ...pin.fields, ...config.extraBody } : config.extraBody;
   const sending = { ...config, extraBody };
-  const reasoningReplay = config.reasoningReplay ?? ReasoningReplay.ToolLoop;
+  const reasoningReplay = config.reasoningReplay ?? ReasoningReplay.All;
 
   // Started before the preselection rather than after it: neither reads the other, and in a row
   // they cost the first request two round trips where one will do. A failing runner is a note, but
@@ -1665,7 +1665,11 @@ async function runSteps(
     ledger = entered;
     const turn =
       maxContinuations > 0
-        ? await continueTurn(client, supports, build, first, { ...turnOptions, maxContinuations })
+        ? await continueTurn(client, supports, build, first, {
+            ...turnOptions,
+            maxContinuations,
+            replayReasoning: reasoningReplay !== ReasoningReplay.None,
+          })
         : first;
     inFlight = {};
     previous = {
@@ -1689,7 +1693,9 @@ async function runSteps(
     // is the repaired JSON.
     const parsed = readCalls(calls, turn.finishReason, recovered);
     const isAnswer = calls.length === 0;
-    const replayed = replaysReasoning(reasoningReplay, !isAnswer) ? turn.reasoning : '';
+    const replayed = replaysReasoning(reasoningReplay, !isAnswer)
+      ? { reasoning: turn.reasoning, field: turn.reasoningField }
+      : undefined;
     const assistant = assistantMessage(content, parsed, replayed);
     messages.push(assistant);
     // Recovered calls were never calls on the wire: what the model said is the text they came from.

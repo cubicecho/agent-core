@@ -88,10 +88,9 @@ describe('onMessage', () => {
         heard.push({ message, step, turn });
       },
     });
-    // Everything the run added, and nothing it was handed — less the scratchpad the tool loop
-    // carried, which the answer took off.
+    // Everything the run added, and nothing it was handed.
     expect(heard[0].message).toHaveProperty('reasoning_content', 'hmm');
-    expect(dropReasoning(heard.map((entry) => entry.message))).toEqual(result.messages.slice(1));
+    expect(heard.map((entry) => entry.message)).toEqual(result.messages.slice(1));
     expect(heard.map((entry) => entry.step)).toEqual([0, 0, 0, 1]);
     expect(outline(heard.map((entry) => entry.message))).toEqual([
       'assistant: null',
@@ -878,18 +877,48 @@ describe('reasoning replay', () => {
     return { sent: sentMessages(), result, written };
   };
 
-  it('replays the tool loop by default, and drops it once the answer is written', async () => {
+  it('keeps it on every assistant message by default, the answer included', async () => {
     const { sent, result, written } = await twoSteps();
+    expect(scratchpads(sent[1])).toEqual(['look it up']);
+    expect(written.map((raw) => raw && scratchpads([raw.raw])[0])).toEqual(['look it up', 'that settles it']);
+    expect(scratchpads(result.messages)).toEqual(['look it up', 'that settles it']);
+    expect(dropReasoning(result.messages)).not.toBe(result.messages);
+  });
+
+  it('replays the tool loop under tool-loop, and drops it once the answer is written', async () => {
+    const { sent, result, written } = await twoSteps('tool-loop');
     expect(scratchpads(sent[1])).toEqual(['look it up']);
     expect(written.map((raw) => raw && scratchpads([raw.raw])[0])).toEqual(['look it up', undefined]);
     expect(scratchpads(result.messages)).toEqual([undefined, undefined]);
     expect(result.turn.reasoning).toBe('that settles it');
   });
 
-  it('keeps it on every assistant message under all', async () => {
-    const { sent, result } = await twoSteps('all');
-    expect(scratchpads(sent[1])).toEqual(['look it up']);
-    expect(scratchpads(result.messages)).toEqual(['look it up', 'that settles it']);
+  it("writes it back under the field it came in: Ollama's reasoning, or reasoning_content for a fence", async () => {
+    create
+      .mockReturnValueOnce(
+        chunks(
+          { choices: [{ delta: { reasoning: 'look it up' } }] },
+          {
+            choices: [
+              {
+                delta: { tool_calls: [{ index: 0, id: 'c0', function: { name: 'a', arguments: '{}' } }] },
+                finish_reason: FinishReason.ToolCalls,
+              },
+            ],
+          },
+        ),
+      )
+      .mockReturnValueOnce(says('<think>settled</think>done'));
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'found',
+    });
+    const [called, answered] = result.messages.filter((message) => message.role === Role.Assistant);
+    expect(called).toHaveProperty('reasoning', 'look it up');
+    expect(called).not.toHaveProperty('reasoning_content');
+    expect(answered).toEqual({ role: Role.Assistant, content: 'done', reasoning_content: 'settled' });
   });
 
   it('writes none under none, as every run did before', async () => {
@@ -929,6 +958,6 @@ describe('reasoning replay', () => {
     expect(sent).toHaveLength(3);
     expect(scratchpads(sent[1])).toEqual(['look it up']);
     expect(scratchpads(sent[2])).toEqual([undefined]);
-    expect(notices).toContain('m does not take reasoning_content; replaying without it');
+    expect(notices).toContain('m does not take its reasoning back; replaying without it');
   });
 });
