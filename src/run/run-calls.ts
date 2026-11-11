@@ -163,9 +163,26 @@ export const replaysReasoning = (policy: ReasoningReplay, endsInCalls: boolean) 
   policy === ReasoningReplay.All || (policy === ReasoningReplay.ToolLoop && endsInCalls);
 
 /**
+ * What an assistant message's `content` is written as, for a turn's text.
+ *
+ * @param content - The turn's text.
+ * @param hasCalls - Whether the message carries `tool_calls`.
+ * @returns The text where there is any; otherwise `null` beside calls and `""` without them.
+ *
+ * @remarks
+ * `null` is what the spec and every reference loop write beside calls. Without calls it leaves a
+ * message with neither, which Ollama refuses on the next request that carries it ("invalid message
+ * content type") and which a host's stored transcript carries into the next run. An empty string
+ * is accepted by Ollama, llama.cpp and vLLM alike, and keeps the turn, and any reasoning on it, in
+ * the history rather than dropping it as pydantic-ai does.
+ */
+const spokenContent = (content: string, hasCalls: boolean) => content || (hasCalls ? null : '');
+
+/**
  * The assistant message a turn is written into the transcript as, its calls' arguments repaired.
  *
- * @param content - The turn's text. Empty is written as `null`.
+ * @param content - The turn's text. Empty is written as `null` beside calls and as `""` without
+ * them, per `spokenContent`.
  * @param parsed - The turn's calls as `readCalls` read them. Not written to. None leaves
  * `tool_calls` off the message rather than empty.
  * @param [scratchpad] - The reasoning to replay, under the field it arrived in. None, or empty
@@ -174,7 +191,7 @@ export const replaysReasoning = (policy: ReasoningReplay, endsInCalls: boolean) 
  */
 export const assistantMessage = (content: string, parsed: ReadCall[], scratchpad?: Scratchpad): ReasonedMessage => ({
   role: Role.Assistant,
-  content: content || null,
+  content: spokenContent(content, parsed.length > 0),
   ...reasoningEntry(scratchpad?.reasoning ?? '', scratchpad?.field),
   ...(parsed.length
     ? {
@@ -189,7 +206,8 @@ export const assistantMessage = (content: string, parsed: ReadCall[], scratchpad
 /**
  * The assistant message a turn is, as the model produced it: its text and calls as they streamed.
  *
- * @param content - The turn's text, recovered calls left in it. Empty is written as `null`.
+ * @param content - The turn's text, recovered calls left in it. Empty is written as
+ * `assistantMessage` writes it.
  * @param calls - The calls the model sent as calls, with their arguments as streamed. Not written
  * to. None leaves `tool_calls` off the message rather than empty.
  * @param [scratchpad] - The reasoning, as `assistantMessage` was given it.
@@ -197,7 +215,7 @@ export const assistantMessage = (content: string, parsed: ReadCall[], scratchpad
  */
 export const writtenMessage = (content: string, calls: ToolCall[], scratchpad?: Scratchpad): ReasonedMessage => ({
   role: Role.Assistant,
-  content: content || null,
+  content: spokenContent(content, calls.length > 0),
   ...reasoningEntry(scratchpad?.reasoning ?? '', scratchpad?.field),
   ...(calls.length ? { tool_calls: calls.map((call) => ({ ...call, function: { ...call.function } })) } : {}),
 });

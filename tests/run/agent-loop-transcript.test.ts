@@ -1043,3 +1043,114 @@ describe('call ids', () => {
     expect(callIds(last)).toEqual(callIds(result.messages));
   });
 });
+
+describe('a turn with nothing to say', () => {
+  /** A turn that streams these deltas, stops for this reason, and reports what it cost. */
+  const ends = (finish: FinishReason, ...deltas: Record<string, unknown>[]) =>
+    chunks(
+      ...deltas.map((delta) => ({ choices: [{ delta }] })),
+      { choices: [{ delta: {}, finish_reason: finish }] },
+      { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
+    );
+  /**
+   * What Ollama's `/v1` says of a request, by the rule in `openai/openai.go` `FromChatRequest`: an
+   * assistant message's content that is neither a string nor an array is allowed only beside calls.
+   */
+  const ollamaRefusal = (messages: readonly Message[]) => {
+    const isRefused = (message: Message) =>
+      message.role === Role.Assistant &&
+      typeof message.content !== 'string' &&
+      Array.isArray(message.content) === false &&
+      (message.tool_calls === undefined || message.tool_calls.length === 0);
+    const refused = messages.find(isRefused);
+    return refused ? `invalid message content type: ${String(refused.content)}` : undefined;
+  };
+  /** Runs a question, keeping the notices. */
+  const run = async (messages: Message[] = question) => {
+    const notices: string[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages,
+      dispatch: async () => 'ok',
+      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+    });
+    return { result, notices };
+  };
+
+  it('is written with an empty string, its reasoning kept, so Ollama takes the transcript back', async () => {
+    create.mockReturnValueOnce(ends(FinishReason.Stop, { reasoning_content: 'thinking it over' }));
+    const { result, notices } = await run();
+    expect(result.messages.at(-1)).toEqual({
+      role: Role.Assistant,
+      content: '',
+      reasoning_content: 'thinking it over',
+    });
+    expect(notices).toEqual(['the model ended its turn with no answer']);
+
+    create.mockImplementationOnce((body: Body) => {
+      const refusal = ollamaRefusal(body.messages);
+      if (refusal) {
+        throw apiError(400, refusal);
+      }
+      return says('again');
+    });
+    const next = await run([...result.messages, user('and now?')]);
+    expect(next.result.turn.content).toBe('again');
+  });
+
+  it('keeps `null` beside calls, which is what the spec and every reference loop write', async () => {
+    create.mockReturnValueOnce(calls([['a', '{}']])).mockReturnValueOnce(ends(FinishReason.Stop));
+    const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch: async () => 'ok' });
+    expect(result.messages.filter((message) => message.role === Role.Assistant).map((m) => m.content)).toEqual([
+      null,
+      '',
+    ]);
+    expect(ollamaRefusal(result.messages)).toBeUndefined();
+  });
+
+  it('is told apart when a content filter withheld it, as a notice and an outcome of its own', async () => {
+    create.mockReturnValueOnce(ends(FinishReason.ContentFilter));
+    const { result, notices } = await run();
+    expect(notices).toEqual(["the provider's content filter withheld the reply"]);
+    expect(result.metrics.outcome).toBe('filtered');
+    expect(result.messages.at(-1)).toEqual({ role: Role.Assistant, content: '' });
+  });
+
+  it('is asked for again, once and unwritten, when it says it is calling tools and sends none', async () => {
+    create.mockReturnValueOnce(ends(FinishReason.ToolCalls)).mockReturnValueOnce(says('done'));
+    const { result, notices } = await run();
+    expect(create).toHaveBeenCalledTimes(2);
+    // The same request again: nothing of the empty turn was written into it.
+    expect((create.mock.calls[1][0] as Body).messages).toEqual((create.mock.calls[0][0] as Body).messages);
+    expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
+    expect(notices).toEqual(['the model said it was calling tools but sent none; asking again']);
+    expect(result.metrics.outcome).toBe('answered');
+  });
+
+  it('is taken as the answer, and said so, when it sends no calls a second time', async () => {
+    create.mockReturnValueOnce(ends(FinishReason.ToolCalls)).mockReturnValueOnce(ends(FinishReason.ToolCalls));
+    const { result, notices } = await run();
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(result.messages).toEqual([...question, { role: Role.Assistant, content: '' }]);
+    expect(notices).toEqual([
+      'the model said it was calling tools but sent none; asking again',
+      'the model said it was calling tools but sent none; taking its reply as the answer',
+    ]);
+  });
+
+  it('is not asked for again where it said something, or where no step is left to ask in', async () => {
+    create.mockReturnValueOnce(ends(FinishReason.ToolCalls, { content: 'here it is' }));
+    const said = await run();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(said.result.turn.content).toBe('here it is');
+
+    create.mockReset().mockReturnValueOnce(ends(FinishReason.ToolCalls));
+    const last = await runAgentLoop({
+      config: { ...config, maxToolIterations: 1 },
+      messages: question,
+      dispatch: vi.fn(),
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(last.messages.at(-1)).toEqual({ role: Role.Assistant, content: '' });
+  });
+});

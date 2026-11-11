@@ -805,10 +805,16 @@ const WARNING = SEVERITY.indexOf(ServerLogLevel.Warning);
 
 /** How a run ended, as `runMetrics` reads it. */
 export const RunOutcome = {
-  /** The run did not fail, and its last turn was not cut off. */
+  /** The run did not fail, and its last turn was neither cut off nor withheld. */
   Answered: 'answered',
   /** The run did not fail, and its last turn is an answer the reply ceiling cut off. */
   Truncated: 'truncated',
+  /**
+   * The run did not fail, and the provider's content filter withheld its last turn
+   * (`finish_reason: "content_filter"`): what the answer says, if anything, is not the model's
+   * whole reply.
+   */
+  Filtered: 'filtered',
   /**
    * The run did not fail, and a tool call ended it: `AgentLoopResult.ended` says which, and so
    * does a `done` that names the tool.
@@ -831,7 +837,8 @@ export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
  * ended by it; anything else is read off the turn.
  * @param last - The last turn a `usage` event reported, if any did.
  * @returns `failed` for a `done` that was not ok, `ended` for one that names the tool that ended
- * the run, `truncated` where the last turn ran into the reply ceiling, and `answered` otherwise.
+ * the run, `truncated` where the last turn ran into the reply ceiling, `filtered` where a content
+ * filter withheld it, and `answered` otherwise.
  */
 function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOutcome {
   if (ok === false) {
@@ -842,8 +849,21 @@ function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOut
   if (isEnded) {
     return RunOutcome.Ended;
   }
-  if (last?.finishReason === FinishReason.Length) {
+  return endingOf(last?.finishReason);
+}
+
+/**
+ * How a run that ends on a turn ends, read off that turn's finish reason.
+ *
+ * @param finishReason - The last turn's `finish_reason`, as the server sent it.
+ * @returns `truncated` for `length`, `filtered` for `content_filter`, and `answered` otherwise.
+ */
+export function endingOf(finishReason: string | undefined): RunOutcome {
+  if (finishReason === FinishReason.Length) {
     return RunOutcome.Truncated;
+  }
+  if (finishReason === FinishReason.ContentFilter) {
+    return RunOutcome.Filtered;
   }
   return RunOutcome.Answered;
 }

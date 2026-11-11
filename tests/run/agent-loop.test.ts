@@ -297,12 +297,13 @@ describe('runAgentLoop', () => {
     expect(notices).toEqual(['the model stopped at maxTokens (100); this turn is cut short']);
   });
 
-  it('drops a call that never got a name', async () => {
-    create.mockReturnValueOnce(calls(['', '{}']));
+  it('drops a call that never got a name, and asks again for the turn it leaves with none', async () => {
+    create.mockReturnValueOnce(calls(['', '{}'])).mockReturnValueOnce(says('done'));
     const dispatch = vi.fn();
     const result = await runAgentLoop({ config, messages: question, dispatch });
     expect(dispatch).not.toHaveBeenCalled();
-    expect(result.messages.at(-1)).not.toHaveProperty('tool_calls');
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
   });
 
   it('hands the tool repaired arguments and replays them as JSON', async () => {
