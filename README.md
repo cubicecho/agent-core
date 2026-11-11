@@ -151,6 +151,18 @@ A host storing rows from `onMessage` gets the message as replayed, field and all
 `dropReasoning(rows, from)` does the same to the stored copy. History before the question is sent as
 the host gave it.
 
+Two providers hand back opaque state that has to go back byte for byte. OpenRouter streams
+`reasoning_details`, a list of summary, signed-text and encrypted blocks, beside `reasoning`, and asks
+for them back unmodified and in order. `streamTurn` puts them back together as `reasoningDetails` on
+the turn: a text or summary block's pieces are joined, an index that differs or an encrypted block
+starts a new one. `runAgentLoop` writes them back as `reasoning_details` under the same
+`reasoningReplay` policy as the scratchpad, since they are the same reasoning. `dropReasoning` and the
+`reasoningContent` latch take them off with it. Gemini puts `extra_content.google.thought_signature`
+on the first call of a step, and refuses with a 400 a request that replays the step without it. That
+is not reasoning to drop, so it stays on the call under every policy. The keys a call keeps are an
+allowlist, `CALL_EXTRA_KEYS`, which is `extra_content` today, so no key a server merely added is sent
+to a stricter one.
+
 A server without a reasoning parser leaves the scratchpad in `content`, fenced, and then it is shown
 as output, stored and sent back. `streamTurn` routes text inside a fence to `onThinking` and
 `reasoning` instead, holding back the tail of a chunk that could be half a tag. `DEFAULT_FENCES` is

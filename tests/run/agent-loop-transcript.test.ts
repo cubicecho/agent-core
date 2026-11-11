@@ -969,6 +969,121 @@ describe('reasoning replay', () => {
     expect(scratchpads(sent[2])).toEqual([undefined]);
     expect(notices).toContain('m does not take its reasoning back; replaying without it');
   });
+
+  /** A turn that streams OpenRouter's blocks in two pieces, beside `reasoning`, and then calls `a`. */
+  const routedCall = () =>
+    chunks(
+      {
+        choices: [
+          {
+            delta: {
+              reasoning: 'look ',
+              reasoning_details: [{ type: 'reasoning.text', text: 'look ', format: 'anthropic-claude-v1', index: 0 }],
+            },
+          },
+        ],
+      },
+      {
+        choices: [
+          {
+            delta: {
+              reasoning: 'it up',
+              reasoning_details: [{ type: 'reasoning.text', text: 'it up', signature: 's' }],
+            },
+          },
+        ],
+      },
+      { choices: [{ delta: { reasoning_details: [{ type: 'reasoning.encrypted', data: 'opaque', index: 1 }] } }] },
+      {
+        choices: [
+          {
+            delta: { tool_calls: [{ index: 0, id: 'c0', function: { name: 'a', arguments: '{}' } }] },
+            finish_reason: FinishReason.ToolCalls,
+          },
+        ],
+      },
+    );
+  /** The blocks the routed turn streamed, as one ordered array. */
+  const routedBlocks = [
+    { type: 'reasoning.text', text: 'look it up', format: 'anthropic-claude-v1', index: 0, signature: 's' },
+    { type: 'reasoning.encrypted', data: 'opaque', index: 1 },
+  ];
+  /** The `reasoning_details` of each assistant message, `undefined` where it has none. */
+  const blocksOf = (messages: readonly Message[]) =>
+    messages
+      .filter((message) => message.role === Role.Assistant)
+      .map((message) => (message as { reasoning_details?: unknown }).reasoning_details);
+  /** Runs the routed call and then an answer, and keeps what each request carried. */
+  const routedRun = async (reasoningReplay?: 'tool-loop' | 'all' | 'none') => {
+    create.mockReturnValueOnce(routedCall()).mockReturnValueOnce(says('done'));
+    const result = await runAgentLoop({
+      config: reasoningReplay ? { ...config, reasoningReplay } : config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'found',
+    });
+    return { sent: sentMessages(), result };
+  };
+
+  it("sends OpenRouter's reasoning blocks back whole and in order, beside the reasoning", async () => {
+    const { sent, result } = await routedRun();
+    const [called] = sent[1].filter((message) => message.role === Role.Assistant);
+    expect(called).toHaveProperty('reasoning', 'look it up');
+    expect(called).toHaveProperty('reasoning_details', routedBlocks);
+    expect(blocksOf(result.messages)).toEqual([routedBlocks, undefined]);
+    expect(blocksOf(dropReasoning(result.messages))).toEqual([undefined, undefined]);
+  });
+
+  it('holds the blocks to reasoningReplay, as it holds the reasoning they came with', async () => {
+    const loop = await routedRun('tool-loop');
+    expect(blocksOf(loop.sent[1])).toEqual([routedBlocks]);
+    expect(blocksOf(loop.result.messages)).toEqual([undefined, undefined]);
+    create.mockReset();
+    const none = await routedRun('none');
+    expect(blocksOf(none.sent[1])).toEqual([undefined]);
+  });
+
+  it("sends Gemini's thought signature back on its call under every policy, none included", async () => {
+    const signature = { google: { thought_signature: 'sig' } };
+    for (const reasoningReplay of ['all', 'none'] as const) {
+      create.mockReset();
+      create
+        .mockReturnValueOnce(
+          chunks({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: 'c0', function: { name: 'a', arguments: '{}' }, extra_content: signature },
+                    { index: 1, id: 'c1', function: { name: 'a', arguments: '{}' } },
+                  ],
+                },
+                finish_reason: FinishReason.ToolCalls,
+              },
+            ],
+          }),
+        )
+        .mockReturnValueOnce(says('done'));
+      const written: (WrittenMessage | undefined)[] = [];
+      await runAgentLoop({
+        config: { ...config, reasoningReplay },
+        messages: question,
+        tools: [tool('a')],
+        dispatch: async () => 'found',
+        onMessage: (message, _step, _turn, raw) => {
+          if (message.role === Role.Assistant) {
+            written.push(raw);
+          }
+        },
+      });
+      const [called] = sentMessages()[1].filter((message) => message.role === Role.Assistant);
+      const sentCalls = (called as { tool_calls: ToolCall[] }).tool_calls;
+      expect(sentCalls.map((call) => call.extra_content)).toEqual([signature, undefined]);
+      expect(sentCalls[1]).not.toHaveProperty('extra_content');
+      const raw = written[0]?.raw as { tool_calls: ToolCall[] };
+      expect(raw.tool_calls[0]?.extra_content).toEqual(signature);
+    }
+  });
 });
 
 describe('call ids', () => {

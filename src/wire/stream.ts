@@ -1,11 +1,20 @@
 import type OpenAI from 'openai';
+import { isRecord } from '../core/guards.ts';
 import { MS_PER_SECOND } from '../core/platform.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { EndpointSilent } from './retry.ts';
 import { DEFAULT_FENCES, type Fence, FenceSplitter, SPLIT_REASONING, type Split } from './thinking.ts';
 import type { ContextBreakdown } from './tokens.ts';
 import type { ToolCall } from './tool-calls.ts';
-import { FUNCTION_TOOL, REASONING, REASONING_CONTENT, type ReasoningField } from './wire.ts';
+import {
+  CALL_EXTRA_KEYS,
+  type CallExtraKey,
+  FUNCTION_TOOL,
+  REASONING,
+  REASONING_CONTENT,
+  REASONING_DETAILS,
+  type ReasoningField,
+} from './wire.ts';
 
 /**
  * Reading one streamed turn back into a message.
@@ -333,7 +342,75 @@ export interface Turn {
    * as `reasoning_content`, the llama.cpp and Qwen convention, rather than glued back into the text.
    */
   reasoningField?: ReasoningField;
+  /**
+   * OpenRouter's `reasoning_details`, the blocks put back together from the chunks they streamed in,
+   * in the order they arrived. Absent where none came.
+   *
+   * @remarks
+   * Written back beside `reasoning` as `reasoningReplay` says, because OpenRouter asks for the
+   * blocks unmodified and in order, and a provider behind it that signs or encrypts its reasoning
+   * loses it between steps without them.
+   */
+  reasoningDetails?: ReasoningDetail[];
 }
+
+/**
+ * One of OpenRouter's reasoning blocks: `reasoning.summary` with a `summary`, `reasoning.text` with
+ * a `text` and maybe a `signature`, or `reasoning.encrypted` with `data`.
+ *
+ * @remarks
+ * Kept whole and unchecked, keys this package has no name for included, since a block goes back
+ * as it came. `type` and `index` are the two read here.
+ */
+export type ReasoningDetail = Record<string, unknown>;
+
+/** The field each kind of block streams its text in, for the two whose text arrives in pieces. */
+const STREAMED_DETAIL_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  'reasoning.text': 'text',
+  'reasoning.summary': 'summary',
+});
+
+/**
+ * Adds one streamed block to the blocks put together so far.
+ *
+ * @param details - The blocks so far, in arrival order. Written to: the last is extended, or a copy
+ * of `block` is appended.
+ * @param block - A block from a chunk's `delta.reasoning_details`. Not written to.
+ *
+ * @remarks
+ * A text or summary block streams its text a piece per chunk, so a piece of the same kind as the
+ * last block, naming no index or the same one, is joined onto it, and a key it brings that the last
+ * lacks, a `signature` arriving at the end, is filled in. Any other block is a block of its own:
+ * an encrypted one is never joined. That is how OpenRouter's own client reads the stream, with an
+ * index that differs kept apart, since two signed blocks joined would carry one signature for both.
+ */
+function appendReasoningDetail(details: ReasoningDetail[], block: ReasoningDetail): void {
+  const last = details.at(-1);
+  const textKey = typeof block.type === 'string' ? STREAMED_DETAIL_TEXT[block.type] : undefined;
+  const sameIndex = block.index === undefined || block.index === last?.index;
+  const continues = last !== undefined && textKey !== undefined && last.type === block.type && sameIndex;
+  if (continues === false) {
+    details.push({ ...block });
+    return;
+  }
+  for (const [key, value] of Object.entries(block)) {
+    if (key === textKey) {
+      last[key] = `${typeof last[key] === 'string' ? last[key] : ''}${typeof value === 'string' ? value : ''}`;
+    } else if (last[key] === undefined || last[key] === null) {
+      last[key] = value;
+    }
+  }
+}
+
+/**
+ * OpenRouter's reasoning blocks as the field to spread onto an assistant message.
+ *
+ * @param [details] - The blocks, as `Turn.reasoningDetails` has them.
+ * @returns `{ reasoning_details: details }`, or an empty object for none: an empty array is not
+ * written.
+ */
+export const reasoningDetailsEntry = (details?: readonly ReasoningDetail[]) =>
+  details?.length ? { [REASONING_DETAILS]: [...details] } : {};
 
 /**
  * A scratchpad as the field to spread onto an assistant message.
@@ -353,6 +430,7 @@ export const reasoningEntry = (reasoning: string, field: ReasoningField = REASON
 type ReasoningDelta = OpenAI.ChatCompletionChunk.Choice.Delta & {
   reasoning_content?: string | null;
   reasoning?: string | null;
+  reasoning_details?: unknown;
 };
 
 /** A tool call being put back together, under the index the server gave it if it gave one. */
@@ -366,6 +444,8 @@ interface PartialCall {
    * read of the same stream names the call the same.
    */
   minted: string;
+  /** Each of `CALL_EXTRA_KEYS` a fragment carried, as the first fragment to carry it sent it. */
+  extras: Partial<Record<CallExtraKey, unknown>>;
 }
 
 /** What one chunk says of the turn's usage, with the cache count kept apart by where it came from. */
@@ -491,6 +571,7 @@ function assembledCalls(calls: readonly PartialCall[], mint: CallIdMinter): Tool
       id,
       type: FUNCTION_TOOL,
       function: { name: call.name, arguments: call.arguments },
+      ...call.extras,
     });
   }
   return assembled;
@@ -741,6 +822,7 @@ export async function streamTurn(
     // already read as answer into reasoning when a closing tag turns up with no opening one.
     const reasoning: string[] = [];
     let reasoningField: ReasoningField | undefined;
+    const details: ReasoningDetail[] = [];
     const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
     const report = (parts: Split[]) => {
       for (const part of parts) {
@@ -790,6 +872,9 @@ export async function streamTurn(
       }
 
       const thinking = delta.reasoning_content || delta.reasoning || '';
+      // OpenRouter sends these beside `reasoning`, which already carries their text for the
+      // watcher, so they are kept to send back and are not reported a second time.
+      const blocks = Array.isArray(delta.reasoning_details) ? delta.reasoning_details.filter(isRecord) : [];
       // Latched on what the chunk carried, not on its having arrived. Most OpenAI-compatible
       // servers open a stream with a content-free `{"role":"assistant"}` before the first
       // token; latching on that made an endpoint that primes and then wedges unrepeatable,
@@ -797,7 +882,7 @@ export async function streamTurn(
       // fragments count even though no callback reports them: a partial call is state the turn
       // has accumulated, and losing a retry is the safer half of that trade. Set before the
       // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
-      const carried = Boolean(thinking || delta.content || delta.tool_calls?.length);
+      const carried = Boolean(thinking || delta.content || delta.tool_calls?.length || blocks.length);
       if (carried && !talking) {
         rearm(true);
         usage.firstTokenMs = Date.now() - started;
@@ -808,6 +893,9 @@ export async function streamTurn(
       if (thinking) {
         reasoning.push(thinking);
         onThinking?.(thinking);
+      }
+      for (const block of blocks) {
+        appendReasoningDetail(details, block);
       }
       if (delta.reasoning_content) {
         reasoningField = REASONING_CONTENT;
@@ -822,8 +910,17 @@ export async function streamTurn(
       for (const part of delta.tool_calls ?? []) {
         let call = ownerOf(calls, part);
         if (!call) {
-          call = { index: fragmentIndex(part), id: '', name: '', arguments: '', minted: '' };
+          call = { index: fragmentIndex(part), id: '', name: '', arguments: '', minted: '', extras: {} };
           calls.push(call);
+        }
+        // The first fragment to carry one wins, as Vercel's compatible client reads it: Gemini
+        // sends the signature once, and a later fragment is not to blank it.
+        const carries = part as Partial<Record<CallExtraKey, unknown>>;
+        for (const key of CALL_EXTRA_KEYS) {
+          const value = carries[key];
+          if (value !== undefined && value !== null && call.extras[key] === undefined) {
+            call.extras[key] = value;
+          }
         }
         if (part.id) {
           call.id = part.id;
@@ -862,6 +959,7 @@ export async function streamTurn(
       finishReason,
       reasoning: reasoning.join('') + splitter.reasoning,
       ...(reasoningField ? { reasoningField } : {}),
+      ...(details.length ? { reasoningDetails: details } : {}),
     };
   }
 }

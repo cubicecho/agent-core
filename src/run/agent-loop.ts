@@ -1744,7 +1744,7 @@ async function runSteps(
     const parsed = readCalls(calls, turn.finishReason, recovered);
     const isAnswer = calls.length === 0;
     const replayed = replaysReasoning(reasoningReplay, !isAnswer)
-      ? { reasoning: turn.reasoning, field: turn.reasoningField }
+      ? { reasoning: turn.reasoning, field: turn.reasoningField, details: turn.reasoningDetails }
       : undefined;
     const assistant = assistantMessage(content, parsed, replayed);
     messages.push(assistant);
