@@ -1,3 +1,10 @@
+# [4.18.0](https://github.com/cubicecho/agent-core/compare/v4.17.0...v4.18.0) (2026-11-11)
+
+
+### Features
+
+* **run:** keep the in-flight reply on AgentLoopFailure as partial ([dc7283f](https://github.com/cubicecho/agent-core/commit/dc7283f5ba3d570516d479482048a42cc5b9d7a9)), closes [#121](https://github.com/cubicecho/agent-core/issues/121) [#177](https://github.com/cubicecho/agent-core/issues/177)
+
 # [4.17.0](https://github.com/cubicecho/agent-core/compare/v4.16.0...v4.17.0) (2026-11-11)
 
 
