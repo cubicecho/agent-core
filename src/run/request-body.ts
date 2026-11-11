@@ -8,8 +8,44 @@ import {
   type ModelCapabilities,
 } from '../endpoint/capabilities.ts';
 import { relaxTools, sanitizeTools } from '../endpoint/schema-compat.ts';
+import { textOf } from '../hooks/hooks.ts';
 import { orderTools, type ToolOrder } from '../tools/tool-loading.ts';
+import { Role } from '../wire/wire.ts';
 import { dropReasoning } from './run-calls.ts';
+
+/** What the texts of several leading system messages are joined with when they become one. */
+const SYSTEM_JOIN = '\n\n';
+
+/**
+ * A request's leading system messages as one, which is the most system messages some templates
+ * take.
+ *
+ * @param messages - The request's messages, the loop's system prompt first. Not written to.
+ * @returns `messages` itself when it opens with fewer than two `system` messages, otherwise a new
+ * array whose first message is one `system` message holding their texts in order, a blank line
+ * apart, and the rest as they were.
+ *
+ * @remarks
+ * The Qwen3.5 and later templates and Devstral's raise on any `system` message that is not the
+ * first, and so does Mistral's v0.3, so a host that keeps its own system message in the transcript
+ * beside the loop's `system` option, or a transcript stored with a fold's summary as a `system`
+ * message the way earlier versions wrote it, would otherwise fail on every request. The merge is the
+ * same text on every step, so the prefix stays stable. A `system` message further down the
+ * transcript is the host's and is sent where it is: moving it would change what it is said after.
+ */
+export function singleSystem(messages: OpenAI.ChatCompletionMessageParam[]): OpenAI.ChatCompletionMessageParam[] {
+  const end = messages.findIndex((message) => message.role !== Role.System);
+  const lead = end === -1 ? messages.length : end;
+  if (lead < 2) {
+    return messages;
+  }
+  const text = messages
+    .slice(0, lead)
+    .map((message) => textOf(message.content).trim())
+    .filter((part) => part !== '')
+    .join(SYSTEM_JOIN);
+  return [{ role: Role.System, content: text }, ...messages.slice(lead)];
+}
 
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and

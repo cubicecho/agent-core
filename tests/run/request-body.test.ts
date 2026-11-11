@@ -1,9 +1,9 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it } from 'vitest';
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../../src/endpoint/capabilities.ts';
-import { buildBody } from '../../src/run/request-body.ts';
+import { buildBody, singleSystem } from '../../src/run/request-body.ts';
 import { FUNCTION_TOOL, Role, SchemaType } from '../../src/wire/wire.ts';
-import { type Body, config, type Message, tool } from '../helpers.ts';
+import { assistant, type Body, config, type Message, templateRefusal, tool, user } from '../helpers.ts';
 
 afterEach(() => resetCapabilities());
 
@@ -137,5 +137,28 @@ describe('buildBody', () => {
       b.localeCompare(a),
     );
     expect(names(body)).toEqual(['c', 'b', 'a']);
+  });
+});
+
+describe('singleSystem', () => {
+  const system = (content: string): Message => ({ role: Role.System, content });
+
+  it('joins the leading system messages into one, a blank line apart, and keeps the rest', () => {
+    const tail = [user('q'), assistant('a')];
+    expect(singleSystem([system('rules'), system(' '), system('more rules'), ...tail])).toEqual([
+      system('rules\n\nmore rules'),
+      ...tail,
+    ]);
+    expect(templateRefusal(singleSystem([system('rules'), system('more rules'), ...tail]))).toBeUndefined();
+  });
+
+  it('hands back the array itself when there is nothing to join', () => {
+    const one = [system('rules'), user('q')];
+    expect(singleSystem(one)).toBe(one);
+  });
+
+  it('leaves a system message further down where the host put it', () => {
+    const later = [system('rules'), user('q'), system('a notice')];
+    expect(singleSystem(later)).toBe(later);
   });
 });

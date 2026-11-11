@@ -495,7 +495,8 @@ export function turnMessages(
  * Counted over what it is given, which is the session only while nothing has been folded away — a
  * compacted request has lost the questions the summary now stands for, and turn eleven counting
  * itself as turn two is the kind of thing a hook writes into a memory. Count over the stored
- * transcript, or add what the fold took as `offset`.
+ * transcript, or add what the fold took as `offset`. The fold's own summary is a user message too,
+ * and is counted like one.
  */
 export const turnIndex = (messages: readonly { role: string }[], before = messages.length, offset = 0) =>
   offset + messages.slice(0, before).filter((message) => message.role === Role.User).length;

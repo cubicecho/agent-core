@@ -19,7 +19,7 @@ Keeping a long run inside its window: stale tool results cleared, and the oldest
 - `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
 - `CompactionRecord` (type) — One fold, as a host that keeps its transcript append-only stores it.
 - `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
-- `compactTranscript` — The transcript with the plan's stretch replaced by one system message holding its summary.
+- `compactTranscript` — The transcript with the plan's stretch replaced by its summary, as `applyCompaction` writes it.
 - `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
 - `PRUNE_SHARE` — The share of the window a prune has to win back on its own before it is worth the prompt cache it costs.
 - `PruneOptions` (type) — What `pruneToolResults` takes.
@@ -32,7 +32,8 @@ Keeping a long run inside its window: stale tool results cleared, and the oldest
 - `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
 - `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted everything after it.
 - `runCompaction` — The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
-- `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from a system prompt.
+- `SUMMARY_ACK` — The assistant's reply to a summary, which closes the pair `applyCompaction` writes.
+- `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from the conversation.
 - `SUMMARY_PROMPT` — The summariser's instruction when the caller gives none.
 - `summariser` — A summariser that asks `model` with `SUMMARY_PROMPT`, for `compactTranscript`.
 

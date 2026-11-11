@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import {
   type CompactionOptions,
   compactTranscript,
+  isSummary,
   type PrunePlanOptions,
   planCompaction,
   planPrune,
@@ -102,7 +103,7 @@ import {
   runMetrics,
   stamp,
 } from './events.ts';
-import { buildBody } from './request-body.ts';
+import { buildBody, singleSystem } from './request-body.ts';
 import {
   assistantMessage,
   type Calling,
@@ -1138,7 +1139,8 @@ const tellAfterTurn = (
       ...(at >= 0
         ? {
             turn: {
-              index: turnIndex(messages, at),
+              // A fold's summary is a user message, and stands for turns rather than being one.
+              index: turnIndex(messages, at) - messages.slice(0, at).filter(isSummary).length,
               messages: turnMessages(hooks.context.session.id, messages, at, undefined, { offset: hooks.offset }),
             },
           }
@@ -1598,10 +1600,10 @@ async function runSteps(
     // `system` as it was given when nothing is added, so a host with neither sees no change.
     const isBare = catalogued === false && sections.length === 0;
     const prompt = isBare ? system : [system, ...sections].join('\n\n').trim();
-    const request: OpenAI.ChatCompletionMessageParam[] = [
+    const request = singleSystem([
       ...(prompt ? [{ role: Role.System, content: prompt }] : []),
       ...withContext(messages, questionAt(), gathered.context, preface),
-    ];
+    ]);
 
     const build = (supported: Capabilities, refused: ModelCapabilities | undefined) =>
       buildBody(sending, supported, refused, request, declared, toolOrder);

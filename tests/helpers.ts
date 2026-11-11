@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
+import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
-import type { HookOutcome } from '../src/hooks/hooks.ts';
+import { type HookOutcome, textOf } from '../src/hooks/hooks.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
 import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire/wire.ts';
 
@@ -145,6 +146,53 @@ export const assistant = (content: string): Message => ({ role: Role.Assistant, 
  * @returns The message, answering a call with the id `c`.
  */
 export const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
+
+/**
+ * A fold's summary as `applyCompaction` writes it.
+ *
+ * @param notes - The summary, without the lead.
+ * @returns The `user` message carrying it and the `assistant` reply that closes the pair.
+ */
+export const summarised = (notes: string): Message[] => [user(`${SUMMARY_LEAD}${notes}`), assistant(SUMMARY_ACK)];
+
+/**
+ * What a chat template would raise over a request, for the templates agent-core is most often
+ * refused by.
+ *
+ * @param messages - The request's messages, as sent.
+ * @returns The exception's text, or `undefined` where every template here renders it.
+ *
+ * @remarks
+ * The rules are transcribed rather than rendered, so no Jinja engine is needed. Qwen3.5, 3.6 and
+ * 3.8 (`chat_template.jinja`, the loop over `messages`) raise "System message must be at the
+ * beginning." on any `system` message that is not the first, and "No user query found in
+ * messages." where no user message is more than a `<tool_response>` block; Devstral-2512 has the
+ * first rule too. Mistral v0.3 raises when the messages after an optional first `system` do not
+ * alternate user and assistant, tool calls and their results left out of the count.
+ */
+export const templateRefusal = (messages: Message[]): string | undefined => {
+  if (messages.some((message, at) => message.role === Role.System && at > 0)) {
+    return 'System message must be at the beginning.';
+  }
+  const isQuery = (message: Message) => {
+    const content = textOf(message.content).trim();
+    return (
+      message.role === Role.User &&
+      (content.startsWith('<tool_response>') && content.endsWith('</tool_response>')) === false
+    );
+  };
+  if (messages.some(isQuery) === false) {
+    return 'No user query found in messages.';
+  }
+  const spoken = messages.filter(
+    (message, at) =>
+      (at === 0 && message.role === Role.System) === false &&
+      message.role !== Role.Tool &&
+      ('tool_calls' in message && (message.tool_calls?.length ?? 0) > 0) === false,
+  );
+  const alternates = spoken.every((message, at) => (message.role === Role.User) === (at % 2 === 0));
+  return alternates ? undefined : 'After the optional system message, conversation roles must alternate';
+};
 
 /**
  * What a hook's runner reports for one hook, whole, so a fake runner can be typed as a real one.
