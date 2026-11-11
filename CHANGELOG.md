@@ -1,3 +1,10 @@
+## [4.23.8](https://github.com/cubicecho/agent-core/compare/v4.23.7...v4.23.8) (2026-11-11)
+
+
+### Bug Fixes
+
+* replay one tool call per message for templates that render no more ([70681de](https://github.com/cubicecho/agent-core/commit/70681de77a0aaf5c98ceb99f77c9fe096bb247bb)), closes [#206](https://github.com/cubicecho/agent-core/issues/206)
+
 ## [4.23.7](https://github.com/cubicecho/agent-core/compare/v4.23.6...v4.23.7) (2026-11-11)
 
 
