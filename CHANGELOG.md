@@ -1,3 +1,10 @@
+# [4.14.0](https://github.com/cubicecho/agent-core/compare/v4.13.0...v4.14.0) (2026-11-11)
+
+
+### Features
+
+* **run:** preselect on the question as written, beside the hooks' gather ([bf86b8f](https://github.com/cubicecho/agent-core/commit/bf86b8fd302e3aae111f666a7a130c3cbfabe038)), closes [#173](https://github.com/cubicecho/agent-core/issues/173)
+
 # [4.13.0](https://github.com/cubicecho/agent-core/compare/v4.12.0...v4.13.0) (2026-11-11)
 
 
