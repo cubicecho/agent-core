@@ -1,3 +1,10 @@
+# [4.12.0](https://github.com/cubicecho/agent-core/compare/v4.11.0...v4.12.0) (2026-11-11)
+
+
+### Features
+
+* **endpoint:** one base-url rule, probeEndpoint, and two probe fixes ([1617867](https://github.com/cubicecho/agent-core/commit/16178672fe2c787019a9f89a79acf51265368b2a)), closes [#171](https://github.com/cubicecho/agent-core/issues/171)
+
 # [4.11.0](https://github.com/cubicecho/agent-core/compare/v4.10.0...v4.11.0) (2026-11-11)
 
 
