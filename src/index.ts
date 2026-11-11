@@ -165,6 +165,17 @@ export {
   type ModelSnapshot,
 } from './runtime/snapshot.ts';
 export {
+  defineSpecColumns,
+  type ExtensionPath,
+  type SpecColumn,
+  type SpecColumnMapping,
+  type SpecColumns,
+  type SpecColumnsOptions,
+  type SpecDrop,
+  type SpecPath,
+  type SpecSection,
+} from './spec/columns.ts';
+export {
   AGENT_SPEC,
   AGENT_SPEC_VERSION,
   AGENT_TASKS,

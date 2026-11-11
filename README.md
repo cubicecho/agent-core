@@ -44,7 +44,7 @@ only, Node >=22.
 | `compaction` | Keeping a long run inside its window: `pruneToolResults` clears stale tool results, `planCompaction` and `compactTranscript` fold the oldest stretch into a summary. |
 | `ledger` | What stretches of a transcript cost, read off the prompt counts the server reported rather than estimated: `recordRequest`, `tokensBetween`, `estimateFrom`, `rebaseLedger`. |
 | `snapshot` | `exportCapabilities` and `importCapabilities`: the latched refusals as a JSON blob a consumer stores, so a restart need not learn them again. |
-| `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. |
+| `spec` | `parseSpec`, `resolveAgentSpec` and `exportSpec`: an agent as a versioned JSON document, layered into the flat config the loop takes. Imports nothing but types, and is published separately at `@cubicecho/agent-core/spec`. `defineSpecColumns` maps a stored row onto a layer and back, at `@cubicecho/agent-core/spec/columns`. |
 | `reset` | `resetAll`: drops every cache and latch in one call, so a teardown cannot forget one. |
 | `runtime` | `createRuntime`: a second set of those caches, with the functions that use them as methods — for a host whose tenants must not share a client pool, a latch or an event bus. `defaultRuntime` is the one the top-level functions use. |
 | `tokens` | How big a request is, estimated: `estimateTokens` — characters over four, deliberately low — and what is built on it for everything here that has to guess at a window: `messageTokens`, `requestTokens`, `contextTokens`. |
@@ -1399,6 +1399,50 @@ The subpath is separate from the main entry for one reason: `client.ts` and `hoo
 a form can load it. Nothing in `src/` imports it — the same direction the config seam runs, which is
 what lets a document travel between hosts without the loop growing an opinion about where an agent
 comes from.
+
+### From a row, and back
+
+A document has one spelling of "inherit" — the field is absent — and a database row cannot leave a
+column out, so every host stores a marker instead: `""` for a text column, `-1` where zero is a real
+answer, the word `inherit` in an enum, `null` in a nullable one. `defineSpecColumns` is the table
+from those columns to the fields they feed, with each column's marker a parameter, so the projection
+is declared once rather than written out in both directions:
+
+```ts
+import { defineSpecColumns } from "@cubicecho/agent-core/spec/columns";
+
+const profile = defineSpecColumns<Agent>(
+  {
+    model: { path: "model.model", inherit: "" },
+    maxTokens: { path: "model.maxTokens", inherit: -1 },
+    temperature: { path: "model.temperature", inherit: null },
+    toolDiscovery: { path: "tools.discovery", inherit: "inherit" },
+    systemPrompt: { path: "prompt.system", inherit: "" },
+    compactionModel: { path: "tasks.compaction.model", inherit: "" },
+    toolExecution: { path: ["extensions", "com.example.host", "toolExecution"], inherit: "inherit" },
+  },
+  { handled: ["bundle", "tools.servers"] },
+);
+
+resolveAgentSpec([settings.toLayer(settingsRow), profile.toLayer(agentRow)]); // markers say nothing
+const row = profile.fromLayer(spec);   // an absent field comes back as its column's marker
+const lost = profile.dropped(spec);    // [{ path: "model.extraBody", value: {...} }, ...]
+```
+
+The table is keyed by column, so a column the row does not have, a marker of the wrong type and a
+path the format has no field at are all type errors. A column with no `inherit` says every value it
+holds, which is a host's bottom layer; `null` and `undefined` are absent whatever the marker. A
+column that stores something other than its field — a switch for a discovery mode — converts with
+`toSpec` and `fromSpec`, and either returning `undefined` says nothing: that is how a marker that
+is a range (a trimmed blank, any negative) is spelled, and how a column refuses a value it cannot
+hold. `prompt.<id>` is one part's text; an extension's reverse-domain key has dots of its own, so
+its path is written as segments.
+
+`dropped` is the import preview's list: what a document says that `fromLayer` will not keep, in the
+document's order, and never silently. A field with no column is reported at its path, a task or
+extension with nothing mapped in it whole, and a value a column's `fromSpec` refused carries that
+column's name. What the host reads by hand — a bundle, `tools.servers` resolved to its own row ids —
+goes in `handled` and is left out.
 
 ### Its side tasks
 
