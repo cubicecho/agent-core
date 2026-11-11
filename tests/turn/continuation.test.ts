@@ -56,6 +56,8 @@ describe('continueTurn', () => {
       startInReasoning: true,
     });
     expect(create).toHaveBeenCalledTimes(1);
+    // What vLLM needs to read the trailing message as a prefill rather than open a fresh turn.
+    expect(create.mock.calls[0][0]).toMatchObject({ continue_final_message: true, add_generation_prompt: false });
     expect((create.mock.calls[0][0] as Body).messages).toEqual([
       ...question.messages,
       { role: Role.Assistant, content: 'The sky is blue because', reasoning_content: 'thought' },
@@ -149,6 +151,73 @@ describe('continueTurn', () => {
     create.mockClear();
     await continueTurn(clientOf(create), supports(), request, cut(), { model: 'm' });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('sends the prefill fields again without both once a model refuses them by name, and still continues', async () => {
+    const notices: string[] = [];
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(apiError(400, "Unknown parameter: 'continue_final_message'."))
+      .mockReturnValue(replies(' of the way light scatters.'));
+    const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
+      model: 'm',
+      onNotice: (n) => notices.push(n),
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    // Only one was named, and the other alone would close the reply off rather than prefill it.
+    expect(create.mock.calls[1][0]).not.toHaveProperty('continue_final_message');
+    expect(create.mock.calls[1][0]).not.toHaveProperty('add_generation_prompt');
+    expect(turn.content).toBe('The sky is blue because of the way light scatters.');
+    const refused = modelCapabilitiesFor(supports(), 'm');
+    expect(refused.refusedFields.has('continue_final_message')).toBe(true);
+    expect(refused.assistantPrefill).toBe(true);
+    expect(notices).toEqual([expect.stringContaining('does not take continue_final_message')]);
+    create.mockClear();
+    await continueTurn(clientOf(create), supports(), request, cut(), { model: 'm' });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0]).not.toHaveProperty('add_generation_prompt');
+  });
+
+  it('drops both on a refusal that names one in words negotiate does not read, before blaming the prefill', async () => {
+    const notices: string[] = [];
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(
+        apiError(
+          422,
+          '[{"type":"extra_forbidden","loc":["body","add_generation_prompt"],"msg":"Extra inputs are not permitted"}]',
+        ),
+      )
+      .mockReturnValue(replies(' more.'));
+    const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
+      model: 'm',
+      onNotice: (n) => notices.push(n),
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1][0]).not.toHaveProperty('continue_final_message');
+    expect(turn.content).toBe('The sky is blue because more.');
+    expect(modelCapabilitiesFor(supports(), 'm').assistantPrefill).toBe(true);
+    expect(notices).toEqual([expect.stringContaining('continuing without them')]);
+  });
+
+  it('still latches the prefill off when the request is refused again without the fields', async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(
+        apiError(400, 'Unrecognized request arguments supplied: add_generation_prompt, continue_final_message'),
+      )
+      .mockRejectedValue(apiError(400, 'Assistant response prefill is incompatible with enable_thinking.'));
+    const turn = await continueTurn(clientOf(create), supports(), request, cut(), { model: 'm' });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(turn.content).toBe('The sky is blue because');
+    expect(modelCapabilitiesFor(supports(), 'm').assistantPrefill).toBe(false);
+  });
+
+  it('says what a continuation needs over a prefill field the request already set', async () => {
+    const create = vi.fn().mockReturnValue(replies(' more.'));
+    const own = () => ({ ...question, add_generation_prompt: true }) as Body;
+    await continueTurn(clientOf(create), supports(), own, cut(), { model: 'm' });
+    expect(create.mock.calls[0][0]).toMatchObject({ continue_final_message: true, add_generation_prompt: false });
   });
 
   it('latches it off when the model answers afresh instead, and keeps the first answer', async () => {

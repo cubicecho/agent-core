@@ -904,7 +904,10 @@ It sends the transcript again with the answer so far as a trailing assistant mes
 reasoning on it under the field it arrived in (`replayReasoning: false` leaves it off), which
 llama.cpp renders as a prefill: the model carries on from the last token, and the cache holds all
 of the prompt and most of the reply. vLLM only does so given `continue_final_message: true` and
-`add_generation_prompt: false` on that request, which nothing here sends yet. The pieces come
+`add_generation_prompt: false`, so the continuation sends both; llama.cpp reads the same two, and a
+lenient server such as Ollama ignores them. A model whose endpoint refuses either by name — hosted
+OpenAI's `Unrecognized request argument` — stops being sent both, latched in its `refusedFields`,
+and the continuation is sent again without them before the prefill is judged. The pieces come
 back as one turn — content and reasoning joined, token counts summed, `continuations` counting the
 extra requests, timings summed or weighted, a field only one piece reported dropped. Only an answer
 begun and cut off is continued. A turn cut off in its scratchpad is left alone, since llama.cpp
