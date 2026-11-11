@@ -35,6 +35,10 @@
     "./spec": {
       "types": "./dist/spec/spec.d.ts",
       "import": "./dist/spec/spec.js"
+    },
+    "./spec/columns": {
+      "types": "./dist/spec/columns.d.ts",
+      "import": "./dist/spec/columns.js"
     }
   },
   "files": [

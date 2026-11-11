@@ -44,7 +44,7 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 | `context` | keeping a run inside its window | `ledger` `compaction` |
 | `run` | the loop, and watching it | `agent-loop` `run-calls` `request-body` `events` |
 | `runtime` | the process's state: scoping it, clearing it, saving it | `runtime` `reset` `snapshot` |
-| `spec` | an agent as a document | `spec` |
+| `spec` | an agent as a document | `spec` `columns` |
 
 `src/index.ts` is the only file that re-exports. A folder has no `index.ts` of its own; a module
 imports another by its full path (`../core/guards.ts`). Biome sorts the exports in `index.ts` by

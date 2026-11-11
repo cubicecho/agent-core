@@ -226,6 +226,20 @@ What endpoints and models refused, carried across a restart.
 - `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
 - `ModelSnapshot` (type) — What one model on an endpoint refused.
 
+### columns
+
+A host's stored agent, read as a spec layer and written back: one table of columns, and the marker each column stores for "inherit".
+
+- `defineSpecColumns` — A column table from a stored row to a spec layer and back, with each column's "inherit" marker a parameter.
+- `ExtensionPath` (type) — A path into a host's own extension, as segments, because its key is a reverse domain and has dots of its own.
+- `SpecColumn` (type) — One column: where its value lives in a spec, what it stores for "inherit", and how its value crosses when the column and the field do not hold the same thing.
+- `SpecColumnMapping` (type) — A row's column table, both ways.
+- `SpecColumns` (type) — A row's columns, each mapped to a field: keyed by column, so a name the row does not have is an excess property and a marker of the wrong type does not typecheck.
+- `SpecColumnsOptions` (type) — What `defineSpecColumns` takes besides the columns.
+- `SpecDrop` (type) — One thing a document says that a row will not keep.
+- `SpecPath` (type) — Where in a spec a column lives, as a dotted path.
+- `SpecSection` (type) — The top-level keys of a spec, for naming a whole section a host reads by hand.
+
 ### spec
 
 A JSON document that defines an agent, and the rules for reading one.
