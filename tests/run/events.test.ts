@@ -466,6 +466,8 @@ describe('runMetrics', () => {
       toolErrors: {},
       loadCalls: 0,
       artifacts: 0,
+      serverWarnings: 0,
+      serverErrors: 0,
       promptTokens: 0,
       completionTokens: 0,
       cachedTokens: 0,
@@ -479,6 +481,14 @@ describe('runMetrics', () => {
     emit('r', { kind: RunEventKind.Artifact, id: 'c0', name: 'write', text: 'a', link: { uri: 'doc://a', name: 'a' } });
     emit('r', { kind: RunEventKind.Artifact, id: 'c1', name: 'write', text: 'b', link: { uri: 'doc://b', name: 'b' } });
     expect(runMetrics(history('r')).artifacts).toBe(2);
+  });
+
+  it('counts a server warning as a warning and everything above it as an error', () => {
+    for (const level of ['debug', 'info', 'notice', 'warning', 'warning', 'error', 'critical', 'alert', 'emergency']) {
+      emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', level, text: level });
+    }
+    emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', level: 'loud', text: 'unknown' });
+    expect(runMetrics(history('r'))).toMatchObject({ serverWarnings: 2, serverErrors: 4, toolCalls: 0 });
   });
 
   it("sums a run's turns, times its tools and weighs what only some turns reported", () => {

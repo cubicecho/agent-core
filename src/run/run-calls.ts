@@ -18,9 +18,11 @@ import {
   parseToolArguments,
   type ResourceLink,
   type RunArtifact,
+  type ServerLogEntry,
   type ToolAnswer,
   type ToolCall,
   type ToolCallOutcome,
+  type ToolCallReport,
   type ToolCallRequest,
   type ToolCallResult,
 } from '../wire/tool-calls.ts';
@@ -133,8 +135,58 @@ export const definedAs = (definitions: ReadonlyMap<string, OpenAI.ChatCompletion
 /**
  * Runs one tool call and resolves to what the model reads, alone or with what the call produced;
  * what it throws, the model reads too.
+ *
+ * @remarks
+ * `report` is how the call tells watchers what its server said on the way, and a dispatcher with
+ * nothing to report leaves it off: one written for `(call, signal)` is a `ToolDispatch` still.
+ * `signal` is `undefined` rather than optional so that `report` can follow it.
  */
-export type ToolDispatch = (call: ToolCallRequest, signal?: AbortSignal) => Promise<string | ToolAnswer>;
+export type ToolDispatch = (
+  call: ToolCallRequest,
+  signal: AbortSignal | undefined,
+  report: ToolCallReport,
+) => Promise<string | ToolAnswer>;
+
+/**
+ * A server's log message as the text of its event.
+ *
+ * @param data - What the server sent: a string, or any JSON value.
+ * @returns A string as it was, anything else as JSON, cut by `preview`. What JSON cannot spell is
+ * shown as `String` shows it.
+ */
+function logText(data: unknown): string {
+  if (typeof data === 'string') {
+    return preview(data);
+  }
+  try {
+    return preview(JSON.stringify(data) ?? String(data));
+  } catch {
+    return preview(String(data));
+  }
+}
+
+/**
+ * What one call's dispatcher may report through, and the switch that closes it once it has answered.
+ *
+ * @param run - The run, whose watchers hear what is reported.
+ * @param id - The call's id, which every event it reports carries.
+ * @param name - The tool the call is shown as.
+ * @returns The report to hand `dispatch`, and `close`, after which it reports nothing.
+ */
+function reportFor(run: Calling, id: string, name: string): { report: ToolCallReport; close: () => void } {
+  let isOpen = true;
+  const log = ({ level, data }: ServerLogEntry) => {
+    if (isOpen) {
+      run.onEvent({ kind: RunEventKind.ServerLog, id, name, level, text: logText(data) });
+    }
+  };
+  return {
+    report: { log },
+    close: () => {
+      isOpen = false;
+    },
+  };
+}
 
 /**
  * A dispatcher's answer in the one shape, whichever it gave.
@@ -415,6 +467,7 @@ async function runCall(
   const { name, raw } = request;
   run.onEvent({ kind: RunEventKind.ToolCall, id: call.id, name, text: preview(raw) });
   run.onToolCall?.(request);
+  const { report, close } = reportFor(run, call.id, name);
   let content: string;
   let links: ResourceLink[] = [];
   let ok = true;
@@ -439,9 +492,11 @@ async function runCall(
       run.used.add(name);
       // Read before `once` looks, which it does before it awaits anything.
       shared = dedupable && answered.has(key);
+      // A repeat answered from the first call reports nothing of its own: the first call's
+      // report is the one its dispatcher holds.
       const answer = dedupable
-        ? await once(answered, key, () => run.dispatch(request, signal))
-        : await run.dispatch(request, signal);
+        ? await once(answered, key, () => run.dispatch(request, signal, report))
+        : await run.dispatch(request, signal, report);
       ({ text: content, links } = answerOf(answer));
     }
   } catch (error) {
@@ -450,6 +505,8 @@ async function runCall(
     }
     content = errorMessage(error);
     ok = false;
+  } finally {
+    close();
   }
   run.onEvent({ kind: RunEventKind.ToolResult, id: call.id, name, ok, text: preview(content) });
   const isFirstAnswer = shared === false;
