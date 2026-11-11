@@ -1,3 +1,4 @@
+import { baseUrlKey } from '../core/config.ts';
 import { scoped } from '../core/scope.ts';
 import { modelKey } from './client.ts';
 
@@ -58,15 +59,14 @@ const pools = scoped(() => ({ slots: new Map<string, Slot[]>(), clock: 0 }));
  *
  * @param endpoint - The server, read for `baseUrl` alone.
  * @param model - The model, which a llama.cpp router serves from a process with slots of its own.
- * @returns The key: the base URL less its trailing slashes, and the model.
+ * @returns The key: the base URL as `baseUrlKey` writes it, and the model.
  *
  * @remarks
  * The API key is left out where every other per-endpoint cache keys on it. Two keys reaching
  * different servers through one URL cost only a slot left unused; two keys reaching the same
  * server under two allocators hand one slot to two runs, which is the collision this exists to stop.
  */
-const poolKey = (endpoint: { baseUrl: string }, model: string) =>
-  modelKey(endpoint.baseUrl.trim().replace(/\/+$/, ''), model);
+const poolKey = (endpoint: { baseUrl: string }, model: string) => modelKey(baseUrlKey(endpoint.baseUrl), model);
 
 /**
  * The slot allocator for one endpoint and model, sized to what its `/props` said.

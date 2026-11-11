@@ -12,16 +12,20 @@ vi.mock('openai', () => ({
 const {
   configureClients,
   contextLimitFor,
+  EndpointProbeError,
   endpointId,
   endpointKey,
   firstTokenMs,
   getClient,
   listModels,
   NO_KEY,
+  ProbeFailure,
+  probeEndpoint,
   resetClients,
   resolveApiKey,
   servedSlots,
 } = await import('../../src/endpoint/client.ts');
+const { normalizeBaseUrl } = await import('../../src/core/config.ts');
 
 /** What a listing endpoint answers with: the OpenAI shape plus whatever window key it uses. */
 const listing = (...models: ({ id: string } & Record<string, unknown>)[]) => ({ data: models });
@@ -213,6 +217,29 @@ describe('contextLimitFor', () => {
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(32768);
     await contextLimitFor({ ...endpoint, model: 'qwen' });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops asking a server that answers every route with a web page', async () => {
+    // llm-router: `/props` and `/api/v0/models` both get the router's `index.html`, with a 200.
+    // Read as a route with nothing to say, it was asked again every `LISTING_MISS_MS`.
+    const fetch = vi.fn(async () => new Response('<!doctype html><title>router</title>', { status: HttpStatus.Ok }));
+    vi.stubGlobal('fetch', fetch);
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await contextLimitFor({ ...endpoint, model: 'qwen' });
+    await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    expect(asked(fetch)).toEqual(['http://local/props?model=qwen', 'http://local/api/v0/models']);
+  });
+
+  it('sends no authorization header for NO_KEY, and a bearer for a real key', async () => {
+    const fetch = routes({ '/props': { default_generation_settings: { n_ctx: 16384 } } });
+    vi.stubGlobal('fetch', fetch);
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    await contextLimitFor({ ...endpoint, apiKey: NO_KEY, model: 'qwen' });
+    await contextLimitFor({ ...endpoint, apiKey: 'sk-1', model: 'qwen' });
+    const headers = fetch.mock.calls.map((call) => (call as unknown[])[1]).map((init) => (init as RequestInit).headers);
+    expect(headers).toEqual([{}, { authorization: 'Bearer sk-1' }]);
   });
 
   it("takes the operator's own number without asking anyone", async () => {
@@ -651,6 +678,224 @@ describe('resolveApiKey', () => {
     expect(resolveApiKey({}, { baseUrl: 'http://x/v1' }, env)).toBe('env-key');
     expect(resolveApiKey({}, undefined, {})).toBe('agent-core');
   });
+
+  it('reads the URL by normalizeBaseUrl, so a host in capitals or a default port is the same endpoint', () => {
+    expect(resolveApiKey({ baseUrl: 'HTTP://X:80/v1' }, { baseUrl: 'http://x/v1', apiKey: 'k' }, env)).toBe('k');
+    expect(resolveApiKey({ baseUrl: 'http://x/V1' }, { baseUrl: 'http://x/v1', apiKey: 'k' }, env)).toBe(NO_KEY);
+    expect(resolveApiKey({ baseUrl: 'http://x:8080/v1' }, { baseUrl: 'http://x/v1', apiKey: 'k' }, env)).toBe(NO_KEY);
+  });
+
+  it('sends no inherited key to a URL with credentials or a query, unless it is the same one', () => {
+    const inherited = { baseUrl: 'http://x/v1', apiKey: 'k' };
+    expect(resolveApiKey({ baseUrl: 'http://evil@x/v1' }, inherited, env)).toBe(NO_KEY);
+    expect(resolveApiKey({ baseUrl: 'http://x/v1?to=evil' }, inherited, env)).toBe(NO_KEY);
+    expect(resolveApiKey({ baseUrl: 'http://x/v1?a=1/' }, { baseUrl: 'http://x/v1?a=1', apiKey: 'k' }, env)).toBe('k');
+  });
+});
+
+describe('probeEndpoint', () => {
+  beforeEach(() => {
+    resetClients();
+    list.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A fetch answering every request with one body and status, and its headers where given. */
+  const answering = (body: string, status: number = HttpStatus.Ok, headers: Record<string, string> = {}) => {
+    const fetch = vi.fn(async (_url: URL, _init: RequestInit) => new Response(body, { status, headers }));
+    vi.stubGlobal('fetch', fetch);
+    return fetch;
+  };
+
+  /** What `probeEndpoint` rejected with, as the fields a form reads. */
+  const failure = async (promise: Promise<unknown>) => {
+    const error = await promise.then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(EndpointProbeError);
+    const { kind, status, message } = error as InstanceType<typeof EndpointProbeError>;
+    return { kind, status, message };
+  };
+
+  it('lists an OpenAI-shaped answer by id, sorted, once per id, with the window any entry stated', async () => {
+    const fetch = answering(
+      JSON.stringify({
+        data: [
+          { id: 'qwen' },
+          { id: 'llama', max_context_length: 8192 },
+          { id: 'qwen', context_window: 32768 },
+          { id: 'gemma', context_length: 4096 },
+          { id: '' },
+          'not a model',
+        ],
+      }),
+    );
+    await expect(probeEndpoint({ baseUrl: 'http://local/v1/' })).resolves.toEqual([
+      { id: 'gemma', contextLength: 4096 },
+      { id: 'llama', contextLength: 8192 },
+      { id: 'qwen', contextLength: 32768 },
+    ]);
+    expect(String(fetch.mock.calls[0]?.[0])).toBe('http://local/v1/models');
+  });
+
+  it("reads Ollama's native shape by name", async () => {
+    answering(JSON.stringify({ models: [{ name: 'llama3:8b' }, { name: 'qwen3:4b', model: 'qwen3:4b' }] }));
+    await expect(probeEndpoint({ baseUrl: 'http://ollama:11434/v1' })).resolves.toEqual([
+      { id: 'llama3:8b', contextLength: 0 },
+      { id: 'qwen3:4b', contextLength: 0 },
+    ]);
+  });
+
+  it('pools nothing and remembers nothing, so asking again asks again', async () => {
+    const fetch = answering(JSON.stringify({ data: [{ id: 'qwen', context_length: 4096 }] }));
+    await probeEndpoint({ baseUrl: 'http://local/v1' });
+    await probeEndpoint({ baseUrl: 'http://local/v1' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(list).not.toHaveBeenCalled();
+    // The listing `contextLimitFor` reads was not filled in by the probe.
+    vi.stubGlobal('fetch', routes({}));
+    list.mockResolvedValue(listing({ id: 'qwen' }));
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands back at most the limit, the first by id', async () => {
+    answering(JSON.stringify({ data: [{ id: 'c' }, { id: 'a' }, { id: 'b' }] }));
+    const models = await probeEndpoint({ baseUrl: 'http://local/v1' }, { limit: 2 });
+    expect(models.map((model) => model.id)).toEqual(['a', 'b']);
+  });
+
+  it('sends a real key as a bearer, and no header for none or NO_KEY', async () => {
+    const fetch = answering(JSON.stringify({ data: [] }));
+    await probeEndpoint({ baseUrl: 'http://local/v1', apiKey: 'sk-1' });
+    await probeEndpoint({ baseUrl: 'http://local/v1', apiKey: NO_KEY });
+    await probeEndpoint({ baseUrl: 'http://local/v1' });
+    expect(fetch.mock.calls.map(([, init]) => init.headers)).toEqual([{ authorization: 'Bearer sk-1' }, {}, {}]);
+  });
+
+  it('does not follow a redirect, and says where it pointed', async () => {
+    const fetch = answering('', 301, { location: 'https://local/v1/models' });
+    const { kind, status, message } = await failure(probeEndpoint({ baseUrl: 'http://local/v1', apiKey: 'sk-1' }));
+    expect({ kind, status }).toEqual({ kind: ProbeFailure.Redirected, status: 301 });
+    expect(message).toContain('https://local/v1/models');
+    expect(fetch.mock.calls[0]?.[1].redirect).toBe('manual');
+  });
+
+  it('refuses a URL that is not one before asking anybody', async () => {
+    const fetch = answering('{}');
+    for (const baseUrl of ['local/v1', 'ftp://local', 'http://user:pass@local/v1', 'http://local/v1?key=1']) {
+      expect((await failure(probeEndpoint({ baseUrl }))).kind).toBe(ProbeFailure.InvalidUrl);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('calls a 401 or a 403 a refused key', async () => {
+    answering('no', HttpStatus.Unauthorized);
+    expect(await failure(probeEndpoint({ baseUrl: 'http://local/v1' }))).toMatchObject({
+      kind: ProbeFailure.Unauthorized,
+      status: 401,
+    });
+    answering('no', HttpStatus.Forbidden);
+    expect((await failure(probeEndpoint({ baseUrl: 'http://local/v1' }))).kind).toBe(ProbeFailure.Unauthorized);
+  });
+
+  it('calls a missing route, a web page or JSON of another shape not an OpenAI endpoint', async () => {
+    for (const [body, status] of [
+      ['not found', HttpStatus.NotFound],
+      ['<!doctype html>', HttpStatus.Ok],
+      ['{"object":"list"}', HttpStatus.Ok],
+    ] as const) {
+      answering(body, status);
+      expect((await failure(probeEndpoint({ baseUrl: 'http://local' }))).kind).toBe(ProbeFailure.NotOpenAi);
+    }
+  });
+
+  it('calls any other error status a failure, with the status on it', async () => {
+    answering('oops', HttpStatus.ServiceUnavailable);
+    const { kind, status, message } = await failure(probeEndpoint({ baseUrl: 'http://local/v1' }));
+    expect({ kind, status }).toEqual({ kind: ProbeFailure.Failed, status: 503 });
+    expect(message).toBe('http://local answered 503 when asked for its models.');
+  });
+
+  it('calls a server nobody answered for unreachable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+    expect(await failure(probeEndpoint({ baseUrl: 'http://local/v1' }))).toEqual({
+      kind: ProbeFailure.Unreachable,
+      status: undefined,
+      message: 'Could not reach http://local.',
+    });
+  });
+
+  /** A fetch that never answers, and rejects with the signal's reason once that fires. */
+  const silent = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: URL, init: RequestInit) =>
+          new Promise<never>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+          }),
+      ),
+    );
+
+  it('calls a server that does not answer in time a timeout', async () => {
+    silent();
+    const probing = probeEndpoint({ baseUrl: 'http://local/v1', requestTimeoutSeconds: 0.02 });
+    expect((await failure(probing)).kind).toBe(ProbeFailure.Timeout);
+  });
+
+  it("rejects with the caller's own reason when the caller stops it", async () => {
+    silent();
+    const controller = new AbortController();
+    const probing = probeEndpoint({ baseUrl: 'http://local/v1' }, { signal: controller.signal });
+    const reason = new Error('closed the form');
+    controller.abort(reason);
+    await expect(probing).rejects.toBe(reason);
+  });
+
+  it('is exported from the package root, with normalizeBaseUrl', async () => {
+    const root = await import('../../src/index.ts');
+    expect(root.probeEndpoint).toBe(probeEndpoint);
+    expect(root.EndpointProbeError).toBe(EndpointProbeError);
+    expect(root.normalizeBaseUrl).toBe(normalizeBaseUrl);
+  });
+});
+
+describe('normalizeBaseUrl', () => {
+  it('keeps an http or https URL, less its trailing slashes and surrounding whitespace', () => {
+    expect(normalizeBaseUrl(' http://local/v1/ ')).toBe('http://local/v1');
+    expect(normalizeBaseUrl('https://api.openai.com/v1')).toBe('https://api.openai.com/v1');
+    expect(normalizeBaseUrl('http://local:8080//')).toBe('http://local:8080');
+  });
+
+  it('writes the scheme and host in lower case and drops a default port, but leaves the path', () => {
+    expect(normalizeBaseUrl('HTTP://Local:80/V1')).toBe('http://local/V1');
+    expect(normalizeBaseUrl('https://local:443/v1')).toBe('https://local/v1');
+  });
+
+  it('refuses anything that is not a plain http or https URL', () => {
+    for (const raw of [
+      '',
+      'local/v1',
+      'ftp://local/v1',
+      'file:///etc/passwd',
+      'http://user:pass@local/v1',
+      'http://user@local/v1',
+      'http://local/v1?key=sk-1',
+      'http://local/v1#models',
+    ]) {
+      expect(normalizeBaseUrl(raw)).toBeNull();
+    }
+  });
 });
 
 describe('endpointKey and endpointId', () => {
@@ -661,6 +906,21 @@ describe('endpointKey and endpointId', () => {
     expect(endpointId({ baseUrl: 'http://local/v1', apiKey: '' })).toBe(endpointId({ baseUrl: 'http://local/v1' }));
     expect(endpointId({ baseUrl: 'http://local/v1', apiKey: 'sk-1' })).toMatch(/^[0-9a-f]{64}$/);
     expect(endpointId({ baseUrl: 'http://local/v1', apiKey: 'sk-1' })).not.toContain('sk-1');
+  });
+
+  it('read a trailing slash, a host in capitals and a default port as the same endpoint', () => {
+    const key = endpointKey({ baseUrl: 'http://local/v1', apiKey: 'sk-1' });
+    expect(endpointKey({ baseUrl: 'http://local/v1/', apiKey: 'sk-1' })).toBe(key);
+    expect(endpointKey({ baseUrl: 'HTTP://LOCAL:80/v1', apiKey: 'sk-1' })).toBe(key);
+    expect(endpointKey({ baseUrl: 'http://local/V1', apiKey: 'sk-1' })).not.toBe(key);
+    expect(endpointId({ baseUrl: 'http://local/v1/' })).toBe(endpointId({ baseUrl: 'http://local/v1' }));
+  });
+
+  it('still tell apart two URLs the normaliser refuses, and match each to itself', () => {
+    const query = endpointKey({ baseUrl: 'http://local/v1?a=1' });
+    expect(endpointKey({ baseUrl: 'http://local/v1?a=1/' })).toBe(query);
+    expect(endpointKey({ baseUrl: 'http://local/v1?a=2' })).not.toBe(query);
+    expect(endpointKey({ baseUrl: 'http://local/v1' })).not.toBe(query);
   });
 
   it('are exported from the package root', async () => {

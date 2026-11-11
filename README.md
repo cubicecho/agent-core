@@ -30,11 +30,11 @@ only, Node >=22.
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
-| `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. And `resolveApiKey`, for a caller deciding which key an endpoint gets. |
+| `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. And `resolveApiKey`, for a caller deciding which key an endpoint gets, and `probeEndpoint`, for listing one a form has not saved yet. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its endpoint reports: `charsPerTokenFor`, `calibrate`. |
 | `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
-| `config` | The structural interfaces every function here asks for. |
+| `config` | The structural interfaces every function here asks for, and `normalizeBaseUrl`, the one rule for when two base URLs are one endpoint. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. |
 | `request-body` | `buildBody`: the one place a streamed request's body is decided from a config and what the endpoint and the model have refused. |
@@ -306,7 +306,7 @@ const turn = await runTurn(client, supports, build, {
 
 `contextLimitFor` answers the operator's number when there is one. Otherwise it reads the
 `/v1/models` listing first. A window at the top of the model's entry (`context_length`,
-`max_context_window`, `max_model_len`, `context_window` or `n_ctx`: vLLM's `max_model_len`,
+`max_context_length`, `max_context_window`, `max_model_len`, `context_window` or `n_ctx`: vLLM's `max_model_len`,
 OpenRouter's `context_length`) is taken as the one being served, and nothing else is asked.
 
 Where the listing does not settle it, the server's own API is asked (`servedWindow`): llama.cpp's
@@ -316,7 +316,10 @@ listed with only `meta.n_ctx_train`, which is llama.cpp. The trained window diff
 one in the case the guard exists for, a 256k model started at `-c 16384`, so it is used only when
 neither native route gives a number. A server with neither route is latched and not asked again.
 `/api/v0/models` is also dropped on its own: for the life of the process once it answers 404, 405
-or 501, and for `listingMissMs` after any other error.
+or 501, and for `listingMissMs` after any other error. A 200 that is not JSON counts as a missing
+route: it is what a proxy with a web app of its own (llm-router) answers on every path it does not
+route. Neither route is sent `NO_KEY` as a bearer; an endpoint with no key is asked with no
+`Authorization` header at all.
 
 A host that sizes the window before each run passes the run's signal as the third argument, so a
 stopped run does not wait on the lookup:
@@ -334,6 +337,33 @@ how long to wait for a model to speak, and an endpoint that accepts the connecti
 nothing would otherwise hold the lookup for that long, or for ever where there is none. Past the
 bound `contextLimitFor` answers zero, as it does for a server it could not reach, and
 `listModels` rejects with a `TimeoutError`.
+
+### Listing an endpoint that is not saved yet
+
+`listModels` is for an endpoint that is configured: it pools a client per URL and remembers what
+came back. A settings form asking at each keystroke would leave a client behind for every
+half-typed URL, so it asks `probeEndpoint` instead, which makes one plain request and remembers
+nothing:
+
+```ts
+import { EndpointProbeError, ProbeFailure, probeEndpoint } from "@cubicecho/agent-core";
+
+try {
+  const models = await probeEndpoint({ baseUrl: typed, apiKey: typedKey }, { signal });
+} catch (error) {
+  if (error instanceof EndpointProbeError) {
+    // error.kind: invalid-url, unreachable, timeout, unauthorized, redirected, not-openai, failed.
+    // error.message is a sentence naming the endpoint by its origin, fit to show under the field.
+    return { problem: error.message };
+  }
+  throw error; // the signal's own reason
+}
+```
+
+It refuses a URL `normalizeBaseUrl` refuses before asking anybody, follows no redirect (so a typed
+key is never carried on to a host nobody typed), reads both OpenAI's `{ data: [...] }` and
+Ollama's native `{ models: [...] }` (by `name` where an entry has no `id`), and hands back each id
+once, sorted, at most `limit` of them (500 unless told). It is bounded as a lookup is.
 
 A top-level listing key is trusted without a second opinion, so on a server that puts a trained
 window there, pass `contextLength`. Ollama reports no window on any route this reads, and truncates
@@ -909,6 +939,12 @@ it encodes is the conservative one: an endpoint's own key wins; one that names a
 own, different from the settings it inherits from, gets `NO_KEY` rather than the operator's key or
 `$OPENAI_API_KEY`; anything else inherits.
 
+"Different" is decided by `normalizeBaseUrl`, the same rule `endpointKey` and every cache here
+compares by: http or https, no credentials, query or fragment, scheme and host in lower case, no
+default port and no trailing slash. A host storing a base URL should store what it returns, and
+refuse a URL it answers `null` for. A URL it refuses still equals itself, trimmed of whitespace
+and trailing slashes, so a row saved before the rule still finds its own key.
+
 ## Fields this interface cannot spell
 
 `ModelParams` has `temperature`, `maxTokens` and `reasoningEffort`. Everything else a model card or
@@ -1473,7 +1509,7 @@ call returns everything in force. Lowering `maxClients` below the pool's current
 it at once, least recently used first. `resetClients` (and `resetAll`) puts the defaults back.
 
 A host that keeps per-endpoint state of its own should key it on `endpointKey` — the JSON of the base
-URL and the key, an absent key read as `NO_KEY` — rather than rebuilding that string, so the two
+URL as `normalizeBaseUrl` writes it and the key, an absent key read as `NO_KEY` — rather than rebuilding that string, so the two
 cannot drift. `endpointKey` holds the key in the clear; `endpointId`, its SHA-256 digest, is the one
 that is safe to write down.
 

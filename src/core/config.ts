@@ -59,11 +59,60 @@ export interface Endpoint {
  * not in it, since a different patience is not a different server.
  */
 export interface EndpointIdentity {
-  /** The base URL as given. Compared as written, so a trailing slash is another endpoint. */
+  /**
+   * The base URL as given. Compared as `baseUrlKey` has it, so a trailing slash, a host's case and
+   * a default port are the same endpoint, and a path's case and a `/v1` are not.
+   */
   baseUrl: string;
   /** Absent and empty mean the same: no key, which `endpointKey` reads as `NO_KEY`. */
   apiKey?: string;
 }
+
+/**
+ * A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
+ *
+ * @param raw - The URL as typed. Surrounding whitespace is trimmed.
+ * @returns The URL as the WHATWG parser writes it, less its trailing slashes — scheme and host in
+ * lower case, a default port dropped — or `null` for anything that is not such a URL.
+ *
+ * @remarks
+ * One rule for every host, because "a stored key only goes to its own endpoint" is decided by
+ * comparing two of these, and four hosts writing four rules had begun to disagree about it. A key
+ * in the URL is a credential nobody meant to store; a query or a fragment is one more thing two
+ * copies of the same endpoint could differ in, and the SDK appends its paths after it.
+ *
+ * A host that stores a base URL stores this, and a form that refuses one refuses on `null`, so what
+ * is saved is already in the form every comparison here reads.
+ */
+export function normalizeBaseUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return null;
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    return null;
+  }
+  return url.toString().replace(/\/+$/, '');
+}
+
+/**
+ * A base URL in the form two of them are compared in, valid or not.
+ *
+ * @param raw - The URL as configured.
+ * @returns `normalizeBaseUrl`'s answer where it has one, and otherwise the URL trimmed of
+ * whitespace and trailing slashes, which is the rule every comparison here used before.
+ *
+ * @remarks
+ * A URL the normaliser refuses is still somebody's endpoint — an old settings row, a key written
+ * into the URL — and it still has to equal itself, so it falls back to the older, looser rule
+ * rather than to "unequal to everything".
+ */
+export const baseUrlKey = (raw: string): string => normalizeBaseUrl(raw) ?? raw.trim().replace(/\/+$/, '');
 
 /**
  * The request fields `extraBody` may not set, because the loop's request is built around them.
