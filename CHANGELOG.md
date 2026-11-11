@@ -1,3 +1,10 @@
+# [4.16.0](https://github.com/cubicecho/agent-core/compare/v4.15.0...v4.16.0) (2026-11-11)
+
+
+### Features
+
+* **context:** plan a prune boundary that keeps the prompt cache ([c86aca0](https://github.com/cubicecho/agent-core/commit/c86aca00b686d510e81c3fb7b2466ecf0937cbb9)), closes [#175](https://github.com/cubicecho/agent-core/issues/175)
+
 # [4.15.0](https://github.com/cubicecho/agent-core/compare/v4.14.0...v4.15.0) (2026-11-11)
 
 
