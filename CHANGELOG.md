@@ -1,3 +1,10 @@
+# [4.23.0](https://github.com/cubicecho/agent-core/compare/v4.22.0...v4.23.0) (2026-11-11)
+
+
+### Features
+
+* **run:** echo reasoning in the field it came in, and replay all of it ([2276903](https://github.com/cubicecho/agent-core/commit/2276903c9c78bc499a32af9024cca1079c5dfad3)), closes [#197](https://github.com/cubicecho/agent-core/issues/197)
+
 # [4.22.0](https://github.com/cubicecho/agent-core/compare/v4.21.0...v4.22.0) (2026-11-11)
 
 
