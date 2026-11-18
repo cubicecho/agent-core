@@ -69,6 +69,11 @@ export interface AgentLoopFailure {
    * failure built before it existed still compiles.
    */
   ledger?: TokenLedger;
+  /**
+   * The remote agent's own run id, as its progress events named it, for a run on a
+   * `remoteAgent` config. Absent elsewhere, and where no event had arrived.
+   */
+  remoteRunId?: string;
 }
 
 /**
@@ -91,6 +96,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
   readonly used: string[];
   readonly preselected: string[];
   readonly ledger: TokenLedger;
+  readonly remoteRunId?: string;
 
   /**
    * @param message - What went wrong — the cause's own message, where there is a cause.
@@ -110,6 +116,9 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
     this.used = run.used;
     this.preselected = run.preselected;
     this.ledger = run.ledger ?? [];
+    if (run.remoteRunId !== undefined) {
+      this.remoteRunId = run.remoteRunId;
+    }
   }
 }
 
@@ -143,6 +152,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
   readonly used: string[];
   readonly preselected: string[];
   readonly ledger: TokenLedger;
+  readonly remoteRunId?: string;
 
   /**
    * @param message - The overflow's own message.
@@ -162,6 +172,9 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
     this.used = run.used;
     this.preselected = run.preselected;
     this.ledger = run.ledger ?? [];
+    if (run.remoteRunId !== undefined) {
+      this.remoteRunId = run.remoteRunId;
+    }
   }
 }
 

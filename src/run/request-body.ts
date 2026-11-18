@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import type { ModelParams } from '../core/config.ts';
+import type { ModelParams, RemoteAgentParams } from '../core/config.ts';
 import {
   type Capabilities,
   ceilingAndTemperature,
@@ -55,16 +55,16 @@ export function singleSystem(messages: OpenAI.ChatCompletionMessageParam[]): Ope
  * @returns `true` where the config asks for it or the model's template refused a message with
  * several.
  */
-export const singleCalls = (config: ModelParams, refused: ModelCapabilities | undefined) =>
+export const singleCalls = (config: Pick<ModelParams, 'singleCallMessages'>, refused: ModelCapabilities | undefined) =>
   config.singleCallMessages === true || refused?.multiCallMessages === false;
 
 /**
  * The one place a streamed request's body is decided from a config and what the endpoint and
  * the model have refused.
  *
- * @param config - What to ask for. `maxTokens` of zero or less sends no ceiling; `reasoningEffort`
- * absent or `"off"` sends no effort, and one the model has refused by value is stepped up to the
- * cheapest it takes by `effortFor`.
+ * @param config - What to ask for. `maxTokens` absent, zero or less sends no ceiling, and a remote
+ * agent's absent `temperature` none; `reasoningEffort` absent or `"off"` sends no effort, and one the
+ * model has refused by value is stepped up to the cheapest it takes by `effortFor`.
  * @param supports - What the endpoint has refused, as `negotiate` hands it to `send`.
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
@@ -90,7 +90,7 @@ export const singleCalls = (config: ModelParams, refused: ModelCapabilities | un
  * one has to read the same — which is the test one of the three copies had inverted.
  */
 export function buildBody(
-  config: ModelParams,
+  config: ModelParams | RemoteAgentParams,
   supports: Capabilities,
   refused: ModelCapabilities | undefined,
   messages: OpenAI.ChatCompletionMessageParam[],

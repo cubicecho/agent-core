@@ -311,7 +311,8 @@ export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kin
  * @remarks
  * The one place the defaults are written, so an event the bus stamps, one the loop keeps for its
  * own metrics and the notice a slow watcher is sent cannot come to disagree about what an unset
- * field reads as.
+ * field reads as. A host that numbers and stores a run's events itself, rather than on `emit`'s
+ * in-memory bus, makes each one with this, so its events keep that shape as `RunEvent` grows.
  */
 export const stamp = (input: RunEventInput, runId: string, seq: number, at: number): RunEvent => ({
   at,

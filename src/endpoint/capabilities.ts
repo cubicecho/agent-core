@@ -564,11 +564,12 @@ export function effortFor(refused: ModelCapabilities | undefined, asked: string 
  *
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model that
  * has refused nothing.
- * @param maxTokens - The ceiling. Zero or less sends none and leaves it to the server: a zero sent
- * as `max_tokens: 0` asks for an empty reply.
- * @param temperature - What to sample at, where the model takes one that was picked for it.
+ * @param maxTokens - The ceiling. Absent, zero or less sends none and leaves it to the server: a
+ * zero sent as `max_tokens: 0` asks for an empty reply.
+ * @param temperature - What to sample at, where the model takes one that was picked for it. Absent
+ * sends none.
  * @returns A fresh object holding the ceiling under one of its two names, or under neither, and
- * `temperature` unless the model refused ours.
+ * `temperature` unless it is absent or the model refused ours.
  *
  * @remarks
  * The reasoning models want the ceiling spelled the other way, and one that will only run at the
@@ -577,14 +578,15 @@ export function effortFor(refused: ModelCapabilities | undefined, asked: string 
  */
 export const ceilingAndTemperature = (
   refused: ModelCapabilities | undefined,
-  maxTokens: number,
-  temperature: number,
+  maxTokens: number | undefined,
+  temperature: number | undefined,
 ) => {
   const ceiling =
     refused?.legacyTokenLimit === false ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+  const isTemperatureSent = temperature !== undefined && refused?.chosenTemperature !== false;
   return {
-    ...(maxTokens > 0 ? ceiling : {}),
-    ...(refused?.chosenTemperature === false ? {} : { temperature }),
+    ...(maxTokens !== undefined && maxTokens > 0 ? ceiling : {}),
+    ...(isTemperatureSent ? { temperature } : {}),
   };
 };
 
