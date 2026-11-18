@@ -1145,7 +1145,9 @@ a lesser body and a continuation with the reply so far on the end, and neither i
 reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft
 acceptance, the largest prompt against its context window, turns cut off, tool errors by name, what
 `load_tools` resolved to (`toolsLoaded`, `redundantLoads`, `unknownToolNames`, off each load's
-result as `loads`), and an `outcome` — `answered`, `truncated`, `filtered`, `ended`, `waiting` or `failed`. The loop returns it as `metrics`. Every turn carries its own context
+result as `loads`), and an `outcome`, an `ExchangeOutcome`: `answered`, `truncated`, `filtered`,
+`ended`, `waiting`, `failed` or `stopped`. The loop returns it as `metrics`, where `outcome` is
+always set and is the exchange's own. Every turn carries its own context
 window and every load its own counts, so an app that runs one loop per stage gets the whole run from
 `runMetrics` over all the loops' events, with no per-loop result to merge. It is a sibling of `fold`
 rather than part of it, since `fold`'s blocks are for display and a summary is not one:

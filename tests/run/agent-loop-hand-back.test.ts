@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookRunner } from '../../src/hooks/hooks.ts';
-import { RunEventKind, RunOutcome } from '../../src/run/events.ts';
+import { ExchangeOutcome, RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
 import { type Create, chunks, config, type Message, pairsByPosition, says, tool, toolNames } from '../helpers.ts';
 
@@ -91,7 +91,7 @@ describe('handBack', () => {
       { id: 'c1', name: 'ask_person', args: { question: 'which?' }, raw: '{"question":"which?"}', repaired: false },
     ]);
     expect(result).not.toHaveProperty('ended');
-    expect(result.metrics.outcome).toBe(RunOutcome.Waiting);
+    expect(result.metrics.outcome).toBe(ExchangeOutcome.Waiting);
     // The handed-back call last, with no result: the loop's own two are answered in call order.
     expect(result.messages).toHaveLength(4);
     expect(callIds(result.messages[1])).toEqual(['c0', 'c2', 'c1']);
@@ -190,7 +190,7 @@ describe('handBack', () => {
     expect(dispatch.mock.calls.map(([call]) => call.name)).toEqual(['ask_person', 's__read']);
     expect(callIds(result.messages[1])).toEqual(['c0', 'c1']);
     expect(result).not.toHaveProperty('pending');
-    expect(result.metrics.outcome).toBe(RunOutcome.Answered);
+    expect(result.metrics.outcome).toBe(ExchangeOutcome.Answered);
     expect(events.some((event) => event.kind === RunEventKind.Wait)).toBe(false);
   });
 
@@ -311,7 +311,7 @@ describe('handBack', () => {
       expect(dispatch.mock.calls.map(([call]) => call.name)).toEqual(['s__write']);
       expect(result.ended).toEqual({ callId: 'c1', name: 's__write', reason: 'handed off' });
       expect(result).not.toHaveProperty('pending');
-      expect(result.metrics.outcome).toBe(RunOutcome.Ended);
+      expect(result.metrics.outcome).toBe(ExchangeOutcome.Ended);
       expect(answered(result.messages)).toEqual(['c1', 'c0']);
       expect(result.messages.at(-1)).toMatchObject({ content: 'Not needed: the task finished first.' });
       expect(pairsByPosition(result.messages)).toBe(true);
@@ -475,12 +475,12 @@ describe('runMetrics', () => {
   const at = (kind: RunEventInput['kind'], seq: number) => stamp({ kind }, 'r', seq, seq);
 
   it('reads a run whose last stretch stopped on `wait` as waiting', () => {
-    expect(runMetrics([at(RunEventKind.Turn, 1), at(RunEventKind.Wait, 2)]).outcome).toBe(RunOutcome.Waiting);
+    expect(runMetrics([at(RunEventKind.Turn, 1), at(RunEventKind.Wait, 2)]).outcome).toBe(ExchangeOutcome.Waiting);
   });
 
   it('reads a run that went on after its `wait` as not done, and by its `done` once it is', () => {
     const resumed = [at(RunEventKind.Turn, 1), at(RunEventKind.Wait, 2), at(RunEventKind.Turn, 3)];
     expect(runMetrics(resumed).outcome).toBeUndefined();
-    expect(runMetrics([...resumed, at(RunEventKind.Done, 4)]).outcome).toBe(RunOutcome.Answered);
+    expect(runMetrics([...resumed, at(RunEventKind.Done, 4)]).outcome).toBe(ExchangeOutcome.Answered);
   });
 });

@@ -858,8 +858,11 @@ export interface RunMetrics {
    * has none.
    */
   largestPromptShare?: number;
-  /** How it ended, read off `done` and the last turn, or `waiting` after a `wait` nothing followed. */
-  outcome?: RunOutcome;
+  /**
+   * How the run ended, in an exchange's terms: off `done` and the last turn, or `waiting` after a
+   * `wait` nothing followed.
+   */
+  outcome?: ExchangeOutcome;
 }
 
 /** The fields of `RunMetrics` that are a number, which are the ones a report can be added to. */
@@ -874,7 +877,7 @@ const SEVERITY: readonly string[] = Object.values(ServerLogLevel);
 const WARNING = SEVERITY.indexOf(ServerLogLevel.Warning);
 
 /** How an exchange ended, as its result says or as `runMetrics` reads it off a run's events. */
-export const RunOutcome = {
+export const ExchangeOutcome = {
   /** The exchange did not fail, and its last turn was neither cut off nor withheld. */
   Answered: 'answered',
   /** The exchange did not fail, and its last turn is an answer the reply ceiling cut off. */
@@ -900,10 +903,12 @@ export const RunOutcome = {
    * the app's own `done` text and not here.
    */
   Failed: 'failed',
+  /** The app's signal stopped the exchange, which then threw: never on a result. */
+  Stopped: 'stopped',
 } as const;
 
-/** Any one of the outcomes in `RunOutcome`. */
-export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
+/** Any one of the outcomes in `ExchangeOutcome`. */
+export type ExchangeOutcome = (typeof ExchangeOutcome)[keyof typeof ExchangeOutcome];
 
 /**
  * How a run that reported `done` ended.
@@ -915,14 +920,14 @@ export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
  * the exchange, `truncated` where the last turn ran into the reply ceiling, `filtered` where a
  * content filter withheld it, and `answered` otherwise.
  */
-function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOutcome {
+function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): ExchangeOutcome {
   if (ok === false) {
-    return RunOutcome.Failed;
+    return ExchangeOutcome.Failed;
   }
   // Read as a truthy string, so an event put together by hand without one is not ended.
   const isEnded = Boolean(name);
   if (isEnded) {
-    return RunOutcome.Ended;
+    return ExchangeOutcome.Ended;
   }
   return endingOf(last?.finishReason);
 }
@@ -934,9 +939,9 @@ function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOut
  * A map rather than an object, because the key is whatever the server sent and an object would
  * look `constructor` up on its prototype.
  */
-const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, RunOutcome> = new Map([
-  [FinishReason.Length, RunOutcome.Truncated],
-  [FinishReason.ContentFilter, RunOutcome.Filtered],
+const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, ExchangeOutcome> = new Map([
+  [FinishReason.Length, ExchangeOutcome.Truncated],
+  [FinishReason.ContentFilter, ExchangeOutcome.Filtered],
 ]);
 
 /**
@@ -945,8 +950,8 @@ const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, RunOutcome> = new Map([
  * @param finishReason - The last turn's `finish_reason`, as the server sent it.
  * @returns `truncated` for `length`, `filtered` for `content_filter`, and `answered` otherwise.
  */
-export function endingOf(finishReason: string | undefined): RunOutcome {
-  return OUTCOME_BY_FINISH.get(finishReason) ?? RunOutcome.Answered;
+export function endingOf(finishReason: string | undefined): ExchangeOutcome {
+  return OUTCOME_BY_FINISH.get(finishReason) ?? ExchangeOutcome.Answered;
 }
 
 /** What `runMetrics` takes besides the events. */
@@ -1096,7 +1101,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
 
   const isWaiting = waits && metrics.outcome === undefined;
   if (isWaiting) {
-    metrics.outcome = RunOutcome.Waiting;
+    metrics.outcome = ExchangeOutcome.Waiting;
   }
   if (events.length > 1) {
     metrics.wallMs = events[events.length - 1].at - events[0].at;

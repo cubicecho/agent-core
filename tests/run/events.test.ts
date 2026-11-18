@@ -3,12 +3,12 @@ import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   configureEvents,
+  ExchangeOutcome,
   emit,
   endRun,
   fold,
   history,
   RunEventKind,
-  RunOutcome,
   resetEvents,
   runMetrics,
   stamp,
@@ -637,7 +637,7 @@ describe('runMetrics', () => {
       draftAcceptance: 0.5,
       largestPrompt: 500,
       largestPromptShare: 0.5,
-      outcome: RunOutcome.Answered,
+      outcome: ExchangeOutcome.Answered,
     });
     // Over the 400 prompt tokens whose cache was reported, not the 900 of all of them.
     expect(metrics.cacheHitRatio).toBeCloseTo(30 / 400);
@@ -713,22 +713,22 @@ describe('runMetrics', () => {
     });
     emit('cut', turn(FinishReason.Length));
     emit('cut', { kind: RunEventKind.Done, ok: true });
-    expect(runMetrics(history('cut')).outcome).toBe(RunOutcome.Truncated);
+    expect(runMetrics(history('cut')).outcome).toBe(ExchangeOutcome.Truncated);
     emit('withheld', turn(FinishReason.ContentFilter));
     emit('withheld', { kind: RunEventKind.Done, ok: true });
-    expect(runMetrics(history('withheld')).outcome).toBe(RunOutcome.Filtered);
+    expect(runMetrics(history('withheld')).outcome).toBe(ExchangeOutcome.Filtered);
     emit('broke', turn(FinishReason.Stop));
     emit('broke', { kind: RunEventKind.Done, ok: false });
-    expect(runMetrics(history('broke')).outcome).toBe(RunOutcome.Failed);
+    expect(runMetrics(history('broke')).outcome).toBe(ExchangeOutcome.Failed);
     emit('running', turn(FinishReason.Stop));
     expect(runMetrics(history('running'))).not.toHaveProperty('outcome');
   });
 
   it('reads a run as ended by a tool where its done names one, and as failed where it was not ok', () => {
     emit('asked', { kind: RunEventKind.Done, ok: true, id: 'c0', name: 'ask_person', text: 'needs a key' });
-    expect(runMetrics(history('asked')).outcome).toBe(RunOutcome.Ended);
+    expect(runMetrics(history('asked')).outcome).toBe(ExchangeOutcome.Ended);
     emit('ended-badly', { kind: RunEventKind.Done, ok: false, name: 'ask_person' });
-    expect(runMetrics(history('ended-badly')).outcome).toBe(RunOutcome.Failed);
+    expect(runMetrics(history('ended-badly')).outcome).toBe(ExchangeOutcome.Failed);
   });
 
   it('counts the turns a session run served on no slot of its own, and only where any said', () => {

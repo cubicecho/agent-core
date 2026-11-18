@@ -4,7 +4,7 @@ import { ToolDiscovery } from '../../src/core/config.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookOutcome, HookRunner } from '../../src/hooks/hooks.ts';
 import { PRESELECT_APPEND } from '../../src/run/agent-loop.ts';
-import { RunEventKind, RunOutcome } from '../../src/run/events.ts';
+import { ExchangeOutcome, RunEventKind } from '../../src/run/events.ts';
 import { CallIds, callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
 import {
@@ -286,7 +286,7 @@ describe('runAgentLoop', () => {
       promptTokens: 230,
       cachedTokens: 108,
       cacheBreaks: 0,
-      outcome: RunOutcome.Answered,
+      outcome: ExchangeOutcome.Answered,
     });
     expect(result.metrics.wallMs).toBeGreaterThanOrEqual(0);
     // Loads are only counted where tools load on demand.
@@ -360,7 +360,7 @@ describe('runAgentLoop', () => {
       turns: 1,
       requests: 2,
       truncatedTurns: 0,
-      outcome: RunOutcome.Answered,
+      outcome: ExchangeOutcome.Answered,
     });
   });
 
@@ -368,7 +368,7 @@ describe('runAgentLoop', () => {
     create.mockReturnValueOnce(says('half', FinishReason.Length));
     const result = await runAgentLoop({ config, messages: question, dispatch: async () => '' });
     expect(create).toHaveBeenCalledTimes(1);
-    expect(result.metrics).toMatchObject({ truncatedTurns: 1, outcome: RunOutcome.Truncated });
+    expect(result.metrics).toMatchObject({ truncatedTurns: 1, outcome: ExchangeOutcome.Truncated });
   });
 
   it('says when a turn was cut off at the ceiling', async () => {
@@ -1072,7 +1072,7 @@ describe('runAgentLoop', () => {
       ]);
       expect(result.messages.at(-1)).toMatchObject({ tool_call_id: callId });
       expect(result.usage).toMatchObject({ promptTokens: 230, completionTokens: 20, totalTokens: 250 });
-      expect(result.metrics.outcome).toBe(RunOutcome.Ended);
+      expect(result.metrics.outcome).toBe(ExchangeOutcome.Ended);
       expect(result.metrics.turns).toBe(2);
       expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'done ended the run: handed to review' });
     });
@@ -1165,7 +1165,7 @@ describe('runAgentLoop', () => {
       });
       expect(result).not.toHaveProperty('ended');
       expect(result.turn.content).toBe('finished');
-      expect(result.metrics.outcome).toBe(RunOutcome.Answered);
+      expect(result.metrics.outcome).toBe(ExchangeOutcome.Answered);
     });
 
     it('resolves rather than throwing when the end comes in the last turn the budget allows', async () => {

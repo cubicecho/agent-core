@@ -217,6 +217,7 @@ What a run is doing, while it is doing it.
 
 - `configureEvents` — Changes what the bus keeps, for a process whose runs are not shaped like the ones these defaults were chosen for.
 - `EventBusOptions` (type) — What the bus keeps and for how long.
+- `ExchangeOutcome` — How an exchange ended, as its result says or as `runMetrics` reads it off a run's events.
 - `emit` — Records one event and hands it to everyone watching that run.
 - `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
 - `fold` — A run's events with each stretch of `thinking` or of `output` joined into one block, for a reader that takes a run in snapshots.
@@ -227,7 +228,6 @@ What a run is doing, while it is doing it.
 - `RunEventKind` — Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it.
 - `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
 - `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
-- `RunOutcome` — How an exchange ended, as its result says or as `runMetrics` reads it off a run's events.
 - `RunUsage` (type) — What an exchange has spent, counted from the start of the exchange rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
 - `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
 - `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.

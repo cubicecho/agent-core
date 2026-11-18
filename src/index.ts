@@ -170,6 +170,7 @@ export {
 export {
   configureEvents,
   type EventBusOptions,
+  ExchangeOutcome,
   emit,
   endRun,
   fold,
@@ -180,7 +181,6 @@ export {
   RunEventKind,
   type RunMetrics,
   type RunMetricsOptions,
-  RunOutcome,
   type RunUsage,
   resetEvents,
   runMetrics,

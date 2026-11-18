@@ -236,8 +236,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `runMetrics`; the app chooses where a run starts and ends.
 - **Exchange:** one input, from a person or a machine, through to the reply it gets, made of one
   or more turns. It ends answered, cut short, filtered, ended, waiting or failed. Owner:
-  `runAgentLoop` (`src/run/agent-loop.ts`); the code still calls it a run (`RunOutcome`,
-  `AgentLoopResult`, "the run ended", "the run waits"), and the renames are pending `A` items.
+  `runAgentLoop` (`src/run/agent-loop.ts`), whose result is `AgentLoopResult` and whose outcome is
+  an `ExchangeOutcome`.
 - **Turn:** one model reply, plus running any tools it asked for; usually one request, more when a
   reply cut off at the length limit is continued. Owner: the loop in `runTurns`; the `Turn` type
   (`src/wire/stream.ts`) is the reply part, run by `runTurn`, and the `turn` event and
@@ -372,7 +372,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `AgentLoopOptions.beforeTurn`, `TurnWindow`.
 - **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`.
 - **Outcome:** how an exchange ended: answered, cut short, filtered, ended, waiting, or (as events
-  tell it) failed. Owner: `RunOutcome` (`src/run/events.ts`), decided by `exchangeOutcome`.
+  tell it) failed or stopped. A run's outcome is told in the same words, read off its events.
+  Owner: `ExchangeOutcome` (`src/run/events.ts`), decided by `exchangeOutcome`; a run's is
+  `RunMetrics.outcome`.
 - **Failure:** what an exchange throws, carrying it as it stood. Owner: `AgentLoopError`,
   `AgentLoopOverflow`, `ToolIterationLimit`, `failedRun` (`src/run/failure.ts`).
 - **Stop (abort):** the app cancelling an exchange through its signal. Owner:
@@ -402,10 +404,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **One call per message:** writing each call in its own assistant message, for templates that
   take only one. Owner: `ModelParams.singleCallMessages`, `splitCalls`, `oneCallPerMessage`.
 - **End (ended):** a tool's answer saying the job is done, which ends the exchange once the turn's
-  calls are answered. Owner: `ToolAnswer.end`, `AgentLoopResult.ended`, `RunOutcome.Ended`.
+  calls are answered. Owner: `ToolAnswer.end`, `AgentLoopResult.ended`, `ExchangeOutcome.Ended`.
 - **Hand back (pending, waiting):** leaving a call for the app to answer later; the exchange stops
   after the turn, waiting. Owner: `AgentLoopOptions.handBack`, `AgentLoopResult.pending`,
-  `RunOutcome.Waiting`, `RunEventKind.Wait`.
+  `ExchangeOutcome.Waiting`, `RunEventKind.Wait`.
 - **Resume:** calling the loop again with a waiting exchange's transcript, its pending calls
   answered, and its ledger and loaded tools. Owner: the app; described on `AgentLoopResult.pending`.
 

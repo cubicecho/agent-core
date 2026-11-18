@@ -86,12 +86,12 @@ import { FinishReason, PARALLEL_TOOL_CALLS, Role } from '../wire/wire.ts';
 import { type ArtifactOptions, RECORD_ARTIFACT_TOOL, RunArtifacts } from './artifacts.ts';
 import type { EndedBy, RunArtifact, ToolCallOutcome, ToolCallRequest, ToolCallResult } from './dispatch.ts';
 import {
+  ExchangeOutcome,
   endingOf,
   type RunEvent,
   type RunEventInput,
   RunEventKind,
   type RunMetrics,
-  RunOutcome,
   runMetrics,
   stamp,
 } from './events.ts';
@@ -860,10 +860,11 @@ export interface AgentLoopResult {
   /**
    * The exchange summed and derived: what `runMetrics` makes of the events this loop emitted, with
    * the `load_tools` counts at zero rather than absent in an exchange on demand, `wallMs` from the
-   * call to the return, and `outcome`. An app running several exchanges for one run gets its counts
-   * from `runMetrics` over all their events, without these results beside it.
+   * call to the return, and the exchange's `outcome`, always there. An app running several
+   * exchanges for one run gets its counts from `runMetrics` over all their events, without these
+   * results beside it.
    */
-  metrics: RunMetrics;
+  metrics: RunMetrics & { outcome: ExchangeOutcome };
   /**
    * What each turn's request reported its prompt as, indexed into `messages` above, for
    * `tokensBetween` and `estimateFrom`. The entries of a `ledger` passed in come first. A turn
@@ -1432,12 +1433,12 @@ function handsBackFor(
  * @returns `ended` where a call ended it, `waiting` where calls were handed back, and otherwise
  * what the finish reason says.
  */
-function exchangeOutcome(reply: Turn, { ended, pending }: TurnOutcome): RunOutcome {
+function exchangeOutcome(reply: Turn, { ended, pending }: TurnOutcome): ExchangeOutcome {
   if (ended) {
-    return RunOutcome.Ended;
+    return ExchangeOutcome.Ended;
   }
   if (pending.length > 0) {
-    return RunOutcome.Waiting;
+    return ExchangeOutcome.Waiting;
   }
   return endingOf(reply.finishReason);
 }
