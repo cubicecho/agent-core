@@ -451,7 +451,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Gather, notify, consult:** firing hooks to collect context, to tell and move on, or to wait
   for a veto. Owner: `gather`, `notify`, `consult`.
 
-### Keeping an exchange inside its window
+### Keeping an exchange inside its context window
 
 - **Token ledger:** the prompt sizes each request reported, used to measure what stretches of
   the transcript cost. Owner: `TokenLedger`, `recordRequest`, `tokensBetween`
@@ -464,12 +464,13 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `planPrune` (`src/context/compaction.ts`).
 - **Prune boundary:** the point before which tool results are sent as stubs; it only moves
   forward. Owner: `PrunePlan`, `pruneThrough`.
-- **Compaction (fold):** replacing the oldest stretch of the transcript with a written summary.
+- **Compaction (fold, in older code and docs):** replacing the oldest stretch of the transcript with a written summary.
   Owner: `planCompaction`, `runCompaction`, `applyCompaction`, `compactTranscript`.
-- **Compaction record:** one fold as an app stores it and applies again. Owner: `CompactionRecord`.
-- **Summary pair:** a fold's summary as a user message and a fixed acknowledgement. Owner:
+- **Compaction record:** one compaction as an app stores it and applies again. Owner: `CompactionRecord`.
+- **Summary pair:** a compaction's summary as a user message and a fixed acknowledgement. Owner:
   `SUMMARY_LEAD`, `SUMMARY_ACK`.
-- **Compact threshold:** how full the window must be before pruning or folding is considered.
+- **Compact threshold:** how full the context window must be before pruning or compaction is
+  considered.
   Owner: `COMPACT_AT`.
 
 ### Watching a run
