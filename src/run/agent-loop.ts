@@ -837,8 +837,8 @@ export interface AgentLoopResult {
    * The loop does not wait for it, so the answer is never held for a hook; a host that stores the
    * notes with the turn, or must not exit before the turn is remembered, awaits it. Each note
    * reaches `onNote` as well. Already resolved and empty without `hooks`, and where `fire` leaves
-   * `afterTurn` out — a host that tells it itself has the notes from its own `notify`. Rejects only
-   * if `onNote` throws.
+   * `afterTurn` out — a host that tells it itself has the notes from its own `notify`. Never rejects:
+   * a note `onNote` throws on is dropped.
    */
   afterTurn: Promise<HookNote[]>;
   /**
