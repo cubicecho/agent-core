@@ -875,13 +875,8 @@ export async function streamTurn(
       // OpenRouter sends these beside `reasoning`, which already carries their text for the
       // watcher, so they are kept to send back and are not reported a second time.
       const blocks = Array.isArray(delta.reasoning_details) ? delta.reasoning_details.filter(isRecord) : [];
-      // Latched on what the chunk carried, not on its having arrived. Most OpenAI-compatible
-      // servers open a stream with a content-free `{"role":"assistant"}` before the first
-      // token; latching on that made a model server that primes and then wedges unrepeatable,
-      // which is exactly the case the watchdog raises `EndpointSilent` for. Tool-call
-      // fragments count even though no callback reports them: a partial call is state the reply
-      // has accumulated, and losing a retry is the safer half of that trade. Set before the
-      // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
+      // Latched on what the chunk carried, not on its arrival, so a content-free opening chunk keeps the
+      // retry; a partial tool call counts, and it is set before the callbacks so no token is told twice.
       const carried = Boolean(thinking || delta.content || delta.tool_calls?.length || blocks.length);
       if (carried && !talking) {
         rearm(true);

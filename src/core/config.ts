@@ -23,16 +23,10 @@ export interface Endpoint {
    * answering slowly needs.
    *
    * @remarks
-   * Not the whole request, which may take as long as the model keeps talking. On a streamed reply
-   * it is the silence allowed between chunks, the idle watchdog; the wait for the first chunk is
-   * `firstTokenSeconds`, except on a side task, which waits this long for its first chunk too. On
-   * a call that does not stream, a model listing, it is the SDK's timer, which runs until the
-   * response headers arrive.
-   *
-   * Optional because a consumer that has no timeout to give should not have to invent one. Two
-   * of the three servers this was extracted from carry no such field, and requiring it made
-   * them write `requestTimeoutSeconds: 0` to mean "I have no opinion", which is a made-up
-   * number standing in for an absent one.
+   * On a streamed reply it is the silence allowed between chunks, the first chunk waiting
+   * `firstTokenSeconds` instead except on a side task; on a call that does not stream, such as a model
+   * listing, it is the SDK's timer until the response headers arrive. Optional, so a consumer with no
+   * timeout to give need not invent a `0` that means "no opinion".
    */
   requestTimeoutSeconds?: number;
   /**

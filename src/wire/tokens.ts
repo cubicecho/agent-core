@@ -64,11 +64,8 @@ const ENVELOPE = 25;
 /** The same for `{"id":"","type":"function","function":{"name":"","arguments":""}},` in a call. */
 const CALL_ENVELOPE = 66;
 
-// `ENVELOPE` is the two keys every message has. These are the three that only some do, and each
-// is the key with its punctuation and the comma after the value it holds — the value's own
-// length is counted where the value is read. Applying `ENVELOPE` alone to these shapes left the
-// keys out, which cost 4.5 tokens on every tool result: the message a tool-using exchange has most
-// of, and short in the direction that lets an overflow through the guard meant to catch it.
+// The three keys only some messages have, each with its punctuation and trailing comma. Left out,
+// they undercounted every tool result by 4.5 tokens, the side that lets an overflow through.
 
 /** What `"name":"",` costs around a message's name. */
 const NAME_KEY = 10;
@@ -210,19 +207,11 @@ export function messageChars(message: OpenAI.ChatCompletionMessageParam): number
  * The tools half, cached against the array.
  *
  * @remarks
- * Serialising two dozen JSON schemas to measure them, on every turn, to get the same number every
- * time, was the more expensive half of this function.
- *
- * The array is the key, so this pays only a caller that hands the same one back. That is not what
- * a turn built through `sanitizeTools` or `relaxTools` does — both are a `map`, so each build
- * allocates a fresh array however stable the tools inside it are, and those builds miss here every
- * time. It is not free to change: keying on the tools instead would hit for them, at the cost of
- * the array-level memoisation `tests/wire/tokens.test.ts` pins, which deliberately holds a mutated array
- * to its first reading. Sizing happens once per turn either way, so the miss costs one walk of the
- * schemas rather than a walk per attempt.
- *
- * Characters rather than tokens, so a calibrated divisor applies to the schemas without walking
- * them again.
+ * The array is the key, so only a caller that hands the same array back hits; a turn built through
+ * `sanitizeTools` or `relaxTools` maps a fresh one and misses, costing one walk of the schemas per
+ * turn. Keying on the tools instead would hit, at the cost of the array-level memoisation
+ * `tests/wire/tokens.test.ts` pins. Characters rather than tokens, so a calibrated divisor applies
+ * without walking the schemas again.
  */
 const toolLengths = new WeakMap<OpenAI.ChatCompletionTool[], number>();
 
