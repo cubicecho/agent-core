@@ -172,25 +172,25 @@ export interface KeywordPreselectOptions {
   /**
    * The most to pick. The same cap the model is held to.
    *
-   * @defaultValue `12`
+   * @defaultValue `TOOL_DISCOVERY_DEFAULTS.maxPerLoad`
    */
   maxPerLoad?: number;
   /**
    * The floor under a confident best match.
    *
-   * @defaultValue `1`
+   * @defaultValue `PRESELECT_DEFAULTS.keywordMinScore`
    */
   minScore?: number;
   /**
    * The gap a confident cut needs.
    *
-   * @defaultValue `0.5`
+   * @defaultValue `PRESELECT_DEFAULTS.keywordDropoffShare`
    */
   dropoff?: number;
   /**
    * Where the request is cut — the same head `preselectInput` reads.
    *
-   * @defaultValue `2000`
+   * @defaultValue `PRESELECT_DEFAULTS.maxPromptChars`
    */
   maxPromptChars?: number;
 }
@@ -289,13 +289,13 @@ export interface PreselectOptions {
   /**
    * The reply's ceiling.
    *
-   * @defaultValue `256`
+   * @defaultValue `PRESELECT_DEFAULTS.maxTokens`
    */
   maxTokens?: number;
   /**
    * As `SideTaskOptions.temperature`.
    *
-   * @defaultValue `0.3`
+   * @defaultValue `SIDE_TASK_DEFAULTS.temperature`
    */
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
@@ -305,7 +305,7 @@ export interface PreselectOptions {
   /**
    * The most tools the choice may name.
    *
-   * @defaultValue `12`
+   * @defaultValue `TOOL_DISCOVERY_DEFAULTS.maxPerLoad`
    */
   maxPerLoad?: number;
   /**

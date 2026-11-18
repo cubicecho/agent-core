@@ -57,7 +57,7 @@ const bus = scoped((): Bus => ({ limits: { ...EVENT_BUS_DEFAULTS }, streams: new
  * own, set through its options or its own `configureEvents`.
  * What it costs is memory against how much of a run a late or slow watcher can still read —
  * a server with hundreds of concurrent runs wants a smaller backlog, and one whose tool calls
- * take an hour wants a longer `retainUnendedMs` than the thirty minutes assumed here.
+ * take an hour wants a longer `retainUnendedMs` than the `EVENT_BUS_DEFAULTS` one.
  *
  * Changes apply from the next event and the next sweep. Nothing already buffered is trimmed to
  * a cap that has just come down, because the trim happens on push; the backlog settles to the

@@ -76,7 +76,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * How long to wait on a server answering that the model is still loading; zero gives up on the
    * first such answer like any other 503.
    *
-   * @defaultValue `120000`
+   * @defaultValue `MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds`, in milliseconds
    *
    * @remarks
    * Polled every `MODEL_SERVER_DEFAULTS.loadingPollSeconds` without spending `maxRetries`, and

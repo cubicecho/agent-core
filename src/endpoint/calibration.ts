@@ -33,8 +33,8 @@ const { charsPerToken, calibrationReadings, minPlausibleCharsPerToken, maxPlausi
 const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>());
 
 /**
- * The characters per token to size a request to this model with, four until a turn
- * has reported one.
+ * The characters per token to size a request to this model with,
+ * `REQUEST_SIZE_DEFAULTS.charsPerToken` until a turn has reported one.
  *
  * @param supports - The model server's capabilities, as `capabilitiesFor` hands them over.
  * @param model - The name the model server knows the model as, as it goes in the body.

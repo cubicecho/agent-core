@@ -4,12 +4,12 @@ import { isPositive } from '../core/guards.ts';
 import { CALL_EXTRA_KEYS, type CallExtraKey, FUNCTION_TOOL, PartType, Role } from './wire.ts';
 
 /**
- * Rough token count. Characters over four, because there is no tokenizer here and there is not
- * going to be one: a server that will not say how big its context window is will not lend us its
+ * Rough token count. Characters over `REQUEST_SIZE_DEFAULTS.charsPerToken`, because there is no
+ * tokenizer here and there is not going to be one: a server that will not say how big its context window is will not lend us its
  * vocabulary either.
  *
  * @param text - Prose or serialised JSON — both counted the same way, which is why JSON reads low.
- * @returns The length over four, rounded up: zero for an empty string, and one for
+ * @returns The length over that ratio, rounded up: zero for an empty string, and one for
  * anything shorter than a token.
  *
  * @remarks
@@ -111,7 +111,7 @@ export interface TokenEstimateOptions {
    * The divisor — `charsPerTokenFor` for a model whose reported usage has calibrated it. A value
    * that is not a number above zero is ignored.
    *
-   * @defaultValue `4`
+   * @defaultValue `REQUEST_SIZE_DEFAULTS.charsPerToken`
    */
   charsPerToken?: number;
 }

@@ -102,7 +102,7 @@ Every value this package chose where another choice would still work, grouped by
 How many characters a token is worth on one model, learned from what its model server reports.
 
 - `calibrate` — Takes one reading from a request that was answered, so the next one to this model is sized by it.
-- `charsPerTokenFor` — The characters per token to size a request to this model with, four until a turn has reported one.
+- `charsPerTokenFor` — The characters per token to size a request to this model with, `REQUEST_SIZE_DEFAULTS.charsPerToken` until a turn has reported one.
 - `resetCalibration` — Forgets every reading, so the next request is sized at `REQUEST_SIZE_DEFAULTS.charsPerToken` again.
 
 ### capabilities

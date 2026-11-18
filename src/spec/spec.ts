@@ -152,7 +152,10 @@ export interface ToolsSpec {
 export interface RetrySpec {
   /** Re-sends of a request lost before the model produced anything. Zero is none — a value. */
   maxRetries?: number;
-  /** Seconds to wait out a server loading its model. Zero is not at all; absent is two minutes. */
+  /**
+   * Seconds to wait out a server loading its model. Zero is not at all; absent is
+   * `MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds`.
+   */
   loadingTimeoutSeconds?: number;
 }
 
@@ -167,7 +170,7 @@ export interface TaskSpec {
   /**
    * Sampling temperature, whatever the agent's own is.
    *
-   * @defaultValue `0.3`
+   * @defaultValue `SIDE_TASK_DEFAULTS.temperature`
    */
   temperature?: number;
   /**

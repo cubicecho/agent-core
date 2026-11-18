@@ -38,7 +38,7 @@ export interface ContinueTurnOptions extends RunTurnOptions {
    * How many more requests one answer may be given; zero continues nothing. The cap is what
    * stops a model that never reaches a stop token from looping on the ceiling.
    *
-   * @defaultValue `1`
+   * @defaultValue `CONTINUATION_DEFAULTS.maxContinuations`
    */
   maxContinuations?: number;
   /**

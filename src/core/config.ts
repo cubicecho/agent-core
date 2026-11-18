@@ -32,7 +32,7 @@ export interface Endpoint {
   /**
    * How long a streamed reply may wait for its first chunk. Zero or less is no limit.
    *
-   * @defaultValue Five times `requestTimeoutSeconds`
+   * @defaultValue `MODEL_SERVER_DEFAULTS.firstTokenIdleWindows` times `requestTimeoutSeconds`
    *
    * @remarks
    * Its own number because the first wait is prefill, and on a local server prefill of a long
@@ -280,8 +280,8 @@ export interface ToolPolicy {
 export interface RetryPolicy {
   maxRetries: number;
   /**
-   * How long to wait for a local server that says it is still loading the model, absent two
-   * minutes and zero not at all. Separate from `maxRetries`, which is sized for a request that
+   * How long to wait for a local server that says it is still loading the model: absent is
+   * `MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds`, and zero not at all. Separate from `maxRetries`, which is sized for a request that
    * was lost rather than for weights being read off a disk. See `isModelLoading`.
    */
   loadingTimeoutSeconds?: number;

@@ -158,13 +158,13 @@ export interface PruneOptions {
   /**
    * How many of the latest tool results are left whole.
    *
-   * @defaultValue `5`
+   * @defaultValue `PRUNE_DEFAULTS.keepLastResults`
    */
   keepLast?: number;
   /**
    * A result this long or shorter, in characters, is left whole wherever it is.
    *
-   * @defaultValue `256`
+   * @defaultValue `PRUNE_DEFAULTS.maxKeptChars`
    */
   maxChars?: number;
 }
@@ -275,7 +275,7 @@ export interface PrunePlanOptions extends PruneOptions {
   /**
    * The divisor the default `estimate` uses. Ignored beside an `estimate` of the caller's own.
    *
-   * @defaultValue `4`
+   * @defaultValue `REQUEST_SIZE_DEFAULTS.charsPerToken`
    */
   charsPerToken?: number;
 }
@@ -457,7 +457,7 @@ export interface CompactionOptions {
    * What the summary is assumed to cost when planning to a `target` — the ceiling its writer is
    * held to, since the plan is made before it is written.
    *
-   * @defaultValue `1024`, which is `summariser`'s ceiling
+   * @defaultValue `COMPACTION_DEFAULTS.summaryTokens`, which is `summariser`'s ceiling
    */
   summaryTokens?: number;
   /**
@@ -470,7 +470,7 @@ export interface CompactionOptions {
    * The divisor the default `estimate` uses — `charsPerTokenFor` the model, for a transcript
    * weighed the way `runTurn` sizes its requests. Ignored beside an `estimate` of the caller's own.
    *
-   * @defaultValue `4`
+   * @defaultValue `REQUEST_SIZE_DEFAULTS.charsPerToken`
    */
   charsPerToken?: number;
   /**

@@ -63,13 +63,13 @@ export interface SideTaskOptions {
    * Ceiling on the reply. These answers are meant to be short. Zero or less sends none and leaves
    * it to the server, which is what `maxTokens: 0` means on the main model too.
    *
-   * @defaultValue `512`
+   * @defaultValue `SIDE_TASK_DEFAULTS.maxTokens`
    */
   maxTokens?: number;
   /**
    * Sampling temperature. Naming and classifying want the same answer twice.
    *
-   * @defaultValue `0.3`
+   * @defaultValue `SIDE_TASK_DEFAULTS.temperature`
    */
   temperature?: number;
   /**
@@ -97,7 +97,7 @@ export interface SideTaskOptions {
    * How many times a lost request is sent again: a dropped connection, a busy or silent model
    * server. A refusal is not one, and a model still loading is waited out without spending these.
    *
-   * @defaultValue `2`
+   * @defaultValue `SIDE_TASK_DEFAULTS.maxRetries`
    */
   maxRetries?: number;
   /** Abandons the call, usually because the exchange it supports has gone away. */
@@ -119,8 +119,8 @@ export interface SideTaskOptions {
  * @remarks
  * Declared here rather than imported from `spec.ts`, whose `ResolvedTask` it matches field for
  * field: the spec module is one nothing else in `src/` imports, and an app that is not on the spec
- * can write one of these by hand. An absent setting is the side task's own default — 0.3, the
- * entry point's ceiling, thinking off — and never the main model's, so raising the agent's
+ * can write one of these by hand. An absent setting is the side task's own default —
+ * `SIDE_TASK_DEFAULTS`' temperature, the entry point's ceiling, thinking off — and never the main model's, so raising the agent's
  * temperature for the chat does not make its titler creative. See `taskCall`.
  */
 export interface SideTask {
@@ -133,7 +133,7 @@ export interface SideTask {
   /**
    * Sampling temperature, whatever the agent's own is. Zero means zero.
    *
-   * @defaultValue `0.3`
+   * @defaultValue `SIDE_TASK_DEFAULTS.temperature`
    */
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: a level replaces the no-thinking hints. */
@@ -493,7 +493,7 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * A helper rather than a second signature on each entry point, so a setting added to a task later
  * arrives without an app's call changing. What the task states wins over `options`, `extraBody`
  * merged key by key, and a setting neither gives is left absent for the entry point's own default
- * (0.3, not the agent's temperature). Given `agent`, a task on the agent's own model server is sent
+ * (`SIDE_TASK_DEFAULTS.temperature`, not the agent's). Given `agent`, a task on the agent's own model server is sent
  * the agent's `baseUrl`, key and `fetch`, so `capabilitiesFor` answers both with one object, and a
  * task on another model server only its own (README, "Its side tasks").
  */
