@@ -131,7 +131,8 @@ function refuseOversized(
 ): void {
   const needed = requestTokens(body, { charsPerToken });
   const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
-  if (needed + reserve <= contextLimit) {
+  const fitsWindow = needed + reserve <= contextLimit;
+  if (fitsWindow) {
     return;
   }
   // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
@@ -242,7 +243,8 @@ export async function runTurn(
             `${modelLabel(model)} is still loading — waiting up to ${formatTokens(loadingTimeoutMs / MS_PER_SECOND)}s`,
           );
         }
-        if (now - loadingSince < loadingTimeoutMs) {
+        const canKeepWaiting = now - loadingSince < loadingTimeoutMs;
+        if (canKeepWaiting) {
           // Not an attempt: the request was never looked at, and a two-minute load would
           // otherwise have to be bought with a retry budget meant for dropped connections.
           attempt--;

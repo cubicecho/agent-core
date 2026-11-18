@@ -181,7 +181,8 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
     const bMs = next[over];
     // Tokens over time for both together, which is each rate weighted by the time it held.
     const bothTimed = a !== undefined && b !== undefined && aMs !== undefined && bMs !== undefined;
-    if (bothTimed && aMs + bMs) {
+    const hasHeldTime = bothTimed && Boolean(aMs + bMs);
+    if (hasHeldTime) {
       joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
     } else {
       delete joined[rate];
@@ -259,7 +260,8 @@ export async function continueTurn(
   let joined = turn;
   const droppable = [...(options.droppable ?? []), ...PREFILL_KEYS];
   for (let count = 0; count < maxContinuations && isContinuable(joined); count++) {
-    if (refused?.assistantPrefill === false) {
+    const refusesPrefill = refused?.assistantPrefill === false;
+    if (refusesPrefill) {
       break;
     }
     const answer = joined.content;
@@ -281,7 +283,8 @@ export async function continueTurn(
         supports,
         (capabilities, forModel) => {
           const body = request(capabilities, forModel);
-          const scratchpad = forModel?.reasoningContent === false ? {} : thought;
+          const refusesScratchpad = forModel?.reasoningContent === false;
+          const scratchpad = refusesScratchpad ? {} : thought;
           return {
             ...body,
             ...prefillFields(forModel),

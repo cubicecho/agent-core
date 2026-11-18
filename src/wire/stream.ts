@@ -548,7 +548,8 @@ function assembledCalls(calls: readonly PartialCall[], mint: CallIdMinter): Tool
     // A server that streams a call without an id still needs one for the result to answer,
     // and two calls it put under one index must not be answered as one.
     const isFree = call.id !== '' && taken.has(call.id) === false;
-    if (isFree === false && call.minted === '') {
+    const needsMintedId = isFree === false && call.minted === '';
+    if (needsMintedId) {
       call.minted = freshCallId(taken, mint);
     }
     const id = isFree ? call.id : call.minted;
@@ -637,7 +638,8 @@ function partialTurn(
   calls: readonly PartialCall[],
   mint: CallIdMinter,
 ): PartialTurn | undefined {
-  if (content === '' && reasoning === '' && calls.length === 0) {
+  const isEmpty = content === '' && reasoning === '' && calls.length === 0;
+  if (isEmpty) {
     return undefined;
   }
   return {
