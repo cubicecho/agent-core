@@ -1,11 +1,10 @@
-import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookRunner } from '../../src/hooks/hooks.ts';
 import { RunEventKind, RunOutcome } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { type Create, chunks, config, type Message, pairsByPosition, says, tool } from '../helpers.ts';
+import { type Create, chunks, config, type Message, pairsByPosition, says, tool, toolNames } from '../helpers.ts';
 
 const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -466,7 +465,7 @@ describe('handBack', () => {
         loaded: first.loaded,
         dispatch: named(),
       });
-      const names = (bodies()[2].tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name);
+      const names = toolNames(bodies()[2].tools);
       expect(names).toContain('s__write');
     });
   });

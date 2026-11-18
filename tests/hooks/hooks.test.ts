@@ -16,7 +16,7 @@ import {
   withContext,
 } from '../../src/hooks/hooks.ts';
 import { FUNCTION_TOOL, PartType, Role } from '../../src/wire/wire.ts';
-import { outcome } from '../helpers.ts';
+import { outcome, partTexts, stringContent } from '../helpers.ts';
 
 /**
  * The host's side of hooks. Running them is a runner's job and is stubbed here; what is tested is
@@ -92,7 +92,7 @@ describe('withContext', () => {
 
   it("puts the context ahead of this turn's question, and only on the request", () => {
     const sent = withContext(history, 3, '<context source="Memory">likes tea</context>');
-    const question = sent[3].content as string;
+    const question = stringContent(sent[3]);
     expect(question).toContain('<context source="Memory">likes tea</context>');
     expect(question.endsWith('now')).toBe(true);
     expect(sent[1]).toBe(history[1]);
@@ -116,10 +116,10 @@ describe('withContext', () => {
       ...history.slice(0, 3),
       { role: Role.User, content: [{ type: PartType.Text, text: 'now' }] },
     ];
-    const content = withContext(parts, 3, 'ctx')[3].content as { text: string }[];
-    expect(content).toHaveLength(2);
-    expect(content[0].text).toContain('ctx');
-    expect(content[1].text).toBe('now');
+    const texts = partTexts(withContext(parts, 3, 'ctx')[3]);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain('ctx');
+    expect(texts[1]).toBe('now');
   });
 
   it('leaves the request alone when there is nothing to add or nowhere to put it', () => {

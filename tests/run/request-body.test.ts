@@ -12,6 +12,7 @@ import {
   singleCallRefusal,
   templateRefusal,
   tool,
+  toolNames,
   user,
 } from '../helpers.ts';
 
@@ -188,7 +189,7 @@ describe('buildBody', () => {
   });
 
   /** The names a built body declares, in the order it declares them. */
-  const names = (body: Body) => (body.tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name);
+  const names = (body: Body) => toolNames(body.tools);
 
   it('declares the same set in the same order however the caller built the array', () => {
     const supports = capabilitiesFor('http://local/v1');

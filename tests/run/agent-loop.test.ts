@@ -7,7 +7,22 @@ import { PRESELECT_APPEND } from '../../src/run/agent-loop.ts';
 import { RunEventKind, RunOutcome } from '../../src/run/events.ts';
 import { CallIds, callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
-import { apiError, type Create, chunks, config, type Message, MINTED_ID, outcome, says, tool } from '../helpers.ts';
+import {
+  apiError,
+  type Create,
+  callArguments,
+  chunks,
+  config,
+  functionTools,
+  type Message,
+  MINTED_ID,
+  ofRole,
+  outcome,
+  says,
+  stringContent,
+  tool,
+  toolNames,
+} from '../helpers.ts';
 
 const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -27,7 +42,6 @@ const { errorMessage } = await import('../../src/wire/errors.ts');
 const { failedRun } = await import('../../src/run/failure.ts');
 
 type Turn = import('../../src/wire/stream.ts').Turn;
-type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
 type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 type ToolCallReport = import('../../src/run/dispatch.ts').ToolCallReport;
 type AgentLoopRequest = import('../../src/run/agent-loop.ts').AgentLoopRequest;
@@ -82,10 +96,7 @@ const reportedCall = (prompt: number, cached: number, name: string, args = '{}')
 
 const question: Message[] = [{ role: Role.User, content: 'hi' }];
 /** What each request was sent, by the name of every tool it declared. */
-const declared = () =>
-  create.mock.calls.map(([body]) =>
-    (body.tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name),
-  );
+const declared = () => create.mock.calls.map(([body]) => toolNames(body.tools));
 
 beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
@@ -141,18 +152,16 @@ describe('runAgentLoop', () => {
     });
     const mint = callIdMinter(5);
     const ids = [mint(), mint()];
-    const assistant = result.messages[1] as OpenAI.ChatCompletionAssistantMessageParam;
+    const assistant = ofRole(result.messages[1], Role.Assistant);
     expect(assistant.tool_calls?.map(({ id }) => id)).toEqual(ids);
-    expect(result.messages.slice(2, 4).map((m) => (m as OpenAI.ChatCompletionToolMessageParam).tool_call_id)).toEqual(
-      ids,
-    );
+    expect(result.messages.slice(2, 4).map((m) => ofRole(m, Role.Tool).tool_call_id)).toEqual(ids);
     expect(result.toolCalls.map(({ id }) => id)).toEqual(ids);
     expect(answered.map(({ id }) => id)).toEqual(ids);
     const told = (kind: string) => events.filter((event) => event.kind === kind).map(({ id }) => id);
     expect(told(RunEventKind.ToolCall)).toEqual(ids);
     expect(told(RunEventKind.ToolResult)).toEqual(ids);
     // And the next request replays the call under the id it was answered by.
-    const replayed = create.mock.calls[1][0].messages[1] as OpenAI.ChatCompletionAssistantMessageParam;
+    const replayed = ofRole(create.mock.calls[1][0].messages[1], Role.Assistant);
     expect(replayed.tool_calls?.map(({ id }) => id)).toEqual(ids);
   });
 
@@ -389,8 +398,8 @@ describe('runAgentLoop', () => {
     const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch });
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch.mock.calls[0][0]).toMatchObject({ args: { x: true }, raw: "{'x': True,}" });
-    const replayed = (result.messages[1] as OpenAI.ChatCompletionAssistantMessageParam).tool_calls;
-    expect(replayed?.map((c) => (c as ToolCall).function.arguments)).toEqual(['{"x":true}', '{}']);
+    const replayed = ofRole(result.messages[1], Role.Assistant).tool_calls;
+    expect(replayed?.map(callArguments)).toEqual(['{"x":true}', '{}']);
     expect(result.messages[3]).toMatchObject({ content: expect.stringContaining('invalid tool') });
     expect(result.toolCalls).toEqual([
       { id: 'c0', name: 'a', ok: true },
@@ -627,7 +636,7 @@ describe('runAgentLoop', () => {
       ['z', 'a'],
     ]);
     // The host's array is read, never rearranged in place.
-    expect(tools.map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name)).toEqual(['z', 'a']);
+    expect(toolNames(tools)).toEqual(['z', 'a']);
   });
 
   it('answers an identical call once when the calls run one after another too', async () => {
@@ -1781,7 +1790,7 @@ describe('runAgentLoop', () => {
       ]);
       expect(result.metrics).toMatchObject({ loadCalls: 1, toolsLoaded: 1, toolCalls: 2 });
       // The transcript keeps the call the model wrote, which the next request has to repeat.
-      const written = result.messages[3] as OpenAI.ChatCompletionAssistantMessageParam;
+      const written = ofRole(result.messages[3], Role.Assistant);
       expect(written.tool_calls?.[0]).toMatchObject({
         function: { name: CALL_TOOL, arguments: '{"name":"s__read","arguments":{"path":"a"}}' },
       });
@@ -1796,7 +1805,7 @@ describe('runAgentLoop', () => {
         catalog,
         dispatch: async () => 'ok',
       });
-      const sent = create.mock.calls[0][0].tools as OpenAI.ChatCompletionFunctionTool[];
+      const sent = functionTools(create.mock.calls[0][0].tools);
       const call = sent.find((entry) => entry.function.name === CALL_TOOL);
       // Sanitising gives the object an empty property list; without the keyword beside it a
       // grammar-constrained server compiles that to `{}`.
@@ -2231,7 +2240,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: { run, context: { session: { id: 's1' } }, preface },
       });
-      return create.mock.calls[0][0].messages[0].content as string;
+      return stringContent(create.mock.calls[0][0].messages[0]);
     };
     configureHooks({ preface: 'From min-agent:' });
     try {

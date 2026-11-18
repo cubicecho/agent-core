@@ -6,6 +6,7 @@ import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import {
   apiError,
   type Create,
+  callArguments,
   chunks,
   config,
   type Message,
@@ -146,7 +147,7 @@ describe('onMessage', () => {
       },
     });
     const argumentsOf = (message: Message | undefined) =>
-      message?.role === Role.Assistant ? message.tool_calls?.map((call) => (call as ToolCall).function.arguments) : [];
+      message?.role === Role.Assistant ? message.tool_calls?.map(callArguments) : [];
     // Replayed: every call as JSON an endpoint will take back, and an unreadable one as none.
     expect(argumentsOf(heard[0].message)).toEqual(['{"x":true}', '{"x":1}', '{}', '{"x":2}', '{}']);
     // Written: exactly what streamed, under the same ids, so the tool results pair with either.

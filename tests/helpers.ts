@@ -4,6 +4,7 @@ import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
 import type { HookOutcome } from '../src/hooks/hooks.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
+import { toolName } from '../src/tools/tool-loading.ts';
 import { textOf } from '../src/wire/text.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire/wire.ts';
 
@@ -148,6 +149,89 @@ export const tool = (name: string): OpenAI.ChatCompletionTool => ({
   type: FUNCTION_TOOL,
   function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
 });
+
+/**
+ * The function tools of a request's tool list, which is what every test that reads a definition wants.
+ *
+ * @param [tools] - The list, as a body declares it. Absent reads as none.
+ * @returns The function tools, in order. A tool of any other type is left out.
+ */
+export const functionTools = (tools: readonly OpenAI.ChatCompletionTool[] = []) =>
+  tools.filter((entry): entry is OpenAI.ChatCompletionFunctionTool => entry.type === FUNCTION_TOOL);
+
+/**
+ * The names a request's tool list declares.
+ *
+ * @param [tools] - The list, as a body declares it. Absent reads as none.
+ * @returns Each tool's name, in order: `undefined` for a tool that is not a function.
+ */
+export const toolNames = (tools: readonly OpenAI.ChatCompletionTool[] = []) => tools.map(toolName);
+
+/**
+ * A call's arguments, as the transcript holds them.
+ *
+ * @param call - A call off an assistant message.
+ * @returns The arguments text, or `undefined` for a call that is not a function call.
+ */
+export const callArguments = (call: OpenAI.ChatCompletionMessageToolCall) =>
+  call.type === FUNCTION_TOOL ? call.function.arguments : undefined;
+
+/**
+ * A message of the role a test expects, failing the test where it is another.
+ *
+ * @param message - The message, such as `result.messages[1]`.
+ * @param role - The role it should have.
+ * @returns The message, typed as that role's.
+ */
+export function ofRole<R extends Message['role']>(
+  message: Message | undefined,
+  role: R,
+): Extract<Message, { role: R }> {
+  const isRole = message !== undefined && hasRole(message, role);
+  if (isRole) {
+    return message;
+  }
+  throw new Error(`expected a ${role} message, got ${message?.role ?? 'none'}`);
+}
+
+/**
+ * Whether a message has a role.
+ *
+ * @param message - The message.
+ * @param role - The role.
+ * @returns `true` where it has it, narrowing the message to that role's.
+ */
+const hasRole = <R extends Message['role']>(message: Message, role: R): message is Extract<Message, { role: R }> =>
+  message.role === role;
+
+/**
+ * A message's content where the test expects it to be one string, failing the test where it is a list of parts.
+ *
+ * @param message - The message.
+ * @returns The content.
+ */
+export function stringContent(message: Message | undefined): string {
+  const content = message?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  throw new Error(`expected string content, got ${JSON.stringify(content)}`);
+}
+
+/**
+ * The text of each part of a message whose content is a list of parts, failing the test where it is a string.
+ *
+ * @param message - The message.
+ * @returns Each part's text, in order: `undefined` for a part that carries none.
+ */
+export function partTexts(message: Message | undefined): (string | undefined)[] {
+  const content = message?.content;
+  const isParts = Array.isArray(content);
+  if (isParts) {
+    return content.map((part) => ('text' in part ? part.text : undefined));
+  }
+  throw new Error(`expected a list of parts, got ${JSON.stringify(content)}`);
+}
 
 /**
  * A tool as a catalogue lists it.

@@ -1,4 +1,3 @@
-import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
@@ -14,6 +13,7 @@ import {
   summarised,
   templateRefusal,
   tool,
+  toolNames,
 } from '../helpers.ts';
 
 const create = vi.fn<Create>();
@@ -314,8 +314,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     apiKey: 'sk-main',
   });
   /** The names of the tools the nth request declared. */
-  const declared = (nth: number) =>
-    ((body(nth).tools ?? []) as OpenAI.ChatCompletionFunctionTool[]).map((t) => t.function.name);
+  const declared = (nth: number) => toolNames(body(nth).tools);
 
   it('runs neither side task unless asked to', async () => {
     create.mockResolvedValueOnce(says('hello'));
