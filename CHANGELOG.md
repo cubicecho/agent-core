@@ -1,3 +1,15 @@
+# [4.29.0](https://github.com/cubicecho/agent-core/compare/v4.28.0...v4.29.0) (2026-11-18)
+
+
+### Bug Fixes
+
+* **run:** a handed-back call is not counted in used ([0289741](https://github.com/cubicecho/agent-core/commit/02897419da440707f43ae9740f0b4984d756d052))
+
+
+### Features
+
+* **run:** hand calls back to the host and wait, instead of ending the run ([097641a](https://github.com/cubicecho/agent-core/commit/097641ac5dd225e860495aacebd9f8c95bc26b78)), closes [#227](https://github.com/cubicecho/agent-core/issues/227)
+
 # [4.28.0](https://github.com/cubicecho/agent-core/compare/v4.27.0...v4.28.0) (2026-11-18)
 
 
