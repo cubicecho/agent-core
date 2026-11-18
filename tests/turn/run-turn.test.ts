@@ -4,7 +4,7 @@ import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../../
 import { runTurn } from '../../src/turn/run-turn.ts';
 import { ContextOverflow, EndpointSilent } from '../../src/wire/retry.ts';
 import { Role } from '../../src/wire/wire.ts';
-import { apiError, chunk, chunks, clientOf, text } from '../helpers.ts';
+import { apiError, type Create, chunk, chunks, clientOf, text } from '../helpers.ts';
 
 /** Lost rather than refused: nothing about the request, and the only thing worth waiting out. */
 const lost = () => new OpenAI.APIConnectionError({ message: 'socket hang up' });
@@ -47,7 +47,7 @@ describe('runTurn', () => {
     vi.useFakeTimers();
     const notices: string[] = [];
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(lost())
       .mockReturnValue(chunks(text('second')));
     const turn = runTurn(clientOf(create), supports(), body, {
@@ -64,7 +64,7 @@ describe('runTurn', () => {
   it('reports what the turn cost in attempts and time on its usage', async () => {
     vi.useFakeTimers();
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(lost())
       .mockRejectedValueOnce(new EndpointSilent('no first token'))
       .mockReturnValue(chunks(text('third')));
@@ -120,7 +120,7 @@ describe('runTurn', () => {
 
   it('gives up when the budget is spent', async () => {
     vi.useFakeTimers();
-    const create = vi.fn().mockRejectedValue(lost());
+    const create = vi.fn<Create>().mockRejectedValue(lost());
     const turn = runTurn(clientOf(create), supports(), body, { maxRetries: 2 });
     const settled = expect(turn).rejects.toThrow('socket hang up');
     await runOutTheClock();
@@ -132,7 +132,7 @@ describe('runTurn', () => {
   it('does not send a refusal again', async () => {
     // A 400 for something the negotiation cannot answer fails the same way every time, and
     // waiting out a server that read the request and disliked it is a wasted round trip.
-    const create = vi.fn().mockRejectedValue(apiError(400, 'unknown model'));
+    const create = vi.fn<Create>().mockRejectedValue(apiError(400, 'unknown model'));
     await expect(runTurn(clientOf(create), supports(), body, { maxRetries: 3 })).rejects.toThrow('unknown model');
     expect(create).toHaveBeenCalledTimes(1);
   });
@@ -167,7 +167,7 @@ describe('runTurn', () => {
     const seen: string[] = [];
     const priming = chunk({ choices: [{ delta: { role: Role.Assistant } }] });
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockImplementationOnce(() => ({
         async *[Symbol.asyncIterator]() {
           yield priming;
@@ -193,7 +193,7 @@ describe('runTurn', () => {
     vi.useFakeTimers();
     const notices: string[] = [];
     const stop = new AbortController();
-    const create = vi.fn().mockImplementation(() => {
+    const create = vi.fn<Create>().mockImplementation(() => {
       stop.abort(new Error('stopped by the operator'));
       return Promise.reject(apiError(503, 'service unavailable'));
     });
@@ -215,7 +215,7 @@ describe('runTurn', () => {
     // budget's business. With no budget at all this still has to converge.
     const notices: string[] = [];
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(apiError(400, 'unknown field: stream_options'))
       .mockReturnValue(chunks(text('counted nothing')));
     const known = supports();
@@ -232,7 +232,7 @@ describe('runTurn', () => {
   it('rebuilds the request from what the last attempt gave up on', async () => {
     // Why `request` is a callback: the second send is not the first send again.
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(apiError(400, 'unknown field: stream_options'))
       .mockReturnValue(chunks(text('ok')));
     await runTurn(clientOf(create), supports(), body);
@@ -244,7 +244,7 @@ describe('runTurn', () => {
     // The refusal is about the model rather than the server, so the answer has to be per model
     // — and `request` has to see it, since the body it builds is what changes.
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(
         apiError(
           400,
@@ -276,7 +276,7 @@ describe('runTurn', () => {
   it('waits out a lost request that arrives in the middle of a negotiation', async () => {
     vi.useFakeTimers();
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(apiError(400, 'unknown field: stream_options'))
       .mockRejectedValueOnce(lost())
       .mockReturnValue(chunks(text('at last')));
@@ -301,14 +301,14 @@ describe('contextLimit', () => {
     }) as OpenAI.ChatCompletionCreateParamsStreaming;
 
   it('refuses a request too big for the window before it is sent', async () => {
-    const create = vi.fn();
+    const create = vi.fn<Create>();
     await expect(runTurn(clientOf(create), supports(), big, { contextLimit: 8192 })).rejects.toThrow(ContextOverflow);
     // The point of the guard: not one round trip was spent finding this out.
     expect(create).not.toHaveBeenCalled();
   });
 
   it('does not spend a retry on a request that will never fit', async () => {
-    const create = vi.fn();
+    const create = vi.fn<Create>();
     await expect(runTurn(clientOf(create), supports(), big, { contextLimit: 8192, maxRetries: 3 })).rejects.toThrow(
       ContextOverflow,
     );
@@ -316,7 +316,7 @@ describe('contextLimit', () => {
   });
 
   it('sends a request that fits', async () => {
-    const create = vi.fn().mockReturnValue(chunks(text('ok')));
+    const create = vi.fn<Create>().mockReturnValue(chunks(text('ok')));
     await expect(runTurn(clientOf(create), supports(), body, { contextLimit: 8192 })).resolves.toMatchObject({
       content: 'ok',
     });
@@ -326,7 +326,7 @@ describe('contextLimit', () => {
     // About 2.5k tokens of prompt: fits 8192 alone, not with 6000 reserved for the reply.
     const prompt = { role: Role.User, content: 'x'.repeat(10_000) };
     for (const ceiling of [{ max_tokens: 6000 }, { max_completion_tokens: 6000 }]) {
-      const create = vi.fn();
+      const create = vi.fn<Create>();
       const request = () => ({ model: 'm', messages: [prompt], stream: true as const, ...ceiling });
       const error = await runTurn(clientOf(create), supports(), request, {
         contextLimit: 8192,
@@ -335,7 +335,7 @@ describe('contextLimit', () => {
       expect((error as Error).message).toContain('plus 6.0k reserved for the reply');
       expect(create).not.toHaveBeenCalled();
     }
-    const create = vi.fn().mockReturnValue(chunks(text('ok')));
+    const create = vi.fn<Create>().mockReturnValue(chunks(text('ok')));
     const request = () => ({
       model: 'm',
       messages: [prompt],
@@ -348,7 +348,7 @@ describe('contextLimit', () => {
   });
 
   it('sends whatever it is given when no limit was set', async () => {
-    const create = vi.fn().mockReturnValue(chunks(text('ok')));
+    const create = vi.fn<Create>().mockReturnValue(chunks(text('ok')));
     await expect(runTurn(clientOf(create), supports(), big)).resolves.toMatchObject({
       content: 'ok',
     });
@@ -358,7 +358,7 @@ describe('contextLimit', () => {
   it('does not believe a limit no model could have', async () => {
     // A caller threading a placeholder through — an unset column, a listing that said nothing —
     // is not a reason to refuse a run that would have worked.
-    const create = vi.fn().mockReturnValue(chunks(text('ok')));
+    const create = vi.fn<Create>().mockReturnValue(chunks(text('ok')));
     await expect(runTurn(clientOf(create), supports(), big, { contextLimit: 64 })).resolves.toMatchObject({
       content: 'ok',
     });
@@ -368,7 +368,9 @@ describe('contextLimit', () => {
     // The half the guard above never sees. Without a `contextLimit` — the default — the same
     // failure used to come back as a raw SDK error, so one overflow had two error types
     // depending on an option about a check that had not run.
-    const create = vi.fn().mockRejectedValue(apiError(400, "This model's maximum context length is 8192 tokens"));
+    const create = vi
+      .fn<Create>()
+      .mockRejectedValue(apiError(400, "This model's maximum context length is 8192 tokens"));
     const failure = runTurn(clientOf(create), supports(), body, { maxRetries: 3 }).catch((error) => error);
     const error = await failure;
     expect(error).toBeInstanceOf(ContextOverflow);
@@ -385,7 +387,7 @@ describe('contextLimit', () => {
     // the next attempt.
     vi.useFakeTimers();
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(apiError(429, 'Request too large for gpt-4o on tokens per min (TPM): limit 30000'))
       .mockReturnValue(chunks(text('at last')));
     const turn = runTurn(clientOf(create), supports(), body, { maxRetries: 2 });
@@ -398,7 +400,7 @@ describe('contextLimit', () => {
     vi.useFakeTimers();
     const build = vi.fn(body);
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(lost())
       .mockReturnValue(chunks(text('at last')));
     const turn = runTurn(clientOf(create), supports(), build, {

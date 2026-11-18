@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HttpStatus, Role } from '../../src/wire/wire.ts';
-import { apiError, type Body, config, type Message, says } from '../helpers.ts';
+import { apiError, type Body, type Create, config, type Message, says } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; `/props` is a stubbed `fetch`. */
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),

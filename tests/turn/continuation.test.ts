@@ -4,7 +4,7 @@ import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../../
 import { continueTurn, isContinuable } from '../../src/turn/continuation.ts';
 import type { Turn } from '../../src/wire/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
-import { apiError, type Body, chunks, clientOf } from '../helpers.ts';
+import { apiError, type Body, type Create, chunks, clientOf } from '../helpers.ts';
 
 /** A reply that says this, stops for this reason, and reports these counts and timings. */
 const replies = (content: string, finish: FinishReason = FinishReason.Stop, timings?: Record<string, number>) =>
@@ -50,7 +50,7 @@ describe('isContinuable', () => {
 
 describe('continueTurn', () => {
   it('sends the answer so far as a prefill and joins what comes back onto it', async () => {
-    const create = vi.fn().mockReturnValue(replies(' of the way light scatters.', FinishReason.Stop));
+    const create = vi.fn<Create>().mockReturnValue(replies(' of the way light scatters.', FinishReason.Stop));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
       startInReasoning: true,
@@ -58,7 +58,7 @@ describe('continueTurn', () => {
     expect(create).toHaveBeenCalledTimes(1);
     // What vLLM needs to read the trailing message as a prefill rather than open a fresh turn.
     expect(create.mock.calls[0][0]).toMatchObject({ continue_final_message: true, add_generation_prompt: false });
-    expect((create.mock.calls[0][0] as Body).messages).toEqual([
+    expect(create.mock.calls[0][0].messages).toEqual([
       ...question.messages,
       { role: Role.Assistant, content: 'The sky is blue because', reasoning_content: 'thought' },
     ]);
@@ -77,9 +77,9 @@ describe('continueTurn', () => {
 
   it('writes the reasoning back under the field it came in, without it when asked or refused', async () => {
     const prefill = async (turn: Turn, options: { replayReasoning?: boolean } = {}) => {
-      const create = vi.fn().mockReturnValue(replies(' more', FinishReason.Stop));
+      const create = vi.fn<Create>().mockReturnValue(replies(' more', FinishReason.Stop));
       await continueTurn(clientOf(create), supports(), request, turn, { model: 'm', ...options });
-      return (create.mock.calls[0][0] as Body).messages.at(-1);
+      return create.mock.calls[0][0].messages.at(-1);
     };
     expect(await prefill(cut(undefined, { reasoningField: 'reasoning' }))).toEqual({
       role: Role.Assistant,
@@ -99,7 +99,7 @@ describe('continueTurn', () => {
     const before = [{ type: 'reasoning.encrypted', data: 'first', index: 0 }];
     const after = { type: 'reasoning.encrypted', data: 'second', index: 0 };
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockReturnValue(
         chunks(
           { choices: [{ delta: { reasoning_details: [after] } }] },
@@ -115,19 +115,19 @@ describe('continueTurn', () => {
         model: 'm',
       },
     );
-    expect((create.mock.calls[0][0] as Body).messages.at(-1)).toHaveProperty('reasoning_details', before);
+    expect(create.mock.calls[0][0].messages.at(-1)).toHaveProperty('reasoning_details', before);
     expect(turn.reasoningDetails).toEqual([...before, after]);
     create.mockClear();
     await continueTurn(clientOf(create), supports(), request, cut(undefined, { reasoningDetails: before }), {
       model: 'm',
       replayReasoning: false,
     });
-    expect((create.mock.calls[0][0] as Body).messages.at(-1)).not.toHaveProperty('reasoning_details');
+    expect(create.mock.calls[0][0].messages.at(-1)).not.toHaveProperty('reasoning_details');
   });
 
   it('drops a field only one request reported, and weights the rates by the time they held', async () => {
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockReturnValue(replies(' more', FinishReason.Stop, { predicted_ms: 3000, predicted_per_second: 40 }));
     const first = cut();
     first.usage = { ...first.usage, predictedMs: 1000, tokensPerSecond: 80, wallMs: 5 };
@@ -140,7 +140,7 @@ describe('continueTurn', () => {
   });
 
   it('leaves a turn it cannot continue as it was, without a request', async () => {
-    const create = vi.fn();
+    const create = vi.fn<Create>();
     const finished = cut('done', { finishReason: FinishReason.Stop });
     expect(await continueTurn(clientOf(create), supports(), request, finished)).toBe(finished);
     const empty = cut('');
@@ -168,7 +168,7 @@ describe('continueTurn', () => {
   it('latches the prefill off for the model when the endpoint refuses one', async () => {
     const notices: string[] = [];
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValue(apiError(400, 'Assistant response prefill is incompatible with enable_thinking.'));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
@@ -186,7 +186,7 @@ describe('continueTurn', () => {
   it('sends the prefill fields again without both once a model refuses them by name, and still continues', async () => {
     const notices: string[] = [];
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(apiError(400, "Unknown parameter: 'continue_final_message'."))
       .mockReturnValue(replies(' of the way light scatters.'));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
@@ -211,7 +211,7 @@ describe('continueTurn', () => {
   it('drops both on a refusal that names one in words negotiate does not read, before blaming the prefill', async () => {
     const notices: string[] = [];
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(
         apiError(
           422,
@@ -232,7 +232,7 @@ describe('continueTurn', () => {
 
   it('still latches the prefill off when the request is refused again without the fields', async () => {
     const create = vi
-      .fn()
+      .fn<Create>()
       .mockRejectedValueOnce(
         apiError(400, 'Unrecognized request arguments supplied: add_generation_prompt, continue_final_message'),
       )
@@ -244,7 +244,7 @@ describe('continueTurn', () => {
   });
 
   it('says what a continuation needs over a prefill field the request already set', async () => {
-    const create = vi.fn().mockReturnValue(replies(' more.'));
+    const create = vi.fn<Create>().mockReturnValue(replies(' more.'));
     const own = () => ({ ...question, add_generation_prompt: true }) as Body;
     await continueTurn(clientOf(create), supports(), own, cut(), { model: 'm' });
     expect(create.mock.calls[0][0]).toMatchObject({ continue_final_message: true, add_generation_prompt: false });
@@ -264,7 +264,9 @@ describe('continueTurn', () => {
 
   it('keeps the cut-off answer when there is no room to continue it', async () => {
     const notices: string[] = [];
-    const create = vi.fn().mockRejectedValue(apiError(400, 'the request exceeds the available context size, tokens'));
+    const create = vi
+      .fn<Create>()
+      .mockRejectedValue(apiError(400, 'the request exceeds the available context size, tokens'));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
       onNotice: (n) => notices.push(n),

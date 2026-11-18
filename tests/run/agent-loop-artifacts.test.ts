@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { type Body, chunks, config, type Message, says, tool } from '../helpers.ts';
+import { type Create, chunks, config, type Message, says, tool } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
@@ -39,7 +39,7 @@ const calls = (...list: [name: string, args: Record<string, unknown>][]) =>
   });
 
 const question: Message[] = [{ role: Role.User, content: 'hi' }];
-const bodies = () => create.mock.calls.map(([body]) => body as Body);
+const bodies = () => create.mock.calls.map(([body]) => body);
 /** What each request was sent, by the name of every tool it declared. */
 const declared = () =>
   bodies().map((body) => (body.tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name));

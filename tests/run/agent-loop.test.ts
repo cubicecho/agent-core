@@ -7,9 +7,9 @@ import { PRESELECT_APPEND } from '../../src/run/agent-loop.ts';
 import { RunEventKind, RunOutcome } from '../../src/run/events.ts';
 import { CallIds, callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
-import { apiError, type Body, chunks, config, type Message, MINTED_ID, outcome, says, tool } from '../helpers.ts';
+import { apiError, type Create, chunks, config, type Message, MINTED_ID, outcome, says, tool } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
@@ -84,7 +84,7 @@ const question: Message[] = [{ role: Role.User, content: 'hi' }];
 /** What each request was sent, by the name of every tool it declared. */
 const declared = () =>
   create.mock.calls.map(([body]) =>
-    ((body as Body).tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name),
+    (body.tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name),
   );
 
 beforeEach(() => create.mockReset());
@@ -120,9 +120,7 @@ describe('runAgentLoop', () => {
     expect(answered.map(({ ok }) => ok)).toEqual([false, false, true, false]);
     // The host is told the same text the model reads, and the next request replays it as written.
     expect(answered.map(({ content }) => content)).toEqual(contents);
-    const replayed = (create.mock.calls[1][0] as Body).messages.flatMap((m) =>
-      m.role === Role.Tool ? [m.content] : [],
-    );
+    const replayed = create.mock.calls[1][0].messages.flatMap((m) => (m.role === Role.Tool ? [m.content] : []));
     expect(replayed).toEqual(contents);
   });
 
@@ -154,7 +152,7 @@ describe('runAgentLoop', () => {
     expect(told(RunEventKind.ToolCall)).toEqual(ids);
     expect(told(RunEventKind.ToolResult)).toEqual(ids);
     // And the next request replays the call under the id it was answered by.
-    const replayed = (create.mock.calls[1][0] as Body).messages[1] as OpenAI.ChatCompletionAssistantMessageParam;
+    const replayed = create.mock.calls[1][0].messages[1] as OpenAI.ChatCompletionAssistantMessageParam;
     expect(replayed.tool_calls?.map(({ id }) => id)).toEqual(ids);
   });
 
@@ -206,7 +204,7 @@ describe('runAgentLoop', () => {
     // Stored as `{}` so a server that parses the replayed call does not refuse an empty one.
     expect(JSON.stringify(result.messages[1])).toContain('"arguments":"{}"');
     expect(question).toHaveLength(1);
-    expect((create.mock.calls[0][0] as Body).messages[0]).toEqual({
+    expect(create.mock.calls[0][0].messages[0]).toEqual({
       role: Role.System,
       content: 'be brief',
     });
@@ -344,7 +342,7 @@ describe('runAgentLoop', () => {
       onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
     });
     expect(create).toHaveBeenCalledTimes(2);
-    expect((create.mock.calls[1][0] as Body).messages.at(-1)).toEqual({
+    expect(create.mock.calls[1][0].messages.at(-1)).toEqual({
       role: Role.Assistant,
       content: 'half',
     });
@@ -1363,7 +1361,7 @@ describe('runAgentLoop', () => {
         dispatch,
       });
       expect(declared()).toEqual([[LOAD_TOOLS], [LOAD_TOOLS, 's__read'], [LOAD_TOOLS, 's__read']]);
-      const systems = create.mock.calls.map(([body]) => (body as Body).messages[0].content);
+      const systems = create.mock.calls.map(([body]) => body.messages[0].content);
       expect(systems[0]).toContain('sys');
       // The head of the prompt does not move when a tool is loaded, so the cache survives it.
       expect(new Set(systems).size).toBe(1);
@@ -1534,8 +1532,8 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
       });
       expect(declared()).toEqual([['s__read'], [LOAD_TOOLS, 's__read']]);
-      expect((create.mock.calls[0][0] as Body).messages[0].content).toBe('sys');
-      expect((create.mock.calls[1][0] as Body).messages[0].content).toContain('Tool catalogue');
+      expect(create.mock.calls[0][0].messages[0].content).toBe('sys');
+      expect(create.mock.calls[1][0].messages[0].content).toContain('Tool catalogue');
     });
 
     describe('with the preselection appended', () => {
@@ -1547,7 +1545,7 @@ describe('runAgentLoop', () => {
         },
       ];
       const all = [tool('s__list'), tool('s__read'), tool('s__write')];
-      const bodies = () => create.mock.calls.map(([body]) => body as Body);
+      const bodies = () => create.mock.calls.map(([body]) => body);
 
       it('sends the first step the head of every other step', async () => {
         create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}'])).mockReturnValueOnce(says('done'));
@@ -1757,7 +1755,7 @@ describe('runAgentLoop', () => {
         [CALL_TOOL, LOAD_TOOLS],
         [CALL_TOOL, LOAD_TOOLS],
       ]);
-      const bodies = create.mock.calls.map(([body]) => body as Body);
+      const bodies = create.mock.calls.map(([body]) => body);
       expect(JSON.stringify(bodies[2].tools)).toBe(JSON.stringify(bodies[0].tools));
       const systems = bodies.map((body) => body.messages[0].content);
       expect(new Set(systems).size).toBe(1);
@@ -1803,7 +1801,7 @@ describe('runAgentLoop', () => {
         catalog,
         dispatch: async () => 'ok',
       });
-      const sent = (create.mock.calls[0][0] as Body).tools as OpenAI.ChatCompletionFunctionTool[];
+      const sent = create.mock.calls[0][0].tools as OpenAI.ChatCompletionFunctionTool[];
       const call = sent.find((entry) => entry.function.name === CALL_TOOL);
       // Sanitising gives the object an empty property list; without the keyword beside it a
       // grammar-constrained server compiles that to `{}`.
@@ -2003,7 +2001,7 @@ describe('runAgentLoop', () => {
       expect(history).toHaveLength(3);
 
       // The first request already carries it: same head as every later step, no step of its own.
-      const first = create.mock.calls[0][0] as Body;
+      const first = create.mock.calls[0][0];
       expect(first.messages).toEqual([
         { role: Role.System, content: expect.stringContaining('# Tool catalogue') },
         ...history,
@@ -2013,7 +2011,7 @@ describe('runAgentLoop', () => {
         [CALL_TOOL, LOAD_TOOLS],
         [CALL_TOOL, LOAD_TOOLS],
       ]);
-      const second = create.mock.calls[1][0] as Body;
+      const second = create.mock.calls[1][0];
       expect(second.messages.slice(0, 6)).toEqual(first.messages);
 
       // A watcher sees the exchange the transcript holds, before the first turn.
@@ -2206,7 +2204,7 @@ describe('runAgentLoop', () => {
       hooks: { run, context: { session: { id: 's1' } } },
     });
     for (const [body] of create.mock.calls) {
-      const sent = (body as Body).messages;
+      const sent = body.messages;
       expect(sent[2].content).toContain('you like tea');
       expect(sent[0].content).toBe('earlier');
     }
@@ -2239,7 +2237,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: { run, context: { session: { id: 's1' } }, preface },
       });
-      return (create.mock.calls[0][0] as Body).messages[0].content as string;
+      return create.mock.calls[0][0].messages[0].content as string;
     };
     configureHooks({ preface: 'From min-agent:' });
     try {
@@ -2272,7 +2270,7 @@ describe('runAgentLoop', () => {
       expect(fired(run)).toEqual([]);
       expect(result.context).toBe('');
       expect(result.notes).toEqual([]);
-      expect((create.mock.calls[0][0] as Body).messages[0].content).toBe('hi');
+      expect(create.mock.calls[0][0].messages[0].content).toBe('hi');
     });
 
     it('gathers the injecting events it lists in their order, and tells afterTurn where it is listed', async () => {
@@ -2408,7 +2406,7 @@ describe('runAgentLoop', () => {
       });
       await result.afterTurn;
       // The recall is still on the question the second request sends.
-      const second = (create.mock.calls[1][0] as Body).messages;
+      const second = create.mock.calls[1][0].messages;
       expect(second[2].content).toContain('you like tea');
       expect(toldAfter(run)).toMatchObject({
         reply: 'the answer',
@@ -2441,7 +2439,7 @@ describe('runAgentLoop', () => {
       context: { session: { id: 's1' } },
       preface,
     });
-    const sent = (call: number) => (create.mock.calls[call][0] as Body).messages;
+    const sent = (call: number) => create.mock.calls[call][0].messages;
 
     it("hands back what it put on the question, so the next turn's request only appends", async () => {
       create
@@ -2612,7 +2610,7 @@ describe('runAgentLoop', () => {
       beforeStep,
     });
     expect(beforeStep).toHaveBeenCalledTimes(2);
-    expect((create.mock.calls[1][0] as Body).messages[0]).toEqual({
+    expect(create.mock.calls[1][0].messages[0]).toEqual({
       role: Role.User,
       content: 'shorter',
     });
@@ -2818,8 +2816,8 @@ describe('runAgentLoop', () => {
     expect(requests.map((request) => request.step)).toEqual([0, 1]);
     for (const [at, [body]] of create.mock.calls.entries()) {
       // The array itself, catalogue and tool result and all, not a copy of it.
-      expect(requests[at].messages).toBe((body as Body).messages);
-      expect(requests[at].tools).toEqual((body as Body).tools);
+      expect(requests[at].messages).toBe(body.messages);
+      expect(requests[at].tools).toEqual(body.tools);
     }
     expect(requests[0].messages[0].content).toContain('Tool catalogue');
     expect(requests[1].messages.at(-1)).toMatchObject({ role: Role.Tool });
@@ -2858,7 +2856,7 @@ describe('runAgentLoop', () => {
     // Three requests went out for the one step: the refused one, the relaxed one, the continuation.
     expect(create).toHaveBeenCalledTimes(3);
     expect(requests).toHaveLength(1);
-    const [refused, relaxed, continued] = create.mock.calls.map(([body]) => body as Body);
+    const [refused, relaxed, continued] = create.mock.calls.map(([body]) => body);
     expect(requests[0].tools).toEqual(refused.tools);
     expect(requests[0].tools).not.toEqual(relaxed.tools);
     expect(requests[0].messages).toHaveLength(continued.messages.length - 1);
@@ -2943,7 +2941,7 @@ describe('runAgentLoop', () => {
       { id: 's', label: 'S', tools: [{ name: 's__read', description: 'read' }], instructions: 'Read twice.' },
       { id: 'q', label: 'Q', tools: [], instructions: 'Ask Q nothing you can read from S.' },
     ];
-    const systems = () => create.mock.calls.map(([body]) => (body as Body).messages[0].content);
+    const systems = () => create.mock.calls.map(([body]) => body.messages[0].content);
     const run = (overrides: Partial<Parameters<typeof runAgentLoop>[0]>) =>
       runAgentLoop({
         config,

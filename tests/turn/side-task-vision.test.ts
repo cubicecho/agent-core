@@ -1,9 +1,9 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSON_SCHEMA_FORMAT, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
-import { answer } from '../helpers.ts';
+import { answer, type Create } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
@@ -13,8 +13,8 @@ const { ask, askJson } = await import('../../src/turn/side-task.ts');
 const { resetAll } = await import('../../src/runtime/reset.ts');
 
 const config = { baseUrl: 'http://box/v1', apiKey: '', requestTimeoutSeconds: 60 };
-const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
-const userMessage = (nth: number) => (body(nth).messages as OpenAI.ChatCompletionMessageParam[])[1];
+const body = (nth: number) => create.mock.calls[nth][0];
+const userMessage = (nth: number) => body(nth).messages[1];
 
 const page: OpenAI.ChatCompletionContentPart[] = [
   { type: PartType.Text, text: 'Transcribe this page.' },

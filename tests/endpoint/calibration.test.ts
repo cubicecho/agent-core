@@ -5,7 +5,7 @@ import { runTurn } from '../../src/turn/run-turn.ts';
 import { ContextOverflow } from '../../src/wire/retry.ts';
 import { CHARS_PER_TOKEN, requestChars, requestTokens, toolsChars } from '../../src/wire/tokens.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
-import { type Body, chunks, clientOf } from '../helpers.ts';
+import { type Body, type Create, chunks, clientOf } from '../helpers.ts';
 
 const asking = (content: string, model = 'm'): Body => ({
   model,
@@ -100,7 +100,7 @@ describe('calibration', () => {
     // Sized at four, it would have been let through.
     expect(requestTokens(big(), { charsPerToken: charsPerTokenFor(supports(), 'm') })).toBeLessThan(8192);
     const small = asking('x'.repeat(2000));
-    const create = vi.fn().mockReturnValue(reports(promptAt(small, 2)));
+    const create = vi.fn<Create>().mockReturnValue(reports(promptAt(small, 2)));
     await runTurn(clientOf(create), supports(), () => small, { contextLimit: 8192 });
     expect(charsPerTokenFor(supports(), 'm')).toBeCloseTo(2);
     create.mockClear();

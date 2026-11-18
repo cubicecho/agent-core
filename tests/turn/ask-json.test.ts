@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FinishReason, JSON_SCHEMA_FORMAT, SchemaType } from '../../src/wire/wire.ts';
-import { answer, apiError } from '../helpers.ts';
+import { answer, apiError, type Create } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
@@ -20,7 +20,22 @@ const schema = {
   required: ['tools'],
   additionalProperties: false,
 };
-const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
+const body = (nth: number) => create.mock.calls[nth][0];
+
+/**
+ * The schema a request asked its answer to follow.
+ *
+ * @param nth - Which request, counting from 0.
+ * @returns The schema, failing the test where the request asked for no JSON schema.
+ */
+const sentSchema = (nth: number) => {
+  const format = body(nth).response_format;
+  const isOtherFormat = format?.type !== JSON_SCHEMA_FORMAT;
+  if (isOtherFormat) {
+    throw new Error(`Request ${nth} asked for no JSON schema. It sent: ${JSON.stringify(format)}`);
+  }
+  return format.json_schema.schema;
+};
 
 afterEach(() => {
   create.mockReset();
@@ -38,7 +53,7 @@ describe('askJson', () => {
       type: JSON_SCHEMA_FORMAT,
       json_schema: { name: 'pick', strict: true, schema },
     });
-    const [system] = body(0).messages as { content: string }[];
+    const [system] = body(0).messages;
     expect(system.content).toContain('Pick.');
     expect(system.content).toContain('"required":["tools"]');
   });
@@ -88,15 +103,13 @@ describe('askJson', () => {
     capabilitiesFor(config.baseUrl, config.apiKey).strictSchemas = false;
     create.mockResolvedValue(answer('{"tools": []}'));
     await askJson(config, 'm', 's', 'u', schema);
-    const sent = (body(0).response_format as { json_schema: { schema: unknown } }).json_schema;
-    expect(JSON.stringify(sent.schema)).not.toContain('pattern');
+    expect(JSON.stringify(sentSchema(0))).not.toContain('pattern');
   });
 
   it("normalises the root the way a tool's parameters are", async () => {
     create.mockResolvedValue(answer('no json here'));
     const reply = await askJson(config, 'm', 's', 'u', { properties: {} });
     expect(reply).toBeUndefined();
-    const sent = (body(0).response_format as { json_schema: { schema: unknown } }).json_schema;
-    expect(sent.schema).toMatchObject({ type: SchemaType.Object, properties: {} });
+    expect(sentSchema(0)).toMatchObject({ type: SchemaType.Object, properties: {} });
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiError, reply } from '../helpers.ts';
+import { apiError, type Create, reply } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),

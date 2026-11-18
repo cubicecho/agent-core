@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogServer } from '../../src/tools/catalog.ts';
 import { MAX_PER_LOAD } from '../../src/tools/tool-loading.ts';
 import { JSON_SCHEMA_FORMAT } from '../../src/wire/wire.ts';
-import { catalog, config } from '../helpers.ts';
+import { type Create, catalog, config } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiError, reply } from '../helpers.ts';
+import { apiError, type Create, reply } from '../helpers.ts';
 import { NO_EFFORT, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from '../refusals.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /**
  * The SDK-touching half of the client module, replaced. Partial rather than whole: the rest of
  * it is pure — `endpointKey` is what every cache in this package agrees an endpoint is — and a
@@ -30,7 +30,7 @@ const NO_EFFORT_NONE = apiError(
 );
 
 /** What the nth call actually put in the body. */
-const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
+const body = (nth: number) => create.mock.calls[nth][0];
 
 describe('no-thinking hints', () => {
   // The latch outlives a test as surely as the mock does. Without this the suite only passed
@@ -252,7 +252,7 @@ describe('what the model refuses', () => {
     await expect(call(endpoint('http://vllm/v1'), 'qwen')).resolves.toBe('ok');
     expect(create).toHaveBeenCalledTimes(2);
     expect(body(1)).not.toHaveProperty('reasoning_effort');
-    expect(body(1).chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body(1)).toHaveProperty('chat_template_kwargs', { enable_thinking: false });
   });
 
   it('asks for the cheapest effort the model offers when it will not take none', async () => {
@@ -306,7 +306,7 @@ describe('what the model refuses', () => {
     }
     for (const nth of [0, 1, 2]) {
       expect(body(nth).reasoning_effort).toBe('none');
-      expect(body(nth).chat_template_kwargs).toEqual({ enable_thinking: false });
+      expect(body(nth)).toHaveProperty('chat_template_kwargs', { enable_thinking: false });
     }
   });
 

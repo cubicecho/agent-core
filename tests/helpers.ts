@@ -24,6 +24,14 @@ export type Chunk = OpenAI.ChatCompletionChunk;
 export type Message = OpenAI.ChatCompletionMessageParam;
 
 /**
+ * The SDK's `chat.completions.create` as the code calls it, which every fake of it is typed as.
+ *
+ * The body is either kind, since a side task asks without streaming. What the fake answers is left
+ * to the test: the SDK promises a whole stream or completion, which no test builds.
+ */
+export type Create = (body: OpenAI.ChatCompletionCreateParams, options?: OpenAI.RequestOptions) => unknown;
+
+/**
  * A client whose only working part is `chat.completions.create`.
  *
  * @param create - What answers a request: it is handed the body and the request's options.
