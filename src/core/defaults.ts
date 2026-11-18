@@ -76,6 +76,29 @@ export const MODEL_SERVER_DEFAULTS: Readonly<ModelServerSettings> = Object.freez
   loadingTimeoutSeconds: 120,
 });
 
+/** Resending a request that was lost: how long to wait between attempts. */
+export interface RetrySettings {
+  /** The first backoff, in milliseconds, before jitter. */
+  firstBackoffMs: number;
+  /** The longest a backoff grows to, in milliseconds, before jitter. */
+  maxBackoffMs: number;
+  /** What each attempt after the first multiplies the backoff by. */
+  growthPerAttempt: number;
+  /**
+   * The least of a backoff that jitter leaves: a wait is somewhere between this share of it and
+   * all of it, so several tasks failing at once do not return in lockstep.
+   */
+  jitterFloorShare: number;
+}
+
+/** The backoff `backoffMs` was written with. */
+export const RETRY_DEFAULTS: Readonly<RetrySettings> = Object.freeze({
+  firstBackoffMs: 500,
+  maxBackoffMs: 8000,
+  growthPerAttempt: 2,
+  jitterFloorShare: 0.5,
+});
+
 /** Sizing a request against the context window, with no tokenizer to hand. */
 export interface RequestSizeSettings {
   /**
@@ -379,29 +402,6 @@ export interface TokenLedgerSettings {
 /** How the ledger tells a kept cache from a broken one. */
 export const TOKEN_LEDGER_DEFAULTS: Readonly<TokenLedgerSettings> = Object.freeze({
   cacheKeptShare: 0.9,
-});
-
-/** Resending a request that was lost: how long to wait between attempts. */
-export interface RetrySettings {
-  /** The first backoff, in milliseconds, before jitter. */
-  firstBackoffMs: number;
-  /** The longest a backoff grows to, in milliseconds, before jitter. */
-  maxBackoffMs: number;
-  /** What each attempt after the first multiplies the backoff by. */
-  growthPerAttempt: number;
-  /**
-   * The least of a backoff that jitter leaves: a wait is somewhere between this share of it and
-   * all of it, so several tasks failing at once do not return in lockstep.
-   */
-  jitterFloorShare: number;
-}
-
-/** The backoff `backoffMs` was written with. */
-export const RETRY_DEFAULTS: Readonly<RetrySettings> = Object.freeze({
-  firstBackoffMs: 500,
-  maxBackoffMs: 8000,
-  growthPerAttempt: 2,
-  jitterFloorShare: 0.5,
 });
 
 /**
