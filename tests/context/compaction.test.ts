@@ -514,6 +514,19 @@ describe('compactTranscript', () => {
     });
   });
 
+  it("still folds when the host's onNote throws, whether or not it honours a veto", async () => {
+    const run: HookRunner = async () => [outcome({ event: HookEvent.BeforeCompact, ok: false, error: 'down' })];
+    const onNote = () => {
+      throw new Error('onNote blew up');
+    };
+    for (const honourVeto of [false, true]) {
+      const out = await compactTranscript(messages, plan, async () => 'notes', {
+        hooks: { run, context: { session: { id: 's' } }, onNote, honourVeto },
+      });
+      expect(out.slice(1, 3)).toEqual(summarised('notes'));
+    }
+  });
+
   it('folds nothing on an empty summary', async () => {
     expect(await compactTranscript(messages, plan, async () => '  ')).toBe(messages);
   });

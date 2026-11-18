@@ -356,6 +356,31 @@ describe('notify', () => {
   });
 });
 
+describe("a host's onNote that throws", () => {
+  const failing: HookRunner = async () => [
+    outcome({ hookId: 'one', ok: false, error: 'down' }),
+    outcome({ hookId: 'two', ok: false, error: 'down' }),
+  ];
+  const throwing = (heard: string[]) => (note: { hookId: string }) => {
+    heard.push(note.hookId);
+    throw new Error('onNote blew up');
+  };
+
+  it('does not make notify reject, and every note still reaches it', async () => {
+    const heard: string[] = [];
+    const notes = await notify(failing, HookEvent.AfterTurn, { session: { id: 's1' } }, throwing(heard));
+    expect(notes.map((note) => note.hookId)).toEqual(['one', 'two']);
+    expect(heard).toEqual(['one', 'two']);
+  });
+
+  it('does not make consult reject, and every note still reaches it', async () => {
+    const heard: string[] = [];
+    const said = await consult(failing, HookEvent.BeforeCompact, { session: { id: 's1' } }, throwing(heard));
+    expect(said.vetoed).toBe(false);
+    expect(heard).toEqual(['one', 'two']);
+  });
+});
+
 describe('consult', () => {
   it('notes failures and vetoes, and reads a veto only off a hook that ran', async () => {
     const run = vi.fn<HookRunner>(async () => [

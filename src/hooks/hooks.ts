@@ -539,6 +539,21 @@ const runSafely = (run: HookRunner, event: HookEvent, context: HookContext, sign
     .catch((error: unknown) => [rejected(event, error)]);
 
 /**
+ * Hands each note to a host's `onNote`, for the callers that promise never to reject.
+ *
+ * @param notes - What to tell, in order.
+ * @param [onNote] - The host's listener. A throw on one note is dropped, and the next note is still told.
+ */
+const tellSafely = (notes: readonly HookNote[], onNote?: OnNote) => {
+  for (const note of notes) {
+    // The listener is the only place a failure here could be reported, so it goes unsaid.
+    try {
+      onNote?.(note);
+    } catch {}
+  }
+};
+
+/**
  * Runs the hooks ahead of a request and builds what they add to it.
  *
  * @param run - Runs one event's hooks.
@@ -582,7 +597,8 @@ export async function gather(
  * @param event - `afterTurn`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
  * works too, but what its hooks return is dropped, since there is no request here to add it to.
  * @param context - What the hooks are told.
- * @param [onNote] - Hears each note — which, with nothing injected, is only ever a failure.
+ * @param [onNote] - Hears each note — which, with nothing injected, is only ever a failure. One it
+ * throws on is dropped.
  * @returns The same notes.
  *
  * @remarks
@@ -598,9 +614,7 @@ export async function notify(
 ): Promise<HookNote[]> {
   const outcomes = await runSafely(run, event, context);
   const notes = outcomes.filter((outcome) => !outcome.ok).map(failureNote);
-  for (const note of notes) {
-    onNote?.(note);
-  }
+  tellSafely(notes, onNote);
   return notes;
 }
 
@@ -611,7 +625,8 @@ export async function notify(
  * @param run - Runs the event's hooks.
  * @param event - What is about to happen. Only `beforeCompact` has anything a veto can stop.
  * @param context - What the hooks are told.
- * @param [onNote] - Hears each note: every failure, and every veto, naming the hook that made it.
+ * @param [onNote] - Hears each note: every failure, and every veto, naming the hook that made it. One
+ * it throws on is dropped.
  * @returns The same notes, and `vetoed` when any `ok` outcome carried `veto`.
  *
  * @remarks
@@ -635,8 +650,6 @@ export async function consult(
       notes.push({ ...noteOf(outcome), veto: true });
     }
   }
-  for (const note of notes) {
-    onNote?.(note);
-  }
+  tellSafely(notes, onNote);
   return { notes, vetoed: notes.some((note) => note.veto) };
 }
