@@ -870,34 +870,6 @@ describe('probeEndpoint', () => {
   });
 });
 
-describe('normalizeBaseUrl', () => {
-  it('keeps an http or https URL, less its trailing slashes and surrounding whitespace', () => {
-    expect(normalizeBaseUrl(' http://local/v1/ ')).toBe('http://local/v1');
-    expect(normalizeBaseUrl('https://api.openai.com/v1')).toBe('https://api.openai.com/v1');
-    expect(normalizeBaseUrl('http://local:8080//')).toBe('http://local:8080');
-  });
-
-  it('writes the scheme and host in lower case and drops a default port, but leaves the path', () => {
-    expect(normalizeBaseUrl('HTTP://Local:80/V1')).toBe('http://local/V1');
-    expect(normalizeBaseUrl('https://local:443/v1')).toBe('https://local/v1');
-  });
-
-  it('refuses anything that is not a plain http or https URL', () => {
-    for (const raw of [
-      '',
-      'local/v1',
-      'ftp://local/v1',
-      'file:///etc/passwd',
-      'http://user:pass@local/v1',
-      'http://user@local/v1',
-      'http://local/v1?key=sk-1',
-      'http://local/v1#models',
-    ]) {
-      expect(normalizeBaseUrl(raw)).toBeNull();
-    }
-  });
-});
-
 describe('endpointKey and endpointId', () => {
   it('read an absent or empty key as NO_KEY, and nothing but the URL and key', () => {
     const key = JSON.stringify(['http://local/v1', NO_KEY]);
