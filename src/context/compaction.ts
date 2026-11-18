@@ -183,6 +183,9 @@ export interface PruneOptions {
   maxChars?: number;
 }
 
+/** How a pruned tool result's stub opens, which is also how a prune knows not to clear it again. */
+const PRUNED_LEAD = '[result cleared';
+
 /**
  * The transcript with every tool result but the latest few replaced by a one-line stub.
  *
@@ -216,7 +219,7 @@ export function pruneToolResults(
       continue;
     }
     const text = textOf(message.content);
-    if (text.length <= maxChars || text.startsWith('[result cleared')) {
+    if (text.length <= maxChars || text.startsWith(PRUNED_LEAD)) {
       continue;
     }
     // A proxied load's result is the schema itself; stubbed, the tool is one the model can still
@@ -227,7 +230,7 @@ export function pruneToolResults(
     out ??= [...messages];
     out[at] = {
       ...message,
-      content: `[result cleared, ${text.length.toLocaleString(COUNT_LOCALE)} chars]`,
+      content: `${PRUNED_LEAD}, ${text.length.toLocaleString(COUNT_LOCALE)} chars]`,
     };
   }
   return out ?? messages;
