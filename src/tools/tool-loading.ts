@@ -105,16 +105,11 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
  * caller separates it from its own prompt. Empty where there is nothing to list.
  *
  * @remarks
- * `runAgentLoop` passes no `loaded`, so the block is the same text on every turn. The system
- * prompt is the head of the request, and marking each load there threw away the prompt cache for
- * the whole transcript on every `load_tools` call. What is loaded is said where it does not move
- * the prefix instead: in the tool array, appended in load order (`loadedTools`), and in the
- * `load_tools` result, which answers a repeat load with "already loaded" (`loadResult`).
- *
- * Loaded tools are never removed from the list. That reads as the tool having vanished the moment
- * it was loaded, and the model loads again to get it back; hoisting them into a separate "already
- * loaded" section splits a server's tools apart, and the model picks a sibling from the longer
- * list instead.
+ * `runAgentLoop` passes no `loaded`, so the block is the same text on every turn and a load never
+ * rewrites the head of the request; what is loaded is said in the tool array (`loadedTools`) and the
+ * `load_tools` result (`loadResult`) instead. Loaded tools are never removed from the list or
+ * hoisted into a section of their own, since a model reads either as the tool vanishing and loads
+ * it again or picks a sibling.
  */
 export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
   const list = catalogList(catalog, loaded);
@@ -346,12 +341,8 @@ export function expandNames(requested: string[], catalog: CatalogServer[], maxPe
     // model that is meant to be choosing from twelve. Already-matched names are free, so a
     // name that only repeats an earlier one never spends budget.
     const fresh = hits.filter((hit) => !matched.has(hit));
-    // Two different refusals, and answering both with "narrow it down" made one of them
-    // impossible to act on. A name that would not fit an empty call is over-broad, and the
-    // names are what the model needs. A name that only does not fit *this* call is precise
-    // enough already — telling a model that asked for one exact tool that it matches one tool,
-    // "more than the twelve one call may load", and to choose from a list holding just that
-    // name, leaves it nothing to do but send the identical call again.
+    // Two refusals: a name too broad for an empty call needs its matches listed, and a precise name
+    // that only does not fit this call is deferred, since "narrow it down" would leave it nothing to do.
     if (fresh.length > maxPerLoad) {
       overBroad.push({ name, hits });
     } else if (matched.size + fresh.length > maxPerLoad) {

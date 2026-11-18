@@ -244,22 +244,12 @@ export interface KeywordPreselectOptions {
  * or nothing scored.
  *
  * @remarks
- * A preselection call costs a round trip to a model that is being asked to do term matching, and
- * on a local box that is seconds before the exchange has started. For a catalogue of a few dozen
- * tools the words usually decide it: a request that says "commit" and a tool called `git__commit`
- * need no reasoning to connect.
- *
- * BM25 rather than counting shared words, because the ranking has to survive the words every tool
- * uses. "list", "get" and "file" are in half the descriptions in a real catalogue, and a plain
- * overlap count hands the top of the ranking to whichever tool has the longest description. The
- * inverse document frequency makes a term worth what it distinguishes, and the length
- * normalisation stops a wordy description from outscoring the tool actually named.
- *
- * `confident` is what a caller acts on, and it is deliberately hard to earn: something more
- * distinctive than a word the whole catalogue shares has to have matched, and the tools left
- * unpicked have to score well below the ones picked. Anything else is ambiguous, and ambiguous is
- * what the model is for. Nothing matching is not confident either — the words cannot tell "this
- * request needs no tools" from "these words are not in the catalogue".
+ * A preselection call costs a model round trip, seconds on a local box, for what is often term
+ * matching: "commit" and `git__commit` need no reasoning to connect. BM25 rather than a count of
+ * shared words, so a word every tool uses is worth only what it distinguishes and a wordy
+ * description does not outscore the tool actually named. `confident` is deliberately hard to earn —
+ * a distinctive word has to match and the unpicked tools have to score well below the picked — since
+ * ambiguous is what the model is for (README, "What the servers say about themselves").
  */
 export function preselectByKeywords(
   catalog: CatalogServer[],

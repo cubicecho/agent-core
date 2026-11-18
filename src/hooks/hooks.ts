@@ -382,22 +382,12 @@ const UUID_DIGEST_CHARS = 12;
  * transcript order. Empty when there is none.
  *
  * @remarks
- * Tool calls and their results are left out. They are the model's working rather than the
- * conversation, and most of a transcript's characters; a memory server that filed them would
- * recall a directory listing ahead of the decision it led to.
- *
- * The uuid is the session, the position and a digest of what was said. Position alone is not stable
- * — a retry cuts the transcript back and writes a new answer at the same index, and a server
- * deduping on it would keep the answer that was thrown away — and text alone would make two
- * identical "ok"s one memory. The same message sent twice, after its exchange and again when it is
- * compacted, is one.
- *
- * That position is the array's, which is the app's only while the two agree. Once a compaction has
- * replaced the head of a request with one summary message, the same message sits at a lower index
- * there than it does in a transcript the app kept whole — so the same exchange, sent after it and
- * again when it is compacted, would arrive under two uuids and be remembered twice. `offset` is
- * what puts the numbering back on the app's own indexes; passing the stored transcript rather than
- * the request avoids the question entirely.
+ * Tool calls and their results are left out: they are the model's working and most of the
+ * characters, and a memory server filing them would recall a directory listing ahead of the
+ * decision it led to. The uuid is the session, the position and a digest of the text, so an answer
+ * a retry replaced at the same index is a new memory, two identical "ok"s are two, and the same
+ * message sent twice is one. The position is the array's, so once a compaction has shifted a
+ * request, `offset` puts the numbering back on the app's own indexes.
  */
 export function turnMessages(
   sessionId: string,
