@@ -101,7 +101,9 @@ export function normalizeBaseUrl(raw: string): string | null {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return null;
   }
-  if (url.username || url.password || url.search || url.hash) {
+  const hasCredentials = url.username !== '' || url.password !== '';
+  const hasQueryOrFragment = url.search !== '' || url.hash !== '';
+  if (hasCredentials || hasQueryOrFragment) {
     return null;
   }
   return url.toString().replace(/\/+$/, '');

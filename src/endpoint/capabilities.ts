@@ -397,7 +397,8 @@ export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
   let dropped = 0;
   for (const known of capabilities.copies()) {
     for (const [id, supports] of known) {
-      if (now - supports.since < maxAgeMs) {
+      const isFresh = now - supports.since < maxAgeMs;
+      if (isFresh) {
         continue;
       }
       known.delete(id);
@@ -665,8 +666,8 @@ export const ceilingAndTemperature = (
   maxTokens: number | undefined,
   temperature: number | undefined,
 ) => {
-  const ceiling =
-    refused?.legacyTokenLimit === false ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+  const refusesMaxTokens = refused?.legacyTokenLimit === false;
+  const ceiling = refusesMaxTokens ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
   const isTemperatureSent = temperature !== undefined && refused?.chosenTemperature !== false;
   return {
     ...(isPositive(maxTokens) ? ceiling : {}),

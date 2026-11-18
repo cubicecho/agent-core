@@ -752,7 +752,8 @@ async function readSlots(config: Endpoint & { model: string }, within: AbortSign
   }
   const key = modelKey(endpoint, config.model);
   const known = slotCounts(config.fetch).get(key);
-  if (known && (known.gone || isAnswerFresh(known.at))) {
+  const answerStands = known && (known.gone || isAnswerFresh(known.at));
+  if (answerStands) {
     return known.slots;
   }
   try {
@@ -925,7 +926,8 @@ export async function probeEndpoint(
   }
   const { status } = response;
   // A browser hands a refused redirect back as an opaque response with status zero.
-  if (response.type === 'opaqueredirect' || (status >= REDIRECT_MIN && status <= REDIRECT_MAX)) {
+  const isRedirect = response.type === 'opaqueredirect' || (status >= REDIRECT_MIN && status <= REDIRECT_MAX);
+  if (isRedirect) {
     const location = response.headers.get('location');
     throw new EndpointProbeError(
       ProbeFailure.Redirected,
@@ -943,7 +945,8 @@ export async function probeEndpoint(
       status,
     );
   }
-  if (response.ok === false) {
+  const requestFailed = response.ok === false;
+  if (requestFailed) {
     throw new EndpointProbeError(
       ProbeFailure.Failed,
       `${url.origin} answered ${status} when asked for its models.`,
@@ -1021,7 +1024,8 @@ export async function contextLimitFor(
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the model server is asked, and a caller sizing a context window per turn pays a
     // round trip for each of them; `listingMissMs` is how long that answer is allowed to stand.
-    if (asked === undefined || isAnswerFresh(asked) === false) {
+    const shouldAskAgain = asked === undefined || isAnswerFresh(asked) === false;
+    if (shouldAskAgain) {
       // A failure is not remembered: a model server that was down when the last exchange started is
       // not a model server with no models, and a context window nobody could ask about is not a
       // failed exchange.
@@ -1113,7 +1117,8 @@ export function resolveApiKey(
     return own.apiKey;
   }
   const baseUrl = own.baseUrl?.trim();
-  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) {
+  const isOtherServer = inherited && baseUrl && sameUrl(baseUrl, inherited.baseUrl) === false;
+  if (isOtherServer) {
     return NO_KEY;
   }
   return inherited?.apiKey || env.OPENAI_API_KEY || NO_KEY;
