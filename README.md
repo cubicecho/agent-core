@@ -622,7 +622,9 @@ card and fills it in when the result lands hears of those through `onToolCall` a
 which are told of every call the model made — the request as `dispatch` would have been handed it
 (with empty `args` where they could not be read), then `{ id, name, ok, content }` with the whole
 text the model reads. A repeat gets a result of its own under its own id, carrying the answer it
-shares. Neither is awaited. The `tool-call` and `tool-result` events carry the same `id`, with
+shares. Neither is awaited. A handed-back call is told at the end of its step, with no result to
+follow; a call stopped part-way gets no result, and one never run, or handed back in a step another
+call ended, is not told at all. The `tool-call` and `tool-result` events carry the same `id`, with
 `text` still cut by `preview`, and so does each entry of the result's `toolCalls` — which is what
 tells two calls to one tool apart when `parallel` lands their results out of order. An id is
 distinct across the transcript (`distinctCallIds`), except on a remote agent, whose ids are kept as

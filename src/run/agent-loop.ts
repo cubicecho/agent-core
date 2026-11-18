@@ -259,7 +259,10 @@ export interface StepWindow {
    * since.
    */
   used?: number;
-  /** The model's window, `config.contextLength`. Zero where the config names none. */
+  /**
+   * The model's window, `config.contextLength`. Zero where the config names none, and on a
+   * remote agent.
+   */
   limit: number;
   /** The run's ledger so far, indexed into the transcript `beforeStep` is handed beside it. */
   ledger: TokenLedger;
@@ -286,7 +289,7 @@ export interface AgentLoopOptions {
    * naming a model, `preselect` asks `model` itself; `compact` never does.
    *
    * `remoteAgent: true` (`RemoteAgentParams`) says the model is a remote agent, which runs its own
-   * loop: see `runAgentLoop`.
+   * loop, and `contextLength` is then read as zero: see `runAgentLoop`.
    */
   config: Endpoint &
     (ModelParams | RemoteAgentParams) &
@@ -498,7 +501,8 @@ export interface AgentLoopOptions {
    *
    * @remarks
    * Results go into the transcript in the order the model asked, whichever way they ran. See
-   * `dedupeToolCalls`, which applies either way.
+   * `dedupeToolCalls`, which applies either way. Under `singleCallMessages`, or once the model has
+   * refused several calls in one message, a step's calls run one at a time whatever this says.
    *
    * A predicate is how a host runs reads together while its writes keep their order: a call it
    * fails is a barrier, waiting for every call before it, and every call after waits for it. Read
@@ -511,8 +515,8 @@ export interface AgentLoopOptions {
    */
   parallel?: boolean | ((call: ToolCallRequest) => boolean);
   /**
-   * Answers an identical repeat of a call — the same name and the same arguments, word for word —
-   * within one step from the first one, rather than dispatching it again.
+   * Answers an identical repeat of a call — the same name, and the same arguments once read and
+   * written back as JSON — within one step from the first one, rather than dispatching it again.
    *
    * @defaultValue `true`
    *
@@ -521,7 +525,8 @@ export interface AgentLoopOptions {
    * question twice in one reply gets one answer, and two that are still in flight share the
    * request. A call that threw is not an answer and is made again. The scope is the step and not
    * the run, because between steps other tools have run and the file the model read may be the
-   * file it has since written.
+   * file it has since written. Whitespace and a repaired argument do not tell two calls apart, but
+   * the order of their keys does.
    *
    * `false` dispatches every call. A predicate is asked per call and is how a tool that does
    * something rather than reads something opts out — `send_email` twice is two emails, and this
@@ -569,16 +574,19 @@ export interface AgentLoopOptions {
    *
    * @remarks
    * For a host that shows each call as it is made and fills it in when its result lands, which
-   * `dispatch` alone cannot do for those three. Not awaited: a promise it returns is dropped.
+   * `dispatch` alone cannot do for those three. A handed-back call is told at the end of its step;
+   * one handed back in a step another call ended, and one the step never got to, are not told.
+   * Not awaited: a promise it returns is dropped.
    */
   onToolCall?: (call: ToolCallRequest) => void;
   /**
    * Told of every call's answer as it lands, whole, under the id `onToolCall` announced it by.
    *
    * @remarks
-   * One per call the model made: a deduplicated repeat gets its own, carrying the answer it
-   * shares with the first. With `parallel` they arrive as the calls finish, which need not be
-   * the order they were made in; the transcript and the result's `toolCalls` keep that order.
+   * One per call that came back: a deduplicated repeat gets its own, carrying the answer it shares
+   * with the first. A handed-back call gets none, and neither does a call stopped part-way or never
+   * run. With `parallel` they arrive as the calls finish, which need not be the order they were
+   * made in; the transcript and the result's `toolCalls` keep that order.
    * Not awaited: a promise it returns is dropped.
    */
   onToolResult?: (result: ToolCallResult) => void;
@@ -658,8 +666,8 @@ export interface AgentLoopOptions {
   /**
    * Takes tool calls a model wrote into its reply as text and runs them as calls, with a notice
    * saying so. A server whose tool-call parser does not match the model's template otherwise ends
-   * the run on a reply that is only a call nobody made. Off leaves such a reply as the answer. See
-   * `recoverToolCalls`.
+   * the run on a reply that is only a call nobody made. Off leaves such a reply as the answer, and
+   * so does a `remoteAgent` config whatever this says. See `recoverToolCalls`.
    *
    * @defaultValue `true`
    */
@@ -667,7 +675,7 @@ export interface AgentLoopOptions {
   /**
    * Makes up the id of a call nobody gave one: a streamed call the server sent without an id, a call
    * recovered from text, and a proxied run's preselected load. A server's id is kept as sent unless
-   * the transcript already uses it.
+   * the transcript already uses it, and always on a remote agent.
    *
    * @defaultValue `mintCallId`, nine random characters from `[A-Za-z0-9]`
    *
@@ -689,6 +697,8 @@ export interface AgentLoopOptions {
    * is waiting on the id that comes back — since many servers count ids from zero on every turn.
    * The id is given before the assistant message is stored, so the transcript, the `tool-call`
    * and `tool-result` events, `onToolCall`, `onToolResult` and `toolCalls` all carry it.
+   * Ignored on a `remoteAgent` config, whose ids are kept as sent because the server resumes its
+   * run by them.
    */
   callIds?: CallIds;
   /**
@@ -789,8 +799,9 @@ export interface AgentLoopResult {
    */
   usage: LoopUsage;
   /**
-   * Every call, `load_tools` included, in the order they were made, each under its call id — a
-   * proxied preselection's among them, first.
+   * Every call that was run, `load_tools` included, in the order they were made, each under its
+   * call id — a proxied preselection's among them, first. A handed-back call is not in it: one
+   * still waiting is in `pending`.
    */
   toolCalls: ToolCallOutcome[];
   /**
