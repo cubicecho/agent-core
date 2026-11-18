@@ -222,7 +222,7 @@ export function configureClients(options: ClientPoolOptions = {}): Required<Clie
 }
 
 /** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
-export const FIRST_TOKEN_FACTOR = 5;
+const FIRST_TOKEN_FACTOR = 5;
 
 /**
  * The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.

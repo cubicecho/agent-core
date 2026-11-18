@@ -177,7 +177,7 @@ function askingProgress(extraBody: Record<string, unknown>, field: string): Reco
 }
 
 /** How `remoteRun` reads and asks for the server's progress. */
-export interface RemoteRunOptions {
+interface RemoteRunOptions {
   /**
    * The field the server's progress travels under.
    *
@@ -193,7 +193,7 @@ export interface RemoteRunOptions {
 }
 
 /** What a run on a remote agent adds to each step of `runAgentLoop`. */
-export interface RemoteRun {
+interface RemoteRun {
   /** The config's `extraBody` with progress asked for, unless the host turned it off. */
   extraBody: Record<string, unknown>;
   /** The loop's own events: those the server's progress already says are left out. */

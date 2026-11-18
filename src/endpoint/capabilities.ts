@@ -158,7 +158,7 @@ export interface ModelCapabilities {
 }
 
 /** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
-export type ModelFlag = {
+type ModelFlag = {
   [Key in keyof ModelCapabilities]-?: ModelCapabilities[Key] extends boolean ? Key : never;
 }[keyof ModelCapabilities];
 

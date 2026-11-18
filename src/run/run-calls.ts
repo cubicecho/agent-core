@@ -124,7 +124,7 @@ export function formatToolError(error: unknown): string {
 }
 
 /** One of a turn's calls with its arguments read, or with the reason they could not be. */
-export interface ReadCall {
+interface ReadCall {
   call: ToolCall;
   /** Absent where the arguments could not be read. */
   args?: Record<string, unknown>;
@@ -778,7 +778,7 @@ function prepare(run: Calling, entry: ReadCall): Prepared {
 }
 
 /** One call of a step handed back to the host: the call as read, and the request the host is handed. */
-export interface HandedBack {
+interface HandedBack {
   entry: ReadCall;
   request: ToolCallRequest;
 }
