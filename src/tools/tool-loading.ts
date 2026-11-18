@@ -343,9 +343,11 @@ export function expandNames(requested: string[], catalog: CatalogServer[], maxPe
     const fresh = hits.filter((hit) => !matched.has(hit));
     // Two refusals: a name too broad for an empty call needs its matches listed, and a precise name
     // that only does not fit this call is deferred, since "narrow it down" would leave it nothing to do.
-    if (fresh.length > maxPerLoad) {
+    const isOverBroad = fresh.length > maxPerLoad;
+    const overfillsThisCall = matched.size + fresh.length > maxPerLoad;
+    if (isOverBroad) {
       overBroad.push({ name, hits });
-    } else if (matched.size + fresh.length > maxPerLoad) {
+    } else if (overfillsThisCall) {
       deferred.push(name);
     } else {
       for (const hit of hits) {

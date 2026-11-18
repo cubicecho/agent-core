@@ -152,7 +152,9 @@ export function exportCapabilities(through: Pick<Endpoint, 'fetch'> = {}): Capab
         models[name] = model;
       }
     }
-    if (!supports.strictSchemas || !supports.usageInStream || Object.keys(models).length) {
+    const hasRefusal =
+      supports.strictSchemas === false || supports.usageInStream === false || Object.keys(models).length > 0;
+    if (hasRefusal) {
       endpoints[id] = {
         strictSchemas: supports.strictSchemas,
         usageInStream: supports.usageInStream,

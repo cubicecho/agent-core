@@ -183,9 +183,10 @@ const terms = (text: string): string[] =>
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((word) => word.length > 1 && !NOISE.has(word))
-    .map((word) =>
-      word.length > SHORTEST_PLURAL && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word,
-    );
+    .map((word) => {
+      const isPlural = word.length > SHORTEST_PLURAL && word.endsWith('s') && word.endsWith('ss') === false;
+      return isPlural ? word.slice(0, -1) : word;
+    });
 
 /** One tool's score against a request. */
 export interface ToolMatch {
