@@ -98,7 +98,8 @@ describe('handBack', () => {
     expect(callIds(result.messages[1])).toEqual(['c0', 'c2', 'c1']);
     expect(answered(result.messages)).toEqual(['c0', 'c2']);
     expect(result.toolCalls.map((call) => call.id)).toEqual(['c0', 'c2']);
-    expect(result.used).toEqual(['s__read', 's__write', 'ask_person']);
+    // Only what the loop dispatched: the handed-back call is the host's to run.
+    expect(result.used).toEqual(['s__read', 's__write']);
     expect(result.turn.toolCalls.map((call) => call.id)).toEqual(['c0', 'c1', 'c2']);
   });
 

@@ -1128,8 +1128,9 @@ export async function runCalls(
       }
       return { ended, pending: [] };
     }
+    // Told as made, but not counted as used: nothing ran them, and the run that answers them
+    // counts its own.
     for (const { request } of back) {
-      markUsed(run, request.name);
       announceCall(run, request);
     }
     return { pending: back.map(({ request }) => request) };

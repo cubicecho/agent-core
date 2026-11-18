@@ -887,7 +887,8 @@ if (result.pending) {
 ```
 
 The step's other calls still run first, and are answered as usual; the handed-back ones are not
-dispatched, get no result and no `tool-result` event, and the loop sends nothing after the step.
+dispatched, get no result and no `tool-result` event, are not counted in `used`, and the loop sends
+nothing after the step.
 Each is told as a `tool-call` event and to `onToolCall`, then one `wait` event says the run is
 waiting. `wait` is not `done`: the run goes on under the same id, and `watch` keeps following it.
 `metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The `afterTurn`
@@ -900,6 +901,10 @@ tool message per pending call, in `pending` order, answers every call in its ord
 that pairs calls with results by position (Qwen, GLM, DeepSeek V3.2) reads that right. Written one
 call a message, the handed-back calls share one assistant message after the pairs, which
 `oneCallPerMessage` splits once their answers follow it.
+
+A host that finds the waiting run by the id an answer comes back with, across many runs, passes
+`callIds: 'minted'` as well: a server that counts its ids from zero gives two waiting runs the same
+`call_0`, and a minted id is unique wherever it is handed out.
 
 - **`parallel`.** A handed-back call is never put to the predicate and is no barrier: it does not
   run. A call the model asked for after it runs before the host has answered it.
