@@ -1,3 +1,10 @@
+## [6.0.1](https://github.com/cubicecho/agent-core/compare/v6.0.0...v6.0.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **spec:** a prompt part's text or reference replaces the one below it (B39) ([ea0850b](https://github.com/cubicecho/agent-core/commit/ea0850bbd40c1fb1ad166ee092f8db06d15f3120))
+
 # [6.0.0](https://github.com/cubicecho/agent-core/compare/v5.0.0...v6.0.0) (2026-11-18)
 
 
