@@ -370,7 +370,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   takes between turns. Owner: `AgentLoopOptions.takeInput`, `RunEventKind.Input`.
 - **Before-turn rewrite:** the app's chance to replace the transcript before a turn. Owner:
   `AgentLoopOptions.beforeTurn`, `TurnWindow`.
-- **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`.
+- **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`; its
+  `afterExchange` is the `afterExchange` hooks' notes, as a promise the loop does not wait for.
 - **Outcome:** how an exchange ended: answered, cut short, filtered, ended, waiting, or (as events
   tell it) failed or stopped. A run's outcome is told in the same words, read off its events.
   Owner: `ExchangeOutcome` (`src/run/events.ts`), decided by `exchangeOutcome`; a run's is

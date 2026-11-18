@@ -643,7 +643,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     ]);
     expect(compacting.compacting[0].uuid).toMatch(/^s:41:/);
     // The summary is a user message, and is not counted as a turn of its own.
-    await result.afterTurn;
+    await result.afterExchange;
     const told = (run.mock.calls as unknown[][]).find((args) => args[0] === 'afterExchange')?.[1] as {
       turn: { index: number };
     };
@@ -702,7 +702,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       compact: true,
       hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeCompact] },
     });
-    await result.afterTurn;
+    await result.afterExchange;
     expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([HookEvent.BeforeCompact]);
   });
 
@@ -716,7 +716,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       compact: true,
       hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeExchange, HookEvent.AfterExchange] },
     });
-    await result.afterTurn;
+    await result.afterExchange;
     expect(body(1).messages.slice(0, 2)).toEqual(summarised('what was said'));
     expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([
       HookEvent.BeforeExchange,

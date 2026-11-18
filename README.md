@@ -1192,7 +1192,7 @@ session.messages.push(
   { role: "user", content: prompt, hookContext: result.context, hookPreface: result.preface },
   ...result.messages.slice(history.length + 1),
 );
-await result.afterTurn; // only if its notes are wanted, or the process is about to exit
+await result.afterExchange; // only if its notes are wanted, or the process is about to exit
 ```
 
 `withContext` with those two arguments builds the question exactly as the loop sent it, whatever
@@ -1200,7 +1200,7 @@ await result.afterTurn; // only if its notes are wanted, or the process is about
 `result.messages` is the transcript the loop was given plus what the exchange added — earlier questions
 as the app passed them, this one as typed — which is why the snippet stores only the new tail.
 
-`afterTurn` on the result is the `afterExchange` hooks' notes as a promise. The loop still returns
+`afterExchange` on the result is the `afterExchange` hooks' notes as a promise. The loop still returns
 without waiting; an app that stores those notes with the exchange, or would otherwise exit before the
 exchange is remembered, awaits it once the answer is out.
 
@@ -1252,7 +1252,7 @@ await runAgentLoop({
 });
 ```
 
-An event left out of `fire` is one the result has nothing for: the result's `afterTurn` is resolved
+An event left out of `fire` is one the result has nothing for: the result's `afterExchange` is resolved
 and empty without `afterExchange`, and `notes` and `context` are empty without an injecting event,
 since the app's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
 loop and are ignored there.

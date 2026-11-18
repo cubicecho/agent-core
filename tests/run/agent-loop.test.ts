@@ -1217,7 +1217,7 @@ describe('runAgentLoop', () => {
         hooks: { run, context: { session: { id: 's1' } } },
       });
       expect(result.turn.content).toBe('handing off');
-      await result.afterTurn;
+      await result.afterExchange;
       expect(run.mock.calls.map(([event]) => event)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
       expect(run.mock.calls[1][1]).toMatchObject({ reply: 'handing off' });
     });
@@ -2260,7 +2260,7 @@ describe('runAgentLoop', () => {
       ]);
     const fired = (run: ReturnType<typeof recalling>) => run.mock.calls.map(([event]) => event);
 
-    it('fires only the events it lists, and hands back an empty afterTurn for one it leaves out', async () => {
+    it('fires only the events it lists, and hands back an empty afterExchange for one it leaves out', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
@@ -2269,7 +2269,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: { run, context: { session: { id: 's1' } }, fire: [HookEvent.BeforeCompact] },
       });
-      expect(await result.afterTurn).toEqual([]);
+      expect(await result.afterExchange).toEqual([]);
       expect(fired(run)).toEqual([]);
       expect(result.context).toBe('');
       expect(result.notes).toEqual([]);
@@ -2289,7 +2289,7 @@ describe('runAgentLoop', () => {
           fire: [HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange, HookEvent.SessionEnd],
         },
       });
-      await result.afterTurn;
+      await result.afterExchange;
       // `sessionEnd` is the host's: the loop has no point that is the end of a session.
       expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange]);
       expect(result.context.indexOf('from sessionStart')).toBeLessThan(result.context.indexOf('from beforeExchange'));
@@ -2308,7 +2308,7 @@ describe('runAgentLoop', () => {
           fire: [HookEvent.AfterExchange, HookEvent.BeforeExchange],
         },
       });
-      await result.afterTurn;
+      await result.afterExchange;
       expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
       expect(run.mock.calls[1][1]).toMatchObject({ reply: 'the answer' });
     });
@@ -2322,7 +2322,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: { run, context: { session: { id: 's1' } } },
       });
-      await result.afterTurn;
+      await result.afterExchange;
       expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
     });
   });
@@ -2366,7 +2366,7 @@ describe('runAgentLoop', () => {
           offset: 4,
         },
       });
-      await result.afterTurn;
+      await result.afterExchange;
       const stored = [...Array(8).fill({ role: Role.Tool, content: '' }), { role: Role.User, content: typed }];
       stored.push({ role: Role.Assistant, content: 'tea' });
       expect(toldAfter(run)).toEqual({
@@ -2387,7 +2387,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: { run, context: { session: { id: 's1' }, prompt: 'as stored' }, question: 'as typed' },
       });
-      await result.afterTurn;
+      await result.afterExchange;
       expect(toldAfter(run)).toMatchObject({ prompt: 'as stored', turn: { messages: [{ text: 'as typed' }, {}] } });
     });
 
@@ -2407,7 +2407,7 @@ describe('runAgentLoop', () => {
         // Rebuilt from a store: every message a copy.
         beforeTurn: (messages, turn) => (turn === 1 ? messages.map((message) => ({ ...message })) : undefined),
       });
-      await result.afterTurn;
+      await result.afterExchange;
       // The recall is still on the question the second request sends.
       const second = create.mock.calls[1][0].messages;
       expect(second[2].content).toContain('you like tea');
@@ -2552,10 +2552,10 @@ describe('runAgentLoop', () => {
       expect(quiet.context).toBe('');
       const bare = await runAgentLoop({ config, messages: question, dispatch: async () => 'ok' });
       expect(bare.context).toBe('');
-      await expect(bare.afterTurn).resolves.toEqual([]);
+      await expect(bare.afterExchange).resolves.toEqual([]);
     });
 
-    it("hands back afterTurn's notes as a promise, without waiting for them itself", async () => {
+    it("hands back afterExchange's notes as a promise, without waiting for them itself", async () => {
       create.mockReturnValueOnce(says('the answer'));
       let finish: (outcomes: HookOutcome[]) => void = () => {};
       const heard: unknown[] = [];
@@ -2595,7 +2595,7 @@ describe('runAgentLoop', () => {
         }),
       ]);
       const note = { event: HookEvent.AfterExchange, source: 'memory', hookId: 'h', error: 'down' };
-      await expect(result.afterTurn).resolves.toEqual([note]);
+      await expect(result.afterExchange).resolves.toEqual([note]);
       expect(heard).toEqual([note]);
     });
   });

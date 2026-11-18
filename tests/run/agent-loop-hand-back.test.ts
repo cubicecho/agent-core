@@ -229,7 +229,7 @@ describe('handBack', () => {
       dispatch: named(),
       hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.AfterExchange] },
     });
-    expect(await result.afterTurn).toEqual([]);
+    expect(await result.afterExchange).toEqual([]);
     expect(run).not.toHaveBeenCalled();
     expect(result.messages[1]).toMatchObject({ reasoning_content: 'ask first' });
   });

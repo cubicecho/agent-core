@@ -194,7 +194,7 @@ export interface AgentLoopHooks {
    * For an app that fires some of them around the loop rather than inside it: one that tells
    * `beforeExchange` and `afterExchange` around a whole stage of its own, and wants only compaction's
    * `beforeCompact` from the loop, passes `[HookEvent.BeforeCompact]`. With `afterExchange` left out the
-   * result's `afterTurn` is resolved and empty, and `notes` and `context` are empty with no
+   * result's `afterExchange` is resolved and empty, and `notes` and `context` are empty with no
    * injecting event listed — the app's own `gather` and `notify` hold those instead.
    */
   fire?: readonly HookEvent[];
@@ -856,7 +856,7 @@ export interface AgentLoopResult {
    * `afterExchange` out — an app that tells it itself has the notes from its own `notify`. Never
    * rejects: a note `onNote` throws on is dropped.
    */
-  afterTurn: Promise<HookNote[]>;
+  afterExchange: Promise<HookNote[]>;
   /**
    * The exchange summed and derived: what `runMetrics` makes of the events this loop emitted, with
    * the `load_tools` counts at zero rather than absent in an exchange on demand, `wallMs` from the
@@ -1906,7 +1906,7 @@ async function runTurns(
         notes: gathered.notes,
         context: gathered.context,
         preface,
-        afterTurn: afterExchange,
+        afterExchange,
         metrics: {
           ...metrics,
           ...(onDemand ? loads : {}),
