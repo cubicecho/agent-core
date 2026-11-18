@@ -33,7 +33,14 @@ const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[n
 
 /** Teaches the process one latched refusal per module, so there is something to forget. */
 const latchEverything = async () => {
-  create.mockRejectedValueOnce(new OpenAI.APIError(400, { error: {} }, 'rejected', undefined)).mockResolvedValue(reply);
+  // The no-thinking hints refused by name. Built here, since this file mocks the SDK whole.
+  const refusal = new OpenAI.APIError(
+    400,
+    { message: 'Unrecognized request argument supplied: chat_template_kwargs' },
+    undefined,
+    undefined,
+  );
+  create.mockRejectedValueOnce(refusal).mockResolvedValue(reply);
   await ask(endpoint, 'qwen', 'system', 'user');
   capabilitiesFor(endpoint.baseUrl).usageInStream = false;
   emit('run-a', { kind: RunEventKind.Output, text: 'one' });

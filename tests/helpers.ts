@@ -83,13 +83,44 @@ export const says = (content: string, finish: FinishReason = FinishReason.Stop) 
     { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
   );
 
+/** What a side task's reply carries beside its text. */
+export interface AnswerParts {
+  /** Why the model stopped. Absent or `null` is a server that never said. */
+  finishReason?: string | null;
+  /** A scratchpad sent in `reasoning_content`, beside the text rather than fenced inside it. */
+  reasoning?: string;
+}
+
 /**
- * What a call that does not stream is answered with.
+ * A side task's reply, which reads as a whole completion and iterates as a stream, so one fake
+ * answers a request made either way.
  *
  * @param content - What the model says.
- * @returns The completion, with only its message set.
+ * @param [parts] - Why it stopped, and a scratchpad in its own field.
+ * @returns The completion, with its first choice's message and finish reason set, which is also
+ * a stream of the same: the message as one delta, then the finish reason.
  */
-export const answer = (content: string) => ({ choices: [{ message: { content } }] });
+export const answer = (content: string, { finishReason = null, reasoning }: AnswerParts = {}) => {
+  const said = { content, ...(reasoning === undefined ? {} : { reasoning_content: reasoning }) };
+  return Object.assign(
+    chunks({ choices: [{ delta: said }] }, { choices: [{ delta: {}, finish_reason: finishReason }] }),
+    {
+      choices: [{ message: said, finish_reason: finishReason }],
+    },
+  );
+};
+
+/**
+ * A reply in words as a server on a port sends it: streamed where the request asked for a stream.
+ *
+ * @param body - The request, read for `stream`.
+ * @param content - What the model says.
+ * @returns The response.
+ */
+export const respondAsAsked = (body: { stream?: boolean }, content: string) =>
+  body.stream
+    ? streamed({ choices: [{ index: 0, delta: { content }, finish_reason: FinishReason.Stop }] })
+    : respond(answer(content));
 
 /** An answer for a test that does not care what was said. */
 export const reply = answer('ok');

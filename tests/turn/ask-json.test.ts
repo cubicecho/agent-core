@@ -60,9 +60,7 @@ describe('askJson', () => {
 
   it('answers undefined for a reply cut off before its JSON closed', async () => {
     // Nothing the repair does adds a missing closer, so the root never parses.
-    create.mockResolvedValue({
-      choices: [{ message: { content: '{"tools": ["read", {"x": 1}, "wri' }, finish_reason: FinishReason.Length }],
-    });
+    create.mockResolvedValue(answer('{"tools": ["read", {"x": 1}, "wri', { finishReason: FinishReason.Length }));
     expect(await askJson(config, 'm', 's', 'u', schema)).toBeUndefined();
   });
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiError, type Create, reply } from '../helpers.ts';
+import { answer, apiError, type Create, reply } from '../helpers.ts';
 import { NO_EFFORT, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from '../refusals.ts';
 
 const create = vi.fn<Create>();
@@ -203,16 +203,12 @@ describe('no-thinking hints', () => {
   });
 
   it('does not return a scratchpad that ran out of budget as the answer', async () => {
-    create.mockResolvedValue({
-      choices: [{ message: { content: '<think>weighing it up and then the budget ran' } }],
-    });
+    create.mockResolvedValue(answer('<think>weighing it up and then the budget ran'));
     expect(await call(endpoint('http://reasoner/v1'))).toBe('');
   });
 
   it('falls back to reasoning_content when the content is all scratchpad', async () => {
-    create.mockResolvedValue({
-      choices: [{ message: { content: '', reasoning_content: 'deliberation — the answer' } }],
-    });
+    create.mockResolvedValue(answer('', { reasoning: 'deliberation — the answer' }));
     expect(await call(endpoint('http://split/v1'))).toBe('deliberation — the answer');
   });
 });

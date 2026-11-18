@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiError, type Create, reply } from '../helpers.ts';
+import { type Create, reply } from '../helpers.ts';
+import { NO_HINTS } from '../refusals.ts';
 
 const create = vi.fn<Create>();
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
@@ -16,7 +17,6 @@ const { CAPABILITY_SNAPSHOT_VERSION, exportCapabilities, importCapabilities } = 
 );
 
 const config = { baseUrl: 'http://box/v1', apiKey: 'sk-secret', requestTimeoutSeconds: 60 };
-const refuseHints = apiError(400, 'no');
 
 afterEach(() => {
   create.mockReset();
@@ -45,11 +45,11 @@ describe('capability snapshots', () => {
 
       // The hints refused by a model with other refusals, by one with none, and on an endpoint
       // with nothing else latched.
-      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      create.mockRejectedValueOnce(NO_HINTS).mockResolvedValueOnce(reply);
       await ask(config, 'big', 'system', 'user');
-      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      create.mockRejectedValueOnce(NO_HINTS).mockResolvedValueOnce(reply);
       await ask(config, 'small', 'system', 'user');
-      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      create.mockRejectedValueOnce(NO_HINTS).mockResolvedValueOnce(reply);
       await ask(other, 'tiny', 'system', 'user');
 
       const written = JSON.stringify(exportCapabilities(), null, 2);
@@ -148,7 +148,7 @@ describe('capability snapshots', () => {
     const model = modelCapabilitiesFor(supports, 'big');
     model.legacyTokenLimit = false;
     model.refusedFields.add('min_p');
-    create.mockRejectedValueOnce(refuseHints).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await ask(config, 'small', 'system', 'user');
 
     const stored = JSON.stringify(exportCapabilities());

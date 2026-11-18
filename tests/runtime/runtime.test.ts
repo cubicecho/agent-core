@@ -28,7 +28,14 @@ const { resetAll } = await import('../../src/runtime/reset.ts');
 const { charsPerTokenFor } = await import('../../src/endpoint/calibration.ts');
 const { createRuntime, defaultRuntime } = await import('../../src/runtime/runtime.ts');
 
-const refusal = () => new OpenAI.APIError(400, { error: {} }, 'rejected', undefined);
+/** The no-thinking hints refused by name. Built here, since this file mocks the SDK whole. */
+const refusal = () =>
+  new OpenAI.APIError(
+    400,
+    { message: 'Unrecognized request argument supplied: chat_template_kwargs' },
+    undefined,
+    undefined,
+  );
 /** Whether the no-thinking hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
 const body = {

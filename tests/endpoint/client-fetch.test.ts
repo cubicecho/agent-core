@@ -12,7 +12,7 @@ import { resetAll } from '../../src/runtime/reset.ts';
 import { exportCapabilities } from '../../src/runtime/snapshot.ts';
 import { ask } from '../../src/turn/side-task.ts';
 import { HttpStatus } from '../../src/wire/wire.ts';
-import { answer, answeredBy, respond } from '../helpers.ts';
+import { answer, answeredBy, respond, respondAsAsked } from '../helpers.ts';
 
 /** An address only the function answers: nothing listens there, and no resolver knows the host. */
 const internal = { baseUrl: 'http://router.internal/v1', apiKey: '' };
@@ -157,8 +157,11 @@ describe('an endpoint answered by a function, written down', () => {
     const fetch = answeredBy(async (request) => {
       const body = (await request.json()) as Record<string, unknown>;
       return 'chat_template_kwargs' in body
-        ? respond({ error: { message: 'unknown field' } }, HttpStatus.BadRequest)
-        : respond(answer('named'));
+        ? respond(
+            { error: { message: 'Unrecognized request argument supplied: chat_template_kwargs' } },
+            HttpStatus.BadRequest,
+          )
+        : respondAsAsked(body, 'named');
     });
     const endpoint = { ...internal, apiKey: 'sk-router', fetch };
     expect(await ask(endpoint, 'm', 'Name this.', 'hi')).toBe('named');
