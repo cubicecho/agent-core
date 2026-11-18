@@ -5,7 +5,7 @@ import { assignSettings, scoped } from '../core/scope.ts';
 import { LOAD_TOOLS } from '../tools/tool-loading.ts';
 import type { TurnUsage } from '../wire/stream.ts';
 import { CacheBreakReason } from '../wire/stream.ts';
-import { type ResourceLink, ServerLogLevel } from '../wire/tool-calls.ts';
+import { type ResourceLink, ServerLogLevel } from './dispatch.ts';
 import { FinishReason } from '../wire/wire.ts';
 
 /**

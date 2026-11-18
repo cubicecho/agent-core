@@ -17,7 +17,7 @@ import {
 import { type CallIdMinter, callIdsIn, freshCallId } from '../wire/call-ids.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { type ReasoningDetail, reasoningDetailsEntry, reasoningEntry, type Turn } from '../wire/stream.ts';
-import { parseToolArguments, type ResourceLink, type ToolCall } from '../wire/tool-calls.ts';
+import { parseToolArguments, type ToolCall } from '../wire/tool-calls.ts';
 import {
   FUNCTION_TOOL,
   REASONING,
@@ -35,6 +35,7 @@ import {
 } from './artifacts.ts';
 import type {
   EndedBy,
+  ResourceLink,
   RunArtifact,
   ServerLogEntry,
   ToolAnswer,
