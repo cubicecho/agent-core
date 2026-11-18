@@ -559,8 +559,14 @@ export function proxyCatalogPrompt(catalog: CatalogServer[]): string {
   ].join('\n');
 }
 
-/** How a proxied load result that carries definitions opens, with the count left open. */
-const PROXY_LOADED = /^Loaded \d+ tool\(s\)\. Run them with `call_tool`\./;
+/** How a proxied load result that carries definitions opens, before its count. */
+const PROXY_LOADED_LEAD = 'Loaded ';
+
+/** What follows the count in that opening line. */
+const PROXY_LOADED_TAIL = ` tool(s). Run them with \`${CALL_TOOL}\`.`;
+
+/** The lead and the count, which `PROXY_LOADED_TAIL` has to follow. */
+const PROXY_LOADED_COUNT = new RegExp(`^${PROXY_LOADED_LEAD}\\d+`);
 
 /**
  * Whether a tool result is a proxied load carrying definitions, which is the only copy of them
@@ -575,7 +581,10 @@ const PROXY_LOADED = /^Loaded \d+ tool\(s\)\. Run them with `call_tool`\./;
  * `pruneToolResults` asks this before it stubs one. Told by how `proxyLoadResult` opens, the way
  * a summary is told by `SUMMARY_LEAD`, because a `tool` message carries no tool name of its own.
  */
-export const holdsDefinitions = (result: string) => PROXY_LOADED.test(result);
+export const holdsDefinitions = (result: string) => {
+  const opening = PROXY_LOADED_COUNT.exec(result)?.[0];
+  return opening !== undefined && result.startsWith(PROXY_LOADED_TAIL, opening.length);
+};
 
 /**
  * The tools a proxied load's result defines, by name.
@@ -639,7 +648,7 @@ export function proxyLoadResult(
   const defined = new Set(fresh.map((tool) => tool.name));
   const missing = resolved.matched.filter((name) => !loaded?.has(name) && !defined.has(name));
   if (fresh.length) {
-    blocks.push([`Loaded ${fresh.length} tool(s). Run them with \`${CALL_TOOL}\`.`]);
+    blocks.push([`${PROXY_LOADED_LEAD}${fresh.length}${PROXY_LOADED_TAIL}`]);
     blocks.push(
       ...fresh.map(({ name, description, parameters }) => [JSON.stringify({ name, description, parameters })]),
     );
