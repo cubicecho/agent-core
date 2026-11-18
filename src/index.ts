@@ -169,6 +169,7 @@ export {
   type RunUsage,
   resetEvents,
   runMetrics,
+  stamp,
   type TurnReport,
   watch,
 } from './run/events.ts';

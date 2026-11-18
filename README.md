@@ -29,7 +29,7 @@ only, Node >=22.
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
 | `side-task` | One-shot calls that support a run without being one — small prompt, short answer, no tools, never worth failing the run over. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
 | `hooks` | The host's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the turn's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
-| `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
+| `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, `stamp` for a host that numbers its own, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per endpoint, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. And `resolveApiKey`, for a caller deciding which key an endpoint gets, and `probeEndpoint`, for listing one a form has not saved yet. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its endpoint reports: `charsPerTokenFor`, `calibrate`. |
@@ -1521,6 +1521,18 @@ repeat, and a client doing what `seq` is documented for would throw away one of 
 
 `history` reads what a run has emitted without subscribing, `fold` collapses a token stream into
 blocks for display, and `endRun` drops a finished run's buffer.
+
+A host that numbers and stores a run's events itself — a run that waits on an app can outlive this
+bus, and the process too, and its `seq` must never start again — makes each event with `stamp`,
+which is what `emit` does too. The empty defaults (`text`, `name` and `step` `""`, `ok` and `usage`
+`null`) go under what the input says, and the run id and sequence over it, so the stored events
+keep `RunEvent`'s shape as it grows:
+
+```ts
+import { stamp } from "@cubicecho/agent-core";
+
+const event = stamp(input, runId, ++lastSeq, Date.now()); // an `at` on the input wins
+```
 
 The four numbers behind that — the backlog cap, the slack it is trimmed in batches of, and the two
 deadlines the sweep reaps on — are defaults rather than decisions. `configureEvents` moves them,

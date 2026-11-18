@@ -11,6 +11,7 @@ import {
   RunOutcome,
   resetEvents,
   runMetrics,
+  stamp,
   watch,
 } from '../../src/run/events.ts';
 import { LOAD_TOOLS } from '../../src/tools/tool-loading.ts';
@@ -75,6 +76,34 @@ describe('emit', () => {
     // The oldest went, and the sequence numbers do not restart.
     expect(kept[0].seq).toBe(258);
     expect(kept[kept.length - 1].seq).toBe(1257);
+  });
+});
+
+describe('stamp', () => {
+  it("makes the event `emit` would record, under a host's own run id and numbering", () => {
+    vi.useFakeTimers({ now: 5 });
+    const recorded = emit('r', { kind: RunEventKind.ToolCall, id: 'c1', name: 'read' });
+    expect(stamp({ kind: RunEventKind.ToolCall, id: 'c1', name: 'read' }, 'r', 1, 5)).toEqual(recorded);
+  });
+
+  it('keeps the run id and sequence it is given over any the input carries, and an `at` the input carries', () => {
+    const relayed = { kind: RunEventKind.Notice, text: 'hi', at: 7, runId: 'remote', seq: 40 };
+    expect(stamp(relayed, 'own', 3, 9)).toEqual({
+      at: 7,
+      kind: RunEventKind.Notice,
+      text: 'hi',
+      name: '',
+      step: '',
+      ok: null,
+      usage: null,
+      runId: 'own',
+      seq: 3,
+    });
+  });
+
+  it('is exported from the package root', async () => {
+    const root = await import('../../src/index.ts');
+    expect(root.stamp).toBe(stamp);
   });
 });
 
