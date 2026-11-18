@@ -112,10 +112,10 @@ describe('withContext', () => {
   });
 
   it('adds a part to a question that is already a list of parts', () => {
-    const parts = [
+    const parts: OpenAI.ChatCompletionMessageParam[] = [
       ...history.slice(0, 3),
       { role: Role.User, content: [{ type: PartType.Text, text: 'now' }] },
-    ] as OpenAI.ChatCompletionMessageParam[];
+    ];
     const content = withContext(parts, 3, 'ctx')[3].content as { text: string }[];
     expect(content).toHaveLength(2);
     expect(content[0].text).toContain('ctx');

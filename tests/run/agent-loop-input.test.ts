@@ -138,7 +138,7 @@ describe('takeInput', () => {
       dispatch: async () => 'a ran',
       takeInput: inputOn(2, 'use b instead'),
       // New message objects every step, as a host reading its store would hand back.
-      beforeStep: (messages) => messages.map((message) => ({ ...message }) as Message),
+      beforeStep: (messages) => messages.map((message) => ({ ...message })),
       hooks: { run, context: { session: { id: 's1' } } },
     });
     const [question, , , input] = sent(1);

@@ -235,7 +235,7 @@ describe('pruneNotice', () => {
 
 describe('planCompaction', () => {
   const long = [
-    { role: Role.System, content: 'prompt' } as Message,
+    { role: Role.System, content: 'prompt' } satisfies Message,
     user('1'),
     assistant('a'),
     user('2'),
@@ -259,7 +259,7 @@ describe('planCompaction', () => {
   });
 
   it('weighs the transcript at the characters per token it is given', () => {
-    const wordy = [user('x'.repeat(100)), ...long.slice(1).map((m) => ({ ...m, content: 'x'.repeat(100) }) as Message)];
+    const wordy = [user('x'.repeat(100)), ...long.slice(1).map((m) => ({ ...m, content: 'x'.repeat(100) }))];
     // About 290 tokens at four characters each, under the mark on a 500 window; twice that at two.
     expect(planCompaction(wordy, { limit: 500 })).toBeUndefined();
     expect(planCompaction(wordy, { limit: 500, charsPerToken: 2 })).toBeDefined();
@@ -275,8 +275,8 @@ describe('planCompaction', () => {
 
   it('continues an earlier summary rather than summarising it', () => {
     const again = [
-      { role: Role.System, content: 'prompt' } as Message,
-      { role: Role.System, content: `${SUMMARY_LEAD}they like tea` } as Message,
+      { role: Role.System, content: 'prompt' } satisfies Message,
+      { role: Role.System, content: `${SUMMARY_LEAD}they like tea` } satisfies Message,
       ...long.slice(1),
     ];
     const plan = planCompaction(again, { limit: 100, estimate });
@@ -572,7 +572,11 @@ describe('a fold and the one system message', () => {
   });
 
   it('continues a summary stored as a system message, and writes the next as conversation', async () => {
-    const stored = [prompt, { role: Role.System, content: `${SUMMARY_LEAD}old notes` } as Message, ...long.slice(1)];
+    const stored = [
+      prompt,
+      { role: Role.System, content: `${SUMMARY_LEAD}old notes` } satisfies Message,
+      ...long.slice(1),
+    ];
     expect(templateRefusal(stored)).toBe('System message must be at the beginning.');
     const plan = planCompaction(stored, window);
     expect(plan).toMatchObject({ from: 2, previous: 'old notes' });
@@ -611,8 +615,8 @@ describe('a stored fold', () => {
 
   it('plans the same cut the scan finds for the same transcript rebuilt', () => {
     const scanned = [
-      { role: Role.System, content: 'prompt' } as Message,
-      { role: Role.System, content: `${SUMMARY_LEAD}they like tea` } as Message,
+      { role: Role.System, content: 'prompt' } satisfies Message,
+      { role: Role.System, content: `${SUMMARY_LEAD}they like tea` } satisfies Message,
       ...stored,
     ];
     const byScan = planCompaction(scanned, window);

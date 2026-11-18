@@ -1925,8 +1925,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         // A new array, and new message objects, with nothing taken out: a host rebuilding its
         // transcript from a store each step.
-        beforeStep: (messages, step) =>
-          step === 1 ? messages.map((message) => ({ ...message }) as Message) : undefined,
+        beforeStep: (messages, step) => (step === 1 ? messages.map((message) => ({ ...message })) : undefined),
       });
       const [first, second] = results(result.messages);
       expect(first).toBe(definition);
@@ -2401,8 +2400,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: { run, context: { session: { id: 's1' } } },
         // Rebuilt from a store: every message a copy.
-        beforeStep: (messages, step) =>
-          step === 1 ? messages.map((message) => ({ ...message }) as Message) : undefined,
+        beforeStep: (messages, step) => (step === 1 ? messages.map((message) => ({ ...message })) : undefined),
       });
       await result.afterTurn;
       // The recall is still on the question the second request sends.
