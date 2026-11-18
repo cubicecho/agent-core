@@ -338,6 +338,26 @@ export interface ParseSpecOptions {
 /** A `${VAR}`-shaped string, which is kept as the literal it is rather than expanded. */
 const VARIABLE = /\$\{[^}]*\}/;
 
+/**
+ * A path as text, in `parseSpec`'s spelling, with a segment holding a dot quoted so it reads as one.
+ *
+ * @param path - The segments.
+ * @returns `extensions["com.acme"].plan` for the key `com.acme`, and `extensions.com.acme` for
+ * the key `acme` beneath the key `com`.
+ */
+export function pathText(path: readonly string[]): string {
+  let text = '';
+  for (const segment of path) {
+    const holdsDot = segment.includes('.');
+    if (holdsDot) {
+      text += `[${JSON.stringify(segment)}]`;
+    } else {
+      text += text === '' ? segment : `.${segment}`;
+    }
+  }
+  return text;
+}
+
 /** Problems in the order they were found, in `validateHooks`'s `path: what is wrong` shape. */
 class Report {
   readonly errors: string[] = [];
@@ -768,7 +788,7 @@ function parseRetry(report: Report, value: unknown): RetrySpec | undefined {
 function parseTasks(report: Report, value: Record<string, unknown>): Record<string, TaskSpec> {
   const tasks: Record<string, TaskSpec> = {};
   for (const [key, held] of Object.entries(value)) {
-    const path = `tasks.${key}`;
+    const path = pathText(['tasks', key]);
     if (isAbsent(held)) {
       continue;
     }

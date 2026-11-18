@@ -4,6 +4,7 @@ import {
   type AgentSpec,
   type EndpointSpec,
   type ModelSpec,
+  pathText,
   type RetrySpec,
   type TaskSpec,
   type ToolsSpec,
@@ -215,26 +216,6 @@ function segmentsOf(path: SpecPath | ExtensionPath | SpecSection | `tasks.${stri
     return [PROMPT, path.slice(prefix.length)];
   }
   return path.split('.');
-}
-
-/**
- * A path as text, in `parseSpec`'s spelling, with a segment holding a dot quoted so it reads as one.
- *
- * @param path - The segments.
- * @returns `extensions["com.acme"].plan` for the key `com.acme`, and `extensions.com.acme` for
- * the key `acme` beneath the key `com`.
- */
-function pathText(path: readonly string[]): string {
-  let text = '';
-  for (const segment of path) {
-    const holdsDot = segment.includes('.');
-    if (holdsDot) {
-      text += `[${JSON.stringify(segment)}]`;
-    } else {
-      text += text === '' ? segment : `.${segment}`;
-    }
-  }
-  return text;
 }
 
 /**

@@ -166,6 +166,17 @@ describe('parseSpec', () => {
     ]);
   });
 
+  it('quotes a task key that holds a dot, as columns do', () => {
+    const result = parseSpec(
+      doc({ tasks: { 'vision.v2': { model: 3, extraBody: { temperature: 0.2 } }, 'odd.one': 'x' } }),
+    );
+    expect(result.warnings).toEqual([
+      'tasks["vision.v2"].model: must be a string, and was dropped',
+      `tasks["vision.v2"].extraBody.temperature: is tasks["vision.v2"].temperature's to set, and was dropped`,
+      'tasks["odd.one"]: must be an object, and was dropped',
+    ]);
+  });
+
   it('carries a key from a later 1.x rather than erasing it', () => {
     const result = parseSpec(doc({ id: 'a', memory: { store: 'vector' } }));
     expect(result.spec?.memory).toEqual({ store: 'vector' });
