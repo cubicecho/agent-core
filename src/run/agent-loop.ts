@@ -183,7 +183,7 @@ export interface AgentLoopHooks {
   context: HookContext;
   /**
    * The events the loop fires, and the only ones: `sessionStart` and `beforeExchange` gathered before
-   * the first request, in the order listed; `beforeCompact` beside each compaction `compact` makes;
+   * the first request, in the order listed; `beforeCompact` ahead of each compaction `compact` makes;
    * and `afterExchange` once the exchange has its answer. `sessionEnd` and `sessionDelete` are the
    * app's, since the loop has no point that is either, and are ignored here.
    *
@@ -212,6 +212,14 @@ export interface AgentLoopHooks {
   preface?: string;
   /** Hears each note, from before the request, from `beforeCompact` and from `afterExchange`. */
   onNote?: OnNote;
+  /**
+   * Whether a `beforeCompact` hook can stop a compaction `compact` makes. The hooks then run ahead
+   * of the summary, which waits on them, and a veto leaves the exchange uncompacted, with a notice.
+   * `false` runs them beside the summary and reads no veto, as `compactTranscript` does without it.
+   *
+   * @defaultValue `true`
+   */
+  honourVeto?: boolean;
   /**
    * What the exchange's first message is numbered as in the uuids hooks are told — the app's stored
    * index of `messages[0]`, for an app that numbers messages across exchanges or runs. Read for
@@ -441,8 +449,9 @@ export interface AgentLoopOptions {
    * It runs after `beforeTurn`, on what that returned, and is `compactTranscript` and nothing
    * more: the plan is made from the last request's reported prompt, or an estimate before the
    * first turn and after a `beforeTurn` rewrite; `hooks`, when given, are told `beforeCompact`
-   * beside the summary; and a compaction is said as a `notice` event. A summary that fails is a
-   * notice too and compacts nothing. Tool results are not pruned by this — `prune` is.
+   * ahead of the summary, and a veto skips it (`honourVeto`); and a compaction, or a veto, is said
+   * as a `notice` event. A summary that fails is a notice too and compacts nothing. Tool results
+   * are not pruned by this — `prune` is.
    *
    * The result's `messages` then open with the summary in place of what was compacted, so an app
    * that keeps its transcript append-only wants `runCompaction` and a stored compaction instead.
@@ -1076,7 +1085,7 @@ function pruneBeforeTurn(
  * @param summarise - Writes the summary. Not called where no compaction is due.
  * @param context - The exchange's options, read for `compact`'s thresholds, the context window,
  * the compaction task's ceiling and the hooks; the characters per token an estimate is made at;
- * and `notice`, told of a compaction.
+ * and `notice`, told of a compaction or of a veto that stopped one.
  * @returns `transcript` itself where nothing was compacted, otherwise a new array with the
  * compacted stretch replaced by its summary.
  */
@@ -1099,11 +1108,32 @@ async function foldBeforeTurn(
   if (!plan) {
     return transcript;
   }
+  // `consult` tells a veto as a note, and the loop needs it to say why nothing was compacted.
+  const vetoes: HookNote[] = [];
+  const hear = (note: HookNote) => {
+    if (note.veto) {
+      vetoes.push(note);
+    }
+    told?.onNote?.(note);
+  };
   const folded = await compactTranscript(transcript, plan, summarise, {
-    ...(told ? { hooks: { run: told.run, context: told.context, onNote: told.onNote, offset: told.offset } } : {}),
+    ...(told && {
+      hooks: {
+        run: told.run,
+        context: told.context,
+        onNote: hear,
+        offset: told.offset,
+        honourVeto: told.honourVeto ?? true,
+      },
+    }),
   });
+  const count = plan.toSummarise.length;
+  const wasVetoed = vetoes.length > 0;
   if (folded !== transcript) {
-    notice(`compacted ${plan.toSummarise.length} messages into a summary`);
+    notice(`compacted ${count} messages into a summary`);
+  } else if (wasVetoed) {
+    const by = vetoes.map((note) => note.source).join(', ');
+    notice(`${by} vetoed compacting ${count} messages; this exchange goes on uncompacted`);
   }
   return folded;
 }

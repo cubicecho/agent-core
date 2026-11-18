@@ -1236,7 +1236,7 @@ await runAgentLoop({
 ```
 
 `hooks.fire` says which events the loop fires itself, and it fires no others: `sessionStart` and
-`beforeExchange` gathered before the first request, `beforeCompact` beside each compaction
+`beforeExchange` gathered before the first request, `beforeCompact` ahead of each compaction
 `compact` makes, `afterExchange` once answered. Left out, it is `beforeExchange`, `beforeCompact`
 and `afterExchange`: every event the loop has a point for but `sessionStart`. An app that fires the
 exchange's events around a stage of its own still hands the loop its hooks for compaction:
@@ -1480,6 +1480,10 @@ any hook that ran leaves the transcript as it was, with a note naming the hook. 
 vetoes nothing. A compaction passed `forced: true`, because a request was already refused as too
 big, goes ahead regardless: a veto there only trades the summary for a `ContextOverflow`.
 `consult` is the same wait for an app that compacts its own way.
+
+`runAgentLoop({ compact: true })` honours a veto by default: its hooks run ahead of the summary, and
+a veto leaves the exchange uncompacted, with a notice naming the hooks that made it. Pass
+`hooks.honourVeto: false` to run them beside the summary instead and read no veto.
 
 ```ts
 const compacted = await compactTranscript(messages, plan, summarise, {

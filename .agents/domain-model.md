@@ -70,7 +70,7 @@ agent document, stands apart and uses only a few small pieces, so it also loads 
 | Model server | the server the model runs on | its answers and errors | which request features are used from then on (a refused feature is not sent again), how big requests are estimated to be, and whether a reply was cut short or filtered |
 | Remote agent's server | a server that runs its own agent loop | progress reports streamed with its replies | what watchers see of its own turns, the ids of the calls it hands back, and the id of its own run |
 | Tool runner | the app's function that runs one tool call | one call in, its result out | what the model is told that call returned, and whether that answer ends the exchange. It never sees the rest of the conversation |
-| Hook runner | the app's function that runs agent hooks | the package asking at fixed moments | extra context added to the question, short notes about what the hooks did, and whether a planned summary goes ahead, when the app asks for its veto (the loop's own summaries never do). Never the conversation itself |
+| Hook runner | the app's function that runs agent hooks | the package asking at fixed moments | extra context added to the question, short notes about what the hooks did, and whether a planned summary goes ahead: the loop's own summaries ask for its veto unless the app opts out, and an app's own ask when it says so. Never the conversation itself |
 | Watcher | anything reading a run's events | the event stream | nothing; it only reads |
 | Operator | a person writing an agent document | the document's layers, or stored settings rows | the agent's settings, prompt, side tasks, hooks and which tool servers it may use. Never a password or key: exporting a document strips them |
 
@@ -155,7 +155,7 @@ How a long exchange stays small enough for the model to read.
 - Trimming: once the window is full enough, old tool results before a cut-off become one-line
   stubs; the cut-off only moves forward
 - Summarising: the oldest stretch is picked → hooks are told, and may veto it when the app asks
-  for that (`honourVeto`; the loop's own summaries are never vetoed) → a summary is written
+  for that (`honourVeto`, which the loop's own summaries default to) → a summary is written
   and stored as a record → applying it puts the summary in that stretch's place, keeping the
   question and the rest (`compactTranscript` does both)
 

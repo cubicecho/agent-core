@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
+import type { HookNote, HookRunner } from '../../src/hooks/hooks.ts';
+import type { AgentLoopHooks } from '../../src/run/agent-loop.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
 import {
@@ -720,6 +722,42 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       HookEvent.BeforeExchange,
       HookEvent.AfterExchange,
     ]);
+  });
+
+  describe('a beforeCompact hook that vetoes', () => {
+    const guard = vi.fn<HookRunner>(async (event) =>
+      event === HookEvent.BeforeCompact ? [outcome({ event, label: 'Guard', hookId: 'keep', veto: true })] : [],
+    );
+    const folding = (extra: Partial<AgentLoopHooks>, events: RunEventInput[] = []) =>
+      runAgentLoop({
+        config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+        messages: long,
+        dispatch: async () => 'done',
+        compact: true,
+        hooks: { run: guard, context: { session: { id: 's' } }, ...extra },
+        onEvent: (event) => events.push(event),
+      });
+
+    it('stops the fold, says so, and the exchange goes on uncompacted', async () => {
+      create.mockResolvedValueOnce(says('hello'));
+      const events: RunEventInput[] = [];
+      const heard: HookNote[] = [];
+      const result = await folding({ onNote: (note) => heard.push(note) }, events);
+      // No summary was asked for: the only request is the turn, on the transcript as it was.
+      expect(create).toHaveBeenCalledOnce();
+      expect(body(0).messages).toEqual(long);
+      expect(result.messages.slice(0, long.length)).toEqual(long);
+      expect(heard).toContainEqual(expect.objectContaining({ event: HookEvent.BeforeCompact, veto: true }));
+      const notices = events.flatMap((event) => (event.kind === RunEventKind.Notice ? [event.text] : []));
+      expect(notices).toEqual([expect.stringContaining('Guard')]);
+      expect(notices[0]).toContain('vetoed');
+    });
+
+    it('is not read with honourVeto: false, and the fold goes ahead', async () => {
+      create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
+      await folding({ honourVeto: false });
+      expect(body(1).messages).toEqual([...summarised('what was said'), long[2]]);
+    });
   });
 
   it('does not fold without the task, however full the window', async () => {
