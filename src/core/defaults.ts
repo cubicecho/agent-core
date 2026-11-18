@@ -253,6 +253,20 @@ export const PRUNE_DEFAULTS: Readonly<PruneSettings> = Object.freeze({
   maxKeptChars: 256,
 });
 
+/** The token ledger: what each request cost, and whether its prompt cache held. */
+export interface TokenLedgerSettings {
+  /**
+   * The share of the previous prompt a cache that kept its prefix reports as hit. Short of it by
+   * more than this is a break, not the few tokens a template re-renders at the join.
+   */
+  cacheKeptShare: number;
+}
+
+/** How the ledger tells a kept cache from a broken one. */
+export const TOKEN_LEDGER_DEFAULTS: Readonly<TokenLedgerSettings> = Object.freeze({
+  cacheKeptShare: 0.9,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

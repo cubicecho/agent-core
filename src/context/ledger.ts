@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { TOKEN_LEDGER_DEFAULTS } from '../core/defaults.ts';
 import type { TurnUsage } from '../wire/stream.ts';
 import { CacheBreakReason } from '../wire/stream.ts';
 import { messageChars, messageTokens, type TokenEstimateOptions } from '../wire/tokens.ts';
@@ -178,12 +179,6 @@ export interface SentRequest extends RequestShape {
 }
 
 /**
- * The share of the previous prompt a cache that kept its prefix reports as hit. Short of it by
- * more than this is a break, not the few tokens a template re-renders at the join.
- */
-const CACHE_KEPT = 0.9;
-
-/**
  * What one turn's cache should have been and whether it was, against the request before it.
  *
  * @param previous - The request before this one, with what it reported. Absent, or with no prompt
@@ -210,7 +205,7 @@ export function cacheDiagnosis(
   if (usage.uncached === undefined) {
     return found;
   }
-  found.cacheBroken = usage.cached < previous.prompt * CACHE_KEPT;
+  found.cacheBroken = usage.cached < previous.prompt * TOKEN_LEDGER_DEFAULTS.cacheKeptShare;
   if (found.cacheBroken) {
     found.cacheBreakReason = breakReason(previous, next);
   }
