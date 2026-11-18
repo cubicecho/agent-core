@@ -281,17 +281,12 @@ export interface AgentLoopOptions {
    * The model server, what to ask the model for, and how long it may keep calling tools.
    * `toolDiscovery` absent is eager, `maxRetries` absent is none, and `contextLength` is handed to
    * `runTurn` as `contextLimit`, which sizes each request against the context window before
-   * sending. `"proxy"` is on-demand loading behind a tool array that never changes; see
-   * `PROXY_TOOLS`.
+   * sending. `"proxy"` is on-demand loading behind a tool array that never changes; see `PROXY_TOOLS`.
    *
    * @remarks
-   * `tasks` is a resolved agent's, and is read only for the side tasks the loop was asked to run:
-   * `tasks.toolSelect` under `preselect` and `tasks.compaction` under `compact`. `toolSelectModel`
-   * is the flattened spelling of the first, for an app that is not on the spec. With neither
-   * naming a model, `preselect` asks `model` itself; `compact` never does.
-   *
-   * `remoteAgent: true` (`RemoteAgentParams`) says the model is a remote agent, which runs its own
-   * loop, and `contextLength` is then read as zero: see `runAgentLoop`.
+   * `tasks` is read only for the side tasks asked for — `tasks.toolSelect` (or the flattened
+   * `toolSelectModel`) under `preselect`, `tasks.compaction` under `compact` — and `contextLength` is
+   * read as zero under `remoteAgent: true`.
    */
   config: Endpoint &
     (ModelParams | RemoteAgentParams) &
@@ -360,36 +355,25 @@ export interface AgentLoopOptions {
   /**
    * What `preselect` picked. The first turn is sent these and nothing else — no catalogue, no
    * `load_tools` — because a model with the menu still in front of it shops: it reloads what it
-   * has or picks a sibling. Everything comes back on the turn after. `preselectRouting` trades
-   * that for a first turn shaped like the rest.
+   * has or picks a sibling. Everything comes back on the turn after.
    *
    * @remarks
-   * Proxied, the tool array is fixed and there is no such turn. The shortlist is written into the
-   * transcript instead, after the question, as a `load_tools` call the model did not make and the
-   * result that call would have had — an assistant message and a tool message, handed back in
-   * `messages` like any other, reported as a `tool-call` and a `tool-result` event and told to
-   * `onToolCall` and `onToolResult`. Names with no definition in `tools`, or outside the
-   * catalogue, are left out, and with none left nothing is written.
+   * Proxied, the shortlist is written into the transcript after the question instead, as a
+   * `load_tools` call and its result reported like any other call, leaving out names outside `tools`
+   * or the catalogue.
    */
   preselected?: readonly string[];
   /**
-   * What a preselection does to the first turn. `"exclusive"` is the shortlist alone
-   * as `preselected` describes — and a system prompt and tool array unlike the last request's and
-   * unlike the next turn's, so a prompt cache misses the whole transcript on the first turn and
-   * again on the second. `"append"` loads the shortlist as a `load_tools` call would have and
-   * sends the first turn like any other: the catalogue, `load_tools`, what `loaded` carried, then
-   * the shortlist after it, with a name already carried left where it is. The price is the menu
-   * back in front of the model. Which costs more has not been measured, which is why the default
-   * has not moved.
+   * What a preselection does to the first turn. `"exclusive"` sends the shortlist alone, as
+   * `preselected` describes, and the prompt cache misses on the first turn and again on the second;
+   * `"append"` loads it after what `loaded` carried and sends the first turn like any other, with the
+   * menu back in front of the model. Which costs more has not been measured, so the default stays.
    *
    * @defaultValue `PRESELECT_EXCLUSIVE`
    *
    * @remarks
-   * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
-   * place and moves every definition after it, so only `toolOrder: false` keeps a carried array
-   * a strict prefix. Either way the first turn's system prompt is the second's, and so is its
-   * tool array until something else is loaded. Nothing to do without a preselection, in eager
-   * mode, or proxied, where no turn is routed either way.
+   * Appended is before `toolOrder` sorts, so only `toolOrder: false` keeps a carried tool array a
+   * strict prefix (README, "The loop").
    */
   preselectRouting?: typeof PRESELECT_EXCLUSIVE | typeof PRESELECT_APPEND;
   /**
@@ -400,26 +384,10 @@ export interface AgentLoopOptions {
    * @defaultValue `false`
    *
    * @remarks
-   * The preselector is `config.tasks.toolSelect` with everything it states — its model server,
-   * model, ceiling, temperature and reasoning effort, keyed as `taskCall` keys a task against
-   * `config` — and otherwise `config.toolSelectModel` on the config's own model server at
-   * `preselect`'s defaults. With neither naming a model it is `config.model` itself, on the same
-   * terms as `toolSelectModel`: an app that opted in has asked for a preselection, and an empty
-   * name is a setting nobody filled in rather than a refusal. An app that wants none passes no
-   * `preselect`.
-   *
-   * What it is asked about is `preselectQuery`, and otherwise the text of the last user message as
-   * the app gave it — the hooks' context is put on the request, never on `messages`, so the
-   * tools are picked on what was asked rather than on what was recalled. Nothing is asked in eager
-   * mode, with no question, or when `preselected` is given — an empty one included, which is how
-   * an app says it has already decided.
-   *
-   * `true` takes `preselect`'s defaults; an object passes `keywords` and `maxPerLoad` through.
-   * Its notices arrive as `notice` events, and a preselection that fails picks nothing rather
-   * than ending the exchange. What it picked is a notice too, `PRESELECTED_NOTICE` and the names,
-   * before the first `turn` event, and is the result's `preselected`. It runs beside the hooks'
-   * `gather` rather than before it, since neither reads what the other returns, and the first
-   * request waits for both.
+   * The preselector is `config.tasks.toolSelect`, else `config.toolSelectModel`, else `config.model`
+   * itself, and it is asked about `preselectQuery` or the last user message's text (README, "Its side
+   * tasks"). Nothing is asked in eager mode or when `preselected` is given, an empty one included, and
+   * a preselection that fails picks nothing rather than ending the exchange.
    */
   preselect?: boolean | { keywords?: boolean | KeywordPreselectOptions; maxPerLoad?: number };
   /**
@@ -439,16 +407,10 @@ export interface AgentLoopOptions {
    * to the main model — or without a `config.contextLength` to plan against.
    *
    * @remarks
-   * It runs after `beforeTurn`, on what that returned, and is `compactTranscript` and nothing
-   * more: the plan is made from the last request's reported prompt, or an estimate before the
-   * first turn and after a `beforeTurn` rewrite; `hooks`, when given, are told `beforeCompact`
-   * ahead of the summary, and a veto skips it (`honourVeto`); and a compaction, or a veto, is said
-   * as a `notice` event. A summary that fails is a notice too and compacts nothing. Tool results
-   * are not pruned by this — `prune` is.
-   *
-   * The result's `messages` then open with the summary in place of what was compacted, so an app
-   * that keeps its transcript append-only wants `runCompaction` and a stored compaction instead.
-   * `true` plans by `planCompaction`'s defaults; an object moves its thresholds.
+   * It runs after `beforeTurn`, on what that returned, as `compactTranscript`: `hooks` are told
+   * `beforeCompact` and may veto it, and a compaction, a veto or a failed summary is a `notice`. The
+   * result's `messages` then open with the summary, so an app that keeps its transcript append-only
+   * wants `runCompaction` and a stored compaction instead.
    */
   compact?: boolean | Pick<CompactionOptions, 'compactAt' | 'keepRatio' | 'target'>;
   /**
@@ -457,16 +419,11 @@ export interface AgentLoopOptions {
    * nothing moves without a `config.contextLength` — except alongside a compaction.
    *
    * @remarks
-   * It runs after `beforeTurn`, on what that returned, and before `compact`, which then plans from
-   * what is left: a prune that brings the exchange back under the line spares it the summary's
-   * round trip. Where it compacts anyway, the boundary is moved again after it with `compacted`,
-   * since the cache is already lost. Each move is said as a `notice` event, with
-   * `pruneNotice`'s counts.
-   *
-   * The stubs are in the result's `messages`, as a summary is, so an app that keeps its transcript
-   * whole calls `planPrune` and `pruneThrough` in its own `beforeTurn` and stores the boundary
-   * instead. `true` plans by `planPrune`'s defaults — past `COMPACT_AT` of the context window, and
-   * only for at least `PRUNE_SHARE` of it; an object moves the gate and what is kept.
+   * It runs after `beforeTurn` and before `compact`, so a prune that brings the exchange back under
+   * the line spares it the summary's round trip; each move is a `notice` with `pruneNotice`'s counts.
+   * The stubs are in the result's `messages`, so an app that keeps its transcript whole calls
+   * `planPrune` and `pruneThrough` in its own `beforeTurn` instead (README, "A prune boundary that
+   * keeps the cache").
    */
   prune?: boolean | Pick<PrunePlanOptions, 'at' | 'minShare' | 'keepLast' | 'maxChars'>;
   /**
@@ -505,18 +462,11 @@ export interface AgentLoopOptions {
    * @defaultValue `false`
    *
    * @remarks
-   * Results go into the transcript in the order the model asked, whichever way they ran. See
-   * `dedupeToolCalls`, which applies either way. Under `singleCallMessages`, or once the model has
-   * refused several calls in one message, a turn's calls run one at a time whatever this says.
-   *
-   * A predicate is how an app runs reads together while its writes keep their order: a call it
-   * fails is a barrier, waiting for every call before it, and every call after waits for it. Read
-   * A, read B, write C, read D, read E runs as `[A ‖ B] → C → [D ‖ E]`, so a read asked for after
-   * a write sees what the write did. Calls the loop answers itself — `load_tools`, a call whose
-   * arguments could not be read, an identical repeat `dedupeToolCalls` answers — are not put to
-   * it, and count as reads. Inside a batch, `onToolResult` and the events arrive as calls finish.
-   * A pool that reads the MCP `readOnlyHint` annotation can answer it; nothing in an OpenAI tool
-   * definition can.
+   * A call the predicate fails is a barrier, so reads run together while writes keep their order:
+   * read A, read B, write C, read D runs as `[A ‖ B] → C → D`. Results go into the transcript in the
+   * order asked, and the calls the loop answers itself are not put to the predicate and count as
+   * reads. Under `singleCallMessages`, or once the model has refused several calls in one message,
+   * calls run one at a time whatever this says.
    */
   parallel?: boolean | ((call: ToolCallRequest) => boolean);
   /**
@@ -526,17 +476,10 @@ export interface AgentLoopOptions {
    * @defaultValue `true`
    *
    * @remarks
-   * It holds whether or not the calls run in `parallel`: a model that asks the same
-   * question twice in one reply gets one answer, and two that are still in flight share the
-   * request. A call that threw is not an answer and is made again. The scope is the turn and not
-   * the exchange, because between turns other tools have run and the file the model read may be the
-   * file it has since written. Whitespace and a repaired argument do not tell two calls apart, but
-   * the order of their keys does.
-   *
-   * `false` dispatches every call. A predicate is asked per call and is how a tool that does
-   * something rather than reads something opts out — `send_email` twice is two emails, and this
-   * package cannot tell which tools those are. A pool that reads the MCP `readOnlyHint` and
-   * `idempotentHint` annotations can answer it; nothing in an OpenAI tool definition can.
+   * A call that threw is made again, and whitespace or a repaired argument do not tell two calls
+   * apart, though the order of their keys does. The scope is the turn, because between turns the file
+   * the model read may be the file it has since written. A predicate is how a tool that does something
+   * rather than reads something opts out: `send_email` twice is two emails.
    */
   dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
   /**
@@ -561,15 +504,10 @@ export interface AgentLoopOptions {
    * successful call for the shape of a write. Both off by default.
    *
    * @remarks
-   * For servers that never send a `resource_link`, which is the source to rely on. One artifact per
-   * location either way: a later write moves `action` on, a declaration over a detection fills in
-   * the title and description and takes the `source` over, and a link over either takes over too.
-   *
-   * `record_artifact` is declared beside `hostTools`, in every mode, and answered by the loop
-   * without `dispatch` seeing it. A declaration is believed only where some successful call in the
-   * exchange was given or answered with the location, and is otherwise refused for the model to
-   * read; run in a batch, it waits for the batch's other calls. `onToolCall` and `onToolResult`
-   * hear it as they hear `load_tools`, and it counts in `toolCalls` but not in `used`.
+   * For servers that never send a `resource_link`, which is the source to rely on. There is one
+   * artifact per location either way, a link taking over from a declaration and a declaration from a
+   * detection, and a declaration is believed only where some successful call in the exchange was
+   * given or answered with the location (README, "What the calls made").
    */
   artifacts?: ArtifactOptions;
   /**
@@ -734,18 +672,11 @@ export interface AgentLoopOptions {
    * before its tools run, and every tool result before the next request is sent.
    *
    * @remarks
-   * The assistant message is the one replayed on later requests — arguments repaired, recovered
-   * calls folded in, the scratchpad on it where `reasoningReplay` says — and comes with its
-   * `reply`, as `onTurn` was handed it. Under `tool-loop` the result's `messages` drop that field
-   * once the answer is written, so an app storing these rows drops it too (`dropReasoning`).
-   * A tool result comes without one, and so do the two messages
-   * a proxied exchange writes for its `preselected` shortlist, told as turn zero's before any
-   * request. What it returns is ignored: `beforeTurn` is the one way to rewrite the transcript.
-   * What it throws ends the exchange, and it is not called again for that exchange.
-   *
-   * Beside an assistant message the model wrote comes `written`, whose `raw` is the message as the
-   * model produced it, for an app that shows or stores what was said rather than what is replayed.
-   * See `WrittenMessage`.
+   * An assistant message is the one replayed on later requests, and comes with its `reply` and, where
+   * the model wrote it, `written`, whose `raw` is the message as the model produced it. What it returns
+   * is ignored, since `beforeTurn` is the one way to rewrite the transcript, and what it throws ends the
+   * exchange. Under `tool-loop` the result's `messages` drop the scratchpad once the answer is written,
+   * so an app storing these rows drops it too (`dropReasoning`).
    */
   onMessage?: (
     message: OpenAI.ChatCompletionMessageParam,
@@ -894,9 +825,7 @@ interface Standing {
 
 /**
  * Runs a question to its answer: one `runTurn` per turn, the tools it asks for between them, until
- * a reply asks for none or a call's answer ends the exchange. Throws when `maxToolIterations` is
- * spent, when stopped, and on whatever `runTurn` throws — `ContextOverflow` among them, however it
- * was found out.
+ * a reply asks for none or a call's answer ends the exchange.
  *
  * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
@@ -904,71 +833,16 @@ interface Standing {
  * `ended` naming it, or the calls it waits on, in `pending` — and the exchange around it: the
  * transcript with what the exchange added, usage, every call, what is loaded and used, the hooks'
  * notes and context, metrics and the ledger. See `AgentLoopResult`.
+ * @throws {@link ToolIterationLimit} When `maxToolIterations` is spent.
+ * @throws {@link AgentLoopOverflow} When a request is too big for the context window, however that was found out.
+ * @throws {@link AgentLoopError} On anything else, a stop included, with what was caught as its `cause`.
  *
  * @remarks
- * Its first event is an `exchange` and its last an `exchange-end`, sent on every way out: with how
- * the exchange ended where it returns, and with `failed`, or `stopped` once the app's signal has
- * aborted, just before it throws. `exchange` names the exchange on both and on every event between.
- *
- * What it throws carries the exchange as it stood — `messages`, `usage`, `toolCalls`, `loaded`,
- * `used`, `preselected` and `ledger` — because the turns before a failure were real and an app that
- * stores its transcript has nothing else to store them from. What the request in flight had said
- * is on it as `partial`, and not in `messages`. A spent budget is a `ToolIterationLimit`, an
- * overflow is an `AgentLoopOverflow`, which is still a `ContextOverflow`, and anything else is an
- * `AgentLoopError` with what was caught as its `cause` and its message as its own; `failedRun`
- * reads the exchange off any of the three. A failure while a turn's tools run leaves the transcript
- * well-formed: the results that came back are kept, and each call without one is answered with a
- * line saying it was stopped or never run, since a call with no result is refused on replay.
- *
- * A tool that finishes the job — a hand-off, a question for a person — ends the exchange with a
- * `ToolAnswer` whose `end` is set, rather than by aborting it: the turn's calls are all run and
- * answered, no further request is sent, and the loop resolves with `ended`. An end in the last turn
- * `maxToolIterations` allows resolves too, since nothing was left undone.
- *
- * A call only the app can answer later — one of its own tools — is left unanswered with `handBack`:
- * the turn's other calls run, a `wait` event is emitted, and the loop resolves with the call in
- * `pending`. The run goes on when the app calls the loop again with the answers appended; see
- * `AgentLoopResult.pending`.
- *
- * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system prompt
- * unchanged from turn to turn, a load adds to the tool array — which every request sends in the
- * stable order `toolOrder` asks for — and a catalogued tool called without being loaded is loaded
- * and run rather than refused, and a preselection shapes the first turn unless `preselectRouting`
- * says to append it. A reply cut off at `maxTokens` is said so as a notice, because it otherwise
- * reads exactly like a finished one — or, given `maxContinuations`, is continued first. Every turn
- * ends in a `usage` event carrying the turn's own report, with the cache compared against the
- * request before it and the request broken down by what filled it; see `TurnUsage` and
- * `runMetrics`.
- *
- * Each turn's reported prompt goes on a token ledger, in the same epoch as the turn before where
- * the request only appended to it and in a new one where it did not — a `beforeTurn` that rewrote
- * the transcript, a tool array a load grew — so that what the messages between two turns cost can
- * be read back as a subtraction. The prompt recorded is the first request's, before any
- * continuation, and a turn that reported none, or reported a cache count above its prompt, is not
- * recorded. The ledger comes back in the result and on every `usage` event; see `tokensBetween`.
- *
- * Proxied discovery is the same catalogue behind a tool array that never moves: every turn declares
- * `PROXY_TOOLS` and nothing else, a load answers with the definitions themselves, and a `call_tool`
- * is dispatched, counted and reported as the tool it names. A preselection has no tool array to go
- * into, so it is written into the transcript as a `load_tools` call and its result after the
- * question. `call_tool` is honoured on demand too, unless the app has a tool of that name — a
- * session switched out of proxied mode still has it in its history, and the model copies it. The
- * app's own `hostTools` are declared beside whatever the mode sends, in every mode, and are
- * never catalogued.
- *
- * Neither side task is run unless asked for. `preselect` has the loop make the preselection and
- * `compact` has it compact the transcript, each by the task `config.tasks` carries for it and on
- * that task's own settings — a setting the task leaves out is the side task's default, never the
- * exchange's `temperature` or `maxTokens`.
- *
- * On a `remoteAgent` config the model runs its own loop, and this one is a plain tool loop around
- * it: every request declares `tools` and `hostTools`, `dispatch` answers the calls the server hands
- * back, and the next request resumes the server's run by the ids it sent, which are kept as sent.
- * Only the sampling the config sets is sent, and the server's own work — compaction, pruning,
- * preselection, on-demand loading, continuations, the context-window guard — is left to it
- * (`asRemoteAgent`). Its progress is asked for and its events forwarded to `onEvent` in place of
- * the loop's own for its turns, and each turn carries one `IDEMPOTENCY_HEADER` across its retries
- * (`remoteRun`).
+ * Its first event is an `exchange` and its last an `exchange-end`, sent on every way out. What it
+ * throws carries the exchange as it stood, for `failedRun`, with each call left without a result
+ * answered as stopped or never run, since a call with no result is refused on replay. Loading
+ * modes, ending and handing back calls, the token ledger and remote agents are in the README's
+ * "The loop" and "Running against a remote agent".
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const record = recorder(options.onEvent, options.exchange);
@@ -1646,11 +1520,8 @@ async function runTurns(
     onEvent({ kind: RunEventKind.Input, text: textOf(input.content) });
     await announce(input, turn);
   };
-  // Held by reference, so a `beforeTurn` that compacts the head into a summary moves the question
-  // without losing it, and found again by role where an app rebuilt the transcript and the object
-  // went with it: the only user messages the loop writes are its input, so the question is the
-  // last other one that is not a summary. One that summarises the question away took every user
-  // message before it too, and the hooks' context goes with it, which is right.
+  // Held by reference, and found again by role where an app rebuilt the transcript: the only user
+  // messages the loop writes are its input, so the question is the last other one that is not a summary.
   const question = messages.findLast(isQuestion);
   const questionAt = () => {
     const at = question ? messages.indexOf(question) : -1;

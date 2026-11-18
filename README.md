@@ -757,7 +757,8 @@ if (result.ended) {
 The turn's other calls still run, whichever side of the end the model asked for them and however
 `parallel` batches them: they were asked for in the same reply, and a model that says "write the
 file, then hand off" wants the file written in either order. Where two calls end it, `ended` is
-the first in the order asked. Everything else is a finished exchange's — `usage`, `metrics`,
+the first in the order asked, and an end in the last turn `maxToolIterations` allows resolves too,
+since nothing was left undone. Everything else is a finished exchange's — `usage`, `metrics`,
 `messages`, `artifacts`, the `afterExchange` hooks — with `metrics.outcome` `ended` and a notice
 saying which tool ended it. `turn` is the reply that made the call, so its `content` is whatever
 the model wrote beside its calls, often nothing; the exchange's answer is what the ending tool took.

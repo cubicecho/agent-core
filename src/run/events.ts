@@ -42,18 +42,11 @@ export interface EventBusOptions {
    * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
    *
    * @remarks
-   * A finished run has nothing more to say, so forgetting it a minute later costs a late watcher
-   * a backlog and nothing else. An unfinished one is still writing: `touched` only moves on
-   * `emit`, so a live run that spends a minute inside one slow tool call looked exactly like an
-   * abandoned one and was reaped out from under itself. What made that more than a lost backlog
-   * is that the next `emit` builds a fresh stream with `seq` back at zero — and `seq` is the
-   * field `RunEvent` documents for ordering and de-duplication, so a client that reconnects
-   * across the gap discards the new events as ones it has already seen.
-   *
-   * The sweep still has to reap them, because a run killed by a signal or simply forgotten
-   * reaches no `done` either. This is the backstop for a caller that never says so; `endRun` is
-   * for one that knows. Anything shorter than the longest a tool call may take is a live run
-   * reaped out from under itself.
+   * `touched` only moves on `emit`, so a live run inside one slow tool call looks abandoned, and the
+   * next `emit` after a reap restarts `seq` at zero, which a reconnecting client discards as events it
+   * has seen. Anything shorter than the longest a tool call may take reaps a live run out from under
+   * itself. The sweep still reaps these, as the backstop for a run killed or forgotten before `done`;
+   * `endRun` is for a caller that knows.
    */
   retainUnendedMs?: number;
   /**
@@ -488,12 +481,8 @@ export function endRun(runId: string) {
   if (!stream) {
     return;
   }
-  // Watchers are parked on a promise that only an `emit` to *this* stream can resolve, and the
-  // delete below puts it beyond the reach of every later one — the next `emit` builds a fresh
-  // stream and wakes nobody. So they are told the run is over first: a watcher that is handed
-  // `done` completes, runs its `finally` and lets its consumer go, where one left parked holds
-  // an open subscription that can never say anything again. An SSE client on the other end of
-  // that is a connection that never closes.
+  // Watchers are parked on a promise only an `emit` to this stream resolves, and the delete puts it
+  // beyond reach, so they are handed `done` first: one left parked is an SSE connection that never closes.
   if (stream.listeners.size) {
     emit(runId, { kind: RunEventKind.Done, ok: false, text: 'run ended' });
   }
@@ -615,14 +604,8 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
   let wake: (() => void) | null = null;
   const listener = (event: RunEvent) => {
     queue.push(event);
-    // The bus caps its own backlog at `maxEvents`; without this the watcher downstream of it
-    // had no cap at all, so a client too slow to keep up held every delta a run ever emitted.
-    // The oldest go, which is what the backlog does, and the gap is reported once below.
-    //
-    // Dropped here means released here. Advancing the cursor alone left the dropped events in
-    // the slots behind it, to be freed by the compaction in the drain below — which a consumer
-    // that has stalled does not reach, and a stalled consumer is the whole reason for the cap.
-    // It read as capped and held every event anyway: 16MB where the cap promises a third of one.
+    // Capped as the bus's own backlog is, oldest first, and released here rather than by the drain's
+    // compaction, which a stalled consumer (the reason for the cap) never reaches.
     const cut = queue.length - head - limits.maxEvents;
     if (cut > limits.trimSlack) {
       queue = queue.slice(head + cut);
@@ -681,12 +664,8 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // signal — a run's whole backlog kept by a watcher that finished on `done`.
     signal?.removeEventListener(ABORT_EVENT, onAbort);
     stream.listeners.delete(listener);
-    // A watcher can name a run that has not started, or will never start. Nothing was recorded
-    // under it, so nothing is left behind either — and a run that has ended has nothing more to
-    // say to anyone, so the last watcher leaving takes the backlog with it.
-    // Against `stream` rather than the id: this generator may have outlived its own entry — a
-    // sweep or an `endRun` drops it and a later `emit` files the same run under a new one — and
-    // the last watcher of the old stream has no business deleting the new one.
+    // Nothing is left behind for a run that never started or has ended. Checked against `stream`, not
+    // the id: a later `emit` may have filed the same run under a new stream, which is not ours to delete.
     const stillFiled = streams.get(runId) === stream;
     const unwatched = stream.listeners.size === 0;
     const nothingMoreToSay = stream.phase === StreamPhase.Ended || stream.events.length === 0;
