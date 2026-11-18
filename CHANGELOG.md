@@ -1,3 +1,26 @@
+# [4.30.0](https://github.com/cubicecho/agent-core/compare/v4.29.0...v4.30.0) (2026-11-18)
+
+
+### Bug Fixes
+
+* **endpoint:** a slot allocator reads the pool as it is now (B14) ([e7b668e](https://github.com/cubicecho/agent-core/commit/e7b668e66c050db05b1de3c92926567884157be0))
+* **events:** keep a waiting run's stream until its done (B15) ([15023f2](https://github.com/cubicecho/agent-core/commit/15023f214aeb950a68e90296dfb9f75603dda840))
+* **events:** pair a tool's result with its call by id (B13) ([68c3b8d](https://github.com/cubicecho/agent-core/commit/68c3b8d7c5117ded72caf9bdad2982e293dc70cd))
+* **hooks:** notify and consult never reject when onNote throws (B7) ([4c974a6](https://github.com/cubicecho/agent-core/commit/4c974a6f6205f5933f203a8980718145da41244b))
+* **spec:** an empty id, name or description overrides the layer below (B10) ([1632605](https://github.com/cubicecho/agent-core/commit/1632605d9fc46bfb580efd0dc13354fd0a477332))
+* **spec:** an empty prompt-part text deletes the part, ref included (B9) ([2f2ff14](https://github.com/cubicecho/agent-core/commit/2f2ff14d305e6cf3fa9d99a19dec0dba5328395e))
+* **spec:** quote a dropped path's key that holds a dot (B18) ([f6656b7](https://github.com/cubicecho/agent-core/commit/f6656b797a273cb4a693b38ddd28d8d3bb7bfab7))
+* **spec:** re-check a hook's inject and veto after layers merge (B8) ([168e6ba](https://github.com/cubicecho/agent-core/commit/168e6babac9c4fd5cfd760dca7328d9392bdbda5))
+* **spec:** resolving drops the extraBody fields something else sets (B11) ([a7109e1](https://github.com/cubicecho/agent-core/commit/a7109e1cfccbc46c143af5b3169f376c07e3768e)), closes [#222](https://github.com/cubicecho/agent-core/issues/222)
+* **turn:** leave latching a refused reasoning effort to negotiate (B20) ([64ed163](https://github.com/cubicecho/agent-core/commit/64ed163db173bd0c08b77ed21d0e6f1c554c40cd))
+* **wire:** keep Turn.reasoning in arrival order (B19) ([90a83b1](https://github.com/cubicecho/agent-core/commit/90a83b116f56ac31e5aaf0c667838b88493e94db))
+* **wire:** recoverToolCalls skips every DEFAULT_FENCES scratchpad (B12) ([21b3266](https://github.com/cubicecho/agent-core/commit/21b32665c7fe49433d97136078d1b19f1bbf4942))
+
+
+### Features
+
+* export OnNotice and EndpointIdentity from the package root (A4) ([d522ecd](https://github.com/cubicecho/agent-core/commit/d522ecd83eb45e028057a996a424087a2912e644))
+
 # [4.29.0](https://github.com/cubicecho/agent-core/compare/v4.28.0...v4.29.0) (2026-11-18)
 
 
