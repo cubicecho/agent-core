@@ -214,11 +214,6 @@ describe('runAgentLoop', () => {
       totalTokens: 12,
       cachedTokens: 0,
       cacheReported: false,
-      // The names the field had before, kept beside the ones it shares with the events.
-      prompt: 10,
-      completion: 2,
-      total: 12,
-      cached: 0,
     });
     expect(events.map((e) => e.kind)).toEqual([
       RunEventKind.Turn,
@@ -351,7 +346,7 @@ describe('runAgentLoop', () => {
       content: 'half and the rest',
     });
     expect(notices).toEqual([]);
-    expect(result.usage).toMatchObject({ prompt: 20, completion: 4 });
+    expect(result.usage).toMatchObject({ promptTokens: 20, completionTokens: 4 });
     expect(result.metrics).toMatchObject({
       turns: 1,
       requests: 2,
@@ -922,7 +917,7 @@ describe('runAgentLoop', () => {
       },
     });
     expect(usages.map((usage) => usage.cacheReported)).toEqual([false, true]);
-    expect(result.usage).toMatchObject({ cachedTokens: 40, cached: 40, cacheReported: true });
+    expect(result.usage).toMatchObject({ cachedTokens: 40, cacheReported: true });
   });
 
   describe('artifacts', () => {
@@ -1067,7 +1062,7 @@ describe('runAgentLoop', () => {
         { id: callId, name: 'done', ok: true },
       ]);
       expect(result.messages.at(-1)).toMatchObject({ tool_call_id: callId });
-      expect(result.usage).toMatchObject({ prompt: 230, completion: 20, total: 250 });
+      expect(result.usage).toMatchObject({ promptTokens: 230, completionTokens: 20, totalTokens: 250 });
       expect(result.metrics.outcome).toBe(RunOutcome.Ended);
       expect(result.metrics.turns).toBe(2);
       expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'done ended the run: handed to review' });
@@ -2291,7 +2286,7 @@ describe('runAgentLoop', () => {
       expect(result.context.indexOf('from sessionStart')).toBeLessThan(result.context.indexOf('from beforeTurn'));
     });
 
-    it('wins over events, and never gathers afterTurn before the request', async () => {
+    it('never gathers afterTurn before the request', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
@@ -2301,7 +2296,6 @@ describe('runAgentLoop', () => {
         hooks: {
           run,
           context: { session: { id: 's1' } },
-          events: [HookEvent.SessionStart],
           fire: [HookEvent.AfterTurn, HookEvent.BeforeTurn],
         },
       });
@@ -2310,17 +2304,17 @@ describe('runAgentLoop', () => {
       expect(run.mock.calls[1][1]).toMatchObject({ reply: 'the answer' });
     });
 
-    it('fires what it always did when absent: events before the request, then afterTurn', async () => {
+    it('fires beforeTurn before the request and afterTurn after it when absent', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
         config,
         messages: question,
         dispatch: async () => 'ok',
-        hooks: { run, context: { session: { id: 's1' } }, events: [HookEvent.SessionStart] },
+        hooks: { run, context: { session: { id: 's1' } } },
       });
       await result.afterTurn;
-      expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.AfterTurn]);
+      expect(fired(run)).toEqual([HookEvent.BeforeTurn, HookEvent.AfterTurn]);
     });
   });
 

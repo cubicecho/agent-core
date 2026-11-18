@@ -1111,8 +1111,7 @@ continue, one to find out.
 
 Every turn ends in a `usage` event, whether or not the model server reported tokens. Its totals are the
 exchange's so far — `promptTokens`, `completionTokens`, `totalTokens`, `cachedTokens` and
-`cacheReported`, the `UsageTotals` spelling that `result.usage` and a failed exchange's `usage` share
-(their older `prompt`, `completion`, `total` and `cached` are still there, deprecated). A
+`cacheReported`, the `UsageTotals` spelling that `result.usage` and a failed exchange's `usage` share. A
 `cachedTokens` of zero is a miss only where `cacheReported` is true; false is a model server that never
 said; `reportsCache` asks the same of one turn's `TurnUsage`. Its `turn` is that turn's own `TurnUsage` and `finishReason`, with the `contextLength` the loop
 was told. The loop adds what only
@@ -1237,8 +1236,8 @@ await runAgentLoop({
 
 `hooks.fire` says which events the loop fires itself, and it fires no others: `sessionStart` and
 `beforeTurn` gathered before the first request, `beforeCompact` beside each compaction `compact` makes,
-`afterTurn` once answered. Left out, it is all of them — `events` (`beforeTurn` by default), then
-`afterTurn` and `beforeCompact` — which is what the loop always did. An app that fires the exchange's
+`afterTurn` once answered. Left out, it is `beforeTurn`, `beforeCompact` and `afterTurn`: every event
+the loop has a point for but `sessionStart`. An app that fires the exchange's
 events around a stage of its own still hands the loop its hooks for compaction:
 
 ```ts
@@ -1252,8 +1251,7 @@ await runAgentLoop({
 An event left out of `fire` is one the result has nothing for: `afterTurn` is resolved and empty
 without `afterTurn`, and `notes` and `context` are empty without an injecting event, since the
 app's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
-loop and are ignored there. `events` is deprecated: it is the injecting half of `fire`, and is
-ignored once `fire` is given.
+loop and are ignored there.
 
 An app that stores its transcript — a row per message, so a crash or a stop mid-exchange still leaves
 readable history — gets each message as the loop appends it, and the exchange as it stood when the loop

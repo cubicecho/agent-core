@@ -187,8 +187,8 @@ export interface AgentLoopHooks {
    * and `afterTurn` once the exchange has its answer. `sessionEnd` and `sessionDelete` are the
    * app's, since the loop has no point that is either, and are ignored here.
    *
-   * @defaultValue `events`, then `afterTurn` and `beforeCompact` — everything the loop has a point
-   * for, as it fired before this existed.
+   * @defaultValue `[HookEvent.BeforeTurn, HookEvent.BeforeCompact, HookEvent.AfterTurn]` —
+   * everything the loop has a point for but `sessionStart`.
    *
    * @remarks
    * For an app that fires some of them around the loop rather than inside it: one that tells
@@ -198,15 +198,6 @@ export interface AgentLoopHooks {
    * injecting event listed — the app's own `gather` and `notify` hold those instead.
    */
   fire?: readonly HookEvent[];
-  /**
-   * Run before the first request, when `fire` is not given. Ignored beside `fire`, which says the
-   * same thing with the other events in it.
-   *
-   * @defaultValue `[HookEvent.BeforeTurn]`
-   * @deprecated List them in `fire` instead, with `afterTurn` and `beforeCompact` where the loop
-   * should fire those too.
-   */
-  events?: readonly HookEvent[];
   /**
    * The shared context budget.
    *
@@ -816,7 +807,7 @@ export interface AgentLoopResult {
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
    * Summed over every turn of the exchange, in the spelling the `usage` events use, with whether
-   * any turn reported a cache count. The four counts are also under their older names.
+   * any turn reported a cache count.
    */
   usage: LoopUsage;
   /**
@@ -1118,21 +1109,20 @@ async function foldBeforeTurn(
 }
 
 /**
- * Which events the loop fires for these hooks, read from `fire`, or from `events` without it.
+ * Which events the loop fires for these hooks, read from `fire`.
  *
  * @param hooks - The exchange's hooks.
  * @returns The events to gather before the first request, and whether `afterTurn` and
  * `beforeCompact` are the loop's to fire.
  *
  * @remarks
- * Without `fire`, `events` goes to `gather` as it was given, unfiltered, so an app that had put
- * something odd in it sees what it saw before. With `fire`, only the injecting events are gathered:
- * a list that names every event is the whole of the loop's firing, and `afterTurn` gathered before
- * the request would be the hooks told a reply that does not exist yet.
+ * Only the injecting events of `fire` are gathered: a list that names every event is the whole of
+ * the loop's firing, and `afterTurn` gathered before the request would be the hooks told a reply
+ * that does not exist yet.
  */
 function firing(hooks: AgentLoopHooks): { before: readonly HookEvent[]; afterTurn: boolean; beforeCompact: boolean } {
   if (!hooks.fire) {
-    return { before: hooks.events ?? [HookEvent.BeforeTurn], afterTurn: true, beforeCompact: true };
+    return { before: [HookEvent.BeforeTurn], afterTurn: true, beforeCompact: true };
   }
   const fire = new Set(hooks.fire);
   return {
