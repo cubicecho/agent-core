@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { REQUEST_SIZE_DEFAULTS } from '../../src/core/defaults.ts';
 import { SERVER_INSTRUCTION_TOKENS, serverInstructionsPrompt } from '../../src/tools/instructions.ts';
-import { CHARS_PER_TOKEN } from '../../src/wire/tokens.ts';
 
 describe('serverInstructionsPrompt', () => {
   it('is empty when no server sent anything', () => {
@@ -33,13 +33,13 @@ describe('serverInstructionsPrompt', () => {
     const long = 'word '.repeat(200).trim();
     const block = serverInstructionsPrompt([{ label: 'Long', instructions: long }], { maxTokensPerServer: 10 });
     const fenced = block.slice(block.indexOf('<untrusted'), block.indexOf('</untrusted>'));
-    expect(fenced.split('\n')[1].length).toBeLessThanOrEqual(10 * CHARS_PER_TOKEN);
+    expect(fenced.split('\n')[1].length).toBeLessThanOrEqual(10 * REQUEST_SIZE_DEFAULTS.charsPerToken);
     expect(fenced.trimEnd().endsWith('…')).toBe(true);
     expect(block.endsWith('(Cut to about 10 of the 250 tokens this server sent.)')).toBe(true);
   });
 
   it('keeps a text whole at a budget of zero, and cuts at the default otherwise', () => {
-    const long = 'x'.repeat((SERVER_INSTRUCTION_TOKENS + 1) * CHARS_PER_TOKEN);
+    const long = 'x'.repeat((SERVER_INSTRUCTION_TOKENS + 1) * REQUEST_SIZE_DEFAULTS.charsPerToken);
     const servers = [{ label: 'Long', instructions: long }];
     expect(serverInstructionsPrompt(servers, { maxTokensPerServer: 0 })).toContain(long);
     expect(serverInstructionsPrompt(servers)).toContain(`Cut to about ${SERVER_INSTRUCTION_TOKENS} of the`);

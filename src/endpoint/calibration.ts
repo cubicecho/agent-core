@@ -1,7 +1,8 @@
 import type OpenAI from 'openai';
+import { REQUEST_SIZE_DEFAULTS } from '../core/defaults.ts';
 import { getOrCreate } from '../core/guards.ts';
 import { scoped } from '../core/scope.ts';
-import { CHARS_PER_TOKEN, requestChars, toolsChars } from '../wire/tokens.ts';
+import { requestChars, toolsChars } from '../wire/tokens.ts';
 import { PartType } from '../wire/wire.ts';
 import type { Capabilities } from './capabilities.ts';
 
@@ -20,15 +21,8 @@ import type { Capabilities } from './capabilities.ts';
  * moves on every turn there would read as a latch changing and re-send refusals it should throw.
  */
 
-/** How many of a model's latest readings the ratio is taken over. */
-const READINGS = 4;
-
-/**
- * The ratios no tokenizer produces over a whole request. Below one is a request whose tokens are
- * mostly somewhere the characters do not count — an image — and far above four is a server that
- * reported the uncached part of the prompt as all of it.
- */
-const PLAUSIBLE = { least: 1, most: 8 };
+const { charsPerToken, calibrationReadings, minPlausibleCharsPerToken, maxPlausibleCharsPerToken } =
+  REQUEST_SIZE_DEFAULTS;
 
 /**
  * The latest readings per model, under the model server's own `Capabilities` object — the identity
@@ -57,7 +51,7 @@ const readings = scoped(() => new WeakMap<Capabilities, Map<string, number[]>>()
  */
 export function charsPerTokenFor(supports: Capabilities, model: string): number {
   const known = readings().get(supports)?.get(model);
-  return known?.length ? Math.max(...known) : CHARS_PER_TOKEN;
+  return known?.length ? Math.max(...known) : charsPerToken;
 }
 
 /**
@@ -97,19 +91,19 @@ export function calibrate(
     return charsPerTokenFor(supports, body.model);
   }
   const ratio = (requestChars(body) + toolsChars(body.tools ?? [])) / promptTokens;
-  if (ratio < PLAUSIBLE.least || ratio > PLAUSIBLE.most) {
+  if (ratio < minPlausibleCharsPerToken || ratio > maxPlausibleCharsPerToken) {
     return charsPerTokenFor(supports, body.model);
   }
   const models = getOrCreate(readings(), supports, () => new Map<string, number[]>());
   const known = getOrCreate(models, body.model, () => []);
   known.push(ratio);
-  if (known.length > READINGS) {
+  if (known.length > calibrationReadings) {
     known.shift();
   }
   return charsPerTokenFor(supports, body.model);
 }
 
-/** Forgets every reading, so the next request is sized at `CHARS_PER_TOKEN` again. */
+/** Forgets every reading, so the next request is sized at `REQUEST_SIZE_DEFAULTS.charsPerToken` again. */
 export function resetCalibration() {
   readings.reset();
 }

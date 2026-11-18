@@ -35,6 +35,39 @@ export const MODEL_SERVER_DEFAULTS: Readonly<ModelServerSettings> = Object.freez
   loadingTimeoutSeconds: 120,
 });
 
+/** Sizing a request against the context window, with no tokenizer to hand. */
+export interface RequestSizeSettings {
+  /**
+   * The characters one token is taken to be, where nothing has measured it.
+   *
+   * @remarks
+   * The fallback, not the rule: once a reply has come back with a reported prompt count, `runTurn`
+   * divides by what the model on that model server was measured at instead. See
+   * `charsPerTokenFor`.
+   */
+  charsPerToken: number;
+  /** How many of a model's latest readings `charsPerTokenFor` takes its ratio over. */
+  calibrationReadings: number;
+  /**
+   * The fewest characters per token a whole request can measure and still be believed. Below it is
+   * a request whose tokens are mostly somewhere the characters do not count — an image.
+   */
+  minPlausibleCharsPerToken: number;
+  /**
+   * The most characters per token a whole request can measure and still be believed. Far above
+   * `charsPerToken` is a server that reported the uncached part of the prompt as all of it.
+   */
+  maxPlausibleCharsPerToken: number;
+}
+
+/** The ratio a request is sized by, and the bounds a measured one is held to. */
+export const REQUEST_SIZE_DEFAULTS: Readonly<RequestSizeSettings> = Object.freeze({
+  charsPerToken: 4,
+  calibrationReadings: 4,
+  minPlausibleCharsPerToken: 1,
+  maxPlausibleCharsPerToken: 8,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

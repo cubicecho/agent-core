@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { REQUEST_SIZE_DEFAULTS } from '../../src/core/defaults.ts';
 import { calibrate, charsPerTokenFor, resetCalibration } from '../../src/endpoint/calibration.ts';
 import { capabilitiesFor, resetCapabilities } from '../../src/endpoint/capabilities.ts';
 import { runTurn } from '../../src/turn/run-turn.ts';
 import { ContextOverflow } from '../../src/wire/retry.ts';
-import { CHARS_PER_TOKEN, requestChars, requestTokens, toolsChars } from '../../src/wire/tokens.ts';
+import { requestChars, requestTokens, toolsChars } from '../../src/wire/tokens.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
 import { type Body, type Create, chunks, clientOf } from '../helpers.ts';
 
@@ -34,7 +35,7 @@ describe('calibration', () => {
   const supports = () => capabilitiesFor({ baseUrl: 'http://local/v1' });
 
   it('sizes at four characters a token until something has been measured', () => {
-    expect(charsPerTokenFor(supports(), 'm')).toBe(CHARS_PER_TOKEN);
+    expect(charsPerTokenFor(supports(), 'm')).toBe(REQUEST_SIZE_DEFAULTS.charsPerToken);
   });
 
   it('takes the highest of the latest four readings, which is the lowest count', () => {
@@ -50,8 +51,10 @@ describe('calibration', () => {
     const body = asking('x'.repeat(3000));
     calibrate(supports(), body, promptAt(body, 2));
     expect(charsPerTokenFor(supports(), 'm')).toBeCloseTo(2);
-    expect(charsPerTokenFor(supports(), 'other')).toBe(CHARS_PER_TOKEN);
-    expect(charsPerTokenFor(capabilitiesFor({ baseUrl: 'http://elsewhere/v1' }), 'm')).toBe(CHARS_PER_TOKEN);
+    expect(charsPerTokenFor(supports(), 'other')).toBe(REQUEST_SIZE_DEFAULTS.charsPerToken);
+    expect(charsPerTokenFor(capabilitiesFor({ baseUrl: 'http://elsewhere/v1' }), 'm')).toBe(
+      REQUEST_SIZE_DEFAULTS.charsPerToken,
+    );
   });
 
   it('counts the tools the request declared', () => {
@@ -67,7 +70,7 @@ describe('calibration', () => {
     calibrate(supports(), body, promptAt(body, 0.5));
     calibrate(supports(), body, promptAt(body, 20));
     calibrate(supports(), body, 0);
-    expect(charsPerTokenFor(supports(), 'm')).toBe(CHARS_PER_TOKEN);
+    expect(charsPerTokenFor(supports(), 'm')).toBe(REQUEST_SIZE_DEFAULTS.charsPerToken);
   });
 
   it('does not learn from a request carrying an image', () => {
@@ -84,14 +87,14 @@ describe('calibration', () => {
         },
       ],
     };
-    expect(calibrate(supports(), body, 800)).toBe(CHARS_PER_TOKEN);
+    expect(calibrate(supports(), body, 800)).toBe(REQUEST_SIZE_DEFAULTS.charsPerToken);
   });
 
   it('is forgotten by resetCalibration', () => {
     const body = asking('x'.repeat(3000));
     calibrate(supports(), body, promptAt(body, 2));
     resetCalibration();
-    expect(charsPerTokenFor(supports(), 'm')).toBe(CHARS_PER_TOKEN);
+    expect(charsPerTokenFor(supports(), 'm')).toBe(REQUEST_SIZE_DEFAULTS.charsPerToken);
   });
 
   it('is learned by runTurn and then sizes the guard in front of the next request', async () => {

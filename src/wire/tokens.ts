@@ -1,15 +1,7 @@
 import type OpenAI from 'openai';
+import { REQUEST_SIZE_DEFAULTS } from '../core/defaults.ts';
 import { isPositive } from '../core/guards.ts';
 import { CALL_EXTRA_KEYS, type CallExtraKey, FUNCTION_TOOL, PartType, Role } from './wire.ts';
-
-/**
- * The characters one token is taken to be, where nothing has measured it.
- *
- * @remarks
- * The fallback, not the rule: once a reply has come back with a reported prompt count, `runTurn`
- * divides by what the model on that model server was measured at instead. See `charsPerTokenFor`.
- */
-export const CHARS_PER_TOKEN = 4;
 
 /**
  * Rough token count. Characters over four, because there is no tokenizer here and there is not
@@ -30,17 +22,17 @@ export const CHARS_PER_TOKEN = 4;
  * a tool block's, a request's, and the breakdown of a context window. `hooks` and `instructions`
  * read this to cap the block each adds, as can an app sizing its own prompt.
  */
-export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
+export const estimateTokens = (text: string) => Math.ceil(text.length / REQUEST_SIZE_DEFAULTS.charsPerToken);
 
 /**
  * Text cut to fit a token budget, with an ellipsis where the cut is.
  *
  * @param text - What to cut. Cut whatever its length, so a caller checks the budget first.
- * @param maxTokens - The budget, in tokens of `CHARS_PER_TOKEN` characters.
+ * @param maxTokens - The budget, in tokens of `REQUEST_SIZE_DEFAULTS.charsPerToken` characters.
  * @returns The head of the text, trailing space trimmed, and `…`: no longer than the budget.
  */
 export const clipToTokens = (text: string, maxTokens: number) =>
-  `${text.slice(0, maxTokens * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+  `${text.slice(0, maxTokens * REQUEST_SIZE_DEFAULTS.charsPerToken - 1).trimEnd()}…`;
 
 /** Where `formatTokens` starts counting in thousands. */
 const THOUSAND = 1000;
@@ -128,9 +120,10 @@ export interface TokenEstimateOptions {
  * The divisor an option asked for, or the fallback when it asked for nothing usable.
  *
  * @param charsPerToken - What the caller gave. Absent, zero, negative or `NaN` is nothing usable.
- * @returns `charsPerToken` when it is above zero, otherwise four.
+ * @returns `charsPerToken` when it is above zero, otherwise `REQUEST_SIZE_DEFAULTS.charsPerToken`.
  */
-const divisor = (charsPerToken: number | undefined) => (isPositive(charsPerToken) ? charsPerToken : CHARS_PER_TOKEN);
+const divisor = (charsPerToken: number | undefined) =>
+  isPositive(charsPerToken) ? charsPerToken : REQUEST_SIZE_DEFAULTS.charsPerToken;
 
 /**
  * How many characters one message is worth: its keys, and its content in whichever shape.
