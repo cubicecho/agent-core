@@ -1562,7 +1562,8 @@ async function runSteps(
   const dedupable = typeof dedupeToolCalls === 'function' ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
   const { recorded, onEvent: told } = recorder(options.onEvent);
-  const remote = config.remoteAgent === true ? remoteRun(config.extraBody, told) : undefined;
+  const remote =
+    config.remoteAgent === true ? remoteRun(config.extraBody, told, { field: config.progressField }) : undefined;
   const onEvent = remote?.emit ?? told;
   const client = getClient(config);
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);

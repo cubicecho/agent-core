@@ -40,9 +40,10 @@ interface Received {
  *
  * @param stretches - What each request is answered with, in order.
  * @param [failFirst] - How many requests are refused with a 503 before any is answered.
+ * @param [field] - The field the server reads its options and writes its progress under.
  * @returns The `fetch` to put on the endpoint, and what reached it.
  */
-function remoteAgent(stretches: Stretch[], failFirst = 0) {
+function remoteAgent(stretches: Stretch[], failFirst = 0, field: string = PROGRESS_FIELD) {
   const received: Received[] = [];
   let seq = 0;
   let failures = failFirst;
@@ -63,7 +64,7 @@ function remoteAgent(stretches: Stretch[], failFirst = 0) {
     if (!stretch) {
       throw new Error('the fake has no stretch left');
     }
-    const options = body[PROGRESS_FIELD] as { progress?: boolean } | undefined;
+    const options = body[field] as { progress?: boolean } | undefined;
     const progress = options?.progress === true ? stretch.events : [];
     const chunk = (delta: Record<string, unknown>, finish: string | null = null) => ({
       ...head,
@@ -78,7 +79,7 @@ function remoteAgent(stretches: Stretch[], failFirst = 0) {
     }));
     return streamed(
       chunk({ role: Role.Assistant, content: '' }),
-      ...progress.map((input) => progressChunk(stamp(input, RUN, ++seq, 1000 + seq), head)),
+      ...progress.map((input) => progressChunk(stamp(input, RUN, ++seq, 1000 + seq), head, field)),
       ...(stretch.content ? [chunk({ content: stretch.content })] : []),
       ...(calls.length ? [chunk({ tool_calls: calls })] : []),
       chunk({}, calls.length ? 'tool_calls' : 'stop'),
@@ -225,6 +226,15 @@ describe('a run on a remote agent', () => {
     const { remoteAgent: _flag, ...config } = remoteConfig(plain.fetch);
     const renamed = await ask({ ...config, maxTokens: 0, temperature: 0 }, { messages: earlier });
     expect(renamed.dispatched[0].id).not.toBe(HANDED);
+  });
+
+  it('asks for and reads progress under the field the config names', async () => {
+    const { fetch, received } = remoteAgent([asking, answering], 0, 'agent_run');
+    const { result, events } = await ask({ ...remoteConfig(fetch), progressField: 'agent_run' });
+    expect(received[0].body.agent_run).toEqual({ progress: true });
+    expect(received[0].body).not.toHaveProperty(PROGRESS_FIELD);
+    expect(events.filter((event) => 'seq' in event)).toHaveLength(asking.events.length + answering.events.length - 1);
+    expect(result.remoteRunId).toBe(RUN);
   });
 
   it('sends no sampling the host did not set, and what it did set as it was set', async () => {

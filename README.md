@@ -1266,6 +1266,8 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   pinned.
 - **Progress is asked for**, as `ai_router: { progress: true }` laid under the host's own
   `extraBody.ai_router` (its `task`, `servers`), and a host's `progress: false` turns it off.
+  `ai_router` is `PROGRESS_FIELD`, the default; a server that reads another names it as
+  `progressField`, and the loop asks and reads under that instead.
 - **The server says its own steps.** Each progress chunk's event goes to `onEvent` whole, under the
   server's `runId` and `seq` (`'seq' in event` tells one from the loop's), and the loop then says no
   `turn`, `thinking`, `output`, `tool-call`, `tool-result` or `usage` of its own: the server already
@@ -1288,7 +1290,8 @@ head)` writes an event as a chunk with empty `choices` and `ai_router: { event }
 client skips as it skips a usage chunk; `withProgress(completion, runId, events)` puts
 `ai_router: { runId, events }` beside the `choices` of an answer that is not streamed; and
 `progressEvent` and `progressEvents` read them back, dropping an event that is malformed or of a
-kind this version does not know. A server numbering its own events makes each with `stamp`.
+kind this version does not know. Each takes the field as its last argument, `PROGRESS_FIELD` where
+it is left out. A server numbering its own events makes each with `stamp`.
 
 ## Fields this interface cannot spell
 

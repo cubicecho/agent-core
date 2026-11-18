@@ -223,7 +223,7 @@ What a run is doing, while it is doing it.
 Running against a remote agent: a model that runs a whole agent loop of its own behind the chat completions API, and hands the host's tools back to it with `finish_reason: "tool_calls"`.
 
 - `IDEMPOTENCY_HEADER` — The header that makes a resent request the same request: one key per turn, kept across its retries.
-- `PROGRESS_FIELD` — The body field a remote agent's progress travels under: `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
+- `PROGRESS_FIELD` — The body field a remote agent's progress travels under where the host names no other: `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
 - `ProgressChunk` (type) — A streamed chunk that carries one of a remote run's events: no choices, and the event beside them.
 - `progressChunk` — A run event as a progress chunk, for a server streaming a remote agent's run.
 - `progressEvent` — The run event a streamed chunk carries, where it carries one.

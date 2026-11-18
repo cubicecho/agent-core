@@ -9,18 +9,22 @@ import { type RunEvent, type RunEventInput, RunEventKind } from './events.ts';
  * completions API, and hands the host's tools back to it with `finish_reason: "tool_calls"`.
  *
  * Its steps happen on the server, so what they say comes back as the server's own run events,
- * carried beside the chunks under `PROGRESS_FIELD`. The encoder is for that server and the decoder
- * for `runAgentLoop`, so the wire shape lives with `RunEvent` and the two ends cannot drift.
+ * carried beside the chunks under a field of their own, `PROGRESS_FIELD` unless the host names
+ * another. The encoder is for that server and the decoder for `runAgentLoop`, so the wire shape
+ * lives with `RunEvent` and the two ends cannot drift.
  */
 
 /**
- * The body field a remote agent's progress travels under: `{ progress: true }` on a request,
- * `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
+ * The body field a remote agent's progress travels under where the host names no other:
+ * `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on
+ * an answer that is not streamed.
  *
  * @remarks
  * ai-router's own name, because the request's other router fields (`task`, `servers`) live under it
- * too, and a second name for the answer's half would split one namespace in two. A standard
- * client skips it on the way in, and a server that refuses it on the way out has it dropped by name.
+ * too, and a second name for the answer's half would split one namespace in two. Another server
+ * names its own: `RemoteAgentParams.progressField` for the loop, and the last argument of each
+ * encoder and decoder here. A standard client skips it on the way in, and a server that refuses it
+ * on the way out has it dropped by name.
  */
 export const PROGRESS_FIELD = 'ai_router' as const;
 
@@ -46,8 +50,14 @@ const SERVER_OWNED: ReadonlySet<string> = new Set([
 /** Every kind a `RunEvent` may be, for telling one off the wire from something else. */
 const KINDS: ReadonlySet<string> = new Set(Object.values(RunEventKind));
 
-/** A streamed chunk that carries one of a remote run's events: no choices, and the event beside them. */
-export type ProgressChunk = OpenAI.ChatCompletionChunk & { [PROGRESS_FIELD]: { event: RunEvent } };
+/**
+ * A streamed chunk that carries one of a remote run's events: no choices, and the event beside them.
+ *
+ * @typeParam F - The field the event is under.
+ */
+export type ProgressChunk<F extends string = typeof PROGRESS_FIELD> = OpenAI.ChatCompletionChunk & {
+  [K in F]: { event: RunEvent };
+};
 
 /** What an answer that is not streamed carries beside `choices`: the run, and what it said. */
 export interface RunProgress {
@@ -87,43 +97,52 @@ function isRunEvent(value: unknown): value is RunEvent {
 /**
  * A run event as a progress chunk, for a server streaming a remote agent's run.
  *
+ * @typeParam F - The field the event goes under.
  * @param event - The event, whole, under the server's run id and numbering.
  * @param head - The chunk's `id`, `created` and `model`, the same as the stream's other chunks.
- * @returns A new chunk with empty `choices`, the event under `PROGRESS_FIELD`.
+ * @param [field] - The field the event goes under.
+ * @returns A new chunk with empty `choices`, the event under `field`.
  */
-export function progressChunk(
+export function progressChunk<F extends string = typeof PROGRESS_FIELD>(
   event: RunEvent,
   head: Pick<OpenAI.ChatCompletionChunk, 'id' | 'created' | 'model'>,
-): ProgressChunk {
-  return { ...head, object: CHUNK_OBJECT, choices: [], [PROGRESS_FIELD]: { event } };
+  field: F = PROGRESS_FIELD as F,
+): ProgressChunk<F> {
+  const chunk: OpenAI.ChatCompletionChunk = { ...head, object: CHUNK_OBJECT, choices: [] };
+  return Object.assign(chunk, { [field]: { event } }) as ProgressChunk<F>;
 }
 
 /**
  * An answer that is not streamed, with a remote run's events beside its `choices`.
  *
  * @typeParam T - The completion's own type.
+ * @typeParam F - The field the run goes under.
  * @param completion - The `chat.completion` body. Not written to.
  * @param runId - The server's run id.
  * @param events - What the run said, in order.
- * @returns A copy of `completion` with `{ runId, events }` under `PROGRESS_FIELD`.
+ * @param [field] - The field the run goes under.
+ * @returns A copy of `completion` with `{ runId, events }` under `field`.
  */
-export function withProgress<T extends object>(
+export function withProgress<T extends object, F extends string = typeof PROGRESS_FIELD>(
   completion: T,
   runId: string,
   events: readonly RunEvent[],
-): T & { [PROGRESS_FIELD]: RunProgress } {
-  return { ...completion, [PROGRESS_FIELD]: { runId, events: [...events] } };
+  field: F = PROGRESS_FIELD as F,
+): T & { [K in F]: RunProgress } {
+  const progress: RunProgress = { runId, events: [...events] };
+  return { ...completion, [field]: progress } as T & { [K in F]: RunProgress };
 }
 
 /**
  * The run event a streamed chunk carries, where it carries one.
  *
  * @param chunk - One chunk of the stream, as parsed.
+ * @param [field] - The field the event is under.
  * @returns The event as the server sent it — its `runId`, `seq` and `at` kept — or `undefined` for
  * a chunk with none, and for one whose event is malformed or of a kind this version does not know.
  */
-export function progressEvent(chunk: unknown): RunEvent | undefined {
-  const carried = isRecord(chunk) ? chunk[PROGRESS_FIELD] : undefined;
+export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): RunEvent | undefined {
+  const carried = isRecord(chunk) ? chunk[field] : undefined;
   const event = isRecord(carried) ? carried.event : undefined;
   return isRunEvent(event) ? event : undefined;
 }
@@ -132,11 +151,12 @@ export function progressEvent(chunk: unknown): RunEvent | undefined {
  * The run id and events an answer that is not streamed carries, where it carries them.
  *
  * @param completion - The `chat.completion` body, as parsed.
+ * @param [field] - The field the run is under.
  * @returns The run and its events, less any that are malformed or of an unknown kind; `undefined`
  * where the answer carries no run id or no list of events.
  */
-export function progressEvents(completion: unknown): RunProgress | undefined {
-  const carried = isRecord(completion) ? completion[PROGRESS_FIELD] : undefined;
+export function progressEvents(completion: unknown, field: string = PROGRESS_FIELD): RunProgress | undefined {
+  const carried = isRecord(completion) ? completion[field] : undefined;
   if (!isRecord(carried) || typeof carried.runId !== 'string' || !Array.isArray(carried.events)) {
     return undefined;
   }
@@ -146,13 +166,30 @@ export function progressEvents(completion: unknown): RunProgress | undefined {
 /**
  * A remote agent's `extraBody`, with its progress asked for under what the host wrote.
  *
- * @param [extraBody] - The host's. Not written to.
- * @returns A new body whose `PROGRESS_FIELD` object says `progress: true` unless the host's own says
+ * @param extraBody - The host's. Not written to.
+ * @param field - The field progress is asked for under.
+ * @returns A new body whose `field` object says `progress: true` unless the host's own says
  * otherwise, the host's other router fields kept.
  */
-function askingProgress(extraBody: Record<string, unknown> = {}): Record<string, unknown> {
-  const own = extraBody[PROGRESS_FIELD];
-  return { ...extraBody, [PROGRESS_FIELD]: { progress: true, ...(isRecord(own) ? own : {}) } };
+function askingProgress(extraBody: Record<string, unknown>, field: string): Record<string, unknown> {
+  const own = extraBody[field];
+  return { ...extraBody, [field]: { progress: true, ...(isRecord(own) ? own : {}) } };
+}
+
+/** How `remoteRun` reads and asks for the server's progress. */
+export interface RemoteRunOptions {
+  /**
+   * The field the server's progress travels under.
+   *
+   * @defaultValue `PROGRESS_FIELD`
+   */
+  field?: string;
+  /**
+   * Makes a turn's idempotency key.
+   *
+   * @defaultValue `crypto.randomUUID`
+   */
+  newKey?: () => string;
 }
 
 /** What a run on a remote agent adds to each step of `runAgentLoop`. */
@@ -175,7 +212,7 @@ export interface RemoteRun {
  *
  * @param extraBody - The config's `extraBody`. Not written to.
  * @param told - Hears every event the run emits, the server's and the loop's.
- * @param [newKey] - Makes a turn's idempotency key.
+ * @param [options] - The progress field, and where keys come from.
  * @returns The run's remote half.
  *
  * @remarks
@@ -187,10 +224,10 @@ export interface RemoteRun {
 export function remoteRun(
   extraBody: Record<string, unknown> | undefined,
   told: (event: RunEventInput | RunEvent) => void,
-  newKey: () => string = () => globalThis.crypto.randomUUID(),
+  { field = PROGRESS_FIELD, newKey = () => globalThis.crypto.randomUUID() }: RemoteRunOptions = {},
 ): RemoteRun {
-  const asked = askingProgress(extraBody);
-  const options = asked[PROGRESS_FIELD];
+  const asked = askingProgress(extraBody ?? {}, field);
+  const options = asked[field];
   const isForwarding = isRecord(options) && options.progress === true;
   let runId: string | undefined;
   return {
@@ -202,7 +239,7 @@ export function remoteRun(
       }
     },
     onChunk: (chunk) => {
-      const event = progressEvent(chunk);
+      const event = progressEvent(chunk, field);
       if (!event) {
         return;
       }

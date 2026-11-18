@@ -208,6 +208,13 @@ export interface RemoteAgentParams extends Omit<ModelParams, 'maxTokens' | 'temp
   maxTokens?: number;
   /** What to sample at, where the host chose it for this call. Absent sends none. */
   temperature?: number;
+  /**
+   * The body field the server's progress travels under, both ways: asked for as
+   * `{ progress: true }`, and read off each chunk as `{ event }`. See `progressChunk`.
+   *
+   * @defaultValue `PROGRESS_FIELD`, `"ai_router"`
+   */
+  progressField?: string;
 }
 
 /**

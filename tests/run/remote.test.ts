@@ -33,6 +33,16 @@ describe('progressChunk and progressEvent', () => {
     expect(progressEvent(overTheWire(progressChunk(called, head)))).toEqual(called);
   });
 
+  it('writes and reads under the field a host names, and finds nothing under another', () => {
+    const chunk = overTheWire(progressChunk(called, head, 'agent_run'));
+    expect(chunk).toEqual({ ...head, object: 'chat.completion.chunk', choices: [], agent_run: { event: called } });
+    expect(progressEvent(chunk, 'agent_run')).toEqual(called);
+    expect(progressEvent(chunk)).toBeUndefined();
+    const completion = overTheWire(withProgress({ id: 'c', choices: [] }, 'r1', [called], 'agent_run'));
+    expect(progressEvents(completion, 'agent_run')).toEqual({ runId: 'r1', events: [called] });
+    expect(progressEvents(completion)).toBeUndefined();
+  });
+
   it('reads nothing off a chunk that carries no event', () => {
     expect(progressEvent({ ...head, choices: [{ index: 0, delta: { content: 'hi' } }] })).toBeUndefined();
     expect(progressEvent({ ...head, choices: [], usage: { prompt_tokens: 1 } })).toBeUndefined();
@@ -107,13 +117,18 @@ describe('remoteRun', () => {
     expect(told).toEqual([{ kind: RunEventKind.Turn, text: 'turn 1' }]);
   });
 
+  it('asks for progress and forwards it under the field it is given', () => {
+    const told: unknown[] = [];
+    const remote = remoteRun({ agent_run: { task: 'triage' } }, (event) => told.push(event), { field: 'agent_run' });
+    expect(remote.extraBody).toEqual({ agent_run: { progress: true, task: 'triage' } });
+    remote.onChunk(progressChunk(called, head));
+    remote.onChunk(progressChunk(called, head, 'agent_run'));
+    expect(told).toEqual([called]);
+  });
+
   it('makes a new idempotency key for each turn', () => {
     let made = 0;
-    const remote = remoteRun(
-      undefined,
-      () => {},
-      () => `key-${++made}`,
-    );
+    const remote = remoteRun(undefined, () => {}, { newKey: () => `key-${++made}` });
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-1' });
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-2' });
   });
