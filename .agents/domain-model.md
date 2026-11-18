@@ -451,7 +451,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Epoch:** a stretch of requests that only appended, within which two prompts can be compared.
   Owner: `LedgerEntry.epoch`.
 - **Cache break:** a request whose prompt cache fell short of the one before, and the likely
-  reason. Owner: `breakReason`, `CacheBreakReason`, `TurnUsage.cacheBroken`.
+  reason. Owner: `cacheDiagnosis`, `breakReason`, `CacheBreakReason`, `TurnUsage.cacheBroken`.
 - **Prune:** replacing old, long tool results with a one-line stub. Owner: `pruneToolResults`,
   `planPrune` (`src/context/compaction.ts`).
 - **Prune boundary:** the point before which tool results are sent as stubs; it only moves

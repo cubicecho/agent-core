@@ -11,11 +11,11 @@ import {
   summariser,
 } from '../context/compaction.ts';
 import {
-  breakReason,
+  cacheDiagnosis,
   type LedgerRequest,
-  type RequestShape,
   rebaseLedger,
   recordRequest,
+  type SentRequest,
   sameMessage,
   type TokenLedger,
 } from '../context/ledger.ts';
@@ -77,7 +77,6 @@ import {
   noUsage,
   reportsCache,
   type Turn,
-  type TurnUsage,
 } from '../wire/stream.ts';
 import { textOf } from '../wire/text.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
@@ -861,50 +860,6 @@ export interface AgentLoopResult {
   remoteRunId?: string;
 }
 
-/** What the loop remembers of one request, to explain the next one's cache. */
-interface Sent extends RequestShape {
-  /** The prompt the first request of the turn reported, before any continuation was joined. */
-  prompt: number;
-  /** The completion across the whole turn, continuations included. */
-  completion: number;
-}
-
-/**
- * The share of the previous prompt a cache that kept its prefix reports as hit. Short of it by
- * more than this is a break, not the few tokens a template re-renders at the join.
- */
-const CACHE_KEPT = 0.9;
-
-/**
- * What one turn's cache should have been and whether it was, against the request before it.
- *
- * @param previous - The request before this one, with what it reported. Absent, or with no prompt
- * reported, diagnoses nothing.
- * @param next - The request this turn sent, read only to say why a broken cache broke.
- * @param usage - The turn's own report. Not written to. One with no `uncached` did not report its
- * cache, and is told what to expect without being judged.
- * @returns The fields to lay over the turn's usage: `cacheExpected`, the previous prompt plus its
- * completion; `cacheBroken` where the cache was reported; and `cacheBreakReason` where it broke.
- * Empty where nothing is diagnosed.
- *
- * @remarks
- * Nothing before the second request, or where the previous prompt was not reported.
- */
-function cacheDiagnosis(previous: Sent | undefined, next: RequestShape, usage: TurnUsage): Partial<TurnUsage> {
-  if (!previous || !(previous.prompt > 0)) {
-    return {};
-  }
-  const found: Partial<TurnUsage> = { cacheExpected: previous.prompt + previous.completion };
-  if (usage.uncached === undefined) {
-    return found;
-  }
-  found.cacheBroken = usage.cached < previous.prompt * CACHE_KEPT;
-  if (found.cacheBroken) {
-    found.cacheBreakReason = breakReason(previous, next);
-  }
-  return found;
-}
-
 /** How `runAgentLoop` reads the run as it stands, from outside the steps that are building it. */
 interface Standing {
   read: () => AgentLoopFailure;
@@ -1682,7 +1637,7 @@ async function runSteps(
   const preface = hooks?.preface ?? configureHooks().preface;
 
   const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
-  let previous: Sent | undefined;
+  let previous: SentRequest | undefined;
   // The loop's prune boundary. Its stubs stay in `messages`, so between moves each request only
   // extends the last; a rewrite or a fold renumbers the transcript, and it starts again from zero.
   let pruneBoundary = 0;

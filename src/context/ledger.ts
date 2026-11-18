@@ -164,6 +164,54 @@ export function breakReason(previous: RequestShape, next: RequestShape): NonNull
   return CacheBreakReason.NoneKnown;
 }
 
+/** What the loop remembers of one request, to explain the next one's cache. */
+export interface SentRequest extends RequestShape {
+  /** The prompt the first request of the turn reported, before any continuation was joined. */
+  prompt: number;
+  /** The completion across the whole turn, continuations included. */
+  completion: number;
+}
+
+/**
+ * The share of the previous prompt a cache that kept its prefix reports as hit. Short of it by
+ * more than this is a break, not the few tokens a template re-renders at the join.
+ */
+const CACHE_KEPT = 0.9;
+
+/**
+ * What one turn's cache should have been and whether it was, against the request before it.
+ *
+ * @param previous - The request before this one, with what it reported. Absent, or with no prompt
+ * reported, diagnoses nothing.
+ * @param next - The request this turn sent, read only to say why a broken cache broke.
+ * @param usage - The turn's own report. Not written to. One with no `uncached` did not report its
+ * cache, and is told what to expect without being judged.
+ * @returns The fields to lay over the turn's usage: `cacheExpected`, the previous prompt plus its
+ * completion; `cacheBroken` where the cache was reported; and `cacheBreakReason` where it broke.
+ * Empty where nothing is diagnosed.
+ *
+ * @remarks
+ * Nothing before the second request, or where the previous prompt was not reported.
+ */
+export function cacheDiagnosis(
+  previous: SentRequest | undefined,
+  next: RequestShape,
+  usage: TurnUsage,
+): Partial<TurnUsage> {
+  if (!previous || !(previous.prompt > 0)) {
+    return {};
+  }
+  const found: Partial<TurnUsage> = { cacheExpected: previous.prompt + previous.completion };
+  if (usage.uncached === undefined) {
+    return found;
+  }
+  found.cacheBroken = usage.cached < previous.prompt * CACHE_KEPT;
+  if (found.cacheBroken) {
+    found.cacheBreakReason = breakReason(previous, next);
+  }
+  return found;
+}
+
 /**
  * The ledger with one more request on it, in the epoch the request before it says it belongs to.
  *
