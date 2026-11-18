@@ -169,7 +169,7 @@ describe('an endpoint answered by a function, written down', () => {
     const snapshot = exportCapabilities();
     const id = endpointId({ baseUrl: internal.baseUrl, apiKey: 'sk-router' });
     expect(Object.keys(snapshot.endpoints)).toEqual([id]);
-    expect(snapshot.endpoints[id].models.m.thinkingHints).toBe(false);
+    expect(snapshot.endpoints[id].models.m.refusedFields).toEqual(['chat_template_kwargs']);
     // Survives JSON whole, so nothing in it was a function that JSON would have dropped.
     expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
     expect(JSON.stringify(snapshot)).not.toContain('fetch');

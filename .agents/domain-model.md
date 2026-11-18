@@ -47,7 +47,8 @@ the app's tools and callbacks ───────┼→ exchange: ask the mode
 - **One request:** built from what this server and model accept, resent without whatever it
   refuses or when it is lost, and read as it streams in. (`runTurn`)
 - **A side task:** a small one-off question, such as naming a conversation, picking tools or
-  writing a summary, that never makes the main exchange fail. (`ask`)
+  writing a summary, that never makes the main exchange fail. It is sent as one request, the same
+  way a turn's is. (`ask`, through `runTurn`)
 - **Settings from a document:** an agent written as JSON layers (app defaults, the agent, one
   task) is checked and merged into an exchange's settings. (`resolveAgentSpec`)
 - **A remote agent:** when the server runs its own agent, the package only passes the app's tools
@@ -189,7 +190,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A reply that has produced anything is never sent again | `Produced`, checked in `negotiate` and `runTurn` |
 | The caller's abort is never reported as `EndpointSilent`, and an aborted stream never returns a reply | `streamTurn` |
 | One refusal gets at most one answer, and negotiation ends | `negotiate` over `ANSWERS`, `flagsOf` |
-| Capability flags only latch off while their entry lives, except the no-thinking hints, which `resetHints` offers again | `endpointAnswer`, `latchModel`, `latchFields` |
+| Capability flags and refused fields only latch off while their entry lives, except the no-thinking hints, which `resetHints` offers again | `endpointAnswer`, `latchModel`, `latchFields` |
 | An effort is only stepped up the ladder, never down | `nextEffort`, `planEffortStep` |
 | A refused field is latched only if the caller offered it as droppable | `droppedFieldsAnswer` |
 | `extraBody` never sets `model`, `messages`, `stream` or `tools` | `extraFields`, `parseExtraBody` |
@@ -298,9 +299,11 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `modelCapabilitiesFor`.
 - **Latch (downgrade):** turning a capability off for good after one refusal, so later requests
   are sent the lesser form at once. Owner: `latchModel`, `latchFields`, through which `negotiate`'s
-  `Answer`s in `ANSWERS`, a continuation and a side task latch a model's capabilities.
+  `Answer`s in `ANSWERS` and a continuation latch a model's capabilities.
 - **Negotiation:** sending a request and re-sending it without whatever the server refused, until
-  it answers or refuses something nothing can drop. Owner: `negotiate`.
+  it answers or refuses something nothing can drop. A refusal that names nothing it can drop is
+  not guessed at, for a side task as for a turn. Owner: `negotiate`, which `runTurn` calls for
+  both.
 - **Droppable field:** a request field the caller lets a refusal remove. Owner:
   `NegotiateOptions.droppable`, `refusedFields`.
 - **Reasoning effort:** how hard a reasoning model should think; a refused level is stepped up to
@@ -353,11 +356,14 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 ### Side tasks
 
 - **Side task (task):** a small one-shot call that supports an exchange, such as naming it,
-  choosing its tools or summarising, and is never worth failing it. Owner: `ask`, `askReply`,
-  `askJson` (`src/turn/side-task.ts`); `TaskSpec` in a document, `SideTask` in code.
+  choosing its tools or summarising, and is never worth failing it. It is one request sent by
+  `runTurn`, as a turn's is: streamed, negotiated, retried, and waited out while the model loads.
+  Owner: `ask`, `askReply`, `askJson` (`src/turn/side-task.ts`), whose `complete` builds the body;
+  `TaskSpec` in a document, `SideTask` in code.
 - **No-thinking hints:** fields sent so a reasoning model answers a side task directly, dropped
-  per model once refused. Owner: `NO_THINKING`; the latch is `ModelCapabilities.thinkingHints`
-  (`src/endpoint/capabilities.ts`).
+  per model once a refusal names them. Owner: `NO_THINKING`, offered to `negotiate` as droppable;
+  the latch is `chat_template_kwargs` in `ModelCapabilities.refusedFields`.
+  `ModelCapabilities.thinkingHints` is only read, for a snapshot from before 6.0.0 that latched it.
 - **Structured answer:** a side task's reply as JSON for a schema. Owner: `askJson`, `parseJson`.
 - **Forgiving side task:** a side task whose failure becomes "no answer" and a notice. Owner:
   `tryAsk`.
@@ -598,7 +604,8 @@ optional preselection. Hooks add injected context to the question's request. Bef
 pruning and compaction keep the exchange inside its context window, sized from the last reported
 prompt; the token ledger records each request's size, so an app can price stretches of the
 transcript.
-Side tasks name, choose and summarise without risking the exchange. Every turn reports events through `onEvent`, which the app files on the
+Side tasks name, choose and summarise without risking the exchange, each sent as one request the
+way a turn's is. Every turn reports events through `onEvent`, which the app files on the
 bus under the run they belong to, which may hold several exchanges, and watchers read them and
 metrics are built from them; a remote agent's server can supply those events in the loop's place.
 A session is the conversation around many runs. An operator can write the agent as a document

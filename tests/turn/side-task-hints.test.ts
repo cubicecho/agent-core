@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ContextOverflow } from '../../src/wire/retry.ts';
 import { answer, apiError, type Create, reply } from '../helpers.ts';
-import { NO_EFFORT, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from '../refusals.ts';
+import { NO_EFFORT, NO_HINTS, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from '../refusals.ts';
 
 const create = vi.fn<Create>();
 /**
@@ -46,52 +47,66 @@ describe('no-thinking hints', () => {
   it('reports the downgrade to a caller who asked, and to nobody who did not', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const notices: string[] = [];
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await ask(endpoint('http://picky/v1'), 'm', 'system', 'user', {
       onNotice: (message) => notices.push(message),
     });
-    expect(notices).toEqual(['m rejected a request carrying the no-thinking hints; retrying without them']);
+    expect(notices).toEqual(['m does not take chat_template_kwargs; retrying without it']);
 
     // A library that writes to the console has decided for its consumer where operator text
     // goes. The retry still happens; it just says so through the seam or not at all.
     resetHints();
     create.mockReset();
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await call(endpoint('http://picky/v1'));
     expect(create).toHaveBeenCalledTimes(2);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('stops offering them to a server that answered 4xx', async () => {
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+  it('stops offering them to a model that refused them by name', async () => {
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await call(endpoint('http://picky/v1'));
     expect(sentHints(0)).toBe(true);
     expect(sentHints(1)).toBe(false);
+    expect([...modelCapabilitiesFor(capabilitiesFor('http://picky/v1'), 'm').refusedFields]).toEqual([
+      'chat_template_kwargs',
+    ]);
 
     await call(endpoint('http://picky/v1'));
     expect(create).toHaveBeenCalledTimes(3);
     expect(sentHints(2)).toBe(false);
   });
 
-  it('does not latch on a 400 that dropping them did not fix', async () => {
-    // A context overflow is a 400 `negotiate` does not recognise, as the hints are. Latching
-    // before the retry had shown anything cost every later side task on the model its hints.
+  it('fails a refusal that names nothing, and latches nothing', async () => {
+    // Negotiation drops only what a refusal names, as it does for an exchange. Guessing that a
+    // bare 400 was about the hints, and retrying without them, was a side task's own rule.
+    create.mockRejectedValueOnce(apiError(400));
+    await expect(call(endpoint('http://vague/v1'))).rejects.toThrow('rejected');
+    expect(create).toHaveBeenCalledTimes(1);
+
+    create.mockResolvedValue(reply);
+    await call(endpoint('http://vague/v1'));
+    expect(sentHints(1)).toBe(true);
+    expect(body(1).reasoning_effort).toBe('none');
+  });
+
+  it('fails an overflow at once, and latches nothing', async () => {
     const overflow = apiError(400, "This model's maximum context length is 4096 tokens");
-    create.mockRejectedValueOnce(overflow).mockRejectedValueOnce(overflow);
-    await expect(call(endpoint('http://small/v1'))).rejects.toThrow('maximum context length');
-    expect(create).toHaveBeenCalledTimes(2);
+    create.mockRejectedValueOnce(overflow);
+    await expect(call(endpoint('http://small/v1'))).rejects.toBeInstanceOf(ContextOverflow);
+    expect(create).toHaveBeenCalledTimes(1);
 
     create.mockResolvedValue(reply);
     await call(endpoint('http://small/v1'));
-    expect(sentHints(2)).toBe(true);
-    expect(body(2).reasoning_effort).toBe('none');
+    expect(sentHints(1)).toBe(true);
+    expect(body(1).reasoning_effort).toBe('none');
   });
 
   it('keeps sending the effort to a model that refused only the template kwargs', async () => {
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await call(endpoint('http://vllm/v1'));
-    expect(body(1)).not.toHaveProperty('reasoning_effort');
+    expect(body(1).reasoning_effort).toBe('none');
 
     await call(endpoint('http://vllm/v1'));
     expect(sentHints(2)).toBe(false);
@@ -100,49 +115,28 @@ describe('no-thinking hints', () => {
     expect(modelCapabilitiesFor(supports, 'm').reasoningEffort).toBe(true);
   });
 
-  it('leaves latching the effort to negotiate when it is all that is left to drop', async () => {
-    // Both refused in wordings `negotiate` does not know: the first call blames the kwargs, and
-    // the next is retried without the effort but latches nothing, since only `rejectsEffort`
-    // reading the refusal latches an effort.
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
-    await call(endpoint('http://odd/v1'));
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
-    await call(endpoint('http://odd/v1'));
-    expect(body(2).reasoning_effort).toBe('none');
-    expect(body(3)).not.toHaveProperty('reasoning_effort');
-    expect(modelCapabilitiesFor(capabilitiesFor('http://odd/v1'), 'm').reasoningEffort).toBe(true);
-
-    create.mockResolvedValue(reply);
-    await call(endpoint('http://odd/v1'));
-    expect(create).toHaveBeenCalledTimes(5);
-    expect(body(4).reasoning_effort).toBe('none');
-    expect(sentHints(4)).toBe(false);
-  });
-
-  it('leaves latching a chosen effort to negotiate as well', async () => {
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
-    await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', { reasoningEffort: 'high' });
-    expect(body(1)).not.toHaveProperty('reasoning_effort');
-    expect(modelCapabilitiesFor(capabilitiesFor('http://plain/v1'), 'm').reasoningEffort).toBe(true);
-
-    await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', { reasoningEffort: 'high' });
-    expect(body(2).reasoning_effort).toBe('high');
-  });
-
-  it('keeps offering them after a failure that says nothing about the request', async () => {
-    // A timeout, an aborted call or a 500 is the server failing to answer, not refusing the
-    // fields — latching on one of those cost every later side task its whole budget.
-    create.mockRejectedValueOnce(apiError(503));
-    await expect(call(endpoint('http://flaky/v1'))).rejects.toThrow();
-    expect(create).toHaveBeenCalledTimes(1);
-
-    create.mockResolvedValue(reply);
-    await call(endpoint('http://flaky/v1'));
-    expect(sentHints(1)).toBe(true);
+  it('keeps offering them while a server that failed to answer is waited out', async () => {
+    // A 503 or a rate limit is the server failing to answer, not refusing the fields. It is sent
+    // again after a backoff, as an exchange's turn would be, hints and all.
+    vi.useFakeTimers();
+    try {
+      for (const status of [503, 429]) {
+        resetCapabilities();
+        create.mockReset();
+        create.mockRejectedValueOnce(apiError(status)).mockResolvedValue(reply);
+        const asking = call(endpoint('http://flaky/v1'));
+        await vi.advanceTimersByTimeAsync(8000);
+        await expect(asking).resolves.toBe('ok');
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(sentHints(1)).toBe(true);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps one endpoint's refusal off another's calls", async () => {
-    create.mockRejectedValueOnce(apiError(422)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await call(endpoint('http://local/v1'));
 
     await call(endpoint('http://cloud/v1'));
@@ -152,7 +146,7 @@ describe('no-thinking hints', () => {
   it("keeps one model's refusal off another model on the same host", async () => {
     // One base URL is routinely many models — a router, or vLLM serving several. Whether the
     // hints are understood belongs to the model, not to the route.
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await call(endpoint('http://router/v1'), 'picky-model');
     expect(sentHints(1)).toBe(false);
 
@@ -161,35 +155,30 @@ describe('no-thinking hints', () => {
   });
 
   it('names the model in the notice, so two on one host are told apart', async () => {
-    // The latch is on the (endpoint, model) pair and this line is the only announcement that it
-    // caught. Opening with "server" made every model behind one route say the same sentence.
     const notices: string[] = [];
     const watched = (model: string) =>
       ask(endpoint('http://router/v1'), model, 'system', 'user', {
         onNotice: (message) => notices.push(message),
       });
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await watched('picky-model');
     create.mockReset();
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await watched('other-model');
 
     expect(notices).toEqual([
-      'picky-model rejected a request carrying the no-thinking hints; retrying without them',
-      'other-model rejected a request carrying the no-thinking hints; retrying without them',
+      'picky-model does not take chat_template_kwargs; retrying without it',
+      'other-model does not take chat_template_kwargs; retrying without it',
     ]);
   });
 
-  it('does not latch on a rate limit, or answer one by sending it again', async () => {
-    // 429 is a 4xx that says nothing about the fields, and `isTransient` accepts it. Retrying
-    // it here doubled the request rate against a server that had just asked for less.
-    create.mockRejectedValueOnce(apiError(429));
-    await expect(call(endpoint('http://busy/v1'))).rejects.toThrow();
-    expect(create).toHaveBeenCalledTimes(1);
-
+  it('keeps them off a model a saved snapshot says refused them', async () => {
+    // Before 6.0.0 a side task latched the hints as a flag of their own, which a snapshot carries.
+    modelCapabilitiesFor(capabilitiesFor('http://saved/v1'), 'm').thinkingHints = false;
     create.mockResolvedValue(reply);
-    await call(endpoint('http://busy/v1'));
-    expect(sentHints(1)).toBe(true);
+    await call(endpoint('http://saved/v1'));
+    expect(sentHints(0)).toBe(false);
+    expect(body(0).reasoning_effort).toBe('none');
   });
 
   it('does not latch on a bad key or a missing model', async () => {
@@ -306,9 +295,9 @@ describe('what the model refuses', () => {
     }
   });
 
-  it('drops a chosen effort the server will not take, and says which it dropped', async () => {
+  it('drops a chosen effort the model does not take, and says which it dropped', async () => {
     const notices: string[] = [];
-    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_EFFORT).mockResolvedValue(reply);
     await expect(
       ask(endpoint('http://plain/v1'), 'm', 'system', 'user', {
         reasoningEffort: 'high',
@@ -317,12 +306,23 @@ describe('what the model refuses', () => {
     ).resolves.toBe('ok');
     expect(body(1)).not.toHaveProperty('reasoning_effort');
     expect(body(1)).not.toHaveProperty('chat_template_kwargs');
-    expect(notices).toEqual(['m rejected a request carrying a reasoning effort; retrying without it']);
+    expect(notices).toEqual(['m does not take a reasoning effort; retrying without one']);
     // The hints were never sent, so they are not what gets latched off.
     create.mockReset();
     create.mockResolvedValue(reply);
     await call(endpoint('http://plain/v1'));
     expect(sentHints(0)).toBe(true);
+  });
+
+  it('fails a chosen effort refused in words that name nothing, and latches nothing', async () => {
+    create.mockRejectedValueOnce(apiError(400));
+    const asked = { reasoningEffort: 'high' };
+    await expect(ask(endpoint('http://plain/v1'), 'm', 'system', 'user', asked)).rejects.toThrow('rejected');
+    expect(modelCapabilitiesFor(capabilitiesFor('http://plain/v1'), 'm').reasoningEffort).toBe(true);
+
+    create.mockResolvedValue(reply);
+    await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', asked);
+    expect(body(1).reasoning_effort).toBe('high');
   });
 
   it('sends no ceiling at all for a ceiling of zero', async () => {

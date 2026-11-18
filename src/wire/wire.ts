@@ -94,6 +94,12 @@ export const REASONING = 'reasoning' as const;
  */
 export const PARALLEL_TOOL_CALLS = 'parallel_tool_calls' as const;
 
+/**
+ * The request field llama.cpp and vLLM hand to the chat template, which a side task's no-thinking
+ * hints travel in. OpenAI refuses it by name, as it does any field it has never heard of.
+ */
+export const CHAT_TEMPLATE_KWARGS = 'chat_template_kwargs' as const;
+
 /** Either field a scratchpad travels in. */
 export type ReasoningField = typeof REASONING_CONTENT | typeof REASONING;
 

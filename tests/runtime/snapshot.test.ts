@@ -69,8 +69,9 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": false,
+          "thinkingHints": true,
           "refusedFields": [
+            "chat_template_kwargs",
             "min_p",
             "top_k"
           ],
@@ -91,8 +92,10 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": false,
-          "refusedFields": [],
+          "thinkingHints": true,
+          "refusedFields": [
+            "chat_template_kwargs"
+          ],
           "refusedEfforts": []
         }
       },
@@ -116,8 +119,10 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": false,
-          "refusedFields": [],
+          "thinkingHints": true,
+          "refusedFields": [
+            "chat_template_kwargs"
+          ],
           "refusedEfforts": []
         }
       },
@@ -177,12 +182,12 @@ describe('capability snapshots', () => {
             legacyTokenLimit: true,
             chosenTemperature: true,
             refusedEfforts: [],
-            refusedFields: [],
+            refusedFields: ['chat_template_kwargs'],
             structuredOutput: true,
             assistantPrefill: true,
             reasoningContent: true,
             multiCallMessages: true,
-            thinkingHints: false,
+            thinkingHints: true,
           },
         },
       },

@@ -7,40 +7,50 @@ import {
   EFFORT_NONE,
   effortFor,
   extraFields,
-  latchModel,
   type ModelCapabilities,
   modelCapabilitiesFor,
-  negotiate,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
-import { getClient, resolveApiKey, sameUrl } from '../endpoint/client.ts';
+import { getClient, resolveApiKey, sameUrl, timeoutMs } from '../endpoint/client.ts';
 import { relaxSchema, sanitizeSchema } from '../endpoint/schema-compat.ts';
 import { errorMessage } from '../wire/errors.ts';
-import { isAbort, refusesRequest } from '../wire/retry.ts';
+import { isAbort } from '../wire/retry.ts';
+import type { Turn } from '../wire/stream.ts';
 import { stripThinking } from '../wire/thinking.ts';
 import { CODE_FENCE, looseJson } from '../wire/tool-calls.ts';
-import { JSON_SCHEMA_FORMAT, Role } from '../wire/wire.ts';
+import { CHAT_TEMPLATE_KWARGS, JSON_SCHEMA_FORMAT, Role } from '../wire/wire.ts';
+import { type RequestBuilder, runTurn } from './run-turn.ts';
 
 /**
  * One-shot calls that support an exchange without being one: picking tools, naming a session,
  * summarising a transcript, proposing follow-ups. They share a shape — small prompt, short
- * answer, no tools, no streaming — and none is ever worth failing the exchange it supports.
+ * answer, no tools — and none is ever worth failing the exchange it supports.
+ *
+ * Each is one request sent by `runTurn`, as an exchange's turn is: negotiated, retried, waited
+ * out while the model loads, and read as it streams in. What a side task adds is its body.
  */
 
 /**
  * Reasoning models will happily spend a whole budget deliberating over a six-word answer and
  * return empty content, so side tasks ask for thinking to be turned off. `reasoning_effort` is
  * the OpenAI-compatible spelling and `chat_template_kwargs` the llama.cpp/vLLM one; servers
- * disagree about which they take, so send both. One that rejects the unknown fields gets a
- * single retry without them, and is not offered them again.
+ * disagree about which they take, so send both.
  *
  * @remarks
- * The second half is latched as `ModelCapabilities.thinkingHints`. `reasoning_effort` is a field
- * `negotiate` already knows how to be refused, so it is sent under
- * `ModelCapabilities.reasoningEffort` instead, which narrows the fallback below to the field it is
- * really about and shares the answer with the exchanges on that model.
+ * This is the second half, sent as a droppable field: a model server that refuses it by name
+ * has it latched into `refusedFields` by `negotiate` and is not sent it again. `reasoning_effort`
+ * is latched under `ModelCapabilities.reasoningEffort`, as every exchange's is.
  */
-const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
+const NO_THINKING = { [CHAT_TEMPLATE_KWARGS]: { enable_thinking: false } };
+
+/**
+ * How many times a side task sends a lost request again, where its caller does not say.
+ *
+ * @remarks
+ * Not the exchange's `maxRetries`, which defaults to none: a side task is small, and a lost one
+ * that is not sent again costs the exchange a title or a shortlist for one dropped connection.
+ */
+const SIDE_TASK_RETRIES = 2;
 
 /**
  * The input a side task applies its instruction to: text, or the content parts a vision model
@@ -92,17 +102,19 @@ export interface SideTaskOptions {
    * without it.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * How many times a lost request is sent again: a dropped connection, a busy or silent model
+   * server. A refusal is not one, and a model still loading is waited out without spending these.
+   *
+   * @defaultValue `2`
+   */
+  maxRetries?: number;
   /** Abandons the call, usually because the exchange it supports has gone away. */
   signal?: AbortSignal;
   /**
-   * Told what was given up on, the same way `runTurn` and `negotiate` tell a caller.
+   * Told what was given up on, waited out or retried, as `runTurn` tells an exchange.
    *
    * @remarks
-   * The one notice `ask` raises itself opens with the model's name, as `negotiate`'s do for the
-   * refusals that are the model's: what it announces is latched on the (model server, model) pair,
-   * so on a consumer reaching several models through one base URL the name is the only thing
-   * separating one announcement from the next.
-   *
    * There is no default, and nothing is printed without one. A library that writes to the
    * console decides for its consumer where operator text goes — which a server embedding this
    * cannot then route to its own logger, attach to the run it belongs to, or silence in tests.
@@ -140,15 +152,18 @@ export interface SideTask {
 }
 
 /**
- * Runs a side task and returns the reply text, scratchpad stripped. Throws like any request.
+ * Runs a side task and returns the reply text, scratchpad stripped. Throws like any request, once
+ * `runTurn` has negotiated, retried and waited out what it can.
  *
  * @param config - Where to send it and how long to wait.
  * @param model - The model to ask, usually smaller than the one running the work.
  * @param system - The instruction.
  * @param user - The input it applies to. Content parts where the model is being shown an image.
- * @param [options] - Reply ceiling, temperature, a reasoning effort, extra fields, cancellation, notices.
+ * @param [options] - Reply ceiling, temperature, a reasoning effort, extra fields, retries, cancellation,
+ * notices.
  * @returns The reply's content, trimmed. Where that is empty once the scratchpad is stripped, a
- * `reasoning_content` the server sent beside it, stripped the same way, or an empty string.
+ * scratchpad the server sent in a field of its own, `reasoning_content` or `reasoning`, stripped
+ * the same way, or an empty string.
  */
 export async function ask(
   config: Endpoint,
@@ -166,7 +181,7 @@ export interface SideTaskReply {
   /** The reply's content as `ask` returns it: trimmed, scratchpad stripped. */
   text: string;
   /**
-   * The first choice's `finish_reason` as the server sent it, compared with `FinishReason`.
+   * The reply's `finish_reason` as the server sent it, compared with `FinishReason`.
    * `FinishReason.Length` means `text` was cut off at the ceiling. Undefined when none was sent.
    */
   finishReason: string | undefined;
@@ -179,7 +194,8 @@ export interface SideTaskReply {
  * @param model - The model to ask.
  * @param system - The instruction.
  * @param user - The input it applies to. Content parts where the model is being shown an image.
- * @param [options] - Reply ceiling, temperature, a reasoning effort, extra fields, cancellation, notices.
+ * @param [options] - Reply ceiling, temperature, a reasoning effort, extra fields, retries, cancellation,
+ * notices.
  * @returns The text `ask` would return, and the `finish_reason` it came with.
  *
  * @remarks
@@ -199,136 +215,111 @@ export function askReply(
 }
 
 /**
- * The request `ask` and `askJson` share, with `format` deciding the extra body fields from what
- * the model and the model server have refused, rebuilt on every re-send.
+ * The request `ask` and `askJson` share, sent by `runTurn`, with `format` deciding the extra body
+ * fields from what the model and the model server have refused, rebuilt on every send.
  *
- * @param config - Where to send it. Its `baseUrl` and key also pick the capabilities the request is
- * negotiated against, and with `model` the pair a refusal of the hints is latched on.
- * @param model - The model to ask.
+ * @param config - Where to send it, and how long a reply may stay silent. Its `baseUrl` and key
+ * also pick the capabilities the request is negotiated against.
+ * @param model - The model to ask, and the one whose refusals are negotiated.
  * @param system - The instruction, sent as the system message.
  * @param user - The input, sent as the user message as it was given.
  * @param options - A side task's options. A `reasoningEffort` that is a level leaves the
- * no-thinking hints out; absent, `""` or `"off"` sends them unless this pair has refused them.
- * An `extraBody` goes out less the fields this model has refused by name.
+ * no-thinking hints out; absent, `""` or `"off"` sends them unless the model has refused them.
+ * The hints and the keys of `extraBody` are offered to `negotiate` as droppable.
  * @param [format] - Builds the extra body fields from the model server's capabilities and
  * the model's.
  * Called on every send, so a re-send is built from what has been latched since. Absent adds none.
- * @returns The first choice's message as `answerOf` reads it, empty when there was no answer, and
- * its `finish_reason`. Throws what the request throws, except that a 400 or 422 `negotiate` did not answer, on a
- * request that carried the hints or an effort, is retried once without either.
+ * @returns The reply as `answerOf` reads it, empty when there was no answer, and its
+ * `finish_reason`. Throws what `runTurn` throws.
  */
 async function complete(
   config: Endpoint,
   model: string,
   system: string,
   user: SideTaskInput,
-  { maxTokens = 512, temperature = 0.3, reasoningEffort, extraBody, signal, onNotice }: SideTaskOptions,
+  {
+    maxTokens = 512,
+    temperature = 0.3,
+    reasoningEffort,
+    extraBody,
+    maxRetries = SIDE_TASK_RETRIES,
+    signal,
+    onNotice,
+  }: SideTaskOptions,
   format?: (supports: Capabilities, refused: ModelCapabilities) => Record<string, unknown>,
 ): Promise<SideTaskReply> {
   // The effort the caller chose, or empty where it chose none: `""` and `"off"` read as absent,
   // since off is what the hints below already ask for.
   const level = effortFor(undefined, reasoningEffort);
-  // Whether the last request carried an effort, which `negotiate` decides and not this function.
-  let sentEffort = false;
-  const send = (hints: boolean, effort: boolean, supports: Capabilities, refused: ModelCapabilities | undefined) => {
+  // The model server's own object, not one of this module's: what a model refuses is the same fact
+  // whether an exchange or a side task found it out, and the point of latching it is that only one
+  // of them has to pay for it.
+  const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+  // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
+  // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
+  const isHinted = level === '' && modelCapabilitiesFor(supports, model).thinkingHints;
+  const hints = isHinted ? NO_THINKING : {};
+  // After the hints, so a caller's own `chat_template_kwargs` is the one sent.
+  const optional = { ...hints, ...extraBody };
+  const build: RequestBuilder = (latched, refused) => {
     // `none` is what a side task wants and not always what the model offers: OpenAI's reasoning
     // models refuse it by value and list `minimal` as their floor. `effortFor` answers with the
     // cheapest rung this one takes, which `negotiate` has been stepping up as it was refused.
     // A level the caller chose goes through the same ladder, which only ever steps up from it.
-    const asked = effort ? effortFor(refused, level || EFFORT_NONE) : '';
-    sentEffort = asked !== '';
-    return getClient(config).chat.completions.create(
-      {
-        model,
-        // The reasoning models want the ceiling spelled the other way, and they are exactly the
-        // models a side task most wants to stop deliberating. One that will only run at its own
-        // temperature is sent none: a side task wants the same answer twice, and 1.0 from that
-        // model is as close as it gets.
-        ...ceilingAndTemperature(refused, maxTokens, temperature),
-        messages: [
-          { role: Role.System, content: system },
-          { role: Role.User, content: user },
-        ],
-        ...(hints ? NO_THINKING : {}),
-        // Not gated on `hints`: a model that refuses `chat_template_kwargs` may still read the
-        // effort, and the two latches would otherwise contradict each other.
-        ...(sentEffort ? { reasoning_effort: asked } : {}),
-        ...extraFields(refused, extraBody),
-        ...(format && refused ? format(supports, refused) : {}),
-      } as OpenAI.ChatCompletionCreateParamsNonStreaming,
-      { signal },
-    );
-  };
-
-  // The model server's own object, not one of this module's: what a model refuses is the same fact
-  // whether an exchange or a side task found it out, and the point of latching it is that only one
-  // of them has to pay for it. Nothing here sends tools or `stream_options`; the grammar flag is in
-  // play only for `askJson`, whose schema a llama.cpp server compiles the way it does a tool's.
-  const supports = capabilitiesFor(config.baseUrl, config.apiKey);
-  const attempt = (hints: boolean, effort: boolean) =>
-    negotiate(supports, (latched, _produced, refused) => send(hints, effort, latched, refused), {
+    const effort = effortFor(refused, level || EFFORT_NONE);
+    return {
+      // The reasoning models want the ceiling spelled the other way, and they are exactly the
+      // models a side task most wants to stop deliberating. One that will only run at its own
+      // temperature is sent none: a side task wants the same answer twice, and 1.0 from that
+      // model is as close as it gets.
+      ...ceilingAndTemperature(refused, maxTokens, temperature),
+      ...(effort ? { reasoning_effort: effort as OpenAI.ReasoningEffort } : {}),
+      ...(latched.usageInStream ? { stream_options: { include_usage: true } } : {}),
+      ...extraFields(refused, optional),
+      ...(format && refused ? format(latched, refused) : {}),
       model,
-      onNotice,
-      droppable: Object.keys(extraBody ?? {}),
-    });
-
-  // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
-  // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
-  const hints = !level && modelCapabilitiesFor(supports, model).thinkingHints;
-  let response: Awaited<ReturnType<typeof send>>;
-  try {
-    response = await attempt(hints, true);
-  } catch (error) {
-    // Whatever is left after `negotiate` has answered everything it knows: on this path that is
-    // the hints it does not, which is `chat_template_kwargs` and an effort the model has but
-    // does not offer as `none`. Or a 400 about something else entirely, which is why the
-    // notice says what was tried rather than what was wrong.
-    const effort = sentEffort;
-    if (!(hints || effort) || !refusesRequest(error)) {
-      throw error;
-    }
-    onNotice?.(
-      level
-        ? `${model} rejected a request carrying a reasoning effort; retrying without it`
-        : `${model} rejected a request carrying the no-thinking hints; retrying without them`,
-    );
-    response = await attempt(false, false);
-    // Latched on the finding, not the hypothesis: a context overflow is a 400 `negotiate` does
-    // not recognise too, and it fails the retry the same way, leaving the next call to try the
-    // hints again. Only the hints are latched here: an effort is `negotiate`'s to latch, on
-    // `rejectsEffort` reading the refusal, so one this retry got past is sent again next time.
-    if (hints) {
-      latchModel(modelCapabilitiesFor(supports, model), 'thinkingHints');
-    }
-  }
-
-  const [choice] = response.choices;
-  // Typed as always present, and sent as `null` or not at all by servers that have none to give.
-  return { text: answerOf(choice?.message), finishReason: choice?.finish_reason ?? undefined };
+      messages: [
+        { role: Role.System, content: system },
+        { role: Role.User, content: user },
+      ],
+      stream: true,
+    };
+  };
+  // One allowance for the silence before the reply and within it, which is the one wait a side
+  // task has always had: `requestTimeoutSeconds`.
+  const turn = await runTurn(getClient(config), supports, build, {
+    model,
+    droppable: Object.keys(optional),
+    maxRetries,
+    onNotice,
+    signal,
+    idleMs: timeoutMs(config),
+  });
+  return { text: answerOf(turn), finishReason: turn.finishReason || undefined };
 }
 
 /**
  * A reply's answer, scratchpad stripped, or the scratchpad itself where the answer is nothing else.
  *
- * @param message - The first choice's message. Absent, as when the reply held no choices, reads as
- * an empty one.
- * @returns The content, trimmed, with its fenced scratchpad stripped. Where that leaves nothing, a
- * string `reasoning_content` read the same way, and an empty string where there is none.
+ * @param turn - The reply, its fenced scratchpad already split out of `content` by `streamTurn`.
+ * @returns The content, trimmed, with any fence the reader left stripped. Where that leaves
+ * nothing, a scratchpad the server sent in a field of its own, read the same way, and an empty
+ * string where there is none.
  *
  * @remarks
  * Reasoning models that ignore the hints still fence their scratchpad. A side task answers under
  * a small ceiling, so the fence often never closes, and a template that opened it in the prompt
- * leaves only the close; either way the scratchpad used to come back as the answer.
+ * leaves only the close; either way the scratchpad used to come back as the answer. A scratchpad
+ * split out of a fence is not an answer, so only one from its own field is fallen back on.
  */
-function answerOf(message: OpenAI.ChatCompletionMessage | undefined): string {
-  const answer = stripThinking(message?.content ?? '').trim();
+function answerOf(turn: Turn): string {
+  const answer = stripThinking(turn.content).trim();
   if (answer) {
     return answer;
   }
   // Nothing but scratchpad. Some servers put the scratchpad in its own field and leave the
   // content genuinely empty, in which case there is no answer to find anywhere else.
-  const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
-  return typeof reasoning === 'string' ? stripThinking(reasoning).trim() : '';
+  return turn.reasoningField ? stripThinking(turn.reasoning).trim() : '';
 }
 
 /** What `askJson` takes besides a side task's options. */

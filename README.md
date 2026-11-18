@@ -27,7 +27,7 @@ only, Node >=22.
 | `stream` | Reads one streamed reply back into a message: token callbacks, tool-call reassembly, a fenced scratchpad taken out of the answer, and the idle watchdog that turns a silent model server into `EndpointSilent`. |
 | `capabilities` | What a model server turned out not to support — and, under it, what one model on that server did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
-| `side-task` | One-shot calls that support an exchange without being one — small prompt, short answer, no tools, never worth failing the exchange over. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
+| `side-task` | One-shot calls that support an exchange without being one — small prompt, short answer, no tools, never worth failing the exchange over. Each is one request sent by `runTurn`, as a turn is. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
 | `hooks` | The app's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the exchange's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, `stamp` for an app that numbers its own, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per model server, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. And `resolveApiKey`, for a caller deciding which key a model server gets, and `probeEndpoint`, for listing one a form has not saved yet. |
@@ -286,8 +286,9 @@ loading the model on demand. It holds until a chunk carries something, so an emp
 `firstTokenMs(config)` reads `firstTokenSeconds` off the endpoint, and five times
 `requestTimeoutSeconds` where that is absent. With a watchdog armed, the SDK's own timer is switched
 off for the stream; it runs until the headers arrive, which is the end of prefill, and used to
-abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, side
-tasks and model listings, the same way.
+abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, such
+as model listings, the same way. A side task streams, and waits `requestTimeoutSeconds` for its first
+chunk as well as between chunks.
 
 ## Structured side tasks
 
@@ -346,6 +347,36 @@ if (finishReason === FinishReason.Length) {
 Nothing is thrown for a cut-off reply, since whether one is still worth keeping is the caller's
 call. `askJson` needs no such variant: a reply cut off before its JSON closed does not parse, so it
 comes back `undefined`, as a reply with no JSON in it does.
+
+### How a side task is sent
+
+A side task is one request sent by `runTurn`, the way an exchange's turn is: streamed, negotiated
+past what the model server refuses, sent again when it is lost, waited out while a local server
+loads the model, and measured for the next request's token estimate. What `ask` adds is the body:
+the ceiling and temperature, a reasoning effort, the no-thinking hints, `extraBody`, and
+`askJson`'s `response_format`.
+
+- **A lost request** — a dropped connection, a 429 or 5xx, a model server gone silent — is sent
+  again after a backoff, twice unless `maxRetries` says otherwise. A side task can therefore take
+  longer than one round trip before it fails.
+- **A model still loading** is waited out for up to two minutes, polled without spending a retry,
+  with one notice.
+- **A refusal** is answered by `negotiate` alone. The no-thinking hints (`chat_template_kwargs`) are
+  a droppable field, latched into the model's `refusedFields` when a refusal names them, and the
+  effort is latched or stepped up as an exchange's is. A refusal that names nothing is not guessed
+  at: the side task fails, and `tryAsk` turns that into no answer and a notice.
+
+```ts
+const title = await tryAsk("title", () => ask(config, small, "Name this chat.", first, { onNotice, signal }), {
+  onNotice,
+  signal,
+});                                              // undefined where it failed, after its retries
+```
+
+Before 6.0.0 a side task did not stream, retried nothing, and answered a 400 or 422 that
+`negotiate` could not read by sending it once more without the hints and the effort, latching the
+hints if that got through. A snapshot from then may hold `thinkingHints: false` for a model, which
+still keeps the hints off it.
 
 ## Sizing a request before sending it
 
@@ -1888,7 +1919,8 @@ copies with it. An app that makes a function per run makes a client per run too,
 when the function is in process. The capability latches, the no-thinking hints among them, stay keyed on the
 URL and the key alone, since they are what a snapshot carries to the next process.
 
-A side task reaches the same function in two ways. `taskCall`, and so the loop's own `preselect` and
+A side task is a streamed request like any other, so a function that answers one in process answers
+it as a stream. It reaches the same function in two ways. `taskCall`, and so the loop's own `preselect` and
 `compact`, gives a task on the agent's model server the agent's `fetch` as it gives it the agent's key.
 A task on another model server is never given it, since an app's function may add that server's
 credentials; an app answering every model server itself sets its function on each task's endpoint:

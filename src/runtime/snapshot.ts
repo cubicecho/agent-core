@@ -41,7 +41,10 @@ export interface ModelSnapshot {
    * from before it was latched lacks it, which `importCapabilities` reads as not refused.
    */
   multiCallMessages: boolean;
-  /** Takes the no-thinking hints `ask` sends. */
+  /**
+   * Takes the no-thinking hints `ask` sends. Only a snapshot from before 6.0.0 holds it off: a
+   * refusal of the hints is now one of `refusedFields`.
+   */
   thinkingHints: boolean;
   /**
    * Efforts refused by value rather than by field, so a restart does not spend a request per rung
@@ -122,8 +125,8 @@ const latchInto = (held: Set<string>, stored: unknown) => {
  * refused ones sorted.
  *
  * @remarks
- * Covers what `negotiate` latches on model servers and models and the models `ask` found refusing
- * the no-thinking hints. Only what was actually refused is in it, so a snapshot of a process that
+ * Covers what `negotiate` latches on model servers and models, the no-thinking hints among the
+ * refused fields. Only what was actually refused is in it, so a snapshot of a process that
  * met no refusals has no model servers. Model servers are named by digest rather than URL and key,
  * since the blob is meant to be written somewhere and a key must not be written with it. Each
  * carries the `since` it was learned at, so importing it does not make an old latch young again.

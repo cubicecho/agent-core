@@ -264,11 +264,10 @@ describe("a side task's extraBody", () => {
 
   it('never lets it set what the request is built around', async () => {
     create.mockResolvedValue(answer('ok'));
-    const extraBody = { model: 'other', messages: [], stream: true, tools: [], top_k: 20 };
+    const extraBody = { model: 'other', messages: [], stream: false, tools: [], top_k: 20 };
     await ask(config, 'qwen', 'Name it.', 'a chat', { extraBody });
-    expect(body(0)).toMatchObject({ model: 'qwen', top_k: 20 });
+    expect(body(0)).toMatchObject({ model: 'qwen', stream: true, top_k: 20 });
     expect(body(0).messages).toHaveLength(2);
-    expect(body(0)).not.toHaveProperty('stream');
     expect(body(0)).not.toHaveProperty('tools');
   });
 
@@ -392,7 +391,8 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const result = await run(onDemand({}), { preselect: true });
     // The preselector's defaults rather than the agent's temperature and ceiling.
     expect(body(0)).toMatchObject({ model: 'big', temperature: 0.3, max_tokens: 256 });
-    expect(body(0).stream).toBeUndefined();
+    // The preselection, not the exchange's first turn: it is the one that asks for a schema.
+    expect(body(0)).toHaveProperty('response_format');
     expect(new Set(reached.map((endpoint) => JSON.stringify(endpoint)))).toEqual(
       new Set([JSON.stringify({ baseUrl: 'http://main/v1', apiKey: 'sk-main' })]),
     );

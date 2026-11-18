@@ -3,7 +3,7 @@ import { getOrCreate, isPositive } from '../core/guards.ts';
 import { scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
 import type { Produced } from '../wire/stream.ts';
-import { PARALLEL_TOOL_CALLS } from '../wire/wire.ts';
+import { CHAT_TEMPLATE_KWARGS, PARALLEL_TOOL_CALLS } from '../wire/wire.ts';
 import { endpointId } from './client.ts';
 import { isGrammarError } from './schema-compat.ts';
 
@@ -146,13 +146,13 @@ export interface ModelCapabilities {
    */
   multiCallMessages: boolean;
   /**
-   * Takes the no-thinking hints a side task sends, `chat_template_kwargs` asking the template to
-   * leave thinking off. Latched off by a side task, never by `negotiate`, since only a side task
-   * sends them.
+   * Takes the no-thinking hints a side task sends. Read, and no longer latched: a refusal of the
+   * hints now joins `refusedFields` as `chat_template_kwargs`, the way `negotiate` latches any
+   * droppable field.
    *
    * @remarks
-   * The model's rather than the model server's because one base URL is routinely many models, and
-   * whether the field reaches a chat template that reads it is a property of the model behind it.
+   * Kept so a snapshot taken before 6.0.0, in which a side task latched this itself, still keeps
+   * the hints off for the models it says refused them. `importCapabilities` is its only writer.
    */
   thinkingHints: boolean;
 }
@@ -264,8 +264,8 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
  * @param flag - The flag to latch off. One already off stays off.
  *
  * @remarks
- * `negotiate` latches through it on a refusal it reads, and the callers that read a refusal of
- * their own do as well: a continuation the model would not take, a side task's hints.
+ * `negotiate` latches through it on a refusal it reads, and so does the one caller that reads a
+ * refusal of its own: a continuation the model would not take.
  */
 export function latchModel(refused: ModelCapabilities, flag: ModelFlag): void {
   refused[flag] = false;
@@ -336,12 +336,14 @@ export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
  *
  * @remarks
  * A test seam, as `resetCapabilities` is. Every model the current scope knows is offered the hints
- * again on its next side task; `resetCapabilities` forgets these with the rest.
+ * again on its next side task, whether it refused them by name or a snapshot said so;
+ * `resetCapabilities` forgets these with the rest.
  */
 export function resetHints() {
   for (const supports of capabilities().values()) {
     for (const refused of supports.models.values()) {
       refused.thinkingHints = true;
+      refused.refusedFields.delete(CHAT_TEMPLATE_KWARGS);
     }
   }
 }
