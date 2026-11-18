@@ -137,20 +137,12 @@ const sender = (config: Pick<Endpoint, 'fetch'>): Fetch => config.fetch ?? globa
  * A client per model server, made once and kept.
  *
  * @remarks
- * The SDK holds its own connection pool, and an exchange makes a request per turn on top of
- * whatever side tasks it asks for — building a fresh client for each of them throws that pool
- * away every time. A map rather than the single slot it would otherwise be, because agents each
- * name their own model server: two running side by side on different servers would evict each
- * other's client on every request.
- *
- * `maxRetries: 0` turns the SDK's own retrying off. Streaming is what this is for, and a stream
- * that has already emitted tokens must not be replayed from the top — the caller knows whether
- * anything has been produced yet and the SDK does not. See `retry.ts`.
- *
- * Bounded, because a cache is only a cache while its keys are. Insertion order is the whole of
- * the eviction: a `Map` iterates oldest-first, and `getClient` re-inserts on a hit. One pool per
- * `fetch` (`perFetch`), each held to `maxClients`, so a client built on one function never sends
- * for another.
+ * The SDK holds its own connection pool, which a client per request would throw away, and agents
+ * on different servers side by side would evict each other's client from a single slot.
+ * `maxRetries: 0` turns the SDK's own retrying off, since a stream that has emitted tokens must not
+ * be replayed and only the caller knows whether it has (`retry.ts`). Bounded to `maxClients` per
+ * `fetch` (`perFetch`), oldest first: a `Map` iterates in insertion order and `getClient`
+ * re-inserts on a hit.
  */
 const clients = perFetch(() => new Map<string, OpenAI>());
 
@@ -657,18 +649,12 @@ export interface LookupOptions {
  * of `options.signal`: a server that could not be reached answers zero too.
  *
  * @remarks
- * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
- * Studio on `/api/v0/models` as `loaded_context_length` while the model is loaded. Both differ
- * from the trained context window in the case that matters, a model started in a smaller one than
- * it was built for, and reading the trained one lets an overflow through the guard meant to catch
- * it. Ollama reports nothing on either; an operator there has to declare the context window.
- *
- * What it answers, zero included, is remembered for `listingMissMs`. A server without either route
- * is latched and not asked again. `/api/v0/models` is also dropped on its own: until
- * `resetClients` once it answers as a route that is not there, and for `listingMissMs` after any
- * other error. A server that could not be reached is not remembered at all.
- *
- * The listing is not read here; `contextLimitFor` reads it first and comes here after.
+ * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, and LM Studio on
+ * `/api/v0/models` as `loaded_context_length`; either can be smaller than the trained context
+ * window, which would let an overflow through the guard. What it answers, zero included, is
+ * remembered for `listingMissMs`, a server without either route is latched, and one that could not
+ * be reached is not remembered (README, "Sizing a request before sending it"). The listing is not
+ * read here: `contextLimitFor` reads it first.
  */
 export async function servedWindow(
   config: Endpoint & { model: string },
@@ -1007,23 +993,10 @@ export async function probeEndpoint(
  * unknown context window.
  *
  * @remarks
- * `declared` is the operator's own number, and it wins outright: a model server can report the
- * context window a model was *built* with while serving it in a much smaller one — llama.cpp will
- * happily load a 256k model at `-c 16384` and go on listing it as 256k — and an exchange refused on
- * the honest-looking number is an exchange that fails at the model server instead.
- *
- * Otherwise the model server's listing — asked once, and again whenever it does not name this
- * model, since a model can arrive after the first listing was taken. A context window stated at the
- * top of the model's entry is taken as the one being served, and nothing else is asked. Where the
- * listing did not settle it — no context window, only llama.cpp's trained one, no entry, no listing
- * — the server's own API is asked (`servedWindow`), and what it says wins; the trained context
- * window is what is left when it says nothing. A server that will not list models still has to be
- * able to run a turn: a failure here is an unknown context window, not a failed exchange.
- *
- * The listing goes first because it is the one route every server here has, and the native ones
- * are two more requests that a server stating its context window in the listing never needed.
- * Asked first, they were also asked again every `listingMissMs` for the life of the process on a
- * server whose `/props` answers without one, by any app that sizes the context window per turn.
+ * `declared` wins outright, because a server can list the context window a model was built with
+ * while serving it in a much smaller one. Otherwise the listing goes first, as the one route every
+ * server has, and the server's own API (`servedWindow`) is asked only where it did not settle the
+ * question (README, "Sizing a request before sending it").
  */
 export async function contextLimitFor(
   config: Endpoint & { model: string },
@@ -1040,13 +1013,8 @@ export async function contextLimitFor(
     listings(config.fetch)
       .get(key)
       ?.find((model) => model.id === config.model);
-  // The listing is asked for again when it does not name this model, rather than only when
-  // there is no listing at all. Models arrive after a process starts — an `ollama pull` on a
-  // box that has been up a week, a worker added to a router, a name the operator has only just
-  // typed into settings — and a cache keyed on "we have asked once" answers zero for every one
-  // of them until a restart. Zero means "nobody knows", so what the operator loses is the
-  // context meter and, in a consumer that compacts on it, compaction: the session then runs at
-  // the context window instead of under it and fails against the model server's own refusal.
+  // Asked again when the listing does not name this model, not only when there is none: models
+  // arrive after a process starts, and a zero cached until a restart costs the meter and compaction.
   if (!listed()) {
     const missKey = modelKey(key, config.model);
     const asked = misses(config.fetch).get(missKey);

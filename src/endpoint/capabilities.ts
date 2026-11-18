@@ -197,21 +197,10 @@ export type OnNotice = (message: string) => void;
  *
  * @remarks
  * Keyed by `endpointId` — `endpointKey` hashed, so a snapshot holds no key — in the copy of the
- * model server's `fetch` (`perFetch`), as every cache of a model server is: two functions behind one
- * URL and key may reach two servers, and one's refusal must not degrade the other. These are
- * facts about the server on the other end and not about this one. A llama.cpp box that cannot
- * compile a grammar and a cloud API that can are both reachable from one settings row over its
- * lifetime — an operator retargets it from Ollama this afternoon to OpenAI this evening — and the
- * first one's refusal must not quietly strip pattern/format from the second one's requests, or
- * silently cost it its token counts, for the rest of the process. Bounded by the number of
- * model servers ever configured, which is a settings row's worth.
- *
- * The API key is part of that identity, the same as it is for the client pool and the model
- * listings. A router — LiteLLM, OpenRouter, a gateway with several boxes behind it — is free to
- * send two keys to two different backends, and then what one of them refused is not a fact about
- * the other. Keyed on the URL alone the first caller through the gateway latched for everyone
- * behind it, including the `models` map underneath, which is the level where two keys through
- * one host are most likely to differ at all.
+ * model server's `fetch` (`perFetch`), as every cache of a model server is. These are facts about
+ * the server on the other end: one settings row may be retargeted from a llama.cpp box to a cloud
+ * API, and a router may send two keys to two backends, so one's refusal must not degrade the other.
+ * Bounded by the number of model servers ever configured.
  */
 const capabilities = perFetch(() => new Map<string, Capabilities>());
 
@@ -1117,8 +1106,7 @@ const ANSWERS: readonly Answer[] = [
 
 /**
  * Sends a request, re-sending it each time the answer is this model server refusing something the
- * request can do without. Returns once the model server has answered, or throws if the refusal is
- * not one of ours.
+ * request can do without.
  *
  * @typeParam T - What `send` resolves, which is handed back as it came.
  * @param supports - What this model server has already refused. Latched further as it refuses more.
@@ -1132,32 +1120,12 @@ const ANSWERS: readonly Answer[] = [
  * as it was caught.
  *
  * @remarks
- * A loop rather than one retry. A server that has heard of neither `stream_options` nor a
- * grammar keyword complains about them one at a time, and answering only the first leaves the
- * second to fail the request — so the first exchange against such a model server is spent
- * discovering what the second one starts knowing. It terminates in at most one pass per capability,
- * since each pass either latches one off for good or rethrows.
- *
- * A refusal is recognised by its text, not by its HTTP status as `refusesRequest` reads one:
- * servers send an unsupported field back under all sorts of statuses, not only 400 and 422, and a
- * status test would throw refusals an answer could have dropped. Each answer matches a wording
- * specific to its own refusal, so the text is enough on its own.
- *
- * One loop over both levels, because a refusal arrives the same way whichever it is about and
- * one request can meet both. An OpenAI reasoning model has two waiting on its own — the ceiling
- * is spelled the other way, and then the temperature is not ours to pick — so a loop that
- * stopped after the first answer would hand the caller the second.
- *
- * `send` is a thunk rather than a request body because the body has to be rebuilt from the
- * latched flags: `relaxTools` applies to the tools that were just sanitised, and
- * `stream_options` is present or absent rather than adjusted. It is generic over what it
- * resolves, so a caller whose request resolves a stream object before any chunk is read is the
- * same shape as one that resolves a finished reply.
- *
- * It is handed the `produced` flag rather than being expected to close over one. There is only
- * ever one flag in a request — the same box `streamTurn` sets and the re-send below reads — and a
- * caller that passed it to only one of the two got a request that had already streamed tokens sent
- * again, silently, with the watcher seeing every one of them twice.
+ * A loop rather than one retry, because a server complains about unknown fields one at a time and
+ * one request can meet refusals at both levels; it ends after one pass per capability at most,
+ * since each pass latches one off or rethrows. A refusal is recognised by its text rather than its
+ * HTTP status, since servers send an unsupported field back under all sorts of statuses. `send` is
+ * a thunk handed the `produced` flag, because the body is rebuilt from the latched flags and a
+ * request that has already streamed tokens must never be sent again.
  */
 export async function negotiate<T>(
   supports: Capabilities,
@@ -1197,13 +1165,8 @@ export async function negotiate<T>(
       } else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) {
         throw error;
       }
-      // Otherwise the refusal was answered by whoever got there first, and this attempt was
-      // built before the answer existed. Two exchanges opening on a fresh llama.cpp box both get
-      // the grammar error; the first latches it off and re-sends, and the second used to find the
-      // flag already clear, fall through to the throw and die on an error the process had just
-      // learned to fix — `isTransient` refuses a 400, so `runTurn` would not send it again either.
-      // Sending it again is the whole of the fix: flags only ever latch off, so this gives up after
-      // one pass per flag.
+      // Otherwise another exchange answered this refusal after this attempt was built, so it is sent
+      // again; flags only latch off, so this gives up after one pass per flag.
     }
   }
 }

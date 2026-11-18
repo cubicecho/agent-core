@@ -5,20 +5,12 @@ import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
 /**
  * JSON Schema compatibility for llama.cpp-backed servers.
  *
- * llama.cpp compiles every tool's parameter schema into one combined GBNF grammar, so a
- * single shape its converter dislikes fails the whole request — not just the offending
- * tool. MCP servers emit those shapes routinely. This mirrors what NousResearch/hermes-agent
- * does in `tools/schema_sanitizer.py` and `agent/error_classifier.py`:
- *
- *   1. Normalise the structurally hostile shapes up front, on every request.
- *   2. If the server still reports a grammar failure, strip the advisory `pattern` and
- *      `format` keywords and send it again. The strip latches for the model server, so every later
- *      request goes without them.
- *
- * Cloud providers accept all of this, so step 2 never fires against them — with one edge worth
- * knowing about, which is that `nullable` is OpenAPI's spelling rather than JSON Schema's.
- * OpenAI's ordinary function tools ignore a keyword they do not know; `strict: true` structured
- * tool calling rejects one. A caller on that path wants its own schemas rather than these.
+ * llama.cpp compiles every tool's parameter schema into one GBNF grammar, so a single shape its
+ * converter dislikes fails the whole request, and MCP servers emit those shapes routinely. Hostile
+ * shapes are normalised on every request, and on a grammar failure the advisory `pattern` and
+ * `format` keywords are stripped and latched off for the model server, as NousResearch/hermes-agent
+ * does in `tools/schema_sanitizer.py`. A caller on OpenAI's `strict: true` tool calling wants its own
+ * schemas, since that rejects `nullable`, OpenAPI's spelling rather than JSON Schema's.
  */
 
 type Schema = Record<string, unknown>;
@@ -150,12 +142,8 @@ function normalize(node: Schema): Schema {
   if (out.type === SchemaType.Object && !isRecord(out.properties)) {
     out.properties = {};
   }
-  // Strict validators reject any sibling of `$ref`, and draft-07 ignores them, so a reference
-  // stands alone or not at all. This is not hypothetical tidying: collapsing `anyOf: [{$ref},
-  // {type: "null"}]` — the shape a schema-generated server emits at every optional argument —
-  // lands `nullable` right next to the `$ref` that survived. Whatever is dropped here was
-  // already unreadable to a conforming consumer; optionality still lives in the parent's
-  // `required`.
+  // Strict validators reject any sibling of `$ref`, and collapsing `anyOf: [{$ref}, {type: "null"}]`
+  // lands `nullable` beside one; optionality still lives in the parent's `required`.
   if ('$ref' in out) {
     return { $ref: out.$ref };
   }
@@ -563,21 +551,11 @@ const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => S
  * Both rewrites are cached against the tool object rather than recomputed.
  *
  * @remarks
- * The agent loop rebuilds its tool array on every turn, and normalising a couple of dozen MCP
- * schemas is the only walk in an exchange that is neither a request nor a query.
- * The pool hands out the same definition objects for the life of a connection, so identity is
- * exactly the right key: a reconnect makes new ones and they are normalised again.
- *
- * Two maps rather than one, because the two answer different questions about the same tool and a
- * relaxed schema is reached by way of a sanitised one. `relaxed` is the load-bearing half: a
- * model server that has refused a grammar once has `strictSchemas` off for the life of the process
- * (see `capabilities.ts`), so from that point every request takes this path and only this path.
- * Caching the call that happens once per connection and not the one that happens on every request
- * had it exactly the wrong way round.
- *
- * The contract both rely on is that a tool definition is not mutated in place. Nothing can evict
- * an entry here — a caller that edits `tool.function.parameters` after the fact keeps the schema
- * it had at first sight. Build a new definition object instead.
+ * The loop rebuilds its tool array every turn, and the pool hands out the same definition objects
+ * for the life of a connection, so identity is the right key. `relaxed` is the half that matters:
+ * once a model server has refused a grammar, every request takes that path (`capabilities.ts`).
+ * Nothing evicts an entry, so a tool definition edited in place keeps the schema it had at first
+ * sight: build a new definition object instead.
  */
 const sanitized = new WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>();
 const relaxed = new WeakMap<OpenAI.ChatCompletionTool, OpenAI.ChatCompletionTool>();
