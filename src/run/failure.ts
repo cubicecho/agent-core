@@ -62,6 +62,36 @@ export interface AgentLoopFailure {
   remoteRunId?: string;
 }
 
+/** The run as a failure holds it: `artifacts` and `ledger` always set. */
+type CarriedRun = Omit<AgentLoopFailure, 'artifacts' | 'ledger'> & { artifacts: RunArtifact[]; ledger: TokenLedger };
+
+/**
+ * Copies a run onto the failure that carries it, in place.
+ *
+ * @param failure - The failure being built, from its constructor. Written to.
+ * @param run - The run as it stood. Held, not copied: its lists become the failure's.
+ *
+ * @remarks
+ * One copy for both classes, which cannot share a base: an overflow has to stay a
+ * `ContextOverflow`.
+ */
+function assignRun(failure: CarriedRun, run: AgentLoopFailure): void {
+  failure.messages = run.messages;
+  if (run.partial) {
+    failure.partial = run.partial;
+  }
+  failure.usage = run.usage;
+  failure.toolCalls = run.toolCalls;
+  failure.artifacts = run.artifacts ?? [];
+  failure.loaded = run.loaded;
+  failure.used = run.used;
+  failure.preselected = run.preselected;
+  failure.ledger = run.ledger ?? [];
+  if (run.remoteRunId !== undefined) {
+    failure.remoteRunId = run.remoteRunId;
+  }
+}
+
 /**
  * What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
  *
@@ -73,15 +103,16 @@ export interface AgentLoopFailure {
  */
 export class AgentLoopError extends Error implements AgentLoopFailure {
   override readonly name: string = 'AgentLoopError';
-  readonly messages: OpenAI.ChatCompletionMessageParam[];
+  // Set by `assignRun`, which the constructor calls; declared here so each is a public field.
+  readonly messages!: OpenAI.ChatCompletionMessageParam[];
   readonly partial?: PartialTurn;
-  readonly usage: LoopUsage;
-  readonly toolCalls: ToolCallOutcome[];
-  readonly artifacts: RunArtifact[];
-  readonly loaded: string[];
-  readonly used: string[];
-  readonly preselected: string[];
-  readonly ledger: TokenLedger;
+  readonly usage!: LoopUsage;
+  readonly toolCalls!: ToolCallOutcome[];
+  readonly artifacts!: RunArtifact[];
+  readonly loaded!: string[];
+  readonly used!: string[];
+  readonly preselected!: string[];
+  readonly ledger!: TokenLedger;
   readonly remoteRunId?: string;
 
   /**
@@ -91,20 +122,7 @@ export class AgentLoopError extends Error implements AgentLoopFailure {
    */
   constructor(message: string, run: AgentLoopFailure, options?: ErrorOptions) {
     super(message, options);
-    this.messages = run.messages;
-    if (run.partial) {
-      this.partial = run.partial;
-    }
-    this.usage = run.usage;
-    this.toolCalls = run.toolCalls;
-    this.artifacts = run.artifacts ?? [];
-    this.loaded = run.loaded;
-    this.used = run.used;
-    this.preselected = run.preselected;
-    this.ledger = run.ledger ?? [];
-    if (run.remoteRunId !== undefined) {
-      this.remoteRunId = run.remoteRunId;
-    }
+    assignRun(this, run);
   }
 }
 
@@ -129,15 +147,16 @@ export class ToolIterationLimit extends AgentLoopError {
  * endpoint's own error, where there was one, is that one's `cause` in turn.
  */
 export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailure {
-  readonly messages: OpenAI.ChatCompletionMessageParam[];
+  // Set by `assignRun`, which the constructor calls; declared here so each is a public field.
+  readonly messages!: OpenAI.ChatCompletionMessageParam[];
   readonly partial?: PartialTurn;
-  readonly usage: LoopUsage;
-  readonly toolCalls: ToolCallOutcome[];
-  readonly artifacts: RunArtifact[];
-  readonly loaded: string[];
-  readonly used: string[];
-  readonly preselected: string[];
-  readonly ledger: TokenLedger;
+  readonly usage!: LoopUsage;
+  readonly toolCalls!: ToolCallOutcome[];
+  readonly artifacts!: RunArtifact[];
+  readonly loaded!: string[];
+  readonly used!: string[];
+  readonly preselected!: string[];
+  readonly ledger!: TokenLedger;
   readonly remoteRunId?: string;
 
   /**
@@ -147,20 +166,7 @@ export class AgentLoopOverflow extends ContextOverflow implements AgentLoopFailu
    */
   constructor(message: string, run: AgentLoopFailure, options?: ErrorOptions) {
     super(message, options);
-    this.messages = run.messages;
-    if (run.partial) {
-      this.partial = run.partial;
-    }
-    this.usage = run.usage;
-    this.toolCalls = run.toolCalls;
-    this.artifacts = run.artifacts ?? [];
-    this.loaded = run.loaded;
-    this.used = run.used;
-    this.preselected = run.preselected;
-    this.ledger = run.ledger ?? [];
-    if (run.remoteRunId !== undefined) {
-      this.remoteRunId = run.remoteRunId;
-    }
+    assignRun(this, run);
   }
 }
 
