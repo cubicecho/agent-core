@@ -82,8 +82,8 @@ export const counted = (count: number, noun: string) => `${count} ${noun}${count
  *
  * @remarks
  * Rather than `localeCompare`, whose answer depends on the host's locale. An order the package
- * relies on — the tool array a prompt cache matches, a tie between two ranked tools, a listing a
- * host may key on — has to come out the same wherever it runs.
+ * relies on — the tool array a prompt cache matches, a tie between two ranked tools, a listing an
+ * app may key on — has to come out the same wherever it runs.
  */
 export function byCodeUnit(a: string, b: string): number {
   if (a < b) {

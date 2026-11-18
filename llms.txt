@@ -2,7 +2,7 @@
 
 > The endpoint-agnostic half of an OpenAI-compatible agent loop: tool-schema compatibility, on-demand tool loading, one-shot side tasks, run events, and a pooled client.
 
-What is here is everything that does not know what the agent is *for*: making a tool schema a strict server will accept, getting tool definitions in front of a model without paying for all of them, reading one streamed turn back into a message, answering an endpoint that refuses one of those, one-shot calls that support a run, the host's side of lifecycle hooks, the event bus a watcher reads, a pooled client, and the rules about retrying. What is not here is the work — orchestration, prompts, and whatever the run is about — because that is the caller's, and it is the part that differs between one server and the next.
+What is here is everything that does not know what the agent is *for*: making a tool schema a strict server will accept, getting tool definitions in front of a model without paying for all of them, reading one streamed reply back into a message, answering a model server that refuses one of those, one-shot calls that support an exchange, the app's side of lifecycle hooks, the event bus a watcher reads, a pooled client, and the rules about retrying. What is not here is the work — orchestration, prompts, and whatever the run is about — because that is the caller's, and it is the part that differs between one server and the next.
 
 Requires Node >=22, with `openai` >=6 as a peer dependency. ESM only.
 Full prose, worked examples and the reasoning behind each seam are in README.md; this file is the index.
@@ -56,11 +56,11 @@ What this package needs to know about a caller's configuration.
 
 - `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
 - `Endpoint` (type) — Where to send a request and how long to wait.
-- `EndpointIdentity` (type) — What makes an endpoint the one it is: where it lives and whose key reaches it.
+- `EndpointIdentity` (type) — What makes a model server the one it is: where it lives and whose key reaches it.
 - `ModelParams` (type) — What to ask the model for.
 - `normalizeBaseUrl` — A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
-- `ReasoningReplay` — Which assistant messages a run writes the model's scratchpad onto, under the field it arrived in.
-- `RemoteAgentParams` (type) — What to ask a remote agent for: a model that runs a whole agent loop of its own, behind the same chat completions API, and hands the host's own tools back to it.
+- `ReasoningReplay` — Which assistant messages an exchange writes the model's scratchpad onto, under the field it arrived in.
+- `RemoteAgentParams` (type) — What to ask a remote agent for: a model that runs a whole agent loop of its own, behind the same chat completions API, and hands the app's own tools back to it.
 - `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
 - `ToolDiscovery` — How tool definitions reach the model.
 - `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
@@ -146,16 +146,16 @@ The points in a session a hook can be bound to, apart from everything that runs 
 
 ### hooks
 
-Lifecycle hooks, from the host's side: what a session looks like to them, where their context lands in a request, and what is said about each one.
+Lifecycle hooks, from the app's side: what a session looks like to them, where their context lands in a request, and what is said about each one.
 
 - `assembleContext` — Builds the context a set of outcomes adds and the notes that go with it.
-- `configureHooks` — Changes what hooks are held to, for a process whose windows are not the size these defaults were chosen for, or whose host wants its own name above the context.
-- `consult` — Runs an event's hooks and waits for their say, for a host that will hold off when one of them vetoes.
+- `configureHooks` — Changes what hooks are held to, for a process whose context windows are not the size these defaults were chosen for, or whose app wants its own name above the context.
+- `consult` — Runs an event's hooks and waits for their say, for an app that will hold off when one of them vetoes.
 - `Gathered` (type) — The context a set of outcomes adds to a request, and a note for each hook worth mentioning.
 - `gather` — Runs the hooks ahead of a request and builds what they add to it.
 - `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens.
 - `HOOK_PREFACE` — Said once, above the blocks, so the model reads them as background rather than instructions.
-- `HookContext` (type) — What a host knows at an event.
+- `HookContext` (type) — What an app knows at an event.
 - `HookMessage` (type) — One message of a session as a hook is handed it.
 - `HookNote` (type) — One hook's line for whoever is watching: the context it added, or why it added none.
 - `HookOptions` (type) — What hooks are held to across a process.
@@ -163,9 +163,9 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `HookRunner` (type) — Runs one event's hooks.
 - `notify` — Runs the hooks for an event that reads what happened and adds nothing to a request.
 - `resetHooks` — Test seam: puts `configureHooks` back to the defaults, so one test's budget or preface is not the next's.
-- `turnIndex` — Which turn of a session begins at a point, from 0: the user messages ahead of it.
+- `turnIndex` — Which exchange of a session begins at a point, from 0: the user messages ahead of it.
 - `turnMessages` — A stretch of a transcript as a hook reads it: what the user and the assistant said, and nothing else.
-- `withContext` — The request, with the hooks' context added to this turn's question.
+- `withContext` — The request, with the hooks' context added to this exchange's question.
 
 ### agent-loop
 
@@ -288,28 +288,28 @@ The tools of one turn: its calls read, run and written into the transcript.
 
 ### snapshot
 
-What endpoints and models refused, carried across a restart.
+What model servers and models refused, carried across a restart.
 
 - `CAPABILITY_SNAPSHOT_VERSION` — The version `importCapabilities` accepts.
 - `CapabilitySnapshot` (type) — Every latched refusal in the process, JSON-safe.
-- `EndpointSnapshot` (type) — What one endpoint refused, and under it what each of its models did.
+- `EndpointSnapshot` (type) — What one model server refused, and under it what each of its models did.
 - `exportCapabilities` — Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
 - `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
-- `ModelSnapshot` (type) — What one model on an endpoint refused.
+- `ModelSnapshot` (type) — What one model on a model server refused.
 
 ### columns
 
-A host's stored agent, read as a spec layer and written back: one table of columns, and the marker each column stores for "inherit".
+An app's stored agent, read as a spec layer and written back: one table of columns, and the marker each column stores for "inherit".
 
 - `defineSpecColumns` — A column table from a stored row to a spec layer and back, with each column's "inherit" marker a parameter.
-- `ExtensionPath` (type) — A path into a host's own extension, as segments, because its key is a reverse domain and has dots of its own.
+- `ExtensionPath` (type) — A path into an app's own extension, as segments, because its key is a reverse domain and has dots of its own.
 - `SpecColumn` (type) — One column: where its value lives in a spec, what it stores for "inherit", and how its value crosses when the column and the field do not hold the same thing.
 - `SpecColumnMapping` (type) — A row's column table, both ways.
 - `SpecColumns` (type) — A row's columns, each mapped to a field: keyed by column, so a name the row does not have is an excess property and a marker of the wrong type does not typecheck.
 - `SpecColumnsOptions` (type) — What `defineSpecColumns` takes besides the columns.
 - `SpecDrop` (type) — One thing a document says that a row will not keep.
 - `SpecPath` (type) — Where in a spec a column lives, as a dotted path.
-- `SpecSection` (type) — The top-level keys of a spec, for naming a whole section a host reads by hand.
+- `SpecSection` (type) — The top-level keys of a spec, for naming a whole section an app reads by hand.
 
 ### spec
 
@@ -318,11 +318,11 @@ A JSON document that defines an agent, and the rules for reading one.
 - `AGENT_SPEC` — The token a document declares itself with.
 - `AGENT_SPEC_VERSION` — The major version `AGENT_SPEC` pins.
 - `AGENT_TASKS` — The side tasks this package has code for: documentation and a sensible UI order, not a validator.
-- `AgentHook` (type) — A tool call bound to a lifecycle event, run by the host rather than the model.
+- `AgentHook` (type) — A tool call bound to a lifecycle event, run by the app rather than the model.
 - `AgentSpec` (type) — One agent, as a document.
 - `EndpointSpec` (type) — Where a model is reached, and how long to wait for it.
 - `ExportSpecOptions` (type) — What `exportSpec` takes besides the document.
-- `exportSpec` — A document fit to leave the host: the same agent, with the secrets of its bundled servers gone.
+- `exportSpec` — A document fit to leave the app: the same agent, with the secrets of its bundled servers gone.
 - `findSpecSecrets` — Where a document's bundled servers may still carry a credential after `exportSpec`.
 - `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
 - `ParsedSpec` (type) — What `parseSpec` hands back.
@@ -332,8 +332,8 @@ A JSON document that defines an agent, and the rules for reading one.
 - `REF_FILE` — The `ref.type` of a prompt part whose text is in a file.
 - `REF_URL` — The `ref.type` of a prompt part whose text is behind a URL.
 - `RESOLVED_DEFAULTS` — What a field falls back to when no layer said anything at all.
-- `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the host's to act on.
-- `ResolvedTask` (type) — One side task, resolved: a model, and the endpoint it is reached through.
+- `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the app's to act on.
+- `ResolvedTask` (type) — One side task, resolved: a model, and the model server it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
 - `resolveAgentSpec` — Layers documents into the flat object the loop takes, weakest first.
 - `SecretHint` (type) — One place `findSpecSecrets` thinks a credential may be, and never the credential.
@@ -352,7 +352,7 @@ The contract between whatever holds the tools and the loop that offers them to a
 
 ### discovery
 
-How a run finds its tools: every definition each time, loaded from the catalogue when asked for, or loaded and called through two fixed tools; and the shortlist it opens with.
+How an exchange finds its tools: every definition each time, loaded from the catalogue when asked for, or loaded and called through two fixed tools; and the shortlist it opens with.
 
 - `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
 
@@ -364,13 +364,13 @@ How a run finds its tools: every definition each time, loaded from the catalogue
 
 ### preselect
 
-Choosing a run's tools before it starts, from the request and the catalogue's names.
+Choosing an exchange's tools before it starts, from the request and the catalogue's names.
 
 - `KeywordPreselection` (type) — What `preselectByKeywords` found.
 - `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
 - `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
 - `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
-- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
+- `preselect` — The tools a request is likely to need, picked by a small model before the exchange starts, or none.
 - `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
 - `preselectInput` — The user message for a preselection call: the catalogue, then the request.
 - `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
@@ -379,21 +379,21 @@ Choosing a run's tools before it starts, from the request and the catalogue's na
 
 ### tool-loading
 
-- `CALL_TOOL` — The one tool a proxied run reaches every catalogued tool through.
-- `carryOver` — The tools to start the next turn with: last turn's where they were, then what this turn used.
+- `CALL_TOOL` — The one tool a proxied exchange reaches every catalogued tool through.
+- `carryOver` — The tools to start the next exchange with: the last one's where they were, then what this one used.
 - `catalogList` — The catalogue as a plain grouped listing of names, loaded ones marked if asked.
 - `catalogPrompt` — The catalogue block appended to the system prompt.
 - `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
 - `holdsDefinitions` — Whether a tool result is a proxied load carrying definitions, which is the only copy of them the model has.
 - `inCatalog` — Whether the catalogue holds a tool by this name.
 - `LOAD_TOOLS` — On-demand tool loading.
-- `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
+- `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every turn.
 - `loadedTools` — A tool array with newly loaded definitions appended, in the order they were loaded.
 - `loadResult` — What `load_tools` reports back: the descriptions, now that they are worth their tokens.
 - `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
-- `PROXY_TOOLS` — The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is shared.
+- `PROXY_TOOLS` — The whole tool array of a proxied exchange, `load_tools` then `call_tool`, frozen because it is shared.
 - `proxiedCall` — The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
-- `proxyCatalogPrompt` — The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a tool list.
+- `proxyCatalogPrompt` — The catalogue block for a proxied exchange's system prompt, worded for `call_tool` rather than for a tool list.
 - `proxyLoadResult` — What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since the result is the only place the model will ever see it.
 - `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
 - `shownCall` — A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it is.

@@ -10,10 +10,10 @@ import {
 } from './spec.ts';
 
 /**
- * A host's stored agent, read as a spec layer and written back: one table of columns, and the
+ * An app's stored agent, read as a spec layer and written back: one table of columns, and the
  * marker each column stores for "inherit".
  *
- * Every host with profiles had written this projection by hand, three times with three markers —
+ * Every app with profiles had written this projection by hand, three times with three markers —
  * `""` and `-1` and the word `inherit` in one, `null` in the next, none at all in the third — and
  * the import half of it once more, with a list of what a row could not keep. The merge was already
  * `resolveAgentSpec`; what each repeated was which column feeds which field, and how a column at
@@ -47,12 +47,12 @@ export type SpecPath =
   | `tasks.${string}.${Exclude<keyof TaskSpec, 'endpoint'>}`;
 
 /**
- * A path into a host's own extension, as segments, because its key is a reverse domain and has
+ * A path into an app's own extension, as segments, because its key is a reverse domain and has
  * dots of its own.
  */
 export type ExtensionPath = readonly ['extensions', string, ...string[]];
 
-/** The top-level keys of a spec, for naming a whole section a host reads by hand. */
+/** The top-level keys of a spec, for naming a whole section an app reads by hand. */
 export type SpecSection =
   | '$schema'
   | 'id'
@@ -81,7 +81,7 @@ export interface SpecColumn<Value> {
   /**
    * What the column stores for "say nothing here": a value at it is a field the layer leaves out,
    * and a field the layer leaves out reads back as it. Compared with `===`. Left out, the column
-   * has no marker — every value it holds is said, which is a host's bottom layer — and an absent
+   * has no marker — every value it holds is said, which is an app's bottom layer — and an absent
    * field leaves the column out of what `fromLayer` returns.
    *
    * @remarks
@@ -115,7 +115,7 @@ export type SpecColumns<Row> = { [Column in keyof Row]?: SpecColumn<Row[Column]>
 /** What `defineSpecColumns` takes besides the columns. */
 export interface SpecColumnsOptions {
   /**
-   * What the host reads by hand, so `dropped` does not report it: a section (`bundle`), a path
+   * What the app reads by hand, so `dropped` does not report it: a section (`bundle`), a path
    * (`tools.servers`, where a list of slugs becomes a list of row ids) or an extension. `spec` is
    * never reported, and needs no entry here.
    */
@@ -186,7 +186,7 @@ interface Entry<Row> {
 /**
  * The sections `dropped` always walks into, so a field the format names is reported at its own
  * path. Anything deeper — one task, one extension — is walked into only where a column is mapped
- * beneath it, and is otherwise reported whole: a side task this host does not run is one loss.
+ * beneath it, and is otherwise reported whole: a side task this app does not run is one loss.
  */
 const STRUCTURAL = ['endpoint', 'model', 'tools', 'retry', 'tasks', 'extensions'];
 
@@ -326,7 +326,7 @@ function checkTable<Row>(entries: readonly Entry<Row>[]) {
  *
  * @typeParam Row - The stored row: a settings row, a profile, an override layer.
  * @param columns - Each mapped column, keyed by its name on the row.
- * @param [options] - What the host reads by hand, outside the table.
+ * @param [options] - What the app reads by hand, outside the table.
  * @returns `toLayer`, `fromLayer` and `dropped` over that one table.
  * @throws When two columns write the same field, or one writes a section another writes inside.
  *
@@ -387,7 +387,7 @@ export function defineSpecColumns<Row>(
         }
       }
       // Built as a plain object because the paths are data; each field is the column's value, of
-      // its path's type when the host's `toSpec` says so, and `parseSpec` is the check on that.
+      // its path's type when the app's `toSpec` says so, and `parseSpec` is the check on that.
       return layer as AgentSpec;
     },
 

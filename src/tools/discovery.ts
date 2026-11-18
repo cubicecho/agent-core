@@ -8,13 +8,16 @@ import type { CatalogServer } from './catalog.ts';
 import { type KeywordPreselectOptions, preselect } from './preselect.ts';
 
 /**
- * How a run finds its tools: every definition each time, loaded from the catalogue when asked
+ * How an exchange finds its tools: every definition each time, loaded from the catalogue when asked
  * for, or loaded and called through two fixed tools; and the shortlist it opens with.
  */
 
-/** What choosing a run's discovery mode and shortlist reads of the run's options. */
+/** What choosing an exchange's discovery mode and shortlist reads of its options. */
 export interface DiscoveryOptions {
-  /** The run's config, read for the mode, the preselector it names and its own endpoint and model. */
+  /**
+   * The exchange's config, read for the mode, the preselector it names and its own model server
+   * and model.
+   */
   config: Endpoint & { model: string; tasks?: Readonly<Record<string, SideTask>> } & Partial<
       Pick<ToolPolicy, 'toolDiscovery' | 'toolSelectModel'>
     >;
@@ -24,7 +27,7 @@ export interface DiscoveryOptions {
   catalog?: CatalogServer[];
   /** Tools carried from an earlier question. */
   loaded?: Iterable<string>;
-  /** A shortlist the host already chose. Given, empty included, nothing is asked. */
+  /** A shortlist the app already chose. Given, empty included, nothing is asked. */
   preselected?: readonly string[];
   /** Has the loop make the preselection itself; an object passes `keywords` and `maxPerLoad` through. */
   preselect?: boolean | { keywords?: boolean | KeywordPreselectOptions; maxPerLoad?: number };
@@ -34,7 +37,7 @@ export interface DiscoveryOptions {
   signal?: AbortSignal;
 }
 
-/** How a run finds its tools, and what it starts with in hand. See `discoverTools`. */
+/** How an exchange finds its tools, and what it starts with in hand. See `discoverTools`. */
 export interface Discovered {
   /** Proxied: definitions come back as `load_tools` results and run through `call_tool`. */
   proxied: boolean;
@@ -67,9 +70,9 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
 
 /**
  * The loop's own preselection: by the task where the config carries one, and by the flattened
- * name on its own endpoint where it does not.
+ * name on its own model server where it does not.
  *
- * @param options - The run's options. Read for the config, the catalogue, the signal, what
+ * @param options - The exchange's options. Read for the config, the catalogue, the signal, what
  * `preselect` passes through, and `preselectQuery` or else the last user message, whose text is
  * what is asked about.
  * @param notice - Hears the preselector's notices, a failure among them.
@@ -77,7 +80,7 @@ const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): strin
  * is asked — and where the preselection picked nothing or failed. An aborted request still rejects.
  *
  * @remarks
- * With no preselector named the main model is asked, on the config's own endpoint.
+ * With no preselector named the main model is asked, on the config's own model server.
  */
 async function chooseTools(options: DiscoveryOptions, notice: OnNotice): Promise<string[]> {
   const { config, catalog = [], signal } = options;
@@ -102,14 +105,14 @@ async function chooseTools(options: DiscoveryOptions, notice: OnNotice): Promise
 export const PRESELECTED_NOTICE = 'tools picked before the run: ';
 
 /**
- * How this run finds its tools, and what it starts with in hand: the loop's own preselection
- * where it was asked for and the host has not already decided, and what an earlier question
+ * How this exchange finds its tools, and what it starts with in hand: the loop's own preselection
+ * where it was asked for and the app has not already decided, and what an earlier question
  * carried over.
  *
- * @param options - The run's options. Read for the discovery mode, the catalogue, `loaded`,
+ * @param options - The exchange's options. Read for the discovery mode, the catalogue, `loaded`,
  * `preselected` and `preselect`.
  * @param notice - Hears what the loop's own preselection has to say, and then what it picked,
- * by name. A shortlist the host gave is not told back to it.
+ * by name. A shortlist the app gave is not told back to it.
  * @returns `proxied` and `onDemand`, the second true of both modes and both false where `catalog`
  * is empty; `preselected`, the shortlist, empty in eager mode; and `loaded`, a new set of what was
  * carried and then the shortlist — empty when eager or proxied.
@@ -120,7 +123,7 @@ export async function discoverTools(options: DiscoveryOptions, notice: OnNotice)
   // results and run through `call_tool`. `onDemand` is true of both.
   const proxied = config.toolDiscovery === ToolDiscovery.Proxy && catalog.length > 0;
   const onDemand = proxied || (config.toolDiscovery === ToolDiscovery.OnDemand && catalog.length > 0);
-  // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
+  // Proxied, `loaded` is what this exchange put a definition in the history for, and starts empty.
   const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
   const chooses = options.preselect && options.preselected === undefined;
   let preselected: string[] = [];

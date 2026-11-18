@@ -8,18 +8,18 @@ import {
 } from '../endpoint/capabilities.ts';
 
 /**
- * What endpoints and models refused, carried across a restart.
+ * What model servers and models refused, carried across a restart.
  *
  * Every latch here dies with the process, so each restart of a consumer spends one refused request
- * per endpoint and model learning the same facts again, with a notice each time — and on a local
- * reasoning model the first side task after boot is sent the hints, refused and sent again. The
- * package cannot know where a consumer keeps state, so it hands over a blob and takes one back.
+ * per model server and model learning the same facts again, with a notice each time — and on a
+ * local reasoning model the first side task after boot is sent the hints, refused and sent again.
+ * The package cannot know where a consumer keeps state, so it hands over a blob and takes one back.
  */
 
 /** The version `importCapabilities` accepts. Raised when what is latched changes shape. */
 export const CAPABILITY_SNAPSHOT_VERSION = 1;
 
-/** What one model on an endpoint refused. `true` is not refused, as on `ModelCapabilities`. */
+/** What one model on a model server refused. `true` is not refused, as on `ModelCapabilities`. */
 export interface ModelSnapshot {
   reasoningEffort: boolean;
   legacyTokenLimit: boolean;
@@ -53,13 +53,13 @@ export interface ModelSnapshot {
   supportedEfforts?: string[];
 }
 
-/** What one endpoint refused, and under it what each of its models did. */
+/** What one model server refused, and under it what each of its models did. */
 export interface EndpointSnapshot {
   strictSchemas: boolean;
   usageInStream: boolean;
   models: Record<string, ModelSnapshot>;
   /**
-   * When this endpoint was first met, as epoch milliseconds, so `expireCapabilities` measures a
+   * When this model server was first met, as epoch milliseconds, so `expireCapabilities` measures a
    * latch from when it was learned rather than from the boot that imported it. Absent in a snapshot
    * taken before it was written, which reads as met now — the behaviour of every release until this
    * one, and the reason no version bump is owed.
@@ -72,7 +72,7 @@ export interface CapabilitySnapshot {
   version: number;
   /** When it was taken, as an ISO string, for the consumer to judge how stale is too stale. */
   savedAt: string;
-  /** By `endpointId`: the endpoint's URL and key hashed together, so no key is in the blob. */
+  /** By `endpointId`: the model server's URL and key hashed together, so no key is in the blob. */
   endpoints: Record<string, EndpointSnapshot>;
 }
 
@@ -122,11 +122,11 @@ const latchInto = (held: Set<string>, stored: unknown) => {
  * refused ones sorted.
  *
  * @remarks
- * Covers what `negotiate` latches on endpoints and models and the models `ask` found refusing the
- * no-thinking hints. Only what was actually refused is in it, so a snapshot of a process that met
- * no refusals has no endpoints. Endpoints are named by digest rather than URL and key, since the
- * blob is meant to be written somewhere and a key must not be written with it. Each carries the
- * `since` it was learned at, so importing it does not make an old latch young again.
+ * Covers what `negotiate` latches on model servers and models and the models `ask` found refusing
+ * the no-thinking hints. Only what was actually refused is in it, so a snapshot of a process that
+ * met no refusals has no model servers. Model servers are named by digest rather than URL and key,
+ * since the blob is meant to be written somewhere and a key must not be written with it. Each
+ * carries the `since` it was learned at, so importing it does not make an old latch young again.
  */
 export function exportCapabilities(): CapabilitySnapshot {
   const endpoints: Record<string, EndpointSnapshot> = {};
@@ -172,8 +172,8 @@ export function exportCapabilities(): CapabilitySnapshot {
  * off whatever the snapshot says, and one the snapshot has off is turned off. A snapshot of another
  * version, or anything that is not one, is ignored — a stale shape costs the refused requests it
  * would have saved, which is what a restart cost before. How old is too old is the consumer's call,
- * made on `savedAt` before importing, or afterwards per endpoint with `expireCapabilities`, since a
- * server behind a URL can be upgraded between boots.
+ * made on `savedAt` before importing, or afterwards per model server with `expireCapabilities`,
+ * since a server behind a URL can be upgraded between boots.
  */
 export function importCapabilities(snapshot: unknown): boolean {
   if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) {

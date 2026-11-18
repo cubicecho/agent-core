@@ -9,11 +9,11 @@ import { PartType, Role } from '../wire/wire.ts';
 import { type HookEvent, INJECT_EVENTS } from './hook-events.ts';
 
 /**
- * Lifecycle hooks, from the host's side: what a session looks like to them, where their context
+ * Lifecycle hooks, from the app's side: what a session looks like to them, where their context
  * lands in a request, and what is said about each one.
  *
  * Running a hook is not here. What a hook *is* — an MCP tool call in `@cubicecho/agent-mcp-pool`,
- * something else in another host — is the runner's business, and this takes the runner as a
+ * something else in another app — is the runner's business, and this takes the runner as a
  * function. The types are the pool's shapes restated rather than imported, so the pool's
  * `runHooks` is a runner as it stands and its outcomes pass straight through, without this
  * package depending on it.
@@ -21,17 +21,17 @@ import { type HookEvent, INJECT_EVENTS } from './hook-events.ts';
 
 /**
  * One message of a session as a hook is handed it. The shape a memory server's `remember` takes,
- * so a template can pass a turn straight through.
+ * so a template can pass an exchange straight through.
  */
 export interface HookMessage {
   speaker: string;
   text: string;
-  /** Stable across retries, so a server that dedups on it files a re-sent turn once. */
+  /** Stable across retries, so a server that dedups on it files a re-sent message once. */
   uuid: string;
 }
 
 /**
- * What a host knows at an event. Every field but `session` is optional because no event carries
+ * What an app knows at an event. Every field but `session` is optional because no event carries
  * all of them.
  */
 export interface HookContext {
@@ -40,23 +40,23 @@ export interface HookContext {
   host?: string;
   /** ISO 8601. */
   now?: string;
-  /** The user's message this turn, or the session's opening one. */
+  /** The user's message this exchange, or the session's opening one. */
   prompt?: string;
   /** The assistant's final text. */
   reply?: string;
   turn?: {
-    /** Which turn of the session this is, from 0. See `turnIndex`. */
+    /** Which exchange of the session this is, from 0. See `turnIndex`. */
     index: number;
-    /** The turn's user and assistant text, tool traffic left out. See `turnMessages`. */
+    /** The exchange's user and assistant text, tool traffic left out. See `turnMessages`. */
     messages?: HookMessage[];
   };
   /** The messages about to be summarised away. */
   compacting?: HookMessage[];
   /** Message indexes of that range, `through` exclusive. */
   range?: { from: number; through: number };
-  /** How a run ended. */
+  /** How the exchange ended. */
   status?: 'ok' | 'stopped' | 'error';
-  /** The host's own extras — a card id, a task step. */
+  /** The app's own extras — a card id, a task stage. */
   vars?: Record<string, unknown>;
 }
 
@@ -84,7 +84,7 @@ export interface HookOutcome {
   maxTokens: number;
   /**
    * Asks that what the event announces not happen. Only a `beforeCompact` hook's is read, and
-   * only by a host that waits for it — see `consult` — and never on an outcome that is not `ok`,
+   * only by an app that waits for it — see `consult` — and never on an outcome that is not `ok`,
    * since a hook that crashed has not said anything.
    */
   veto?: boolean;
@@ -136,15 +136,16 @@ export interface Gathered {
  * The most context all of a request's hooks add between them by default, in estimated tokens.
  *
  * @remarks
- * Enough for a handful of recalled memories, and small against any window worth running an agent
- * in. The point is that a generous hook cannot crowd out the conversation it was meant to inform.
- * `configureHooks` moves it for a process, and `gather` and `assembleContext` for one request.
+ * Enough for a handful of recalled memories, and small against any context window worth running an
+ * agent in. The point is that a generous hook cannot crowd out the conversation it was meant to
+ * inform. `configureHooks` moves it for a process, and `gather` and `assembleContext` for
+ * one request.
  */
 export const HOOK_CONTEXT_TOKENS = 2000;
 
 /**
  * Said once, above the blocks, so the model reads them as background rather than instructions.
- * Names no host; `configureHooks` sets another for a process that wants to, and `withContext`
+ * Names no app; `configureHooks` sets another for a process that wants to, and `withContext`
  * for one request.
  */
 export const HOOK_PREFACE =
@@ -200,8 +201,8 @@ const USABLE_BY_SETTING: ReadonlyMap<string, (value: unknown) => boolean> = new 
 const usableHookSetting = (value: unknown, name: string) => USABLE_BY_SETTING.get(name)?.(value) ?? false;
 
 /**
- * Changes what hooks are held to, for a process whose windows are not the size these defaults
- * were chosen for, or whose host wants its own name above the context.
+ * Changes what hooks are held to, for a process whose context windows are not the size these
+ * defaults were chosen for, or whose app wants its own name above the context.
  *
  * @param [options] - The settings to change. A field left out keeps what it has, and so does one given
  * the wrong kind of value — `contextTokens` anything but a number above zero, `preface` anything
@@ -211,9 +212,10 @@ const usableHookSetting = (value: unknown, name: string) => USABLE_BY_SETTING.ge
  *
  * @remarks
  * One setting per runtime for the same reason `configureEvents` is: a budget and a preface are a
- * deployment's settings, said once at startup. A caller that sizes the budget per model or per agent — a 128k
- * window can afford more recall than an 8k one — passes `maxTokens` to `gather` instead, and a
- * `preface` passed to `withContext` or `runAgentLoop`'s hooks wins over this one the same way.
+ * deployment's settings, said once at startup. A caller that sizes the budget per model or per
+ * agent — a 128k context window can afford more recall than an 8k one — passes `maxTokens` to
+ * `gather` instead, and a `preface` passed to `withContext` or `runAgentLoop`'s hooks wins over
+ * this one the same way.
  */
 export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
   return assignSettings(hookSettings(), options, usableHookSetting);
@@ -282,10 +284,10 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
  * a recalled line can tell it is a memory rather than something the user said. Each is held to
  * its own `maxTokens` and the whole to `maxTokens` here, and a block past the total is dropped
  * whole rather than cut to a stub. For any hooks the pool's `validateHooks` accepts, the text is
- * what its `contextBlocks` builds from the same outcomes, character for character, so a host
+ * what its `contextBlocks` builds from the same outcomes, character for character, so an app
  * moving between the two sends the same request.
  *
- * The note keeps each hook's text as it was cut, so a host can show exactly what the model was
+ * The note keeps each hook's text as it was cut, so an app can show exactly what the model was
  * given without re-deriving the caps or parsing the wrapper back off.
  */
 export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: number): Gathered {
@@ -320,26 +322,27 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
 }
 
 /**
- * The request, with the hooks' context added to this turn's question.
+ * The request, with the hooks' context added to this exchange's question.
  *
  * @param history - The request's messages. Neither the array nor any message in it is changed.
  * @param index - Where the question sits in `history` — which is not where it sits in the
- * session once a compaction has folded the head into a summary. Anything but a user message there
+ * session once a compaction has replaced the head with a summary. Anything but a user message there
  * leaves the request as it was.
- * @param context - What `assembleContext` built, this turn or the turn the question was asked.
- * Empty returns `history` itself.
+ * @param context - What `assembleContext` built, this exchange or the one the question was asked
+ * in. Empty returns `history` itself.
  * @param [preface] - Said above the blocks. Empty says nothing, rather than leaving a blank line
  * where it was.
  * @returns `history` when there was nothing to add or nowhere to add it, otherwise a new array.
  *
  * @remarks
  * It goes on the question and not in the system prompt, because it is about the question — and a
- * system prompt that changed every turn would miss the prompt cache every turn. Nothing is written
- * back: a host that stores what the user typed never remembers the context as something they said.
+ * system prompt that changed with every question would miss the prompt cache every time. Nothing is
+ * written back: an app that stores what the user typed never remembers the context as something
+ * they said.
  *
- * A question keeps its context for as long as it is sent. A host stores `context`, and the preface
+ * A question keeps its context for as long as it is sent. An app stores `context`, and the preface
  * it was said under, beside the question and calls this for each stored one on every later request
- * — a question sent with its blocks one turn and bare the next is a different prompt from that
+ * — a question sent with its blocks one request and bare the next is a different prompt from that
  * message on, and loses the server's prefix cache behind it.
  */
 export function withContext(
@@ -368,13 +371,13 @@ const UUID_DIGEST_CHARS = 12;
  * else.
  *
  * @param sessionId - Prefixes every uuid, so two sessions never share one.
- * @param messages - The transcript, in whatever shape the host stores it, so long as each message
+ * @param messages - The transcript, in whatever shape the app stores it, so long as each message
  * has an OpenAI-style `role` and `content`.
  * @param from - The first index, inclusive. Below zero reads from the start.
  * @param [to] - The end, exclusive. Absent, or past the end, reads to the end.
  * @param [options] - `offset` is what the array's first message is numbered as in the uuids — the
- * stored index of `messages[0]`, when `messages` is a request a fold has shifted. Zero numbers
- * by position. `from` and `to` stay array indexes either way.
+ * stored index of `messages[0]`, when `messages` is a request a compaction has shifted. Zero
+ * numbers by position. `from` and `to` stay array indexes either way.
  * @returns One entry per user or assistant message in the range that has text once trimmed, in
  * transcript order. Empty when there is none.
  *
@@ -383,18 +386,18 @@ const UUID_DIGEST_CHARS = 12;
  * conversation, and most of a transcript's characters; a memory server that filed them would
  * recall a directory listing ahead of the decision it led to.
  *
- * The uuid is the session, the position and a digest of what was said. Position alone is not
- * stable — a retry cuts the transcript back and writes a new answer at the same index, and a
- * server deduping on it would keep the answer that was thrown away — and text alone would make
- * two identical "ok"s one memory. The same message sent twice, after its turn and again when it
- * is compacted, is one.
+ * The uuid is the session, the position and a digest of what was said. Position alone is not stable
+ * — a retry cuts the transcript back and writes a new answer at the same index, and a server
+ * deduping on it would keep the answer that was thrown away — and text alone would make two
+ * identical "ok"s one memory. The same message sent twice, after its exchange and again when it is
+ * compacted, is one.
  *
- * That position is the array's, which is the host's only while the two agree. Once a compaction
- * has folded the head of a request into one summary message, the same message sits at a lower
- * index there than it does in a transcript the host kept whole — so the same turn, sent after it
- * and again when it is compacted, would arrive under two uuids and be remembered twice. `offset`
- * is what puts the numbering back on the host's own indexes; passing the stored transcript rather
- * than the request avoids the question entirely.
+ * That position is the array's, which is the app's only while the two agree. Once a compaction has
+ * replaced the head of a request with one summary message, the same message sits at a lower index
+ * there than it does in a transcript the app kept whole — so the same exchange, sent after it and
+ * again when it is compacted, would arrive under two uuids and be remembered twice. `offset` is
+ * what puts the numbering back on the app's own indexes; passing the stored transcript rather than
+ * the request avoids the question entirely.
  */
 export function turnMessages(
   sessionId: string,
@@ -425,19 +428,19 @@ export function turnMessages(
 }
 
 /**
- * Which turn of a session begins at a point, from 0: the user messages ahead of it.
+ * Which exchange of a session begins at a point, from 0: the user messages ahead of it.
  *
  * @param messages - The transcript.
- * @param [before] - Where the turn begins.
- * @param [offset] - Turns already folded away and so not in `messages`.
+ * @param [before] - Where the exchange begins.
+ * @param [offset] - Exchanges already compacted away and so not in `messages`.
  * @returns `offset` plus the count of user messages before `before`.
  *
  * @remarks
- * Counted over what it is given, which is the session only while nothing has been folded away — a
- * compacted request has lost the questions the summary now stands for, and turn eleven counting
- * itself as turn two is the kind of thing a hook writes into a memory. Count over the stored
- * transcript, or add what the fold took as `offset`. The fold's own summary is a user message too,
- * and is counted like one.
+ * Counted over what it is given, which is the session only while nothing has been compacted away
+ * — a compacted request has lost the questions the summary now stands for, and exchange eleven
+ * counting itself as exchange two is the kind of thing a hook writes into a memory. Count over the
+ * stored transcript, or add what the compaction took as `offset`. The compaction's own summary is a
+ * user message too, and is counted like one.
  */
 export const turnIndex = (messages: readonly { role: string }[], before = messages.length, offset = 0) =>
   offset + messages.slice(0, before).filter((message) => message.role === Role.User).length;
@@ -480,10 +483,10 @@ const runSafely = (run: HookRunner, event: HookEvent, context: HookContext, sign
     .catch((error: unknown) => [rejected(event, error)]);
 
 /**
- * Hands each note to a host's `onNote`, for the callers that promise never to reject.
+ * Hands each note to an app's `onNote`, for the callers that promise never to reject.
  *
  * @param notes - What to tell, in order.
- * @param [onNote] - The host's listener. A throw on one note is dropped, and the next note is still told.
+ * @param [onNote] - The app's listener. A throw on one note is dropped, and the next note is still told.
  */
 const tellSafely = (notes: readonly HookNote[], onNote?: OnNote) => {
   for (const note of notes) {
@@ -499,11 +502,11 @@ const tellSafely = (notes: readonly HookNote[], onNote?: OnNote) => {
  *
  * @param run - Runs one event's hooks.
  * @param events - Which to run: `["beforeTurn"]` ordinarily, and `sessionStart` ahead of it on a
- * session's first turn. The outcomes are assembled in this order, so it is also the order the
+ * session's first exchange. The outcomes are assembled in this order, so it is also the order the
  * budget is spent in.
  * @param context - What the hooks are told.
- * @param [options] - `signal` is handed to the runner, and should be the turn's own: a user who
- * stopped the turn stopped its recall. `onNote` hears each note as the whole is assembled.
+ * @param [options] - `signal` is handed to the runner, and should be the exchange's own: a user
+ * who stopped the exchange stopped its recall. `onNote` hears each note as the whole is assembled.
  * `maxTokens` is the shared budget for this request, read as `assembleContext` reads it: absent
  * or unusable is the process's, from `configureHooks`.
  * @returns What `assembleContext` built from every event's outcomes together. Does not reject for a
@@ -511,10 +514,10 @@ const tellSafely = (notes: readonly HookNote[], onNote?: OnNote) => {
  *
  * @remarks
  * This is on the path of the first token, so the events run together rather than one after the
- * other, and a hook that fails costs the turn its context and never the turn — a runner that
- * rejects outright is noted once for its event, with an empty `hookId` and `source`, and the rest
- * go ahead. Bounding each hook's time is the runner's job; `signal` is how the turn ends all of
- * them.
+ * other, and a hook that fails costs the exchange its context and never the exchange — a runner
+ * that rejects outright is noted once for its event, with an empty `hookId` and `source`, and the
+ * rest go ahead. Bounding each hook's time is the runner's job; `signal` is how the exchange ends
+ * all of them.
  */
 export async function gather(
   run: HookRunner,
@@ -532,7 +535,7 @@ export async function gather(
 
 /**
  * Runs the hooks for an event that reads what happened and adds nothing to a request. Never
- * rejects, so a host can fire it without awaiting it.
+ * rejects, so an app can fire it without awaiting it.
  *
  * @param run - Runs the event's hooks.
  * @param event - `afterTurn`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
@@ -543,9 +546,9 @@ export async function gather(
  * @returns The same notes.
  *
  * @remarks
- * No signal: these run once the turn has been answered, and a reader who stops listening at that
- * point has not asked for the turn not to be remembered. Nor is a `veto` read, since whatever it
- * would stop is already under way; `consult` is the one that waits for it.
+ * No signal: these run once the exchange has been answered, and a reader who stops listening at
+ * that point has not asked for the exchange not to be remembered. Nor is a `veto` read, since
+ * whatever it would stop is already under way; `consult` is the one that waits for it.
  */
 export async function notify(
   run: HookRunner,
@@ -560,7 +563,7 @@ export async function notify(
 }
 
 /**
- * Runs an event's hooks and waits for their say, for a host that will hold off when one of them
+ * Runs an event's hooks and waits for their say, for an app that will hold off when one of them
  * vetoes.
  *
  * @param run - Runs the event's hooks.
@@ -572,7 +575,7 @@ export async function notify(
  *
  * @remarks
  * `notify` runs beside the thing it announces and cannot stop it; this runs ahead of it, so each
- * hook's time is added to whatever waits on the answer. A host that does not mean to act on a
+ * hook's time is added to whatever waits on the answer. An app that does not mean to act on a
  * veto should call `notify` instead. Never rejects: a runner that throws is noted as a failure,
  * and a failure is not a veto — a memory server that is down has not asked for anything.
  */

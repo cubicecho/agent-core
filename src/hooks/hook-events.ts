@@ -2,7 +2,7 @@
  * The points in a session a hook can be bound to, apart from everything that runs one.
  *
  * A leaf with no imports, because two modules need these lists and only one of them may load
- * `node:crypto`: `hooks.ts` hashes a turn into the uuid a memory server dedups on, and `spec.ts`
+ * `node:crypto`: `hooks.ts` hashes a message into the uuid a memory server dedups on, and `spec.ts`
  * has to stay importable in a browser. Before this each kept its own copy, with a test holding
  * one pair together and nothing holding the other.
  */
@@ -17,15 +17,15 @@
 export const HookEvent = {
   /** A session opened. Claude Code's SessionStart. */
   SessionStart: 'sessionStart',
-  /** A turn is about to be requested. Claude Code's UserPromptSubmit. */
+  /** An exchange is about to begin. Claude Code's UserPromptSubmit. */
   BeforeTurn: 'beforeTurn',
-  /** A turn was answered. Claude Code's Stop. */
+  /** An exchange was answered. Claude Code's Stop. */
   AfterTurn: 'afterTurn',
   /** Part of the transcript is about to be summarised away. Claude Code's PreCompact. */
   BeforeCompact: 'beforeCompact',
   /** A session closed. Claude Code's SessionEnd. */
   SessionEnd: 'sessionEnd',
-  /** The host deleted a session's record. */
+  /** The app deleted a session's record. */
   SessionDelete: 'sessionDelete',
 } as const;
 

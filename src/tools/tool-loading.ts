@@ -8,15 +8,15 @@ import type { CatalogServer } from './catalog.ts';
  * On-demand tool loading.
  *
  * @remarks
- * A full tool definition is mostly JSON Schema, and it is sent on every request of every
- * iteration whether or not the model wants it — a couple of connected servers can cost more
- * tokens per request than the task's own prompt. So in on-demand mode the run starts with a
+ * A full tool definition is mostly JSON Schema, and it is sent on every request of every turn
+ * whether or not the model wants it — a couple of connected servers can cost more tokens per
+ * request than the task's own prompt. So in on-demand mode an exchange starts with a
  * bare *catalogue*: tool names only, appended to the system prompt, plus this one meta-tool.
  * The model calls `load_tools` with what it needs, and the next round trip carries those real
  * definitions.
  *
- * Names alone cost roughly a fortieth of what the schemas cost, so a run that needs no tools
- * pays almost nothing, and a run that needs three pays for three.
+ * Names alone cost roughly a fortieth of what the schemas cost, so an exchange that needs no
+ * tools pays almost nothing, and one that needs three pays for three.
  */
 export const LOAD_TOOLS = 'load_tools';
 
@@ -51,7 +51,7 @@ const LOAD_TOOLS_PARAMETERS: OpenAI.FunctionParameters = deepFreeze({
 });
 
 /**
- * One object for the life of the process — the agent loop asks for it on every iteration.
+ * One object for the life of the process — the agent loop asks for it on every turn.
  *
  * @remarks
  * Frozen because it is shared: one mutable export reached by every consumer in the process
@@ -76,7 +76,7 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
  *
  * @param catalog - The connected servers. Ones with no tools are dropped.
  * @param [loaded] - Names to mark `(loaded)` rather than remove. Absent marks nothing, which keeps the
- * listing the same text for the whole run.
+ * listing the same text for the whole exchange.
  * @returns Each server's label on a line ending in a colon, its tool names indented beneath, one
  * server straight after another. Empty where no server has a tool.
  *
@@ -105,7 +105,7 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
  * caller separates it from its own prompt. Empty where there is nothing to list.
  *
  * @remarks
- * `runAgentLoop` passes no `loaded`, so the block is the same text on every step. The system
+ * `runAgentLoop` passes no `loaded`, so the block is the same text on every turn. The system
  * prompt is the head of the request, and marking each load there threw away the prompt cache for
  * the whole transcript on every `load_tools` call. What is loaded is said where it does not move
  * the prefix instead: in the tool array, appended in load order (`loadedTools`), and in the
@@ -214,7 +214,7 @@ export type ToolOrder = boolean | ((a: string, b: string) => number);
  * finds each one in its cache.
  *
  * `false` is for a caller that means its order: the model reads the array top to bottom, and a
- * host may be putting what it wants reached for first at the front.
+ * app may be putting what it wants reached for first at the front.
  */
 export function orderTools(tools: OpenAI.ChatCompletionTool[], order: ToolOrder = true): OpenAI.ChatCompletionTool[] {
   if (order === false) {
@@ -236,28 +236,29 @@ export function orderTools(tools: OpenAI.ChatCompletionTool[], order: ToolOrder 
  * precise.
  *
  * The default rather than the rule: twelve is what a small model chooses well from, and a caller
- * running a large one against a large window can say otherwise to `expandNames`, `preselection`
- * and `preselectSystem`. Whatever it says is carried on the resolution, so the refusal the model
- * reads names the number it was actually held to.
+ * running a large one against a large context window can say otherwise to `expandNames`,
+ * `preselection` and `preselectSystem`. Whatever it says is carried on the resolution, so the
+ * refusal the model reads names the number it was actually held to.
  */
 export const MAX_PER_LOAD = 12;
 
 /**
- * The most a conversation carries between turns. Bounds the tool array no matter how long the
- * conversation runs; past it, the earliest-declared names this turn did not use fall off first.
+ * The most a conversation carries between exchanges. Bounds the tool array no matter how long the
+ * conversation runs; past it, the earliest-declared names this exchange did not use fall off first.
  *
  * @remarks
- * Only a multi-turn caller needs this — a run that starts from nothing each time has nothing to
- * carry. Not exported: `carryOver` takes a cap of its own as `max`.
+ * Only a caller with several exchanges needs this — one whose every exchange starts from nothing
+ * has nothing to carry. Not exported: `carryOver` takes a cap of its own as `max`.
  */
 export const MAX_CARRIED = 16;
 
 /**
- * The tools to start the next turn with: last turn's where they were, then what this turn used.
+ * The tools to start the next exchange with: the last one's where they were, then what this
+ * one used.
  *
- * @param previous - Last turn's names, in the order they were declared.
- * @param used - What this turn called. Names not already carried are appended in the order given,
- * so pass them in load order to keep them where the tool array had them.
+ * @param previous - The last exchange's names, in the order they were declared.
+ * @param used - What this exchange called. Names not already carried are appended in the order
+ * given, so pass them in load order to keep them where the tool array had them.
  * @param [max] - How many to carry. Past it, the earliest names not in
  * `used` go first, then the earliest of all. At least one: a cap of zero is read as one, not as
  * no cap and not as none.
@@ -266,8 +267,8 @@ export const MAX_CARRIED = 16;
  * @remarks
  * Nothing carried moves. A template renders the tool array near the head of the prompt, and
  * moving each used tool to the end — which this did until it was found in a local server's cache
- * log — reordered the array between turns and re-prefilled the whole transcript from the first
- * moved definition. Kept in place, the next turn's array is this one's with only the unused
+ * log — reordered the array between exchanges and re-prefilled the whole transcript from the first
+ * moved definition. Kept in place, the next exchange's array is this one's with only the unused
  * loads gone, a prefix of it when every load was used. Past `max`, dropping a name from the
  * middle costs the cache from there, so it happens only when the cap forces it.
  */
@@ -459,12 +460,12 @@ export function requestedNames(args: Record<string, unknown>): string[] {
 }
 
 /**
- * The one tool a proxied run reaches every catalogued tool through.
+ * The one tool a proxied exchange reaches every catalogued tool through.
  *
  * @remarks
  * Proxied discovery is on-demand loading with a tool array that never changes. On-demand mode
  * declares each tool as it is loaded, and a chat template renders the tool array in the system
- * turn, ahead of the whole conversation — so appending one definition there moves every token
+ * message, ahead of the whole conversation — so appending one definition there moves every token
  * after it, and on a model llama.cpp can only rewind to a saved checkpoint a single load
  * re-prefills the transcript from the first token. Proxied, the array is `load_tools` and
  * `call_tool` for the life of the session: a load answers with the definitions as its result, at
@@ -475,7 +476,7 @@ export function requestedNames(args: Record<string, unknown>): string[] {
 export const CALL_TOOL = 'call_tool';
 
 /**
- * The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is
+ * The whole tool array of a proxied exchange, `load_tools` then `call_tool`, frozen because it is
  * shared.
  *
  * @remarks
@@ -523,8 +524,8 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
 ]);
 
 /**
- * The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a
- * tool list.
+ * The catalogue block for a proxied exchange's system prompt, worded for `call_tool` rather than
+ * for a tool list.
  *
  * @param catalog - The connected servers. A catalogue with no tools in it produces an empty string.
  * @returns The heading, the instructions and the listing, with no blank line before or after.
@@ -612,7 +613,7 @@ export function definedNames(result: string): string[] {
  *
  * @param resolved - What the call asked for, from `expandNames`.
  * @param catalog - The servers, read for the refusals' wording.
- * @param definitions - The definitions of `resolved.matched`, as many as the host has. Ones that
+ * @param definitions - The definitions of `resolved.matched`, as many as the app has. Ones that
  * are not functions are skipped.
  * @param [loaded] - What was loaded before this call. Absent reports every match as newly loaded.
  * @returns What the model reads, a blank line between each part: the count and one line of JSON

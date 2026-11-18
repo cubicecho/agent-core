@@ -3,7 +3,7 @@
  *
  * An MCP server may send `instructions` when it connects: its author's guidance on using its
  * tools, the things a tool description has no room for. This is where that text is put in front
- * of a model, attributed and fenced, so every host says it the same way.
+ * of a model, attributed and fenced, so every app says it the same way.
  */
 import { untrusted } from '../wire/text.ts';
 import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
