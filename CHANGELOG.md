@@ -1,3 +1,12 @@
+# [4.28.0](https://github.com/cubicecho/agent-core/compare/v4.27.0...v4.28.0) (2026-11-18)
+
+
+### Features
+
+* export stamp, for hosts that number and store run events themselves ([0cfb689](https://github.com/cubicecho/agent-core/commit/0cfb6894a90e3fdff643b26ad03dbaa10ebfe44d)), closes [#229](https://github.com/cubicecho/agent-core/issues/229)
+* **loop:** name the field a remote agent's progress travels under ([0b11ad2](https://github.com/cubicecho/agent-core/commit/0b11ad29daf54aff349363ab21aef2135e9aa908))
+* **loop:** run against a remote agent, with a progress-chunk codec and a retry idempotency key ([4f56b66](https://github.com/cubicecho/agent-core/commit/4f56b661de4f0e6ebd7f711f45323414a19d3847)), closes [#223](https://github.com/cubicecho/agent-core/issues/223)
+
 # [4.27.0](https://github.com/cubicecho/agent-core/compare/v4.26.1...v4.27.0) (2026-11-18)
 
 
