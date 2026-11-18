@@ -4,6 +4,7 @@ import { HOOK_EVENTS, HookEvent } from '../../src/hooks/hook-events.ts';
 import type { AgentLoopOptions } from '../../src/run/agent-loop.ts';
 import {
   AGENT_SPEC,
+  type AgentHook,
   type AgentSpec,
   exportSpec,
   findSpecSecrets,
@@ -237,27 +238,50 @@ describe('parseSpec hooks', () => {
   });
 
   it('drops an inject on an event that runs after the model answered', () => {
-    const result = parseSpec(doc({ hooks: [hook({ on: HookEvent.AfterTurn, inject: true })] }));
+    const result = parseSpec(doc({ hooks: [hook({ on: HookEvent.AfterExchange, inject: true })] }));
     expect(result.spec?.hooks?.[0]?.inject).toBeUndefined();
     expect(result.warnings).toEqual([
-      'hooks[0].inject: "afterTurn" runs after the model has already answered, and was dropped',
+      'hooks[0].inject: "afterExchange" runs after the model has already answered, and was dropped',
     ]);
   });
 
   it('drops a veto anywhere but beforeCompact', () => {
     expect(parsed(doc({ hooks: [hook({ on: HookEvent.BeforeCompact, veto: true })] })).hooks?.[0]?.veto).toBe(true);
-    expect(parsed(doc({ hooks: [hook({ on: HookEvent.BeforeTurn, veto: true })] })).hooks?.[0]?.veto).toBeUndefined();
+    expect(
+      parsed(doc({ hooks: [hook({ on: HookEvent.BeforeExchange, veto: true })] })).hooks?.[0]?.veto,
+    ).toBeUndefined();
   });
 
   it('notes an event this host never fires rather than refusing the agent', () => {
     // task_server rejects a beforeCompact hook at save time today, which makes a good agent
     // unimportable. The hook is kept; the operator is told.
     const result = parseSpec(doc({ hooks: [hook({ on: HookEvent.BeforeCompact })] }), {
-      events: [HookEvent.SessionStart, HookEvent.BeforeTurn],
+      events: [HookEvent.SessionStart, HookEvent.BeforeExchange],
     });
     expect(result.errors).toEqual([]);
     expect(result.spec?.hooks).toHaveLength(1);
     expect(result.warnings).toEqual(['hooks[0].on: "beforeCompact" is never fired by this host']);
+  });
+
+  it('reads the exchange events under their names before 5.0.0, renaming each with a warning', () => {
+    // Documents saved before the rename say beforeTurn and afterTurn, and stay importable.
+    const result = parseSpec(
+      doc({ hooks: [hook({ id: 'recall', on: 'beforeTurn', inject: true }), hook({ id: 'keep', on: 'afterTurn' })] }),
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.spec?.hooks?.map(({ on, inject }) => ({ on, inject }))).toEqual([
+      { on: 'beforeExchange', inject: true },
+      { on: 'afterExchange', inject: undefined },
+    ]);
+    expect(result.warnings).toEqual([
+      'hooks[0].on: "beforeTurn" is now "beforeExchange"',
+      'hooks[1].on: "afterTurn" is now "afterExchange"',
+    ]);
+  });
+
+  it('checks an old name against the events the host fires under its new one', () => {
+    const result = parseSpec(doc({ hooks: [hook({ on: 'beforeTurn' })] }), { events: ['beforeExchange'] });
+    expect(result.warnings).toEqual(['hooks[0].on: "beforeTurn" is now "beforeExchange"']);
   });
 
   it('drops a hook that is not an event at all', () => {
@@ -343,6 +367,22 @@ describe('exportSpec', () => {
     expect(again.errors).toEqual([]);
     expect(again.spec?.id).toBe('ocr');
     expect(again.spec?.bundle?.mcpServers).toEqual([{ slug: 'fs', command: 'npx' }]);
+  });
+
+  it('writes the exchange events under their new names, whatever the document it came from said', () => {
+    const old = parsed(doc({ hooks: [{ id: 'h', on: 'afterTurn', server: 'mem', tool: 'remember' }] }));
+    const out = exportSpec(old);
+    expect(out.hooks?.[0]?.on).toBe('afterExchange');
+    expect(JSON.stringify(out)).not.toContain('afterTurn');
+    // Read back, the new name needs no warning.
+    expect(parseSpec(out).warnings).toEqual([]);
+  });
+
+  it('writes a hook a host stored before 5.0.0 under the name its event has now', () => {
+    const stored: AgentHook = JSON.parse('{ "id": "h", "on": "afterTurn", "server": "mem", "tool": "remember" }');
+    expect(exportSpec({ spec: AGENT_SPEC, hooks: [stored] }).hooks).toEqual([
+      { id: 'h', on: HookEvent.AfterExchange, server: 'mem', tool: 'remember' },
+    ]);
   });
 });
 
@@ -708,15 +748,25 @@ describe('resolveAgentSpec', () => {
 
   it('drops an inject or a veto the merged hook can no longer honour', () => {
     const hook = { id: 'h', server: 'mem', tool: 'recall' };
-    const injects = parsed(doc({ hooks: [{ ...hook, on: HookEvent.BeforeTurn, inject: true }] }));
+    const injects = parsed(doc({ hooks: [{ ...hook, on: HookEvent.BeforeExchange, inject: true }] }));
     const vetoes = parsed(doc({ hooks: [{ ...hook, on: HookEvent.BeforeCompact, veto: true }] }));
-    const after = parsed(doc({ hooks: [{ ...hook, on: HookEvent.AfterTurn }] }));
-    expect(resolveAgentSpec([injects, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterTurn }]);
-    expect(resolveAgentSpec([vetoes, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterTurn }]);
+    const after = parsed(doc({ hooks: [{ ...hook, on: HookEvent.AfterExchange }] }));
+    expect(resolveAgentSpec([injects, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterExchange }]);
+    expect(resolveAgentSpec([vetoes, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterExchange }]);
     // A flag the merged event still honours is kept.
     const sessionStart = parsed(doc({ hooks: [{ ...hook, on: HookEvent.SessionStart }] }));
     expect(resolveAgentSpec([injects, sessionStart]).hooks).toEqual([
       { ...hook, on: HookEvent.SessionStart, inject: true },
+    ]);
+  });
+
+  it('reads a hook a host stored before 5.0.0 under the name its event has now', () => {
+    // A host that reads hooks by hand hands its rows to the merge without parsing them.
+    const stored: AgentHook = JSON.parse(
+      '{ "id": "h", "on": "beforeTurn", "server": "mem", "tool": "recall", "inject": true }',
+    );
+    expect(resolveAgentSpec([{ spec: AGENT_SPEC, hooks: [stored] }]).hooks).toEqual([
+      { id: 'h', on: HookEvent.BeforeExchange, server: 'mem', tool: 'recall', inject: true },
     ]);
   });
 

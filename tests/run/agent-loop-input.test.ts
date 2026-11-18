@@ -129,7 +129,9 @@ describe('takeInput', () => {
   it('keeps the hooks on the question where a host rebuilds the transcript each turn', async () => {
     create.mockReturnValueOnce(calls('a')).mockReturnValueOnce(says('done'));
     const run = vi.fn<HookRunner>(async (event) =>
-      event === HookEvent.BeforeTurn ? [outcome({ event, text: 'you like tea', inject: true, maxTokens: 500 })] : [],
+      event === HookEvent.BeforeExchange
+        ? [outcome({ event, text: 'you like tea', inject: true, maxTokens: 500 })]
+        : [],
     );
     await runAgentLoop({
       config,

@@ -207,7 +207,7 @@ describe('handBack', () => {
     expect(result.pending?.map((call) => call.name)).toEqual(['ask_person']);
   });
 
-  it('keeps the scratchpads under `tool-loop`, and tells `afterTurn` nothing, until the run answers', async () => {
+  it('keeps the scratchpads under `tool-loop`, and tells `afterExchange` nothing, until the run answers', async () => {
     create.mockReturnValueOnce(
       chunks({
         choices: [
@@ -228,7 +228,7 @@ describe('handBack', () => {
       hostTools,
       handBack: true,
       dispatch: named(),
-      hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.AfterTurn] },
+      hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.AfterExchange] },
     });
     expect(await result.afterTurn).toEqual([]);
     expect(run).not.toHaveBeenCalled();

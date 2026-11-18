@@ -209,7 +209,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | `call_tool` reaches only catalogued tools | `proxiedCall` |
 | One `load_tools` call or preselection brings in at most `maxPerLoad` definitions | `expandNames`, `preselection` |
 | Hook context goes on the request, never into the transcript or the system prompt | `withContext` on the request in `runTurns` |
-| Only `sessionStart` and `beforeTurn` hook output can reach the model | `assembleContext` (`INJECT_EVENTS`) |
+| Only `sessionStart` and `beforeExchange` hook output can reach the model | `assembleContext` (`INJECT_EVENTS`) |
 | A declaration is believed only where a call in the exchange touched the location; one artifact per location | `answerRecord`, `RunArtifacts` |
 | The ledger indexes into the current transcript | `rebaseLedger`, each turn |
 | A prune boundary only moves forward | `planPrune` |
@@ -439,8 +439,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 
 - **Hook event:** a moment a hook can be bound to: a session starting, before an exchange starts,
   after it has its reply, before a summary replaces old messages, and a session ending or being
-  deleted. Owner: `HookEvent` (`src/hooks/hook-events.ts`); the exchange's two are named
-  `beforeTurn` and `afterTurn`, to be renamed `beforeExchange` and `afterExchange`.
+  deleted. Owner: `HookEvent` (`src/hooks/hook-events.ts`); the exchange's two are
+  `beforeExchange` and `afterExchange`. Documents saved before 5.0.0 name them `beforeTurn` and
+  `afterTurn`, which `parseSpec` still reads (`LEGACY_HOOK_EVENTS`).
 - **Hook runner:** the app's function that runs an event's hooks; the package never runs one.
   Owner: `HookRunner` (`src/hooks/hooks.ts`).
 - **Hook outcome:** what one hook did: its text, whether to inject it, its cap, and a veto.

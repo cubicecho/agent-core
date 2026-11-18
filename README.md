@@ -725,7 +725,7 @@ The turn's other calls still run, whichever side of the end the model asked for 
 `parallel` batches them: they were asked for in the same reply, and a model that says "write the
 file, then hand off" wants the file written in either order. Where two calls end it, `ended` is
 the first in the order asked. Everything else is a finished exchange's — `usage`, `metrics`,
-`messages`, `artifacts`, the `afterTurn` hooks — with `metrics.outcome` `ended` and a notice
+`messages`, `artifacts`, the `afterExchange` hooks — with `metrics.outcome` `ended` and a notice
 saying which tool ended it. `turn` is the reply that made the call, so its `content` is whatever
 the model wrote beside its calls, often nothing; the exchange's answer is what the ending tool took.
 The tool, its definition and its wording stay the app's: this is only the exit.
@@ -894,9 +894,9 @@ dispatched, get no result and no `tool-result` event, are not counted in `used`,
 nothing after the turn.
 Each is told as a `tool-call` event and to `onToolCall`, then one `wait` event says the exchange is
 waiting. `wait` is not `done`: the run goes on under the same id, and `watch` keeps following it.
-`metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The `afterTurn`
-hooks are not told, and under `reasoningReplay: "tool-loop"` the scratchpads stay, since the tool
-loop is not over. A wait in the last turn `maxToolIterations` allows resolves like any other.
+`metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The
+`afterExchange` hooks are not told, and under `reasoningReplay: "tool-loop"` the scratchpads stay,
+since the tool loop is not over. A wait in the last turn `maxToolIterations` allows resolves like any other.
 
 The transcript holds the turn's calls with the handed-back ones last, whatever order the model
 asked in, so `messages` end in the results of the calls the loop ran and an app that appends one
@@ -944,8 +944,8 @@ tools, and the config. A resume also needs:
 
 - **No second preselection.** Pass no `preselect`, or `preselected: []`. A proxied shortlist would
   otherwise be written after the answers.
-- **The hooks told once.** Fire only `afterTurn` and `beforeCompact` on a resume, with `question`
-  the question as typed, and put the first call's `context` back with `withContext`, as for any
+- **The hooks told once.** Fire only `afterExchange` and `beforeCompact` on a resume, with
+  `question` the question as typed, and put the first call's `context` back with `withContext`, as for any
   later call (see `hooks`).
 - **Its own budget.** `maxToolIterations` counts per call, and `usage` and `metrics` are per call
   too; `runMetrics` over every stretch's events sums the run.
@@ -1163,7 +1163,8 @@ where compaction goes (below). Its third argument is `{ used, limit, ledger }` �
 exchange's last request reported, the context window, and the token ledger so far — so an app can compact
 mid-exchange without tracking usage itself; `used` is absent before the first turn and where the
 model server reported nothing. Hooks are gathered once, onto the question, and never written into
-the transcript that comes back; `afterTurn` is told the reply without the exchange waiting on it.
+the transcript that comes back; `afterExchange` is told the reply without the exchange waiting on
+it.
 
 That leaves an earlier question's context to the app, because the loop only ever touches the
 current one. A question sent with `<context>` blocks in one exchange and bare in the next is a different
@@ -1197,7 +1198,7 @@ await result.afterTurn; // only if its notes are wanted, or the process is about
 `result.messages` is the transcript the loop was given plus what the exchange added — earlier questions
 as the app passed them, this one as typed — which is why the snippet stores only the new tail.
 
-`afterTurn` on the result is the `afterTurn` hooks' notes as a promise. The loop still returns
+`afterTurn` on the result is the `afterExchange` hooks' notes as a promise. The loop still returns
 without waiting; an app that stores those notes with the exchange, or would otherwise exit before the
 exchange is remembered, awaits it once the answer is out.
 
@@ -1208,8 +1209,8 @@ as well (see [Hooks](#hooks)). Such an app passes the question as it was typed a
 too, or the preselector is shown the context in front of it and picks tools for what was recalled
 rather than what was asked.
 
-It can still leave `afterTurn` to the loop, with three things the transcript it handed over cannot
-say. `hooks.question` is the question as typed, which the hooks are told in place of the one with
+It can still leave `afterExchange` to the loop, with three things the transcript it handed over
+cannot say. `hooks.question` is the question as typed, which the hooks are told in place of the one with
 the recall on it — at the same position, so its uuid is the stored question's — and as `prompt`
 where the context has none. `hooks.turnBase` is the user messages of the app's transcript that the
 loop's does not hold, added to `turn.index`: what a compaction took and did not send again, or the exchanges
@@ -1226,7 +1227,7 @@ await runAgentLoop({
   hooks: {
     run,
     context,
-    fire: [HookEvent.BeforeCompact, HookEvent.AfterTurn], // beforeTurn is the host's
+    fire: [HookEvent.BeforeCompact, HookEvent.AfterExchange], // beforeExchange is the host's
     question: prompt,
     turnBase: foldedQuestions, // stored user messages the fold took and did not send again
     offset: turnStart - requestIndex(turnStart, fold), // the request's numbering onto the store's
@@ -1235,22 +1236,23 @@ await runAgentLoop({
 ```
 
 `hooks.fire` says which events the loop fires itself, and it fires no others: `sessionStart` and
-`beforeTurn` gathered before the first request, `beforeCompact` beside each compaction `compact` makes,
-`afterTurn` once answered. Left out, it is `beforeTurn`, `beforeCompact` and `afterTurn`: every event
-the loop has a point for but `sessionStart`. An app that fires the exchange's
-events around a stage of its own still hands the loop its hooks for compaction:
+`beforeExchange` gathered before the first request, `beforeCompact` beside each compaction
+`compact` makes, `afterExchange` once answered. Left out, it is `beforeExchange`, `beforeCompact`
+and `afterExchange`: every event the loop has a point for but `sessionStart`. An app that fires the
+exchange's events around a stage of its own still hands the loop its hooks for compaction:
 
 ```ts
 await runAgentLoop({
   ...options,
   compact: true,
-  hooks: { run, context, fire: [HookEvent.BeforeCompact] }, // beforeTurn and afterTurn are the host's
+  // beforeExchange and afterExchange are the host's.
+  hooks: { run, context, fire: [HookEvent.BeforeCompact] },
 });
 ```
 
-An event left out of `fire` is one the result has nothing for: `afterTurn` is resolved and empty
-without `afterTurn`, and `notes` and `context` are empty without an injecting event, since the
-app's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
+An event left out of `fire` is one the result has nothing for: the result's `afterTurn` is resolved
+and empty without `afterExchange`, and `notes` and `context` are empty without an injecting event,
+since the app's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
 loop and are ignored there.
 
 An app that stores its transcript — a row per message, so a crash or a stop mid-exchange still leaves
@@ -1715,8 +1717,8 @@ measured against rather than the module's own.
 
 ## Hooks
 
-A hook is something an app runs at a point in a session — `sessionStart` and `beforeTurn`, whose
-output can reach the request, then `afterTurn`, `beforeCompact`, `sessionEnd` and `sessionDelete`,
+A hook is something an app runs at a point in a session — `sessionStart` and `beforeExchange`, whose
+output can reach the request, then `afterExchange`, `beforeCompact`, `sessionEnd` and `sessionDelete`,
 which can only read what happened. What runs is not decided here. `gather` and `notify` take a
 `HookRunner`, and `@cubicecho/agent-mcp-pool`'s `runHooks` is one as it stands: its types are the
 shapes restated here, so its outcomes pass straight through without either package importing the
@@ -1739,14 +1741,14 @@ const run: HookRunner = (event, context, { signal }) =>
 const context = { session: { id }, host: "my-host", prompt, turn: { index: turnIndex(messages) } };
 const gathered = await gather(
   run,
-  messages.length === 0 ? ["sessionStart", "beforeTurn"] : ["beforeTurn"],
+  messages.length === 0 ? ["sessionStart", "beforeExchange"] : ["beforeExchange"],
   context,
   { signal, onNote: (note) => emit(runId, { kind: "notice", name: note.hookId, text: note.error ?? note.text }) },
 );
 messages.push({ role: "user", content: prompt });
 const request = withContext(messages, messages.length - 1, gathered.context);
 // ... the turn ...
-void notify(run, "afterTurn", { ...context, reply, turn: { ...context.turn, messages: turnMessages(id, messages, turnStart) } });
+void notify(run, "afterExchange", { ...context, reply, turn: { ...context.turn, messages: turnMessages(id, messages, turnStart) } });
 ```
 
 The context goes on this exchange's question and never into the system prompt — a prompt that changed
@@ -1767,7 +1769,7 @@ afford more recall than an 8k one:
 import { configureHooks, gather } from "@cubicecho/agent-core";
 
 configureHooks({ contextTokens: 4000 });
-const gathered = await gather(run, ["beforeTurn"], context, { maxTokens: contextLimit / 20 });
+const gathered = await gather(run, ["beforeExchange"], context, { maxTokens: contextLimit / 20 });
 ```
 
 Either one given something that is not a number above zero keeps what was there, as

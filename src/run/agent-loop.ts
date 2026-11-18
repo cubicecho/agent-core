@@ -170,30 +170,30 @@ export interface AgentLoopRequest {
  * overlap with the hooks — a compaction — calls `gather` itself, puts the context on with
  * `withContext`, and hands `preselectQuery` the question as it was written. It still passes
  * `hooks`, with `fire` leaving out what it fires itself:
- * `[HookEvent.BeforeCompact, HookEvent.AfterTurn]` has the loop compact for it and tell the
+ * `[HookEvent.BeforeCompact, HookEvent.AfterExchange]` has the loop compact for it and tell the
  * answer, with `question`, `turnBase` and `offset` saying what the transcript it handed over does
  * not — the question as typed, and where the app's numbering starts.
  */
 export interface AgentLoopHooks {
   run: HookRunner;
   /**
-   * What the hooks are told. `reply` and `turn` are filled in for `afterTurn`, and `prompt` from
+   * What the hooks are told. `reply` and `turn` are filled in for `afterExchange`, and `prompt` from
    * `question` where it has none.
    */
   context: HookContext;
   /**
-   * The events the loop fires, and the only ones: `sessionStart` and `beforeTurn` gathered before
+   * The events the loop fires, and the only ones: `sessionStart` and `beforeExchange` gathered before
    * the first request, in the order listed; `beforeCompact` beside each compaction `compact` makes;
-   * and `afterTurn` once the exchange has its answer. `sessionEnd` and `sessionDelete` are the
+   * and `afterExchange` once the exchange has its answer. `sessionEnd` and `sessionDelete` are the
    * app's, since the loop has no point that is either, and are ignored here.
    *
-   * @defaultValue `[HookEvent.BeforeTurn, HookEvent.BeforeCompact, HookEvent.AfterTurn]` —
+   * @defaultValue `[HookEvent.BeforeExchange, HookEvent.BeforeCompact, HookEvent.AfterExchange]` —
    * everything the loop has a point for but `sessionStart`.
    *
    * @remarks
    * For an app that fires some of them around the loop rather than inside it: one that tells
-   * `beforeTurn` and `afterTurn` around a whole stage of its own, and wants only compaction's
-   * `beforeCompact` from the loop, passes `[HookEvent.BeforeCompact]`. With `afterTurn` left out the
+   * `beforeExchange` and `afterExchange` around a whole stage of its own, and wants only compaction's
+   * `beforeCompact` from the loop, passes `[HookEvent.BeforeCompact]`. With `afterExchange` left out the
    * result's `afterTurn` is resolved and empty, and `notes` and `context` are empty with no
    * injecting event listed — the app's own `gather` and `notify` hold those instead.
    */
@@ -210,18 +210,18 @@ export interface AgentLoopHooks {
    * @defaultValue The preface `configureHooks` holds.
    */
   preface?: string;
-  /** Hears each note, from before the request, from `beforeCompact` and from `afterTurn`. */
+  /** Hears each note, from before the request, from `beforeCompact` and from `afterExchange`. */
   onNote?: OnNote;
   /**
    * What the exchange's first message is numbered as in the uuids hooks are told — the app's stored
    * index of `messages[0]`, for an app that numbers messages across exchanges or runs. Read for
-   * `beforeCompact`'s `compacting` and `afterTurn`'s `turn`. See `turnMessages`.
+   * `beforeCompact`'s `compacting` and `afterExchange`'s `turn`. See `turnMessages`.
    *
    * @defaultValue `0`
    */
   offset?: number;
   /**
-   * The question as it was asked, for `afterTurn`: the text its `turn.messages` gives the
+   * The question as it was asked, for `afterExchange`: the text its `turn.messages` gives the
    * question, and the `prompt` it is told where `context` has none.
    *
    * @defaultValue The question as the transcript holds it.
@@ -234,7 +234,7 @@ export interface AgentLoopHooks {
   question?: string;
   /**
    * The user messages of the app's transcript that `messages` does not hold, added to the
-   * `turn.index` `afterTurn` is told — `turnIndex`'s `offset`. An app that hands the loop a
+   * `turn.index` `afterExchange` is told — `turnIndex`'s `offset`. An app that hands the loop a
    * compacted transcript passes those the compaction took and did not send again; one that runs
    * each exchange from a transcript of its own passes how many exchanges came before it.
    *
@@ -779,8 +779,8 @@ export interface AgentLoopResult {
    *
    * @remarks
    * Every other field is as a finished exchange has it: `messages` close on the turn's tool results
-   * with no assistant message after them, the hooks are told `afterTurn` with `turn.content`, and
-   * `metrics.outcome` is `ended`. No `beforeTurn` or `compact` runs after the end, since no request
+   * with no assistant message after them, the hooks are told `afterExchange` with `turn.content`,
+   * and `metrics.outcome` is `ended`. No `beforeTurn` or `compact` runs after the end, since no request
    * follows it. An app saying `done` passes the call on it — `id` the call, `name` the tool, `text`
    * the reason — which is how `runMetrics` reads the same outcome off the events.
    */
@@ -793,7 +793,7 @@ export interface AgentLoopResult {
    * @remarks
    * `messages` then end in the turn's assistant message and the results of the calls the loop ran,
    * with no result for these; `turn` is the reply that made them, `metrics.outcome` is `waiting`, a
-   * `wait` event was emitted, and the `afterTurn` hooks were not told. To go on, the app calls the
+   * `wait` event was emitted, and the `afterExchange` hooks were not told. To go on, the app calls the
    * loop again with `messages` and one tool message per call appended in this order, and with
    * `ledger` and `loaded` from this result. A call of the same turn that ended the exchange wins:
    * the calls that would have been handed back are answered as not run, and none is pending.
@@ -853,11 +853,11 @@ export interface AgentLoopResult {
    */
   preface: string;
   /**
-   * The `afterTurn` hooks' notes, once they have run — failures only, as `notify` returns them. The
+   * The `afterExchange` hooks' notes, once they have run — failures only, as `notify` returns them. The
    * loop does not wait for it, so the answer is never held for a hook; an app that stores the notes
    * with the exchange, or must not exit before the exchange is remembered, awaits it. Each note
    * reaches `onNote` as well. Already resolved and empty without `hooks`, and where `fire` leaves
-   * `afterTurn` out — an app that tells it itself has the notes from its own `notify`. Never
+   * `afterExchange` out — an app that tells it itself has the notes from its own `notify`. Never
    * rejects: a note `onNote` throws on is dropped.
    */
   afterTurn: Promise<HookNote[]>;
@@ -1112,28 +1112,32 @@ async function foldBeforeTurn(
  * Which events the loop fires for these hooks, read from `fire`.
  *
  * @param hooks - The exchange's hooks.
- * @returns The events to gather before the first request, and whether `afterTurn` and
+ * @returns The events to gather before the first request, and whether `afterExchange` and
  * `beforeCompact` are the loop's to fire.
  *
  * @remarks
  * Only the injecting events of `fire` are gathered: a list that names every event is the whole of
- * the loop's firing, and `afterTurn` gathered before the request would be the hooks told a reply
+ * the loop's firing, and `afterExchange` gathered before the request would be the hooks told a reply
  * that does not exist yet.
  */
-function firing(hooks: AgentLoopHooks): { before: readonly HookEvent[]; afterTurn: boolean; beforeCompact: boolean } {
+function firing(hooks: AgentLoopHooks): {
+  before: readonly HookEvent[];
+  afterExchange: boolean;
+  beforeCompact: boolean;
+} {
   if (!hooks.fire) {
-    return { before: [HookEvent.BeforeTurn], afterTurn: true, beforeCompact: true };
+    return { before: [HookEvent.BeforeExchange], afterExchange: true, beforeCompact: true };
   }
   const fire = new Set(hooks.fire);
   return {
     before: [...fire].filter((event) => INJECT_EVENTS.has(event)),
-    afterTurn: fire.has(HookEvent.AfterTurn),
+    afterExchange: fire.has(HookEvent.AfterExchange),
     beforeCompact: fire.has(HookEvent.BeforeCompact),
   };
 }
 
 /**
- * Tells the `afterTurn` hooks what was answered, with the exchange it closed where the question is
+ * Tells the `afterExchange` hooks what was answered, with the exchange it closed where the question is
  * still in the transcript.
  *
  * @param hooks - The exchange's hooks: the runner, the context the hooks are told, who hears a
@@ -1144,7 +1148,7 @@ function firing(hooks: AgentLoopHooks): { before: readonly HookEvent[]; afterTur
  * @param reply - The answer's text.
  * @returns A promise of their notes — failures only, as `notify` returns them.
  */
-const tellAfterTurn = (
+const tellAfterExchange = (
   hooks: NonNullable<AgentLoopOptions['hooks']>,
   messages: OpenAI.ChatCompletionMessageParam[],
   at: number,
@@ -1156,7 +1160,7 @@ const tellAfterTurn = (
   const prompt = hooks.context.prompt ?? question;
   return notify(
     hooks.run,
-    HookEvent.AfterTurn,
+    HookEvent.AfterExchange,
     {
       ...hooks.context,
       ...(prompt === undefined ? {} : { prompt }),
@@ -1866,7 +1870,7 @@ async function runTurns(
     }
     if (isAnswer || ended || isWaiting) {
       // A waiting exchange's tool loop goes on when the app answers, so it keeps its scratchpads
-      // and tells `afterTurn` nothing until then.
+      // and tells `afterExchange` nothing until then.
       const isOver = isWaiting === false;
       // The tool loop is over, so its scratchpads go; what came before the question is the app's.
       if (reasoningReplay === ReasoningReplay.ToolLoop && isOver) {
@@ -1874,9 +1878,9 @@ async function runTurns(
       }
       // Not awaited: the answer is ready, and remembering it is not something to hold it for.
       // Handed back instead, for an app that wants its notes.
-      const afterTurn =
-        hooks && fired?.afterTurn && isOver
-          ? tellAfterTurn(hooks, messages, questionAt(), reply.content)
+      const afterExchange =
+        hooks && fired?.afterExchange && isOver
+          ? tellAfterExchange(hooks, messages, questionAt(), reply.content)
           : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
       return {
@@ -1887,7 +1891,7 @@ async function runTurns(
         notes: gathered.notes,
         context: gathered.context,
         preface,
-        afterTurn,
+        afterTurn: afterExchange,
         metrics: {
           ...metrics,
           ...(onDemand ? loads : {}),

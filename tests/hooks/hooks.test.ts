@@ -134,7 +134,7 @@ describe('assembleContext', () => {
     const { context, notes } = assembleContext([outcome({ label: 'A "b" <c>', inject: true, text: '  likes tea  ' })]);
     expect(context).toBe('<context source="A &quot;b&quot; &lt;c>">\nlikes tea\n</context>');
     expect(notes).toEqual([
-      { event: HookEvent.BeforeTurn, source: 'A "b" <c>', hookId: 'recall', tokens: 3, text: 'likes tea' },
+      { event: HookEvent.BeforeExchange, source: 'A "b" <c>', hookId: 'recall', tokens: 3, text: 'likes tea' },
     ]);
   });
 
@@ -163,7 +163,7 @@ describe('assembleContext', () => {
       assembleContext([
         outcome({ text: 'stored' }),
         outcome({ inject: true, text: '   ' }),
-        outcome({ event: HookEvent.AfterTurn, inject: true, text: 'too late' }),
+        outcome({ event: HookEvent.AfterExchange, inject: true, text: 'too late' }),
       ]),
     ).toEqual({ context: '', notes: [] });
   });
@@ -187,14 +187,14 @@ describe('the budget', () => {
     });
     expect(spent(assembleContext([hungry('a'), hungry('b')]))).toBe(500);
     const run: HookRunner = async () => [hungry('a')];
-    expect(spent(await gather(run, [HookEvent.BeforeTurn], { session: { id: 's1' } }))).toBe(500);
+    expect(spent(await gather(run, [HookEvent.BeforeExchange], { session: { id: 's1' } }))).toBe(500);
   });
 
   it('gives way to a budget passed for one call', async () => {
     configureHooks({ contextTokens: 500 });
     expect(spent(assembleContext([hungry('a')], 3000))).toBe(3000);
     const run: HookRunner = async () => [hungry('a')];
-    const gathered = await gather(run, [HookEvent.BeforeTurn], { session: { id: 's1' } }, { maxTokens: 50 });
+    const gathered = await gather(run, [HookEvent.BeforeExchange], { session: { id: 's1' } }, { maxTokens: 50 });
     expect(spent(gathered)).toBe(50);
   });
 
@@ -252,7 +252,7 @@ describe('the preface', () => {
 describe('gather', () => {
   it('runs every event, builds context in event order, and tells onNote', async () => {
     const run = vi.fn<HookRunner>(async (event) =>
-      event === HookEvent.BeforeTurn
+      event === HookEvent.BeforeExchange
         ? [outcome({ inject: true, text: 'likes tea' })]
         : [outcome({ event: HookEvent.SessionStart, hookId: 'hello', ok: false, error: 'timed out' })],
     );
@@ -261,7 +261,7 @@ describe('gather', () => {
 
     const gathered = await gather(
       run,
-      [HookEvent.SessionStart, HookEvent.BeforeTurn],
+      [HookEvent.SessionStart, HookEvent.BeforeExchange],
       { session: { id: 's1' } },
       {
         signal,
@@ -282,7 +282,7 @@ describe('gather', () => {
       }
       return [outcome({ inject: true, text: 'likes tea' })];
     };
-    const gathered = await gather(run, [HookEvent.SessionStart, HookEvent.BeforeTurn], { session: { id: 's1' } });
+    const gathered = await gather(run, [HookEvent.SessionStart, HookEvent.BeforeExchange], { session: { id: 's1' } });
     expect(gathered.notes[0]).toEqual({
       event: HookEvent.SessionStart,
       source: '',
@@ -294,7 +294,7 @@ describe('gather', () => {
 
   it('shares the budget it is given', async () => {
     const run: HookRunner = async () => [outcome({ inject: true, text: 'x'.repeat(400) })];
-    const { notes } = await gather(run, [HookEvent.BeforeTurn], { session: { id: 's1' } }, { maxTokens: 10 });
+    const { notes } = await gather(run, [HookEvent.BeforeExchange], { session: { id: 's1' } }, { maxTokens: 10 });
     expect(notes[0].tokens).toBe(10);
   });
 });
@@ -302,15 +302,15 @@ describe('gather', () => {
 describe('notify', () => {
   it('notes only the failures, drops anything returned, and passes no signal', async () => {
     const run = vi.fn<HookRunner>(async () => [
-      outcome({ event: HookEvent.AfterTurn, hookId: 'remember' }),
-      outcome({ event: HookEvent.AfterTurn, hookId: 'audit', ok: false, error: 'boom' }),
-      outcome({ event: HookEvent.AfterTurn, hookId: 'odd', inject: true, text: 'ignored' }),
+      outcome({ event: HookEvent.AfterExchange, hookId: 'remember' }),
+      outcome({ event: HookEvent.AfterExchange, hookId: 'audit', ok: false, error: 'boom' }),
+      outcome({ event: HookEvent.AfterExchange, hookId: 'odd', inject: true, text: 'ignored' }),
     ]);
     const heard: unknown[] = [];
 
-    const notes = await notify(run, HookEvent.AfterTurn, { session: { id: 's1' } }, (note) => heard.push(note));
+    const notes = await notify(run, HookEvent.AfterExchange, { session: { id: 's1' } }, (note) => heard.push(note));
 
-    expect(notes).toEqual([{ event: HookEvent.AfterTurn, source: 'Memory', hookId: 'audit', error: 'boom' }]);
+    expect(notes).toEqual([{ event: HookEvent.AfterExchange, source: 'Memory', hookId: 'audit', error: 'boom' }]);
     expect(heard).toEqual(notes);
     expect(run.mock.calls[0][2].signal).toBeUndefined();
   });
@@ -337,7 +337,7 @@ describe("a host's onNote that throws", () => {
 
   it('does not make notify reject, and every note still reaches it', async () => {
     const heard: string[] = [];
-    const notes = await notify(failing, HookEvent.AfterTurn, { session: { id: 's1' } }, throwing(heard));
+    const notes = await notify(failing, HookEvent.AfterExchange, { session: { id: 's1' } }, throwing(heard));
     expect(notes.map((note) => note.hookId)).toEqual(['one', 'two']);
     expect(heard).toEqual(['one', 'two']);
   });

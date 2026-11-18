@@ -1185,7 +1185,7 @@ describe('runAgentLoop', () => {
       expect(beforeTurn).toHaveBeenCalledTimes(1);
     });
 
-    it('tells the hooks afterTurn with what the ending turn said', async () => {
+    it('tells the hooks afterExchange with what the ending turn said', async () => {
       create.mockReturnValueOnce(
         chunks({
           choices: [
@@ -1209,7 +1209,7 @@ describe('runAgentLoop', () => {
       });
       expect(result.turn.content).toBe('handing off');
       await result.afterTurn;
-      expect(run.mock.calls.map(([event]) => event)).toEqual([HookEvent.BeforeTurn, HookEvent.AfterTurn]);
+      expect(run.mock.calls.map(([event]) => event)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
       expect(run.mock.calls[1][1]).toMatchObject({ reply: 'handing off' });
     });
   });
@@ -2171,7 +2171,7 @@ describe('runAgentLoop', () => {
   it("puts the hooks' context on the question, and tells them the reply", async () => {
     create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('the answer'));
     const run = vi.fn<HookRunner>(async (event) =>
-      event === HookEvent.BeforeTurn
+      event === HookEvent.BeforeExchange
         ? [
             outcome({
               serverId: 'm',
@@ -2206,7 +2206,7 @@ describe('runAgentLoop', () => {
     expect(result.messages[2].content).toBe('what do I like?');
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
     const [event, context] = run.mock.calls[1];
-    expect(event).toBe(HookEvent.AfterTurn);
+    expect(event).toBe(HookEvent.AfterExchange);
     expect(context).toMatchObject({ reply: 'the answer', turn: { index: 1 } });
   });
 
@@ -2267,7 +2267,7 @@ describe('runAgentLoop', () => {
       expect(create.mock.calls[0][0].messages[0].content).toBe('hi');
     });
 
-    it('gathers the injecting events it lists in their order, and tells afterTurn where it is listed', async () => {
+    it('gathers the injecting events it lists in their order, and tells afterExchange where it is listed', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
@@ -2277,16 +2277,16 @@ describe('runAgentLoop', () => {
         hooks: {
           run,
           context: { session: { id: 's1' } },
-          fire: [HookEvent.SessionStart, HookEvent.BeforeTurn, HookEvent.AfterTurn, HookEvent.SessionEnd],
+          fire: [HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange, HookEvent.SessionEnd],
         },
       });
       await result.afterTurn;
       // `sessionEnd` is the host's: the loop has no point that is the end of a session.
-      expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.BeforeTurn, HookEvent.AfterTurn]);
-      expect(result.context.indexOf('from sessionStart')).toBeLessThan(result.context.indexOf('from beforeTurn'));
+      expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange]);
+      expect(result.context.indexOf('from sessionStart')).toBeLessThan(result.context.indexOf('from beforeExchange'));
     });
 
-    it('never gathers afterTurn before the request', async () => {
+    it('never gathers afterExchange before the request', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
@@ -2296,15 +2296,15 @@ describe('runAgentLoop', () => {
         hooks: {
           run,
           context: { session: { id: 's1' } },
-          fire: [HookEvent.AfterTurn, HookEvent.BeforeTurn],
+          fire: [HookEvent.AfterExchange, HookEvent.BeforeExchange],
         },
       });
       await result.afterTurn;
-      expect(fired(run)).toEqual([HookEvent.BeforeTurn, HookEvent.AfterTurn]);
+      expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
       expect(run.mock.calls[1][1]).toMatchObject({ reply: 'the answer' });
     });
 
-    it('fires beforeTurn before the request and afterTurn after it when absent', async () => {
+    it('fires beforeExchange before the request and afterExchange after it when absent', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
@@ -2314,18 +2314,20 @@ describe('runAgentLoop', () => {
         hooks: { run, context: { session: { id: 's1' } } },
       });
       await result.afterTurn;
-      expect(fired(run)).toEqual([HookEvent.BeforeTurn, HookEvent.AfterTurn]);
+      expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
     });
   });
 
-  describe('afterTurn for a host that rebuilds its transcript', () => {
-    /** A runner whose `beforeTurn` recalls a line, as an injecting hook would. */
+  describe('afterExchange for a host that rebuilds its transcript', () => {
+    /** A runner whose `beforeExchange` recalls a line, as an injecting hook would. */
     const remembering = () =>
       vi.fn<HookRunner>(async (event) =>
-        event === HookEvent.BeforeTurn ? [outcome({ event, text: 'you like tea', inject: true, maxTokens: 500 })] : [],
+        event === HookEvent.BeforeExchange
+          ? [outcome({ event, text: 'you like tea', inject: true, maxTokens: 500 })]
+          : [],
       );
     const toldAfter = (run: ReturnType<typeof remembering>) =>
-      run.mock.calls.find(([event]) => event === HookEvent.AfterTurn)?.[1];
+      run.mock.calls.find(([event]) => event === HookEvent.AfterExchange)?.[1];
 
     it('tells the question as it was typed, numbered as the host stores it', async () => {
       create.mockReturnValueOnce(says('tea'));
@@ -2348,7 +2350,7 @@ describe('runAgentLoop', () => {
         hooks: {
           run,
           context: { session: { id: 's1' } },
-          fire: [HookEvent.AfterTurn],
+          fire: [HookEvent.AfterExchange],
           question: typed,
           turnBase: 3,
           // The stored index of the summary's first slot: six folded messages less the two sent.
@@ -2408,11 +2410,11 @@ describe('runAgentLoop', () => {
   });
 
   describe("the hooks' context on past questions", () => {
-    /** A runner whose `beforeTurn` hook recalls this, and whose other events do nothing. */
+    /** A runner whose `beforeExchange` hook recalls this, and whose other events do nothing. */
     const recalls =
       (text: string): HookRunner =>
       async (event) =>
-        event === HookEvent.BeforeTurn
+        event === HookEvent.BeforeExchange
           ? [
               outcome({
                 serverId: 'm',
@@ -2549,7 +2551,7 @@ describe('runAgentLoop', () => {
       let finish: (outcomes: HookOutcome[]) => void = () => {};
       const heard: unknown[] = [];
       const run = vi.fn<HookRunner>((event) =>
-        event === HookEvent.AfterTurn
+        event === HookEvent.AfterExchange
           ? new Promise<HookOutcome[]>((resolve) => {
               finish = resolve;
             })
@@ -2575,7 +2577,7 @@ describe('runAgentLoop', () => {
           serverId: 'm',
           label: 'memory',
           hookId: 'h',
-          event: HookEvent.AfterTurn,
+          event: HookEvent.AfterExchange,
           ok: false,
           error: 'down',
           ms: 1,
@@ -2583,7 +2585,7 @@ describe('runAgentLoop', () => {
           maxTokens: 0,
         }),
       ]);
-      const note = { event: HookEvent.AfterTurn, source: 'memory', hookId: 'h', error: 'down' };
+      const note = { event: HookEvent.AfterExchange, source: 'memory', hookId: 'h', error: 'down' };
       await expect(result.afterTurn).resolves.toEqual([note]);
       expect(heard).toEqual([note]);
     });

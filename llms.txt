@@ -140,7 +140,7 @@ Which slot of a multi-slot llama.cpp server each session is on, so concurrent ex
 
 The points in a session a hook can be bound to, apart from everything that runs one.
 
-- `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
+- `HOOK_EVENTS` — Every event a hook can be bound to, each once, in the order a session meets them.
 - `HookEvent` — The points in a session a hook can be bound to, in the order a session meets them.
 - `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
 
