@@ -111,6 +111,17 @@ describe('contextLimitFor', () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
+  it('asks for the served window again once listingMissMs has passed, so a restart with another -c is seen', async () => {
+    list.mockResolvedValue(listing({ id: 'qwen', meta: { n_ctx_train: 262144 } }));
+    const serving = (window: number) => routes({ '/props': { default_generation_settings: { n_ctx: window } } });
+    vi.stubGlobal('fetch', serving(16384));
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(16384);
+    vi.stubGlobal('fetch', serving(8192));
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(16384);
+    vi.advanceTimersByTime(LISTING_MISS_MS);
+    await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(8192);
+  });
+
   it('reads the window LM Studio has the model loaded in', async () => {
     // LM Studio's listing names the model and says nothing about a window, so the lookup falls
     // through to the native routes, `/api/v0/models` being the one that exists for this server.

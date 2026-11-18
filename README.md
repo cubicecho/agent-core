@@ -405,7 +405,9 @@ Where the listing does not settle it, the server's own API is asked (`servedWind
 (`loaded_context_length`). That covers a model listed with no context window, which is LM Studio, and one
 listed with only `meta.n_ctx_train`, which is llama.cpp. The trained context window differs from the served
 one in the case the guard exists for, a 256k model started at `-c 16384`, so it is used only when
-neither native route gives a number. A server with neither route is latched and not asked again.
+neither native route gives a number. What a native route answers, a context window included, stands
+for `listingMissMs`, so a server restarted with another `-c` is sized by its new one within the
+interval. A server with neither route is latched and not asked again.
 `/api/v0/models` is also dropped on its own: for the life of the process once it answers 404, 405
 or 501, and for `listingMissMs` after any other error. A 200 that is not JSON counts as a missing
 route: it is what a proxy with a web app of its own (llm-router) answers on every path it does not

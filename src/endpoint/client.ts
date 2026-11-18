@@ -160,9 +160,9 @@ export interface ClientPoolOptions {
   /** How many model servers' clients are kept at once. The least recently asked for goes first. */
   maxClients?: number;
   /**
-   * How long, in milliseconds, a model missing from a server's listing — or a server that answered
-   * without a served context window, or whose `/api/v0/models` answered with an error other than a
-   * missing route — is taken at its word before the model server is asked again.
+   * How long, in milliseconds, a model missing from a server's listing — or a served context window
+   * or slot count a server's own API gave, or an error other than a missing route from its
+   * `/api/v0/models` — is taken at its word before the model server is asked again.
    */
   listingMissMs?: number;
   /**
@@ -470,8 +470,9 @@ export const endpointId = (config: EndpointIdentity) => digestOf(endpointKey(con
  * Served context windows found by asking a server's own API, keyed on model server and model.
  *
  * @remarks
- * A model's entry stays until `resetClients`, like a listing; a server that answered without one
- * is asked again after `listingMissMs`, like a listing that did not name the model.
+ * Every answer, a window included, stands for `listingMissMs`, the timer the slot count read from
+ * the same `/props` answer is on: a server restarted with another `-c` must not be sized by its
+ * old window for the life of the process.
  */
 const served = perFetch(() => new Map<string, { window: number; at: number }>());
 
@@ -651,8 +652,8 @@ export interface LookupOptions {
  * it was built for, and reading the trained one lets an overflow through the guard meant to catch
  * it. Ollama reports nothing on either; an operator there has to declare the context window.
  *
- * Zero where no answer was found, which is remembered for `listingMissMs`. A server without
- * either route is latched and not asked again. `/api/v0/models` is also dropped on its own: until
+ * What it answers, zero included, is remembered for `listingMissMs`. A server without either route
+ * is latched and not asked again. `/api/v0/models` is also dropped on its own: until
  * `resetClients` once it answers as a route that is not there, and for `listingMissMs` after any
  * other error. A server that could not be reached is not remembered at all.
  *
@@ -681,7 +682,7 @@ async function readServed(config: Endpoint & { model: string }, within: AbortSig
   }
   const key = modelKey(endpoint, config.model);
   const known = served(config.fetch).get(key);
-  if (known && (known.window > 0 || isAnswerFresh(known.at))) {
+  if (known && isAnswerFresh(known.at)) {
     return known.window;
   }
 
