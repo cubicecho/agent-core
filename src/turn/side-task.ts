@@ -292,13 +292,10 @@ async function complete(
     response = await attempt(false, false);
     // Latched on the finding, not the hypothesis: a context overflow is a 400 `negotiate` does
     // not recognise too, and it fails the retry the same way, leaving the next call to try the
-    // hints again. When both went out the refusal cannot say which, so the one `negotiate`
-    // cannot latch is blamed; if it was the effort after all, the next call is left with only
-    // the effort to drop and latches that instead.
+    // hints again. Only the hints are latched here: an effort is `negotiate`'s to latch, on
+    // `rejectsEffort` reading the refusal, so one this retry got past is sent again next time.
     if (hints) {
       modelCapabilitiesFor(supports, model).thinkingHints = false;
-    } else {
-      modelCapabilitiesFor(supports, model).reasoningEffort = false;
     }
   }
 

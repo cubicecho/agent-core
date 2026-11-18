@@ -100,21 +100,33 @@ describe('no-thinking hints', () => {
     expect(modelCapabilitiesFor(supports, 'm').reasoningEffort).toBe(true);
   });
 
-  it('latches the effort when it is all that is left to drop', async () => {
-    // Both refused in wordings `negotiate` does not know: the first call blames the kwargs, the
-    // next is left with only the effort, and after that neither goes out.
+  it('leaves latching the effort to negotiate when it is all that is left to drop', async () => {
+    // Both refused in wordings `negotiate` does not know: the first call blames the kwargs, and
+    // the next is retried without the effort but latches nothing, since only `rejectsEffort`
+    // reading the refusal latches an effort.
     create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
     await call(endpoint('http://odd/v1'));
     create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
     await call(endpoint('http://odd/v1'));
     expect(body(2).reasoning_effort).toBe('none');
     expect(body(3)).not.toHaveProperty('reasoning_effort');
+    expect(modelCapabilitiesFor(capabilitiesFor('http://odd/v1'), 'm').reasoningEffort).toBe(true);
 
     create.mockResolvedValue(reply);
     await call(endpoint('http://odd/v1'));
     expect(create).toHaveBeenCalledTimes(5);
-    expect(body(4)).not.toHaveProperty('reasoning_effort');
+    expect(body(4).reasoning_effort).toBe('none');
     expect(sentHints(4)).toBe(false);
+  });
+
+  it('leaves latching a chosen effort to negotiate as well', async () => {
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', { reasoningEffort: 'high' });
+    expect(body(1)).not.toHaveProperty('reasoning_effort');
+    expect(modelCapabilitiesFor(capabilitiesFor('http://plain/v1'), 'm').reasoningEffort).toBe(true);
+
+    await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', { reasoningEffort: 'high' });
+    expect(body(2).reasoning_effort).toBe('high');
   });
 
   it('keeps offering them after a failure that says nothing about the request', async () => {
