@@ -269,13 +269,6 @@ export interface TurnWindow {
   ledger: TokenLedger;
 }
 
-/**
- * The old name of `TurnWindow`.
- *
- * @deprecated Use `TurnWindow`.
- */
-export type StepWindow = TurnWindow;
-
 /** The `preselectRouting` that sends the first turn the shortlist alone. */
 export const PRESELECT_EXCLUSIVE = 'exclusive' as const;
 
@@ -626,12 +619,6 @@ export interface AgentLoopOptions {
     turn: number,
     window: TurnWindow,
   ) => OpenAI.ChatCompletionMessageParam[] | undefined | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
-  /**
-   * The old name of `beforeTurn`, called only where `beforeTurn` is not given.
-   *
-   * @deprecated Use `beforeTurn`, which is handed the same arguments.
-   */
-  beforeStep?: AgentLoopOptions['beforeTurn'];
   /**
    * Asked for input that arrived while the exchange was going — a person steering it — which the
    * exchange then goes on with as a user message.
@@ -1477,8 +1464,7 @@ async function runTurns(
     onMessage,
     onToolCall,
     onToolResult,
-    // The deprecated name is read only where the new one is not given.
-    beforeTurn = options.beforeStep,
+    beforeTurn,
     takeInput,
     parallel = false,
     formatToolError = defaultToolError,

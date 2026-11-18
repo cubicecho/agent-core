@@ -2620,19 +2620,6 @@ describe('runAgentLoop', () => {
     expect(result.messages[0]).toEqual({ role: Role.User, content: 'shorter' });
   });
 
-  it('calls the deprecated beforeStep only where beforeTurn is not given', async () => {
-    create.mockReturnValueOnce(says('done')).mockReturnValueOnce(says('done'));
-    const beforeStep = vi.fn(() => undefined);
-    await runAgentLoop({ config, messages: question, dispatch: async () => 'ok', beforeStep });
-    expect(beforeStep).toHaveBeenCalledExactlyOnceWith(expect.any(Array), 0, expect.objectContaining({ limit: 0 }));
-
-    const beforeTurn = vi.fn(() => undefined);
-    beforeStep.mockClear();
-    await runAgentLoop({ config, messages: question, dispatch: async () => 'ok', beforeTurn, beforeStep });
-    expect(beforeTurn).toHaveBeenCalledOnce();
-    expect(beforeStep).not.toHaveBeenCalled();
-  });
-
   it("keeps a ledger of each turn's reported prompt, and tells beforeTurn how full the window is", async () => {
     create
       .mockReturnValueOnce(reportedCall(100, 0, 'a'))

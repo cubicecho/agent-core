@@ -473,11 +473,10 @@ currently refuses to save a `beforeCompact` hook because it never compacts, whic
 otherwise good agent unimportable. The validator takes the host's fired-event set (the `events`
 option), defaulting to `SPEC_EVENTS`, which is `HOOK_EVENTS`, and warns.
 
-Before 5.0.0 the exchange's two events were named `beforeTurn` and `afterTurn`. A document that
-still says them parses, each hook bound under the new name (`beforeExchange`, `afterExchange`) with
-a warning such as `hooks[0].on: "beforeTurn" is now "beforeExchange"`. `resolveAgentSpec` renames
-them silently in a layer that never went through `parseSpec`, and `exportSpec` writes only the new
-names, so a stored document needs no migration.
+Before 5.0.0 the exchange's two events were named `beforeTurn` and `afterTurn`. Since 6.0.0 those
+are unknown events like any other: a hook bound to one is dropped with a warning such as
+`hooks[0].on: "beforeTurn" is not an event, and was dropped`. Rename them to `beforeExchange` and
+`afterExchange` in stored documents once.
 
 An `inject: true` on an event outside `INJECT_EVENTS`, or a `veto: true` on any event but
 `beforeCompact`, is dropped with a warning and the hook is kept. Resolving drops the same flags

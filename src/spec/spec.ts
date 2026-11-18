@@ -6,7 +6,7 @@ import {
   ToolDiscovery,
 } from '../core/config.ts';
 import { isAbsent, isRecord } from '../core/guards.ts';
-import { HOOK_EVENTS, HookEvent, INJECT_EVENTS, LEGACY_HOOK_EVENTS } from '../hooks/hook-events.ts';
+import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
@@ -835,17 +835,6 @@ function honouredFlags({ on, inject, veto }: Pick<AgentHook, 'on' | 'inject' | '
 }
 
 /**
- * A hook under the name its event has now, where it was stored under the name before 5.0.0.
- *
- * @param hook - A hook as a layer holds it, parsed or not.
- * @returns `hook` itself where its event is current, or a copy bound to the event's new name.
- */
-function renamedHook(hook: AgentHook): AgentHook {
-  const on = LEGACY_HOOK_EVENTS.get(hook.on);
-  return on ? { ...hook, on } : hook;
-}
-
-/**
  * Reads the `hooks` array, hook by hook.
  *
  * @param report - Where what is dropped or noted is written.
@@ -857,8 +846,7 @@ function renamedHook(hook: AgentHook): AgentHook {
  * @remarks
  * A hook goes whole where it is not an object, lacks a non-empty `id`, `on`, `server` or `tool`,
  * or is bound to something that is not one of `SPEC_EVENTS`. An `inject: true` or a `veto: true`
- * its event cannot honour goes alone. `args` is carried unread. An event under its name before
- * 5.0.0 (`LEGACY_HOOK_EVENTS`) is read under its new one, with a note.
+ * its event cannot honour goes alone. `args` is carried unread.
  */
 function parseHooks(report: Report, value: unknown[], events: readonly string[]): AgentHook[] {
   const hooks: AgentHook[] = [];
@@ -876,21 +864,15 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
       report.drop(path, 'needs an id, an event, a server and a tool');
       continue;
     }
-    // A document saved before 5.0.0 names the exchange events after the turn.
-    const renamed = LEGACY_HOOK_EVENTS.get(written);
-    if (renamed) {
-      report.note(`${path}.on`, `"${written}" is now "${renamed}"`);
-    }
-    const on = renamed ?? written;
-    const event = SPEC_EVENTS.find((known) => known === on);
+    const event = SPEC_EVENTS.find((known) => known === written);
     if (!event) {
-      report.drop(`${path}.on`, `"${on}" is not an event`);
+      report.drop(`${path}.on`, `"${written}" is not an event`);
       continue;
     }
     // An app that never compacts refuses to save a `beforeCompact` hook today, which makes an
     // otherwise good agent unimportable. Kept and noted instead.
-    if (!events.includes(on)) {
-      report.note(`${path}.on`, `"${on}" is never fired by this host`);
+    if (!events.includes(event)) {
+      report.note(`${path}.on`, `"${event}" is never fired by this host`);
     }
     const { dropped, inject, veto } = honouredFlags({
       on: event,
@@ -1293,12 +1275,10 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   );
   // Each layer's flags were checked against that layer's event, and the merge may have moved the
   // hook to another one, so they are checked again. Nothing is reported: resolving has no warnings.
-  // A host that reads hooks by hand may hand over a row stored under an event's old name.
   const hooks = mergeById(
     layers.flatMap((layer) => layer.hooks ?? []),
     (hook) => hook.id,
-  ).map((stored) => {
-    const hook = renamedHook(stored);
+  ).map((hook) => {
     const { dropped, ...flags } = honouredFlags(hook);
     return kept({ ...hook, ...flags });
   });
@@ -1377,8 +1357,8 @@ export interface ExportSpecOptions {
  *
  * @param spec - A document, ordinarily one `parseSpec` returned.
  * @param [options] - Whether to keep the secrets.
- * @returns A copy one level deep, never `spec` itself: what is not redacted or renamed is shared
- * with the original.
+ * @returns A copy one level deep, never `spec` itself: what is not redacted is shared with the
+ * original.
  *
  * @remarks
  * The property worth keeping is that **a redacted spec is still a valid spec** — it parses, it
@@ -1388,17 +1368,13 @@ export interface ExportSpecOptions {
  * fields the format gives a credential. A server can still carry one where the format gives it no
  * field — an `--api-key` among its `args`, a token in its `url` — and that is kept, because
  * cutting it would point the agent at a different server. `findSpecSecrets` says where to look.
- *
- * A hook stored under an event's name before 5.0.0 is written under its new one, so what leaves
- * the app reads without a warning.
  */
 export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptions = {}): AgentSpec {
-  const out: AgentSpec = spec.hooks ? { ...spec, hooks: spec.hooks.map(renamedHook) } : { ...spec };
   if (secrets || !spec.bundle?.mcpServers) {
-    return out;
+    return { ...spec };
   }
   return {
-    ...out,
+    ...spec,
     bundle: {
       ...spec.bundle,
       mcpServers: spec.bundle.mcpServers.map(({ env: _env, headers: _headers, ...rest }) => rest),

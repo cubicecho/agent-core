@@ -242,8 +242,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   reply cut off at the length limit is continued. Owner: the loop in `runTurns`; the `Turn` type
   (`src/wire/stream.ts`) is the reply part, run by `runTurn`, and the `turn` event and
   `RunMetrics.turns` count them. A turn's number, from zero, is `turn`: on `AgentLoopRequest` and
-  `RunArtifact`, and the number `beforeTurn`, `onTurn` and `onMessage` are handed. `beforeStep`
-  and `StepWindow` are deprecated aliases of `beforeTurn` and `TurnWindow`.
+  `RunArtifact`, and the number `beforeTurn`, `onTurn` and `onMessage` are handed.
 - **Exchange events:** what an app emits when one run holds several exchanges, such as a task's
   stages: an exchange began, which exchange each event belongs to, and which arm a deciding
   exchange chose. Owner: `RunEventKind.Exchange`, `RunEvent.exchange`, `RunMetrics.exchanges` and
@@ -440,8 +439,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Hook event:** a moment a hook can be bound to: a session starting, before an exchange starts,
   after it has its reply, before a summary replaces old messages, and a session ending or being
   deleted. Owner: `HookEvent` (`src/hooks/hook-events.ts`); the exchange's two are
-  `beforeExchange` and `afterExchange`. Documents saved before 5.0.0 name them `beforeTurn` and
-  `afterTurn`, which `parseSpec` still reads (`LEGACY_HOOK_EVENTS`).
+  `beforeExchange` and `afterExchange`.
 - **Hook runner:** the app's function that runs an event's hooks; the package never runs one.
   Owner: `HookRunner` (`src/hooks/hooks.ts`).
 - **Hook outcome:** what one hook did: its text, whether to inject it, its cap, and a veto.

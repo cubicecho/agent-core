@@ -221,7 +221,7 @@ export interface RunUsage {
   turn?: TurnReport;
   /**
    * The exchange's token ledger as of this turn, whole rather than the entry it added — an app
-   * whose exchange then fails still holds the latest one, and a rewrite in `beforeStep` moves
+   * whose exchange then fails still holds the latest one, and a rewrite in `beforeTurn` moves
    * earlier entries. Absent from a caller emitting usage of its own.
    */
   ledger?: TokenLedger;
