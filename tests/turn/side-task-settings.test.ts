@@ -142,6 +142,25 @@ describe('taskCall', () => {
     const call = taskCall({ model: 'tiny', endpoint: slow }, {}, { baseUrl: 'http://main/v1' });
     expect(call.endpoint).toEqual({ ...slow, apiKey: NO_KEY });
   });
+
+  it("gives the agent's fetch to a task on the agent's endpoint, as it gives the key", () => {
+    const fetch = async () => new Response('{}');
+    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main', fetch };
+    // A resolved task on the agent's own endpoint, which names no function.
+    const { tasks } = agent({ title: { model: 'tiny' } });
+    expect(taskCall(tasks.title, {}, main).endpoint).toEqual(main);
+  });
+
+  it("never gives the agent's fetch to another endpoint, and keeps a fetch the task has", () => {
+    const agentFetch = async () => new Response('{}');
+    const taskFetch = async () => new Response('{}');
+    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main', fetch: agentFetch };
+    expect(taskCall({ model: 'tiny', endpoint }, {}, main).endpoint).toEqual({ ...endpoint, apiKey: NO_KEY });
+    const own = { ...endpoint, fetch: taskFetch };
+    expect(taskCall({ model: 'tiny', endpoint: own }, {}, main).endpoint.fetch).toBe(taskFetch);
+    const sameOwn = { baseUrl: 'http://main/v1', apiKey: '', fetch: taskFetch };
+    expect(taskCall({ model: 'tiny', endpoint: sameOwn }, {}, main).endpoint.fetch).toBe(taskFetch);
+  });
 });
 
 describe("a side task's own settings", () => {

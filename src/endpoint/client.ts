@@ -7,7 +7,7 @@ import {
   type RetryPolicy,
 } from '../core/config.ts';
 import { digestOf } from '../core/digest.ts';
-import { byCodeUnit, isPositive } from '../core/guards.ts';
+import { byCodeUnit, getOrCreate, isPositive } from '../core/guards.ts';
 import { MS_PER_SECOND } from '../core/platform.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { HttpStatus } from '../wire/wire.ts';
@@ -51,6 +51,54 @@ export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): numb
 export const loadingMs = (config: Pick<RetryPolicy, 'loadingTimeoutSeconds'>): number | undefined =>
   config.loadingTimeoutSeconds === undefined ? undefined : (limitMs(config.loadingTimeoutSeconds) ?? 0);
 
+/** The function an endpoint's requests go through: `Endpoint.fetch`, or the global one. */
+type Fetch = typeof globalThis.fetch;
+
+/** One cache, held once for the global `fetch` and once for each function a host gave an endpoint. */
+interface PerFetch<T extends {}> {
+  /** The copy for the endpoints that send through `fetch`, absent being the global one, made on first use. */
+  (fetch: Fetch | undefined): T;
+  /** Drops the current scope's copies: the global one's and every function's. */
+  reset(): void;
+}
+
+/**
+ * Declares a cache that keeps what was found through one `fetch` apart from what any other found.
+ *
+ * @typeParam T - The cache.
+ * @param create - Builds a fresh, empty copy. Called once per function per scope, and again after `reset`.
+ * @returns The reader, with a `reset` on it, both acting on the scope current when called.
+ *
+ * @remarks
+ * Two endpoints with one URL and key and different functions may reach two different servers, so
+ * neither a client nor a listing found through one function may answer for another, or for the
+ * global `fetch`. A function's copy lives in a `WeakMap` under the function itself rather than
+ * under a key minted for it, so it goes when the host drops the function: a host making one per
+ * run would otherwise leave a listing behind for every run it ever made.
+ */
+function perFetch<T extends {}>(create: () => T): PerFetch<T> {
+  const own = scoped(create);
+  const hosts = scoped(() => new WeakMap<Fetch, T>());
+  const read = (fetch: Fetch | undefined) => (fetch ? getOrCreate(hosts(), fetch, create) : own());
+  return Object.assign(read, {
+    reset: () => {
+      own.reset();
+      hosts.reset();
+    },
+  });
+}
+
+/**
+ * The function an endpoint's requests are sent through.
+ *
+ * @param config - Read for `fetch` alone.
+ * @returns The endpoint's own function, or the global `fetch` as it is at the time of the call.
+ *
+ * @remarks
+ * The global is read per call rather than once, so a test that stubs it is heard.
+ */
+const sender = (config: Pick<Endpoint, 'fetch'>): Fetch => config.fetch ?? globalThis.fetch;
+
 /**
  * A client per endpoint, made once and kept.
  *
@@ -66,9 +114,11 @@ export const loadingMs = (config: Pick<RetryPolicy, 'loadingTimeoutSeconds'>): n
  * anything has been produced yet and the SDK does not. See `retry.ts`.
  *
  * Bounded, because a cache is only a cache while its keys are. Insertion order is the whole of
- * the eviction: a `Map` iterates oldest-first, and `getClient` re-inserts on a hit.
+ * the eviction: a `Map` iterates oldest-first, and `getClient` re-inserts on a hit. One pool per
+ * `fetch` (`perFetch`), each held to `maxClients`, so a client built on one function never sends
+ * for another.
  */
-const clients = scoped(() => new Map<string, OpenAI>());
+const clients = perFetch(() => new Map<string, OpenAI>());
 
 /**
  * How many endpoints' clients are kept at once, until `configureClients` moves it.
@@ -131,13 +181,15 @@ const poolLimits = scoped((): Required<ClientPoolOptions> => ({ ...CLIENT_DEFAUL
  * out: the SDK holds no handle a caller can release, and an evicted client is garbage once
  * whatever request is still in flight on it has finished — dropping the reference is the whole
  * of the eviction.
+ *
+ * @param pool - The clients of one `fetch`, as `clients` holds them. Written to.
  */
-const evict = () => {
-  for (const oldest of clients().keys()) {
-    if (clients().size <= poolLimits().maxClients) {
+const evict = (pool: Map<string, OpenAI>) => {
+  for (const oldest of pool.keys()) {
+    if (pool.size <= poolLimits().maxClients) {
       break;
     }
-    clients().delete(oldest);
+    pool.delete(oldest);
   }
 };
 
@@ -159,12 +211,13 @@ const evict = () => {
  * `listingMissMs` so a model it has just pulled is seen sooner.
  *
  * A `maxClients` below the pool's current size evicts down to it at once, least recently asked
- * for first, as the next `getClient` would have. A shorter `listingMissMs` applies to misses
- * already remembered, since each is a timestamp compared against it when read.
+ * for first, as the next `getClient` would have; the pool of a host's `fetch` is evicted at its
+ * next `getClient`. A shorter `listingMissMs` applies to misses already remembered, since each is
+ * a timestamp compared against it when read.
  */
 export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
   const inForce = assignSettings(poolLimits(), options);
-  evict();
+  evict(clients(undefined));
   return inForce;
 }
 
@@ -191,13 +244,15 @@ export const firstTokenMs = (
 /**
  * The client for an endpoint, built once and kept.
  *
- * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`.
- * @returns The pooled client: the same object for the same base URL, key and timeout, until it is
- * evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
+ * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`,
+ * and a `fetch` is what the client sends through.
+ * @returns The pooled client: the same object for the same base URL, key, timeout and `fetch`, until
+ * it is evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
  *
  * @remarks
- * Pooled on the three fields that change how a request is sent, so agents sharing a server share
- * a connection and agents on different servers never share a client.
+ * Pooled on the four fields that change how a request is sent, so agents sharing a server share
+ * a connection and agents on different servers never share a client. The `fetch` picks the pool
+ * (`perFetch`) rather than joining the key, since a function cannot be stringified.
  *
  * The pool is per *deployment*, not per request: what belongs in this map is an endpoint an
  * operator configured, and everything cached in this package is bounded on that reading. A
@@ -212,17 +267,24 @@ export function getClient(config: Endpoint): OpenAI {
   // Stringified rather than joined on a separator: no character is impossible in a URL or a
   // key, and two different endpoints must never resolve to the same cached client.
   const key = JSON.stringify([config.baseUrl, apiKey, timeout]);
-  const existing = clients().get(key);
+  const pool = clients(config.fetch);
+  const existing = pool.get(key);
   if (existing) {
     // Re-inserted so it counts as the youngest. A `Map` keeps insertion order and hands the
     // oldest key over first, which is the whole of the LRU below.
-    clients().delete(key);
-    clients().set(key, existing);
+    pool.delete(key);
+    pool.set(key, existing);
     return existing;
   }
-  const client = new OpenAI({ baseURL: config.baseUrl, apiKey, timeout, maxRetries: 0 });
-  clients().set(key, client);
-  evict();
+  const client = new OpenAI({
+    baseURL: config.baseUrl,
+    apiKey,
+    timeout,
+    maxRetries: 0,
+    ...(config.fetch ? { fetch: config.fetch } : {}),
+  });
+  pool.set(key, client);
+  evict(pool);
   return client;
 }
 
@@ -305,11 +367,13 @@ export interface ModelInfo {
  * The timeout is deliberately not in it, which is where this key parts company with the
  * clients'. Which models a server offers has nothing to do with how long we are willing to wait
  * for it, so two settings rows differing only there ask once between them rather than twice.
+ * `fetch` is not in it either, but picks the copy it is read from (`perFetch`), as it does for
+ * every lookup cache here: two functions may reach two servers behind one URL.
  *
  * It is only ever a cache of something asked for anyway, and a listing that fails leaves
  * whatever was there rather than emptying it.
  */
-const listings = scoped(() => new Map<string, ModelInfo[]>());
+const listings = perFetch(() => new Map<string, ModelInfo[]>());
 
 /**
  * The models in each endpoint's last listing whose window is only the trained one, by id.
@@ -318,7 +382,7 @@ const listings = scoped(() => new Map<string, ModelInfo[]>());
  * Kept beside `listings` rather than on `ModelInfo`, so what `listModels` hands back is the shape
  * it has always been. Replaced with each listing that lands, and left alone by one that fails.
  */
-const trainedOnly = scoped(() => new Map<string, Set<string>>());
+const trainedOnly = perFetch(() => new Map<string, Set<string>>());
 
 /**
  * When an endpoint was last asked about a model it did not name, keyed on the two together.
@@ -335,7 +399,7 @@ const trainedOnly = scoped(() => new Map<string, Set<string>>());
  * picked up within the minute instead of at the next restart. Bounded by the (endpoint, model)
  * pairs actually asked about, which is the bound the listings themselves have.
  */
-const misses = scoped(() => new Map<string, number>());
+const misses = perFetch(() => new Map<string, number>());
 
 /**
  * What counts as one endpoint, everywhere in this package that has to remember something about
@@ -343,8 +407,8 @@ const misses = scoped(() => new Map<string, number>());
  *
  * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
  * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
- * config, and absent and empty already mean the same thing. The timeout is deliberately not in
- * it; see `listings`.
+ * config, and absent and empty already mean the same thing. The timeout and `fetch` are
+ * deliberately not in it; see `listings`.
  * @returns The URL as `baseUrlKey` writes it and the key, as one JSON string, the key in the clear.
  *
  * @remarks
@@ -359,6 +423,10 @@ const misses = scoped(() => new Map<string, number>());
  * is impossible in a URL or a key, and two endpoints must never collide on one entry. A host
  * keeping its own per-endpoint state keys it on this rather than on a copy of it, so the two
  * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
+ *
+ * The capability latches and the no-thinking hints stay on this alone, whatever `fetch` an endpoint
+ * sends through: they are what a snapshot carries to the next process, where no function is the
+ * same one, and what a model refused is a fact about the model behind the URL.
  */
 export const endpointKey = (config: EndpointIdentity) =>
   JSON.stringify([baseUrlKey(config.baseUrl), config.apiKey || NO_KEY]);
@@ -396,7 +464,7 @@ export const endpointId = (config: EndpointIdentity) => digestOf(endpointKey(con
  * A model's entry stays until `resetClients`, like a listing; a server that answered without one
  * is asked again after `listingMissMs`, like a listing that did not name the model.
  */
-const served = scoped(() => new Map<string, { window: number; at: number }>());
+const served = perFetch(() => new Map<string, { window: number; at: number }>());
 
 /**
  * Slot counts read off llama.cpp's `/props`, keyed on endpoint and model as `served` is.
@@ -406,17 +474,18 @@ const served = scoped(() => new Map<string, { window: number; at: number }>());
  * answer, a count included, stands for `listingMissMs`: a server restarted with another
  * `--parallel` must not be sent a slot it no longer has for the life of the process.
  */
-const slotCounts = scoped(() => new Map<string, { slots: number; at: number; gone: boolean }>());
+const slotCounts = perFetch(() => new Map<string, { slots: number; at: number; gone: boolean }>());
 
 /**
  * Remembers what a `/props` answer said of its slots.
  *
+ * @param config - Read for `fetch` alone, which picks the copy of `slotCounts` written to.
  * @param key - The endpoint and model, by `modelKey`.
  * @param props - How `/props` answered, as `probe` hands it over.
  */
-function noteSlots(key: string, props: { missing: boolean; body?: unknown }) {
+function noteSlots(config: Pick<Endpoint, 'fetch'>, key: string, props: { missing: boolean; body?: unknown }) {
   const { total_slots } = (props.body ?? {}) as { total_slots?: unknown };
-  slotCounts().set(key, { slots: positive(total_slots), at: Date.now(), gone: props.missing });
+  slotCounts(config.fetch).set(key, { slots: positive(total_slots), at: Date.now(), gone: props.missing });
 }
 
 /**
@@ -428,7 +497,7 @@ function noteSlots(key: string, props: { missing: boolean; body?: unknown }) {
 const propsPath = (model: string) => `/props?model=${encodeURIComponent(model)}`;
 
 /** Endpoints with neither native route, which are not asked for either again. */
-const unserved = scoped(() => new Set<string>());
+const unserved = perFetch(() => new Set<string>());
 
 /**
  * Endpoints whose `/api/v0/models` answered with an error, and when.
@@ -442,17 +511,18 @@ const unserved = scoped(() => new Set<string>());
  * Per endpoint and on its own, whatever `/props` said: a server whose `/props` answers without a
  * window is never `unserved`, and without this its missing route was asked again with every miss.
  */
-const refusals = scoped(() => new Map<string, { at: number; gone: boolean }>());
+const refusals = perFetch(() => new Map<string, { at: number; gone: boolean }>());
 
 /**
  * Whether `/api/v0/models` is to be left alone on this endpoint for now.
  *
+ * @param config - Read for `fetch` alone, which picks the copy of `refusals` read.
  * @param endpoint - The endpoint, by `endpointKey`.
  * @returns `true` where the route last answered as one the server does not have, or with any other
  * error inside `listingMissMs`; `false` for an endpoint with no error on record.
  */
-const refused = (endpoint: string) => {
-  const refusal = refusals().get(endpoint);
+const refused = (config: Pick<Endpoint, 'fetch'>, endpoint: string) => {
+  const refusal = refusals(config.fetch).get(endpoint);
   return refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs);
 };
 
@@ -524,7 +594,7 @@ async function probe(
   path: string,
   within: AbortSignal,
 ): Promise<{ failed: boolean; missing: boolean; body?: unknown }> {
-  const response = await fetch(`${rootOf(config.baseUrl)}${path}`, {
+  const response = await sender(config)(`${rootOf(config.baseUrl)}${path}`, {
     headers: authHeaders(config.apiKey),
     signal: within,
   });
@@ -587,11 +657,11 @@ export async function servedWindow(
  */
 async function readServed(config: Endpoint & { model: string }, within: AbortSignal): Promise<number> {
   const endpoint = endpointKey(config);
-  if (unserved().has(endpoint)) {
+  if (unserved(config.fetch).has(endpoint)) {
     return 0;
   }
   const key = modelKey(endpoint, config.model);
-  const known = served().get(key);
+  const known = served(config.fetch).get(key);
   if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs)) {
     return known.window;
   }
@@ -599,16 +669,16 @@ async function readServed(config: Endpoint & { model: string }, within: AbortSig
   let window = 0;
   try {
     const props = await probe(config, propsPath(config.model), within);
-    noteSlots(key, props);
+    noteSlots(config, key, props);
     const settings = (props.body as { default_generation_settings?: { n_ctx?: unknown } })?.default_generation_settings;
     window = positive(settings?.n_ctx);
     if (!window) {
-      if (!refused(endpoint)) {
+      if (!refused(config, endpoint)) {
         const lmstudio = await probe(config, '/api/v0/models', within);
         if (lmstudio.failed) {
-          refusals().set(endpoint, { at: Date.now(), gone: lmstudio.missing });
+          refusals(config.fetch).set(endpoint, { at: Date.now(), gone: lmstudio.missing });
         } else {
-          refusals().delete(endpoint);
+          refusals(config.fetch).delete(endpoint);
         }
         const { data } = (lmstudio.body ?? {}) as { data?: unknown };
         const entry = Array.isArray(data)
@@ -616,15 +686,15 @@ async function readServed(config: Endpoint & { model: string }, within: AbortSig
           : undefined;
         window = positive(entry?.loaded_context_length);
       }
-      if (props.missing && refusals().get(endpoint)?.gone) {
-        unserved().add(endpoint);
+      if (props.missing && refusals(config.fetch).get(endpoint)?.gone) {
+        unserved(config.fetch).add(endpoint);
         return 0;
       }
     }
   } catch {
     return 0;
   }
-  served().set(key, { window, at: Date.now() });
+  served(config.fetch).set(key, { window, at: Date.now() });
   return window;
 }
 
@@ -659,20 +729,20 @@ export async function servedSlots(
  */
 async function readSlots(config: Endpoint & { model: string }, within: AbortSignal): Promise<number> {
   const endpoint = endpointKey(config);
-  if (unserved().has(endpoint)) {
+  if (unserved(config.fetch).has(endpoint)) {
     return 0;
   }
   const key = modelKey(endpoint, config.model);
-  const known = slotCounts().get(key);
+  const known = slotCounts(config.fetch).get(key);
   if (known && (known.gone || Date.now() - known.at < poolLimits().listingMissMs)) {
     return known.slots;
   }
   try {
-    noteSlots(key, await probe(config, propsPath(config.model), within));
+    noteSlots(config, key, await probe(config, propsPath(config.model), within));
   } catch {
     return 0;
   }
-  return slotCounts().get(key)?.slots ?? 0;
+  return slotCounts(config.fetch).get(key)?.slots ?? 0;
 }
 
 /**
@@ -714,8 +784,8 @@ async function readListing(config: Endpoint, within: AbortSignal): Promise<Model
   }
   models.sort((a, b) => byCodeUnit(a.id, b.id));
   const key = endpointKey(config);
-  listings().set(key, models);
-  trainedOnly().set(key, trained);
+  listings(config.fetch).set(key, models);
+  trainedOnly(config.fetch).set(key, trained);
   return models;
 }
 
@@ -787,7 +857,7 @@ const REDIRECT_MAX = 399;
  *
  * @param endpoint - The endpoint as typed. Its key goes as a bearer token where it has one other
  * than `NO_KEY`; its `requestTimeoutSeconds` bounds the request where that is shorter than
- * `lookupTimeoutMs`.
+ * `lookupTimeoutMs`; its `fetch`, where it has one, sends the request.
  * @param [options] - Cancellation, and how many models to hand back. See `ProbeOptions`.
  * @returns The models in order of id, one entry per id, at most `options.limit` of them. Rejects
  * with the reason of `options.signal` where that stopped it, and with an `EndpointProbeError`
@@ -805,7 +875,7 @@ const REDIRECT_MAX = 399;
  * `contextLimitFor` reads, and an id listed twice keeps the window one of its entries stated.
  */
 export async function probeEndpoint(
-  endpoint: EndpointIdentity & Pick<Endpoint, 'requestTimeoutSeconds'>,
+  endpoint: EndpointIdentity & Pick<Endpoint, 'requestTimeoutSeconds' | 'fetch'>,
   { signal, limit = PROBE_MODEL_LIMIT }: ProbeOptions = {},
 ): Promise<ModelInfo[]> {
   const baseUrl = normalizeBaseUrl(endpoint.baseUrl);
@@ -827,7 +897,11 @@ export async function probeEndpoint(
 
   let response: Response;
   try {
-    response = await fetch(url, { headers: authHeaders(endpoint.apiKey), signal: within, redirect: 'manual' });
+    response = await sender(endpoint)(url, {
+      headers: authHeaders(endpoint.apiKey),
+      signal: within,
+      redirect: 'manual',
+    });
   } catch {
     throw thrown();
   }
@@ -931,7 +1005,7 @@ export async function contextLimitFor(
   // One signal for the listing and the native routes, so three silent requests wait once.
   const within = lookupSignal(config, signal);
   const listed = () =>
-    listings()
+    listings(config.fetch)
       .get(key)
       ?.find((model) => model.id === config.model);
   // The listing is asked for again when it does not name this model, rather than only when
@@ -943,7 +1017,7 @@ export async function contextLimitFor(
   // the window instead of under it and fails against the endpoint's own refusal.
   if (!listed()) {
     const missKey = modelKey(key, config.model);
-    const asked = misses().get(missKey);
+    const asked = misses(config.fetch).get(missKey);
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the endpoint is asked, and a caller sizing a window per turn pays a round
     // trip for each of them; `listingMissMs` is how long that answer is allowed to stand.
@@ -961,9 +1035,9 @@ export async function contextLimitFor(
       // half a minute.
       if (answered) {
         if (listed()) {
-          misses().delete(missKey);
+          misses(config.fetch).delete(missKey);
         } else {
-          misses().set(missKey, Date.now());
+          misses(config.fetch).set(missKey, Date.now());
         }
       }
     }
@@ -972,7 +1046,7 @@ export async function contextLimitFor(
   const fromListing = entry?.contextLength ?? 0;
   // A top-level key settles it. A trained window does not: llama.cpp lists the one the model was
   // built with, and taking it over what `/props` says lets an overflow through the guard.
-  if (fromListing > 0 && !trainedOnly().get(key)?.has(config.model)) {
+  if (fromListing > 0 && !trainedOnly(config.fetch).get(key)?.has(config.model)) {
     return fromListing;
   }
   const window = await readServed(config, within);
@@ -986,14 +1060,14 @@ export async function contextLimitFor(
  */
 export function resetClients() {
   poolLimits.reset();
-  clients().clear();
-  listings().clear();
-  misses().clear();
-  trainedOnly().clear();
-  served().clear();
-  slotCounts().clear();
-  unserved().clear();
-  refusals().clear();
+  clients.reset();
+  listings.reset();
+  misses.reset();
+  trainedOnly.reset();
+  served.reset();
+  slotCounts.reset();
+  unserved.reset();
+  refusals.reset();
 }
 
 /**

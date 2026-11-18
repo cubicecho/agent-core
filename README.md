@@ -1654,6 +1654,44 @@ The seam is not finished. `timeoutMs` narrows to the one field it reads, but `ge
 asks for the whole of `Endpoint`. `requestTimeoutSeconds` became optional in v2, so a consumer
 with no timeout to give now leaves it out rather than inventing a `0`.
 
+### An endpoint answered in process
+
+`Endpoint.fetch` sends that endpoint's requests through a function of the host's instead of the
+global `fetch`: the SDK client's chat calls, streamed or not, the model listing, the native routes
+`servedWindow` and `servedSlots` ask, and `probeEndpoint`. A host that keeps its model servers
+behind its own forwarding code, a router counting usage per run, answers them there with no HTTP
+door onto them, and a test answers them with no server on a port. Absent, nothing changes.
+
+```ts
+const config = { ...resolveAgentSpec(layers), fetch: forward };  // forward: typeof fetch
+const result = await runAgentLoop({ config, messages, dispatch });
+```
+
+It is runtime only. `parseSpec` never reads one, `exportSpec` never writes one, `resolveAgentSpec`
+never produces one, and it is not part of `EndpointIdentity`, `endpointKey` or `endpointId`, so a
+snapshot and a digest are what they were. The host adds it to the resolved endpoint, as it adds the
+key.
+
+Nothing found through one function answers for another, or for the global `fetch`. Every cache in
+`client.ts`, the client pool and the listings and native-route answers, is held once for the global
+`fetch` and once per function, in a `WeakMap` under the function, so two endpoints with one URL and
+different functions never share a client or a listing, and a function the host drops takes its
+copies with it. A host that makes a function per run makes a client per run too, which is cheap
+when the function is in process. The capability latches and the no-thinking hints stay keyed on the
+URL and the key alone, since they are what a snapshot carries to the next process.
+
+A side task reaches the same function in two ways. `taskCall`, and so the loop's own `preselect` and
+`compact`, gives a task on the agent's endpoint the agent's `fetch` as it gives it the agent's key.
+A task on another endpoint is never given it, since a host's function may add that endpoint's
+credentials; a host answering every endpoint itself sets its function on each task's endpoint:
+
+```ts
+const tasks = Object.fromEntries(
+  Object.entries(resolved.tasks).map(([key, task]) => [key, { ...task, endpoint: { ...task.endpoint, fetch: forward } }]),
+);
+await runAgentLoop({ config: { ...resolved, tasks, fetch: forward }, messages, dispatch, preselect: true });
+```
+
 ## An agent as a document
 
 The seam above says what a *running* agent is. `@cubicecho/agent-core/spec` says what a **stored**
@@ -1801,7 +1839,10 @@ key.
 The third argument is the endpoint the main turn uses. Given it, a task on the same endpoint is
 sent the agent's spelling of the URL and, having no key of its own, the agent's key, so the two
 share one entry in `capabilitiesFor` and a refusal learned by either is known to both; a task on
-another endpoint is sent only a key of its own, as `resolveApiKey` has it.
+another endpoint is sent only a key of its own, as `resolveApiKey` has it. The agent's `fetch`
+follows the key: a task on the agent's endpoint with none of its own sends through it, and a task
+on another endpoint sends through its own endpoint's
+([An endpoint answered in process](#an-endpoint-answered-in-process)).
 
 The loop reads two of them when asked to. `preselect: true` has `runAgentLoop` make the
 preselection itself with `tasks.toolSelect` — or with `toolSelectModel` on the agent's endpoint,
@@ -1849,7 +1890,8 @@ capabilities, and `side-task`'s no-thinking hints. A fifth, the characters per t
 measured at, is keyed on the endpoint's capabilities object, so it goes with them. All four are
 held once per runtime — once per process, unless you make another, [below](#a-runtime-of-its-own)
 — and keyed on the same notion of an endpoint — its base URL and its API key — and the clients' key carries the request
-timeout as well, since that changes how a request is sent.
+timeout as well, since that changes how a request is sent. The clients and listings are held apart
+per `Endpoint.fetch` as well, [above](#an-endpoint-answered-in-process).
 
 **They are keyed per deployment, not per request.** What belongs in them is an endpoint an
 operator configured: a settings row, an agent definition, an environment variable. Everything
