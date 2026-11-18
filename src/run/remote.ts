@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { ToolDiscovery } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
+import { CallIds } from '../wire/call-ids.ts';
 import type { AgentLoopOptions } from './agent-loop.ts';
 import {
   LEGACY_EXCHANGE,
@@ -282,8 +283,9 @@ export function remoteRunOf(remote?: RemoteRun): { remoteRunId?: string } {
  *
  * @param options - What `runAgentLoop` was given. Not written to.
  * @returns `options` itself without `config.remoteAgent`, and otherwise a copy that loads tools
- * eagerly and does not compact, prune, preselect, continue, recover calls from text or size requests
- * against `contextLength`. One notice names whichever of those the app had asked for.
+ * eagerly and does not compact, prune, preselect, continue, recover calls from text, mint call ids
+ * or size requests against `contextLength`. One notice names whichever of those the app had asked
+ * for.
  *
  * @remarks
  * Ignored rather than refused: the flag comes from the model entry and the options from the app's
@@ -305,6 +307,8 @@ export function asRemoteAgent(options: AgentLoopOptions): AgentLoopOptions {
     options.preselect ? 'preselect' : '',
     isOnDemand ? `toolDiscovery "${discovery}"` : '',
     (options.maxContinuations ?? 0) > 0 ? 'maxContinuations' : '',
+    options.recoverToolCalls === true ? 'recoverToolCalls' : '',
+    options.callIds === CallIds.Minted ? `callIds "${CallIds.Minted}"` : '',
   ].filter((name) => name !== '');
   if (asked.length > 0) {
     options.onEvent?.({ kind: RunEventKind.Notice, text: `${REMOTE_AGENT_NOTICE}${asked.join(', ')}` });

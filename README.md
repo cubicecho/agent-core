@@ -1349,8 +1349,8 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   given. An app that fills these from its settings sends only what was chosen for this call.
 - **The server's work stays on the server.** Compaction, pruning, preselection, on-demand loading
   (tools go out eagerly, so `load_tools` never hides the app's), continuations, recovering calls
-  from the answer's text and the context-window guard are all set aside, with one notice
-  (`REMOTE_AGENT_NOTICE`) naming those the app had asked for. They are ignored rather than refused:
+  from the answer's text, minted call ids and the context-window guard are all set aside, with one
+  notice (`REMOTE_AGENT_NOTICE`) naming those the app had asked for. They are ignored rather than refused:
   the flag comes from the model entry and the options from the app's code, so a refusal would have
   every app branch on it. A session still sends its header, but no llama.cpp slot is probed or
   pinned.

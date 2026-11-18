@@ -6,6 +6,7 @@ import { IDEMPOTENCY_HEADER, PROGRESS_FIELD, progressChunk, REMOTE_AGENT_NOTICE 
 import { resetAll } from '../../src/runtime/reset.ts';
 import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../../src/spec/spec.ts';
 import { toolName } from '../../src/tools/tool-loading.ts';
+import { CallIds } from '../../src/wire/call-ids.ts';
 import { HttpStatus, Role } from '../../src/wire/wire.ts';
 import { answeredBy, type Body, catalog, respond, streamed, tool, user } from '../helpers.ts';
 
@@ -306,6 +307,15 @@ describe('a run on a remote agent', () => {
     expect(events).toContainEqual({
       kind: RunEventKind.Notice,
       text: `${REMOTE_AGENT_NOTICE}compact, prune, preselect, toolDiscovery "ondemand", maxContinuations`,
+    });
+  });
+
+  it('names call recovery and minted call ids in its notice, which it also sets aside', async () => {
+    const { fetch } = remoteAgent([{ events: [], content: 'Blue it is.' }]);
+    const { events } = await ask(remoteConfig(fetch), { recoverToolCalls: true, callIds: CallIds.Minted });
+    expect(events).toContainEqual({
+      kind: RunEventKind.Notice,
+      text: `${REMOTE_AGENT_NOTICE}recoverToolCalls, callIds "minted"`,
     });
   });
 
