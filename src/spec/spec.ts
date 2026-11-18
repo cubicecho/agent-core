@@ -1144,16 +1144,30 @@ function mergeById<T extends object>(
   items: readonly T[],
   idOf: (item: T) => string | undefined,
   deletes: (item: T) => boolean = () => false,
+  combine: (below: T | undefined, above: T) => T = (below, above) => ({ ...below, ...above }),
 ) {
   // A deleted id keeps its key, holding nothing, so an item above it takes the same place.
   const merged = new Map<string, T | undefined>();
   for (const item of items) {
     const id = idOf(item);
     if (id !== undefined) {
-      merged.set(id, deletes(item) ? undefined : { ...merged.get(id), ...item });
+      merged.set(id, deletes(item) ? undefined : combine(merged.get(id), item));
     }
   }
   return [...merged.values()].filter((item) => item !== undefined);
+}
+
+/**
+ * A prompt part laid over the one below it: a text or a reference above replaces what the part below
+ * said, since a part has one or the other, never both.
+ *
+ * @param below - The part a weaker layer gave, if any. Not written to.
+ * @param above - The part this layer gives. Not written to.
+ * @returns A new part: `above`'s own, or the one below where `above` gives neither.
+ */
+function overPart(below: PromptPart | undefined, above: PromptPart): PromptPart {
+  const givesSource = above.text !== undefined || above.ref !== undefined;
+  return givesSource ? { ...above } : { ...below, ...above };
 }
 
 /**
@@ -1235,6 +1249,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     layers.flatMap((layer) => layer.prompt ?? []),
     (part) => part.id,
     (part) => part.text === '',
+    overPart,
   );
   // Each layer's flags were checked against that layer's event, and the merge may have moved the
   // hook to another one, so they are checked again. Nothing is reported: resolving has no warnings.

@@ -489,6 +489,30 @@ describe('findSpecSecrets', () => {
 });
 
 describe('resolveAgentSpec', () => {
+  it('replaces a lower layer text with an upper reference, and the other way round (B39)', () => {
+    const ref = { type: REF_FILE, value: './p.md' };
+    const lower = parsed(
+      doc({
+        prompt: [
+          { id: 'a', text: 'Inline.' },
+          { id: 'b', ref },
+        ],
+      }),
+    );
+    const upper = parsed(
+      doc({
+        prompt: [
+          { id: 'a', ref },
+          { id: 'b', text: 'Now inline.' },
+        ],
+      }),
+    );
+    expect(resolveAgentSpec([lower, upper]).prompt).toEqual([
+      { id: 'a', ref },
+      { id: 'b', text: 'Now inline.' },
+    ]);
+  });
+
   it('is the flat shape the loop already takes', () => {
     const resolved = resolveAgentSpec([parsed(doc({ model: { model: 'm' } }))]);
     // The type-level claim the whole design rests on: no adapter between here and the loop.
