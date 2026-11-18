@@ -112,7 +112,10 @@ export interface ModelSpec {
   reasoningReplay?: ReasoningReplay;
   /** What the operator says this model reads, in tokens. Zero asks the endpoint. */
   contextLength?: number;
-  /** Request fields the interface cannot spell. `model`, `messages`, `stream`, `tools` are dropped. */
+  /**
+   * Request fields the interface cannot spell. The `RESERVED_BODY_FIELDS` are dropped, and so are
+   * the `SPELLED_BODY_FIELDS`, which the fields above set.
+   */
   extraBody?: Record<string, unknown>;
 }
 
@@ -555,13 +558,29 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
 }
 
 /**
+ * The request fields `model` and each task spell for themselves, by the field that spells each.
+ *
+ * @remarks
+ * Apart from `RESERVED_BODY_FIELDS`, which are what the loop sets: these are what the document
+ * sets elsewhere. Kept in `extraBody`, a copy would be spread over the stated value at send time,
+ * past the negotiation that sends a temperature only to a model that takes one.
+ */
+const SPELLED_BODY_FIELDS: Readonly<Record<string, keyof ModelSpec & keyof TaskSpec>> = Object.freeze({
+  temperature: 'temperature',
+  max_tokens: 'maxTokens',
+  max_completion_tokens: 'maxTokens',
+  reasoning_effort: 'reasoningEffort',
+});
+
+/**
  * Reads an `extraBody`, the agent's model's or a side task's.
  *
  * @param report - Where what is dropped is written.
  * @param path - Where it sits in the document: `model.extraBody`, or `tasks.title.extraBody`.
  * @param value - What the document held there.
- * @returns A new object without the `RESERVED_BODY_FIELDS`, each of which is warned about, or
- * `undefined` where it is absent or is not an object. An empty one survives as an empty one.
+ * @returns A new object without the `RESERVED_BODY_FIELDS` or the `SPELLED_BODY_FIELDS`, each of
+ * which is warned about, or `undefined` where it is absent or is not an object. An empty one
+ * survives as an empty one.
  */
 function parseExtraBody(report: Report, path: string, value: unknown): Record<string, unknown> | undefined {
   if (absent(value)) {
@@ -570,11 +589,16 @@ function parseExtraBody(report: Report, path: string, value: unknown): Record<st
   if (!isRecord(value)) {
     return void report.drop(path, 'must be an object');
   }
+  // `model`, or `tasks.title`: where the field that spells a dropped one sits.
+  const owner = path.slice(0, -'.extraBody'.length);
   const extraBody: Record<string, unknown> = {};
   for (const [key, held] of Object.entries(value)) {
+    const spelledAs = Object.hasOwn(SPELLED_BODY_FIELDS, key) ? SPELLED_BODY_FIELDS[key] : undefined;
     // The request is built around them and they would be overwritten anyway; better to say so on import.
     if (RESERVED_BODY_FIELDS.includes(key)) {
       report.drop(`${path}.${key}`, "is the loop's to set");
+    } else if (spelledAs) {
+      report.drop(`${path}.${key}`, `is ${owner}.${spelledAs}'s to set`);
     } else {
       extraBody[key] = held;
     }

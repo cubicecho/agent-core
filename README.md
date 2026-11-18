@@ -1228,7 +1228,10 @@ and trailing slashes, so a row saved before the rule still finds its own key.
 `ModelParams` has `temperature`, `maxTokens`, `reasoningEffort`, `reasoningReplay` and `singleCallMessages`. Everything else a model card or
 a server asks for — `top_k`, `min_p`, `repeat_penalty`, llama.cpp's `id_slot`, `cache_prompt` and
 `reasoning_budget` — goes in `extraBody`, which `buildBody` merges in last. It can override
-`temperature` but not `model`, `messages`, `stream` or `tools`, which are the loop's.
+`temperature` but not `model`, `messages`, `stream` or `tools`, which are the loop's. An agent
+document's `extraBody` can do neither: `parseSpec` drops `temperature`, `max_tokens`,
+`max_completion_tokens` and `reasoning_effort` from it, with a warning naming the field that sets
+each, so the value a document states is the one sent.
 
 A local server ignores a field it does not know. OpenAI refuses it — `Unrecognized request
 argument supplied: min_p` — and so do some proxies, as `Unknown parameter: 'min_p'`. Given the

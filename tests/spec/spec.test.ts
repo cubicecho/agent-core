@@ -125,6 +125,32 @@ describe('parseSpec', () => {
     expect(result.warnings).toEqual(["model.extraBody.messages: is the loop's to set, and was dropped"]);
   });
 
+  it('drops the body fields the spec spells elsewhere, naming the field that does', () => {
+    const result = parseSpec(
+      doc({
+        model: {
+          temperature: 0,
+          extraBody: { top_k: 20, temperature: 0.9, max_tokens: 5, max_completion_tokens: 6, reasoning_effort: 'high' },
+        },
+        tasks: { title: { model: 'm', extraBody: { min_p: 0.05, temperature: 1 } } },
+      }),
+    );
+    expect(result.spec?.model?.extraBody).toEqual({ top_k: 20 });
+    expect(result.spec?.tasks?.title?.extraBody).toEqual({ min_p: 0.05 });
+    expect(result.warnings).toEqual([
+      "model.extraBody.temperature: is model.temperature's to set, and was dropped",
+      "model.extraBody.max_tokens: is model.maxTokens's to set, and was dropped",
+      "model.extraBody.max_completion_tokens: is model.maxTokens's to set, and was dropped",
+      "model.extraBody.reasoning_effort: is model.reasoningEffort's to set, and was dropped",
+      "tasks.title.extraBody.temperature: is tasks.title.temperature's to set, and was dropped",
+    ]);
+    // So the resolved agent carries the temperature the document states, zero meaning zero, and
+    // nothing in its `extraBody` that `buildBody` would spread over it.
+    const resolved = resolveAgentSpec([parsed(doc({ model: { temperature: 0, extraBody: { temperature: 0.9 } } }))]);
+    expect(resolved.temperature).toBe(0);
+    expect(resolved).not.toHaveProperty('extraBody.temperature');
+  });
+
   it("reads a task's extraBody by the same rules", () => {
     const result = parseSpec(
       doc({ tasks: { title: { model: 'm', extraBody: { top_k: 20, tools: [] } }, other: { extraBody: 3 } } }),
