@@ -74,7 +74,7 @@ export interface FenceSplitterOptions {
    * it. Without this the splitter still catches it once `</think>` arrives, and moves what came
    * before into `reasoning`, but a watcher will have been shown it as output by then.
    */
-  startInside?: boolean;
+  startInScratchpad?: boolean;
 }
 
 /**
@@ -108,10 +108,10 @@ export class FenceSplitter {
    * @param [fences] - The fences to read; an empty list passes everything through as output.
    * @param [options] - Whether the reply starts inside the first fence.
    */
-  constructor(fences: readonly Fence[] = DEFAULT_FENCES, { startInside }: FenceSplitterOptions = {}) {
+  constructor(fences: readonly Fence[] = DEFAULT_FENCES, { startInScratchpad }: FenceSplitterOptions = {}) {
     this.#fences = fences;
     this.#markers = fences.flatMap((fence) => [fence.open, fence.close, ...(FRAMING[fence.open] ?? [])]);
-    this.#inside = startInside ? fences[0] : undefined;
+    this.#inside = startInScratchpad ? fences[0] : undefined;
     this.#seenFence = this.#inside !== undefined;
   }
 

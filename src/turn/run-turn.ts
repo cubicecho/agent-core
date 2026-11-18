@@ -16,7 +16,7 @@ import {
   sleep,
 } from '../wire/retry.ts';
 import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from '../wire/stream.ts';
-import { compact, requestTokens } from '../wire/tokens.ts';
+import { formatTokens, requestTokens } from '../wire/tokens.ts';
 
 /**
  * One request, given as many attempts as the caller allows.
@@ -153,9 +153,9 @@ function refuseOversized(
   // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
   // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
   // loops on the first attempt instead of being sent again to be refused again.
-  const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : '';
+  const reserved = reserve ? ` plus ${formatTokens(reserve)} reserved for the reply` : '';
   throw new ContextOverflow(
-    `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
+    `the request is about ${formatTokens(needed)} tokens${reserved}, over this model's ${formatTokens(contextLimit)}`,
   );
 }
 
@@ -263,7 +263,7 @@ export async function runTurn(
         if (loadingSince === undefined) {
           loadingSince = now;
           onNotice?.(
-            `${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / MS_PER_SECOND)}s`,
+            `${modelLabel(model)} is still loading — waiting up to ${formatTokens(loadingTimeoutMs / MS_PER_SECOND)}s`,
           );
         }
         if (now - loadingSince < loadingTimeoutMs) {

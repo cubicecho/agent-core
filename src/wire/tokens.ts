@@ -42,7 +42,7 @@ export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PE
 export const clipToTokens = (text: string, maxTokens: number) =>
   `${text.slice(0, maxTokens * CHARS_PER_TOKEN - 1).trimEnd()}…`;
 
-/** Where `compact` starts counting in thousands. */
+/** Where `formatTokens` starts counting in thousands. */
 const THOUSAND = 1000;
 
 /**
@@ -55,7 +55,8 @@ const THOUSAND = 1000;
  * @remarks
  * The numbers in an overflow message are large and nobody reads the units digit.
  */
-export const compact = (tokens: number) => (tokens >= THOUSAND ? `${(tokens / THOUSAND).toFixed(1)}k` : String(tokens));
+export const formatTokens = (tokens: number) =>
+  tokens >= THOUSAND ? `${(tokens / THOUSAND).toFixed(1)}k` : String(tokens);
 
 /** What `{"role":"","content":""},` costs around a message's own text, in characters. */
 const ENVELOPE = 25;

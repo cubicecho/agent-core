@@ -28,12 +28,13 @@ export const NO_KEY = 'agent-core';
 const limitMs = (seconds: number) => (seconds > 0 ? seconds * MS_PER_SECOND : undefined);
 
 /**
- * A model server's request timeout in the SDK's spelling: milliseconds, `undefined` for no limit.
+ * A model server's idle timeout, `requestTimeoutSeconds`, in the SDK's spelling: milliseconds,
+ * `undefined` for no limit.
  *
  * @param config - Read for `requestTimeoutSeconds` alone. Zero, less, or absent means no limit.
- * @returns The request timeout in milliseconds, or `undefined` for no limit.
+ * @returns The idle timeout in milliseconds, or `undefined` for no limit.
  */
-export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
+export const idleTimeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
 
 /**
@@ -264,11 +265,11 @@ const FIRST_TOKEN_FACTOR = 5;
  * @returns Milliseconds. `firstTokenSeconds` where it is given, zero or less being no limit;
  * otherwise five request timeouts, and no limit where the request has none.
  */
-export const firstTokenMs = (
+export const firstTokenLimitMs = (
   config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,
 ): number | undefined => {
   if (config.firstTokenSeconds === undefined) {
-    const idle = timeoutMs(config);
+    const idle = idleTimeoutMs(config);
     return idle === undefined ? undefined : idle * FIRST_TOKEN_FACTOR;
   }
   return limitMs(config.firstTokenSeconds);
@@ -296,7 +297,7 @@ export const firstTokenMs = (
  */
 export function getClient(config: Endpoint): OpenAI {
   const apiKey = config.apiKey || NO_KEY;
-  const timeout = timeoutMs(config);
+  const timeout = idleTimeoutMs(config);
   const key = JSON.stringify([endpointKey(config), timeout]);
   const pool = clients(config.fetch);
   const existing = pool.get(key);
@@ -565,7 +566,7 @@ const refused = (config: Pick<Endpoint, 'fetch'>, endpoint: string) => {
  * whichever is first. Never fires where neither is set.
  */
 const lookupSignal = (config: Pick<Endpoint, 'requestTimeoutSeconds'>, signal?: AbortSignal): AbortSignal => {
-  const boundMs = Math.min(timeoutMs(config) ?? Number.POSITIVE_INFINITY, poolLimits().lookupTimeoutMs);
+  const boundMs = Math.min(idleTimeoutMs(config) ?? Number.POSITIVE_INFINITY, poolLimits().lookupTimeoutMs);
   const bound = Number.isFinite(boundMs) ? [AbortSignal.timeout(boundMs)] : [];
   return AbortSignal.any([...bound, ...(signal ? [signal] : [])]);
 };

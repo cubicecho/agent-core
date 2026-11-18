@@ -81,8 +81,9 @@ export {
   EndpointProbeError,
   endpointId,
   endpointKey,
-  firstTokenMs,
+  firstTokenLimitMs,
   getClient,
+  idleTimeoutMs,
   type LookupOptions,
   listModels,
   type ModelInfo,
@@ -94,7 +95,6 @@ export {
   resolveApiKey,
   servedSlots,
   servedWindow,
-  timeoutMs,
 } from './endpoint/client.ts';
 export {
   isGrammarError,
@@ -378,10 +378,10 @@ export {
 export {
   type ContextBreakdown,
   type ContextBreakdownOptions,
-  compact,
   contextChars,
   contextTokens,
   estimateTokens,
+  formatTokens,
   messageTokens,
   requestChars,
   requestTokens,

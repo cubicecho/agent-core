@@ -281,9 +281,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Key inheritance:** a model server with no key of its own borrows the configured one only when it
   points at the same server. Owner: `resolveApiKey`.
 - **Idle timeout (request timeout):** how long a streamed reply may go quiet once it has started.
-  Owner: `Endpoint.requestTimeoutSeconds`; also `timeoutMs`, `idleMs`.
+  Owner: `Endpoint.requestTimeoutSeconds`; also `idleTimeoutMs(config)`, `idleMs`.
 - **First-token timeout:** how long to wait for a reply's first token. Owner:
-  `Endpoint.firstTokenSeconds`; also `firstTokenMs(config)`, `firstChunkMs`.
+  `Endpoint.firstTokenSeconds`; also `firstTokenLimitMs(config)`, `firstChunkMs`. `TurnUsage.firstTokenMs`
+  is the wait measured, not the limit.
 - **Model listing:** the models a model server says it serves. Owner: `listModels`, `ModelInfo`.
 - **Model server probe (endpoint probe):** a one-off listing of a model server a person is still
   typing into a form. Owner: `probeEndpoint`, `EndpointProbeError`.
@@ -349,7 +350,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Continuation:** carrying on a reply the ceiling cut off by sending it back as a trailing
   assistant message. Owner: `continueTurn` (`src/turn/continuation.ts`).
 - **Scratchpad (reasoning, thinking):** what a model wrote while deliberating, kept apart from
-  its answer. Owner: `Turn.reasoning`, `FenceSplitter`, `stripThinking` (`src/wire/thinking.ts`).
+  its answer; a reply may start inside one its template opened in the prompt. Owner:
+  `Turn.reasoning`, `FenceSplitter`, `stripThinking` (`src/wire/thinking.ts`); `startInScratchpad`
+  on `StreamTurnOptions` and `FenceSplitterOptions`.
 - **Fence:** the markers a model puts around a scratchpad inside its text, such as `<think>`.
   Owner: `Fence`, `DEFAULT_FENCES`.
 - **Reasoning replay:** which assistant messages carry the scratchpad back to the model. Owner:
@@ -357,7 +360,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Turn usage:** what one reply cost: tokens, cache hits, timings and retries. Owner:
   `TurnUsage`; an exchange's totals are `LoopUsage` / `UsageTotals`.
 - **Token estimate:** a rough count, characters over a calibrated ratio (four until learned).
-  Owner: `estimateTokens`, `requestTokens` (`src/wire/tokens.ts`), `charsPerTokenFor`, `calibrate`.
+  Owner: `estimateTokens`, `requestTokens` (`src/wire/tokens.ts`), `charsPerTokenFor`, `calibrate`;
+  a count is printed by `formatTokens`.
 - **Untrusted fence:** a wrapper marking text as data, not instructions; hooks and server
   instructions fence what nobody vouched for with it. Owner: `untrusted`, `UNTRUSTED_PREFACE`
   (`src/wire/text.ts`).

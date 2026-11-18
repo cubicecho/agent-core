@@ -653,7 +653,7 @@ export interface StreamTurnOptions {
   signal?: AbortSignal;
   /**
    * Silence allowed before the request is given up on. Zero or undefined waits forever, which
-   * is what `timeoutMs` means by a timeout of zero and what a local model answering slowly
+   * is what `idleTimeoutMs` means by a timeout of zero and what a local model answering slowly
    * needs.
    */
   idleMs?: number;
@@ -664,7 +664,7 @@ export interface StreamTurnOptions {
    *
    * @remarks
    * The first wait is prefill, or a server loading the model, and is routinely many times the
-   * gap between tokens. See `Endpoint.firstTokenSeconds` and `firstTokenMs`.
+   * gap between tokens. See `Endpoint.firstTokenSeconds` and `firstTokenLimitMs`.
    */
   firstChunkMs?: number;
   /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
@@ -690,7 +690,7 @@ export interface StreamTurnOptions {
    * Without this the scratchpad is still moved out of `content` once the closing tag arrives,
    * but `onOutput` will have been told it first.
    */
-  startInReasoning?: boolean;
+  startInScratchpad?: boolean;
   /** The model's scratchpad, as it arrives, from its own field or from a fence in `content`. */
   onThinking?: (delta: string) => void;
   /** The model's answer, as it arrives. */
@@ -751,7 +751,7 @@ export async function streamTurn(
     produced,
     inFlight,
     fences = DEFAULT_FENCES,
-    startInReasoning,
+    startInScratchpad,
     onThinking,
     onOutput,
     onChunk,
@@ -820,7 +820,7 @@ export async function streamTurn(
     let fenced = 0;
     let reasoningField: ReasoningField | undefined;
     const details: ReasoningDetail[] = [];
-    const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
+    const splitter = new FenceSplitter(fences, { startInScratchpad });
     const report = (parts: Split[]) => {
       reasoning += splitter.reasoning.slice(fenced);
       fenced = splitter.reasoning.length;

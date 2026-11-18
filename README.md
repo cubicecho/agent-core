@@ -68,7 +68,7 @@ and nothing is re-sent once the model has started answering.
 
 ```ts
 import {
-  capabilitiesFor, emit, getClient, negotiate, relaxTools, sanitizeTools, streamTurn, timeoutMs,
+  capabilitiesFor, emit, getClient, idleTimeoutMs, negotiate, relaxTools, sanitizeTools, streamTurn,
 } from "@cubicecho/agent-core";
 
 const declared = sanitizeTools(tools);
@@ -83,7 +83,7 @@ const turn = await negotiate(supports, (supports, produced) =>
       ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
       tools: supports.strictSchemas ? declared : relaxTools(declared),
     },
-    { produced, signal, idleMs: timeoutMs(config), onOutput: (text) => emit(runId, { kind: "output", text }) },
+    { produced, signal, idleMs: idleTimeoutMs(config), onOutput: (text) => emit(runId, { kind: "output", text }) },
   ),
 );
 ```
@@ -172,7 +172,7 @@ model writes as an answer; `ALL_FENCES` adds `<thinking>` and `<reasoning>`, whi
 quoting, and is what the side tasks use. Pass `fences: []` to read `content` as all answer. A reply
 cut off inside a fence has an empty `content`, not the scratchpad promoted to one. A template that
 opens `<think>` in the prompt leaves only the closing tag, so everything before it is moved to
-`reasoning` when it arrives; `startInReasoning: true` says so up front, so `onOutput` is never told
+`reasoning` when it arrives; `startInScratchpad: true` says so up front, so `onOutput` is never told
 it at all.
 
 ## What the model refuses, rather than the server
@@ -275,7 +275,7 @@ answer it is continuing joined on, and `runAgentLoop` reads it into a failure's 
 
 `idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is still
 talking is never cut off however long it takes, and one that has stopped answering raises
-`EndpointSilent` rather than hanging the exchange. `timeoutMs(config)` returns `undefined` for a
+`EndpointSilent` rather than hanging the exchange. `idleTimeoutMs(config)` returns `undefined` for a
 `requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering slowly
 needs.
 
@@ -283,7 +283,7 @@ The first chunk gets its own allowance, `firstChunkMs`, because the first wait i
 seconds for a long prompt on a local GPU, minutes on a CPU, and longer again when the server is
 loading the model on demand. It holds until a chunk carries something, so an empty
 `{"role":"assistant"}` sent before the prompt is read does not start the idle clock.
-`firstTokenMs(config)` reads `firstTokenSeconds` off the endpoint, and five times
+`firstTokenLimitMs(config)` reads `firstTokenSeconds` off the endpoint, and five times
 `requestTimeoutSeconds` where that is absent. With a watchdog armed, the SDK's own timer is switched
 off for the stream; it runs until the headers arrive, which is the end of prefill, and used to
 abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, such
@@ -1891,7 +1891,7 @@ This matters because the three consumers do not agree on the fields. `task_serve
 row has no `contextLength`; `min-agent` spells it `contextLimit` and carries no retry budget.
 A single god interface would have forced two of them to grow columns they have no use for.
 
-The seam is not finished. `timeoutMs` narrows to the one field it reads, but `getClient` still
+The seam is not finished. `idleTimeoutMs` narrows to the one field it reads, but `getClient` still
 asks for the whole of `Endpoint`. `requestTimeoutSeconds` became optional in v2, so a consumer
 with no timeout to give now leaves it out rather than inventing a `0`.
 

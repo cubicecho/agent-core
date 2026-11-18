@@ -1,10 +1,10 @@
 import type OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
 import {
-  compact,
   contextChars,
   contextTokens,
   estimateTokens,
+  formatTokens,
   messageTokens,
   requestTokens,
   toolsChars,
@@ -179,10 +179,10 @@ describe('requestTokens', () => {
   });
 });
 
-describe('compact', () => {
+describe('formatTokens', () => {
   it('shortens token counts the way they are read', () => {
-    expect(compact(999)).toBe('999');
-    expect(compact(1234)).toBe('1.2k');
+    expect(formatTokens(999)).toBe('999');
+    expect(formatTokens(1234)).toBe('1.2k');
   });
 });
 

@@ -30,7 +30,7 @@ import {
   modelCapabilitiesFor,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
-import { firstTokenMs, getClient, loadingMs, timeoutMs } from '../endpoint/client.ts';
+import { firstTokenLimitMs, getClient, idleTimeoutMs, loadingMs } from '../endpoint/client.ts';
 import { pinSession, type SessionPin, SLOT_FIELD } from '../endpoint/slots.ts';
 import { HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 import {
@@ -1806,8 +1806,8 @@ async function runTurns(
       loadingTimeoutMs: loadingMs(config),
       contextLimit: config.contextLength ?? 0,
       signal,
-      idleMs: timeoutMs(config),
-      firstChunkMs: firstTokenMs(config) ?? 0,
+      idleMs: idleTimeoutMs(config),
+      firstChunkMs: firstTokenLimitMs(config) ?? 0,
       onNotice: notice,
       mintCallId,
       onThinking: (text: string) => onEvent({ kind: RunEventKind.Thinking, text }),

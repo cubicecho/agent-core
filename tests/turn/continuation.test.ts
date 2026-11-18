@@ -53,7 +53,7 @@ describe('continueTurn', () => {
     const create = vi.fn<Create>().mockReturnValue(replies(' of the way light scatters.', FinishReason.Stop));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
-      startInReasoning: true,
+      startInScratchpad: true,
     });
     expect(create).toHaveBeenCalledTimes(1);
     // What vLLM needs to read the trailing message as a prefill rather than open a fresh turn.

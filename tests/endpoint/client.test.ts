@@ -15,7 +15,7 @@ const {
   EndpointProbeError,
   endpointId,
   endpointKey,
-  firstTokenMs,
+  firstTokenLimitMs,
   getClient,
   listModels,
   NO_KEY,
@@ -922,14 +922,14 @@ describe('endpointKey and endpointId', () => {
   });
 });
 
-describe('firstTokenMs', () => {
+describe('firstTokenLimitMs', () => {
   it('is five idle windows unless the endpoint names its own', () => {
-    expect(firstTokenMs({ requestTimeoutSeconds: 60 })).toBe(300_000);
-    expect(firstTokenMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 600 })).toBe(600_000);
+    expect(firstTokenLimitMs({ requestTimeoutSeconds: 60 })).toBe(300_000);
+    expect(firstTokenLimitMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 600 })).toBe(600_000);
   });
 
   it('is no limit where there is none to multiply, or it is turned off', () => {
-    expect(firstTokenMs({})).toBeUndefined();
-    expect(firstTokenMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 0 })).toBeUndefined();
+    expect(firstTokenLimitMs({})).toBeUndefined();
+    expect(firstTokenLimitMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 0 })).toBeUndefined();
   });
 });

@@ -239,7 +239,7 @@ function joinPartial(sofar: Turn, piece: PartialTurn | undefined): PartialTurn {
  * Only a turn cut off at the ceiling, with an answer begun and no tool call in it, is continued;
  * any other comes back as it was. Content and scratchpad are joined in order, the tool calls a
  * continuation makes are kept, and usage is summed across the requests with `continuations`
- * counting them. The continuation is read as starting in the answer, whatever `startInReasoning`
+ * counting them. The continuation is read as starting in the answer, whatever `startInScratchpad`
  * says: a template that opens a fence for a fresh reply does not open one for a prefill. Its tokens
  * reach `onOutput` as they arrive, so a watcher sees one answer carry on rather than two.
  *
@@ -304,7 +304,7 @@ export async function continueTurn(
             messages: [...body.messages, { role: Role.Assistant, content: answer, ...scratchpad }],
           };
         },
-        { ...options, ...told, droppable, startInReasoning: false },
+        { ...options, ...told, droppable, startInScratchpad: false },
       );
     } catch (error) {
       if (options.signal?.aborted) {
