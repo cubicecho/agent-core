@@ -67,7 +67,7 @@ What this package needs to know about a caller's configuration.
 
 ### calibration
 
-How many characters a token is worth on one model, learned from what its endpoint reports.
+How many characters a token is worth on one model, learned from what its model server reports.
 
 - `calibrate` — Takes one reading from a request that was answered, so the next one to this model is sized by it.
 - `charsPerTokenFor` — The characters per token to size a request to this model with, four until a turn has reported one.
@@ -75,45 +75,45 @@ How many characters a token is worth on one model, learned from what its endpoin
 
 ### capabilities
 
-What an endpoint turned out not to support, and answering it when it says so.
+What a model server turned out not to support, and answering it when it says so.
 
-- `Capabilities` (type) — What one endpoint turned out not to support.
-- `capabilitiesFor` — What this endpoint is known not to support.
+- `Capabilities` (type) — What one model server turned out not to support.
+- `capabilitiesFor` — What this model server is known not to support.
 - `EFFORT_LADDER` — The efforts this package can place, cheapest first.
 - `EFFORT_NONE` — The lowest effort the wire has a word for, which is what a side task asks for.
 - `EFFORT_OFF` — The setting that asks for no `reasoning_effort` field at all.
 - `effortFor` — What to actually put in `reasoning_effort` for a model that has refused the value asked for.
-- `expireCapabilities` — Forgets every endpoint whose entry is older than this, so the next request finds out again.
-- `ModelCapabilities` (type) — What one model on that endpoint turned out not to support.
-- `modelCapabilitiesFor` — What this model on this endpoint is known not to support.
+- `expireCapabilities` — Forgets every model server whose entry is older than this, so the next request finds out again.
+- `ModelCapabilities` (type) — What one model on that model server turned out not to support.
+- `modelCapabilitiesFor` — What this model on this model server is known not to support.
 - `NegotiateOptions` (type) — What `negotiate` takes besides the request.
-- `negotiate` — Sends a request, re-sending it each time the answer is this endpoint refusing something the request can do without.
+- `negotiate` — Sends a request, re-sending it each time the answer is this model server refusing something the request can do without.
 - `OnNotice` (type) — Hears one line of operator text: what was given up on, what is being waited out, what was chosen.
-- `resetCapabilities` — Forgets what one endpoint refused, or every endpoint's when told none.
+- `resetCapabilities` — Forgets what one model server refused, or every model server's when told none.
 - `resetHints` — Forgets which models refused the no-thinking hints, and nothing else they refused.
 
 ### client
 
 - `ClientPoolOptions` (type) — What the client pool is held to across a process.
-- `configureClients` — Changes what the client pool is held to, for a process whose endpoints are not shaped like the deployments these defaults were chosen for.
+- `configureClients` — Changes what the client pool is held to, for a process whose model servers are not shaped like the deployments these defaults were chosen for.
 - `contextLimitFor` — How much a model will read, in tokens.
-- `EndpointProbeError` — `probeEndpoint` could not list an endpoint's models; `kind` says why.
+- `EndpointProbeError` — `probeEndpoint` could not list a model server's models; `kind` says why.
 - `endpointId` — `endpointKey` hashed, for the remembered facts that can leave the process.
-- `endpointKey` — What counts as one endpoint, everywhere in this package that has to remember something about one — the model listings directly, and `capabilities`, the no-thinking hints among them, through its digest `endpointId`.
-- `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
-- `getClient` — The client for an endpoint, built once and kept.
-- `LookupOptions` (type) — What a lookup takes besides the endpoint: `listModels`, `servedWindow` and `contextLimitFor`.
-- `listModels` — Asks an endpoint what it serves, and remembers the answer.
-- `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
+- `endpointKey` — What counts as one model server, everywhere in this package that has to remember something about one — the model listings directly, and `capabilities`, the no-thinking hints among them, through its digest `endpointId`.
+- `firstTokenMs` — The wait for a streamed reply's first chunk, in the SDK's spelling: `undefined` is no limit.
+- `getClient` — The client for a model server, built once and kept.
+- `LookupOptions` (type) — What a lookup takes besides the server: `listModels`, `servedWindow` and `contextLimitFor`.
+- `listModels` — Asks a model server what it serves, and remembers the answer.
+- `ModelInfo` (type) — A model a server lists, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
-- `ProbeFailure` — Why `probeEndpoint` could not list an endpoint's models, in words a form can branch on.
-- `ProbeOptions` (type) — What `probeEndpoint` takes besides the endpoint.
-- `probeEndpoint` — Asks an endpoint nobody has saved yet which models it serves, for a form a person is typing it into.
+- `ProbeFailure` — Why `probeEndpoint` could not list a model server's models, in words a form can branch on.
+- `ProbeOptions` (type) — What `probeEndpoint` takes besides the model server.
+- `probeEndpoint` — Asks a model server nobody has saved yet which models it serves, for a form a person is typing it into.
 - `resetClients` — Forgets every cached client, model listing and answer from a server's own routes, and puts `configureClients` back to the defaults.
-- `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
+- `resolveApiKey` — The key to send, where a model server may inherit one from the settings it overrides.
 - `servedSlots` — How many slots a llama.cpp server runs a model in, for pinning a session to one of them.
-- `servedWindow` — The window a local server's own API says it is serving a model in, for the servers whose listing does not say.
-- `timeoutMs` — An endpoint's request timeout in the SDK's spelling: milliseconds, and `undefined` for no limit.
+- `servedWindow` — The context window a local server's own API says it is serving a model in, for the servers whose listing does not say.
+- `timeoutMs` — A model server's request timeout in the SDK's spelling: milliseconds, `undefined` for no limit.
 
 ### schema-compat
 
@@ -127,14 +127,14 @@ JSON Schema compatibility for llama.cpp-backed servers.
 
 ### slots
 
-Which slot of a multi-slot llama.cpp server each session is on, so concurrent runs stop evicting each other's prompt cache.
+Which slot of a multi-slot llama.cpp server each session is on, so concurrent exchanges stop evicting each other's prompt cache.
 
 - `CACHE_PROMPT_FIELD` — The request field that asks llama.cpp to reuse the slot's cached prefix.
-- `resetSlots` — Forgets every endpoint's slots, held ones included.
+- `resetSlots` — Forgets every model server's slots, held ones included.
 - `SESSION_HEADER` — The header llm-router's sticky affinity reads first, which keeps a session on one provider.
 - `SLOT_FIELD` — The request field that names a llama.cpp slot.
-- `SlotAllocator` (type) — Hands one endpoint's slots to sessions.
-- `slotAllocator` — The slot allocator for one endpoint and model, sized to what its `/props` said.
+- `SlotAllocator` (type) — Hands one model server's slots to sessions.
+- `slotAllocator` — The slot allocator for one model on one model server, sized to what its `/props` said.
 
 ### hook-events
 
@@ -453,28 +453,28 @@ Everything about a request failing that is not about what the request said.
 
 - `backoffMs` — How long to wait before a retry: exponential, with jitter so several tasks failing at once do not return in lockstep.
 - `ContextOverflow` — The request was bigger than the model will read.
-- `EndpointSilent` — The endpoint stopped answering mid-request.
+- `EndpointSilent` — The model server stopped answering mid-request.
 - `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
-- `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
+- `SMALLEST_LIKELY_WINDOW` — The smallest context window worth believing in, and the floor under `runTurn`'s guard.
 
 ### stream
 
-Reading one streamed turn back into a message.
+Reading one streamed reply back into a message.
 
 - `CacheBreakReason` — What the loop changed that would explain a prompt cache that did not hold.
 - `InFlight` (type) — Where the request in flight can be read from, after it has thrown.
-- `LoopUsage` (type) — What a loop spent, as `AgentLoopResult.usage` and a failed run's `usage` carry it.
-- `PartialTurn` (type) — What a turn had said when it ended without coming back: the answer, the scratchpad and the calls, as far as each had arrived.
+- `LoopUsage` (type) — What a loop spent, as `AgentLoopResult.usage` and a failed exchange's `usage` carry it.
+- `PartialTurn` (type) — What a reply had said when it ended without coming back: the answer, the scratchpad and the calls, as far as each had arrived.
 - `Produced` (type) — Whether the model has said anything a second attempt would say twice.
 - `ReasoningDetail` (type) — One of OpenRouter's reasoning blocks: `reasoning.summary` with a `summary`, `reasoning.text` with a `text` and maybe a `signature`, or `reasoning.encrypted` with `data`.
 - `reasoningDetailsEntry` — OpenRouter's reasoning blocks as the field to spread onto an assistant message.
 - `reasoningEntry` — A scratchpad as the field to spread onto an assistant message.
-- `reportsCache` — Whether a turn's usage says the endpoint reported its cache.
+- `reportsCache` — Whether a reply's usage says the model server reported its cache.
 - `StreamTurnOptions` (type) — What `streamTurn` takes besides the request body.
-- `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
-- `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.
+- `streamTurn` — Streams one reply, reporting tokens as they arrive and assembling them back into a message.
+- `Turn` (type) — One streamed reply, put back together into the shape a loop and a transcript work with.
 - `TurnUsage` (type) — What a turn cost, and how it went.
 - `UsageTotals` (type) — A run's token totals, in the spelling every run-level usage shares.
 
@@ -492,7 +492,7 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `ALL_FENCES` — Every fence known, including the two plain-word ones some fine-tunes and prompt-instructed models use.
 - `DEFAULT_FENCES` — The fences nobody writes by accident, and so the ones `streamTurn` reads by default.
 - `Fence` (type) — One way a model marks off its scratchpad inside `content`.
-- `FenceSplitter` — A state machine over a stream of `content` that routes fenced text to reasoning.
+- `FenceSplitter` — A state machine over a stream of `content` that routes fenced text to the scratchpad.
 - `FenceSplitterOptions` (type) — What `FenceSplitter` takes besides its fences.
 - `SPLIT_OUTPUT` — What a `Split` is called when it was not.
 - `SPLIT_REASONING` — What a `Split` is called when it was inside a fence.
@@ -506,11 +506,11 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
 - `compact` — A token count as a message shows it: 1234 → "1.2k".
 - `contextChars` — What each part of a request is worth in characters, by the same walk `requestTokens` divides.
-- `contextTokens` — What each part of a request costs the window, in tokens, adding up to the whole.
+- `contextTokens` — What each part of a request costs the context window, in tokens, adding up to the whole.
 - `estimateTokens` — Rough token count.
 - `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
 - `requestChars` — How many characters a request is worth: the walk `requestTokens` divides, without the division.
-- `requestTokens` — What this request will cost the window, in tokens, near enough.
+- `requestTokens` — What this request will cost the context window, in tokens, near enough.
 - `TokenEstimateOptions` (type) — What the two token estimates below take besides what they measure.
 
 ### tool-calls
@@ -537,7 +537,7 @@ The words the chat-completions wire is written in, each under a name.
 - `PartType` — What a part of a message's content is.
 - `REASONING` — The other spelling of that field: what Ollama's `/v1` sends and the only one it reads back, and OpenRouter's own.
 - `REASONING_CONTENT` — The assistant message field a model's scratchpad is replayed in where it did not arrive as `reasoning`.
-- `REASONING_DETAILS` — OpenRouter's field for reasoning as blocks: summaries, raw text with a signature, or encrypted data.
+- `REASONING_DETAILS` — OpenRouter's field for the scratchpad as blocks: summaries, raw text with a signature, or encrypted data.
 - `ReasoningField` (type) — Either field a scratchpad travels in.
 - `Role` — Who a message is from.
 - `SchemaType` — The types JSON Schema has, as the `type` keyword spells them.

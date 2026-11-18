@@ -12,7 +12,7 @@ import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
  *
  *   1. Normalise the structurally hostile shapes up front, on every request.
  *   2. If the server still reports a grammar failure, strip the advisory `pattern` and
- *      `format` keywords and send it again. The strip latches for the endpoint, so every later
+ *      `format` keywords and send it again. The strip latches for the model server, so every later
  *      request goes without them.
  *
  * Cloud providers accept all of this, so step 2 never fires against them — with one edge worth
@@ -419,7 +419,7 @@ function collectRefs(node: unknown, into: Set<string>) {
  * every sibling of a `$ref`, the branch of a union that was only ever `null` — and the pointers
  * go with them while the pools they named stay behind. On a real Gmail or filesystem schema
  * those pools are most of the parameter bytes, re-sent for every tool on every turn of every
- * run, describing shapes the request no longer mentions anywhere.
+ * exchange, describing shapes the request no longer mentions anywhere.
  *
  * Reachability rather than a single pass, because a definition that is still pointed at can
  * name another; a cycle among them terminates on the `has` check, whether or not anything
@@ -563,14 +563,14 @@ const mapTool = (tool: OpenAI.ChatCompletionTool, fn: (parameters: unknown) => S
  * Both rewrites are cached against the tool object rather than recomputed.
  *
  * @remarks
- * The agent loop rebuilds its tool array on every iteration of every step, and normalising a
- * couple of dozen MCP schemas is the only walk in a run that is neither a request nor a query.
+ * The agent loop rebuilds its tool array on every turn, and normalising a couple of dozen MCP
+ * schemas is the only walk in an exchange that is neither a request nor a query.
  * The pool hands out the same definition objects for the life of a connection, so identity is
  * exactly the right key: a reconnect makes new ones and they are normalised again.
  *
  * Two maps rather than one, because the two answer different questions about the same tool and a
- * relaxed schema is reached by way of a sanitised one. `relaxed` is the load-bearing half: an
- * endpoint that has refused a grammar once has `strictSchemas` off for the life of the process
+ * relaxed schema is reached by way of a sanitised one. `relaxed` is the load-bearing half: a
+ * model server that has refused a grammar once has `strictSchemas` off for the life of the process
  * (see `capabilities.ts`), so from that point every request takes this path and only this path.
  * Caching the call that happens once per connection and not the one that happens on every request
  * had it exactly the wrong way round.

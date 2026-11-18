@@ -480,8 +480,8 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  *
  * @remarks
  * A server whose tool-call parser does not match the model's chat template streams the call as
- * content, and the run ends on what reads like a finished answer. The templates' own markers are
- * looked for — `<tool_call>` (Hermes, Qwen, Qwen3-Coder's markup included), `[TOOL_CALLS]`
+ * content, and the exchange ends on what reads like a finished answer. The templates' own markers
+ * are looked for — `<tool_call>` (Hermes, Qwen, Qwen3-Coder's markup included), `[TOOL_CALLS]`
  * (Mistral, both spellings) and `<|python_tag|>` (Llama 3) — and, failing those, a reply that is
  * nothing but a JSON call, or holds one fenced one, provided every name in it is in `names`. Only
  * text after the last close of a fence in `DEFAULT_FENCES` is searched, since a model deliberating

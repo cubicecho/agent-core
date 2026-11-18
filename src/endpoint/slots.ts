@@ -5,11 +5,11 @@ import { capabilitiesFor, modelCapabilitiesFor, type OnNotice } from './capabili
 import { modelKey, servedSlots } from './client.ts';
 
 /**
- * Which slot of a multi-slot llama.cpp server each session is on, so concurrent runs stop
+ * Which slot of a multi-slot llama.cpp server each session is on, so concurrent exchanges stop
  * evicting each other's prompt cache.
  *
  * `llama-server --parallel N` keeps one KV cache per slot, and a turn that lands on a slot holding
- * another run's prefix is prefilled again from the top. The server's own choice is a guess by
+ * another exchange's prefix is prefilled again from the top. The server's own choice is a guess by
  * prompt similarity; this hands each session a slot of its own for as long as it holds it, and
  * the same one again next time where it is still free.
  */
@@ -33,7 +33,7 @@ interface Slot {
   released: number;
 }
 
-/** One endpoint and model's slots: every one it has had, and how many it has now. */
+/** One model's slots on one model server: every one it has had, and how many it has now. */
 interface SlotPool {
   /** Never shortened, so a slot held across a shrink keeps its holder. */
   slots: Slot[];
@@ -41,14 +41,14 @@ interface SlotPool {
   total: number;
 }
 
-/** Hands one endpoint's slots to sessions. See `slotAllocator`. */
+/** Hands one model server's slots to sessions. See `slotAllocator`. */
 export interface SlotAllocator {
-  /** How many slots the endpoint last said it has, through any allocator for it. */
+  /** How many slots the model server last said it has, through any allocator for it. */
   readonly total: number;
   /**
    * Gives a session a slot for as long as it holds it.
    *
-   * @param session - The run's own key: a run id, a conversation id.
+   * @param session - The exchange's session key: a run id, a conversation id.
    * @returns The slot, from zero: the one this session last held where it is free, else a free
    * one. `undefined` where every slot is held, or this session holds one already.
    */
@@ -61,37 +61,38 @@ export interface SlotAllocator {
   release(session: string): void;
 }
 
-/** Each endpoint and model's slots, and the counter releases are ordered by. */
+/** Each model's slots on each model server, and the counter releases are ordered by. */
 const pools = scoped(() => ({ slots: new Map<string, SlotPool>(), clock: 0 }));
 
 /**
- * The slots one endpoint has, as the allocator keeps them.
+ * The slots one model server has, as the allocator keeps them.
  *
  * @param endpoint - The server, read for `baseUrl` alone.
  * @param model - The model, which a llama.cpp router serves from a process with slots of its own.
  * @returns The key: the base URL as `baseUrlKey` writes it, and the model.
  *
  * @remarks
- * The API key is left out where every other per-endpoint cache keys on it. Two keys reaching
- * different servers through one URL cost only a slot left unused; two keys reaching the same
- * server under two allocators hand one slot to two runs, which is the collision this exists to stop.
+ * The API key is left out where every other cache kept per model server keys on it. Two keys
+ * reaching different servers through one URL cost only a slot left unused; two keys reaching the
+ * same server under two allocators hand one slot to two exchanges, which is the collision this
+ * exists to stop.
  */
 const poolKey = (endpoint: { baseUrl: string }, model: string) => modelKey(baseUrlKey(endpoint.baseUrl), model);
 
 /**
- * The slot allocator for one endpoint and model, sized to what its `/props` said.
+ * The slot allocator for one model on one model server, sized to what its `/props` said.
  *
  * @param endpoint - The server, read for `baseUrl` alone.
  * @param model - The model the requests name.
  * @param total - The slots it has, as `servedSlots` reads them. Zero or less leaves none to hand out.
- * @returns The live allocator: two calls for one endpoint and model share every slot, and each
- * hands out only what the latest `total` allows. A slot past a smaller `total` stays held.
+ * @returns The live allocator: two calls for the same model server and model share every slot,
+ * and each hands out only what the latest `total` allows. A slot past a smaller `total` stays held.
  *
  * @remarks
  * A free slot is chosen in this order: the one the session last held, then one nobody has held,
  * then the one released longest ago, so a session that has just finished keeps its cache for its
- * next step as long as a free slot can be found elsewhere. More sessions than slots get no pin and
- * are not queued; llama.cpp places them by its own guess, which is what every run had before.
+ * next exchange as long as a free slot can be found elsewhere. More sessions than slots get no pin
+ * and are not queued; llama.cpp places them by its own guess, as every exchange was before.
  */
 export function slotAllocator(endpoint: { baseUrl: string }, model: string, total: number): SlotAllocator {
   const key = poolKey(endpoint, model);
@@ -149,7 +150,7 @@ export function slotAllocator(endpoint: { baseUrl: string }, model: string, tota
   };
 }
 
-/** What a run's `session` adds to its requests, and the slot it holds while it runs. */
+/** What an exchange's `session` adds to its requests, and the slot it holds while it runs. */
 export interface SessionPin {
   /** Laid under the config's `extraBody`: `id_slot` and `cache_prompt`, or nothing unpinned. */
   fields: Record<string, unknown>;
@@ -161,21 +162,22 @@ export interface SessionPin {
   release: () => void;
 }
 
-/** What `pinSession` takes besides the endpoint and the session. */
+/** What `pinSession` takes besides the model server and the session. */
 export interface PinOptions {
   /** Abandons the `/props` lookup, which then rejects with the signal's reason. */
   signal?: AbortSignal;
-  /** The server picks its own slots, as a remote agent's does: the run is never pinned. */
+  /** The server picks its own slots, as a remote agent's does: the exchange is never pinned. */
   serverPins?: boolean;
-  /** Told which slot the run was pinned to, or that none was free. */
+  /** Told which slot the exchange was pinned to, or that none was free. */
   onNotice?: OnNotice;
 }
 
 /**
- * Pins a run to a llama.cpp slot where it has a session and the server has slots to hand out.
+ * Pins an exchange to a llama.cpp slot where it has a session and the server has slots to hand out.
  *
- * @param config - The endpoint and the model its requests name. An `extraBody` naming `id_slot` pins itself.
- * @param session - The run's own key. Absent pins nothing.
+ * @param config - The model server and the model its requests name. An `extraBody` naming `id_slot`
+ * pins itself.
+ * @param session - The exchange's session key. Absent pins nothing.
  * @param [options] - Cancellation, whether the server pins its own, and where notices go.
  * @returns The pin, unpinned on a server without slots, one that refused `id_slot` or whose slots
  * are all held. `undefined` without a session. Rejects only with the reason of `signal`.
@@ -217,7 +219,7 @@ export async function pinSession(
   };
 }
 
-/** Forgets every endpoint's slots, held ones included. For tests, and `resetAll`. */
+/** Forgets every model server's slots, held ones included. For tests, and `resetAll`. */
 export function resetSlots() {
   pools.reset();
 }

@@ -6,14 +6,14 @@ import { CALL_EXTRA_KEYS, type CallExtraKey, FUNCTION_TOOL, PartType, Role } fro
  * The characters one token is taken to be, where nothing has measured it.
  *
  * @remarks
- * The fallback, not the rule: once a turn has come back with a reported prompt count, `runTurn`
- * divides by what that endpoint's model was measured at instead. See `charsPerTokenFor`.
+ * The fallback, not the rule: once a reply has come back with a reported prompt count, `runTurn`
+ * divides by what the model on that model server was measured at instead. See `charsPerTokenFor`.
  */
 export const CHARS_PER_TOKEN = 4;
 
 /**
  * Rough token count. Characters over four, because there is no tokenizer here and there is not
- * going to be one: a server that will not say how big its window is will not lend us its
+ * going to be one: a server that will not say how big its context window is will not lend us its
  * vocabulary either.
  *
  * @param text - Prose or serialised JSON — both counted the same way, which is why JSON reads low.
@@ -22,13 +22,13 @@ export const CHARS_PER_TOKEN = 4;
  *
  * @remarks
  * The estimate runs low on tool schemas — JSON packs more tokens into a character than prose
- * does — and that is the side to be wrong on wherever it guards a window, since the cost of
- * guessing high is a run refused that would have worked, and the cost of guessing low is the
- * endpoint's own refusal, which is where we were before the guard existed.
+ * does — and that is the side to be wrong on wherever it guards the context window, since the
+ * cost of guessing high is a request refused that would have worked, and the cost of guessing
+ * low is the model server's own refusal, which is where we were before the guard existed.
  *
  * Everything else here that sizes a request is built on the same ratio — a message's characters,
- * a tool block's, a request's, and the breakdown of a window. `hooks` and `instructions` read this
- * to cap the block each adds, as can an app sizing its own prompt.
+ * a tool block's, a request's, and the breakdown of a context window. `hooks` and `instructions`
+ * read this to cap the block each adds, as can an app sizing its own prompt.
  */
 export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
 
@@ -66,7 +66,7 @@ const CALL_ENVELOPE = 66;
 // `ENVELOPE` is the two keys every message has. These are the three that only some do, and each
 // is the key with its punctuation and the comma after the value it holds — the value's own
 // length is counted where the value is read. Applying `ENVELOPE` alone to these shapes left the
-// keys out, which cost 4.5 tokens on every tool result: the message a tool-using run has most
+// keys out, which cost 4.5 tokens on every tool result: the message a tool-using exchange has most
 // of, and short in the direction that lets an overflow through the guard meant to catch it.
 
 /** What `"name":"",` costs around a message's name. */
@@ -94,7 +94,7 @@ const REFUSAL_PART = 32;
  *
  * @remarks
  * Not in the SDK's types, and written back by `runAgentLoop` as `reasoningReplay` says. Left
- * uncounted, the guard came up short by the whole scratchpad on exactly the runs that replay it.
+ * uncounted, the guard came up short by the whole scratchpad on the very exchanges that replay it.
  */
 const REASONING_KEY = 23;
 
@@ -139,7 +139,7 @@ const divisor = (charsPerToken: number | undefined) => (isPositive(charsPerToken
  *
  * @param message - The message as it will be sent.
  * @returns The characters of its role, its content — a string, or the text and refusal parts of a
- * list — and its name, call id, reasoning and tool calls, plus a constant for each key and part
+ * list — and its name, call id, scratchpad and tool calls, plus a constant for each key and part
  * that carries them. An image or audio part adds nothing.
  */
 export function messageChars(message: OpenAI.ChatCompletionMessageParam): number {
@@ -267,7 +267,7 @@ export function requestChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
 }
 
 /**
- * What this request will cost the window, in tokens, near enough.
+ * What this request will cost the context window, in tokens, near enough.
  *
  * @param body - The request as it will be sent, tools included.
  * @param [options] - The divisor, four when none is given.
@@ -304,10 +304,10 @@ export const requestTokens = (
  *
  * @remarks
  * The question an operator asks is not how big the request is — the total already answers that —
- * but what is filling the window, and the only useful answer names a lever: a system prompt to
- * shorten, a tool list to load on demand instead of declaring whole, a transcript to compact,
+ * but what is filling the context window, and the only useful answer names a lever: a system prompt
+ * to shorten, a tool list to load on demand instead of declaring whole, a transcript to compact,
  * results to prune. So the cut follows the levers rather than the roles: `toolResults` is exactly
- * what `pruneToolResults` can shrink, and `history` is everything `planCompaction` folds, the
+ * what `pruneToolResults` can shrink, and `history` is everything `planCompaction` compacts, the
  * arguments of the calls in it included.
  */
 export interface ContextBreakdown {
@@ -348,8 +348,9 @@ export function contextChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
   };
   for (const message of body.messages) {
     const chars = messageChars(message);
-    // Every system message and not just the leading one: a host that appends guidance, or a
-    // hook that injects a preface, has put more of the window there and wants to be told so.
+    // Every system message and not just the leading one: an app that appends guidance, or a
+    // hook that injects a preface, has put more of the context window there and wants to be
+    // told so.
     if (message.role === Role.System || message.role === Role.Developer) {
       out.system += chars;
     } else if (message.role === Role.Tool) {
@@ -365,7 +366,7 @@ export function contextChars(body: OpenAI.ChatCompletionCreateParamsStreaming): 
 /** What `contextTokens` takes besides the request. */
 export interface ContextBreakdownOptions extends TokenEstimateOptions {
   /**
-   * The prompt count the endpoint reported for this request, if it has answered. Given one, the
+   * The prompt count the model server reported for this request, if it has answered. Given one, the
    * parts are shares of it and the breakdown sums to what was actually charged rather than to an
    * estimate; left out, they are shares of `requestTokens`.
    */
@@ -402,7 +403,7 @@ function share(chars: ContextBreakdown, over: readonly (keyof ContextBreakdown)[
 }
 
 /**
- * What each part of a request costs the window, in tokens, adding up to the whole.
+ * What each part of a request costs the context window, in tokens, adding up to the whole.
  *
  * @param body - The request as it will be sent, tools included.
  * @param [options] - The divisor, and the reported prompt count when there is one.
@@ -452,8 +453,9 @@ export function contextTokens(
  * once over them all.
  *
  * @remarks
- * For the arithmetic that weighs part of a transcript against a window — `planCompaction`'s kept
- * tail — where `estimateTokens` on the text alone would leave out the calls and the envelope.
+ * For the arithmetic that weighs part of a transcript against the context window —
+ * `planCompaction`'s kept tail — where `estimateTokens` on the text alone would leave out the calls
+ * and the envelope.
  */
 export const messageTokens = (
   message: OpenAI.ChatCompletionMessageParam,

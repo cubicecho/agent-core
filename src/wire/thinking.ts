@@ -1,7 +1,7 @@
 /**
  * Telling a model's scratchpad from its answer when both arrive in `content`.
  *
- * A server with a reasoning parser puts the deliberation in a field of its own. One without — a
+ * A server with a reasoning parser puts the scratchpad in a field of its own. One without — a
  * llama.cpp started with `--reasoning-format none`, a model whose template has no parser, most
  * distills on any server — leaves it fenced inline, and then it is shown as output, stored in
  * the transcript and sent back on the next turn, where it costs context and teaches the model to
@@ -78,16 +78,16 @@ export interface FenceSplitterOptions {
 }
 
 /**
- * A state machine over a stream of `content` that routes fenced text to reasoning.
+ * A state machine over a stream of `content` that routes fenced text to the scratchpad.
  *
  * @remarks
  * The reference shape is Vercel's `extractReasoningMiddleware`. A tag can be split across chunks,
  * so the tail of each push that could be the start of one is held until the next push settles
  * it; `finish` releases it. A reply cut off mid-scratchpad ends with the fence still open and its
- * text still reasoning, rather than promoted to the answer.
+ * text still in the scratchpad, rather than promoted to the answer.
  *
  * A closing tag with no opening one is the template having opened it in the prompt. When no
- * fence has been seen yet, everything before it becomes reasoning retroactively in `output` and
+ * fence has been seen yet, everything before it becomes scratchpad retroactively in `output` and
  * `reasoning`, though what was already handed out as output cannot be taken back.
  */
 export class FenceSplitter {
@@ -142,7 +142,7 @@ export class FenceSplitter {
   /**
    * Releases whatever was held back as a possible tag, now that no more is coming.
    *
-   * @returns The held text as one piece — reasoning where the reply ended inside a fence, output
+   * @returns The held text as one piece — scratchpad where the reply ended inside a fence, output
    * otherwise — or nothing where none was held.
    */
   finish(): Split[] {
