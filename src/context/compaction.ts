@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import type { Endpoint } from '../core/config.ts';
+import { isPositive } from '../core/guards.ts';
 import { HookEvent } from '../hooks/hook-events.ts';
 import { consult, type HookContext, type HookRunner, notify, type OnNote, turnMessages } from '../hooks/hooks.ts';
 import { holdsDefinitions } from '../tools/tool-loading.ts';
@@ -593,7 +594,7 @@ const findCut = (
 ): { cut: number; after?: number } => {
   let cut = messages.length;
   let after: number | undefined;
-  if (target !== undefined && target > 0) {
+  if (isPositive(target)) {
     // Forward from the head, so the first cut that reaches the target is the one that folds least.
     let folded = 0;
     for (let at = from; at < messages.length; at++) {

@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { isPositive } from '../core/guards.ts';
 import { CALL_EXTRA_KEYS, type CallExtraKey, FUNCTION_TOOL, PartType, Role } from './wire.ts';
 
 /**
@@ -133,8 +134,7 @@ export interface TokenEstimateOptions {
  * @param charsPerToken - What the caller gave. Absent, zero, negative or `NaN` is nothing usable.
  * @returns `charsPerToken` when it is above zero, otherwise four.
  */
-const divisor = (charsPerToken: number | undefined) =>
-  charsPerToken !== undefined && charsPerToken > 0 ? charsPerToken : CHARS_PER_TOKEN;
+const divisor = (charsPerToken: number | undefined) => (isPositive(charsPerToken) ? charsPerToken : CHARS_PER_TOKEN);
 
 /**
  * How many characters one message is worth: its keys, and its content in whichever shape.
@@ -429,7 +429,7 @@ export function contextTokens(
   { charsPerToken, promptTokens }: ContextBreakdownOptions = {},
 ): ContextBreakdown {
   const chars = contextChars(body);
-  if (promptTokens !== undefined && promptTokens > 0) {
+  if (isPositive(promptTokens)) {
     return share(chars, PARTS, promptTokens);
   }
   const per = divisor(charsPerToken);

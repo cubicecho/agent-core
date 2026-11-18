@@ -1,5 +1,5 @@
 import { type EndpointIdentity, RESERVED_BODY_FIELDS } from '../core/config.ts';
-import { getOrCreate } from '../core/guards.ts';
+import { getOrCreate, isPositive } from '../core/guards.ts';
 import { scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
 import type { Produced } from '../wire/stream.ts';
@@ -638,7 +638,7 @@ export const ceilingAndTemperature = (
     refused?.legacyTokenLimit === false ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
   const isTemperatureSent = temperature !== undefined && refused?.chosenTemperature !== false;
   return {
-    ...(maxTokens !== undefined && maxTokens > 0 ? ceiling : {}),
+    ...(isPositive(maxTokens) ? ceiling : {}),
     ...(isTemperatureSent ? { temperature } : {}),
   };
 };
