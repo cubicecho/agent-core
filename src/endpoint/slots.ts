@@ -1,4 +1,5 @@
 import { baseUrlKey, type Endpoint } from '../core/config.ts';
+import { getOrCreate } from '../core/guards.ts';
 import { scoped } from '../core/scope.ts';
 import { capabilitiesFor, modelCapabilitiesFor, type OnNotice } from './capabilities.ts';
 import { modelKey, servedSlots } from './client.ts';
@@ -32,9 +33,17 @@ interface Slot {
   released: number;
 }
 
+/** One endpoint and model's slots: every one it has had, and how many it has now. */
+interface SlotPool {
+  /** Never shortened, so a slot held across a shrink keeps its holder. */
+  slots: Slot[];
+  /** How many of `slots`, from the first, may be handed out. */
+  total: number;
+}
+
 /** Hands one endpoint's slots to sessions. See `slotAllocator`. */
 export interface SlotAllocator {
-  /** How many slots the endpoint said it has. */
+  /** How many slots the endpoint last said it has, through any allocator for it. */
   readonly total: number;
   /**
    * Gives a session a slot for as long as it holds it.
@@ -53,7 +62,7 @@ export interface SlotAllocator {
 }
 
 /** Each endpoint and model's slots, and the counter releases are ordered by. */
-const pools = scoped(() => ({ slots: new Map<string, Slot[]>(), clock: 0 }));
+const pools = scoped(() => ({ slots: new Map<string, SlotPool>(), clock: 0 }));
 
 /**
  * The slots one endpoint has, as the allocator keeps them.
@@ -75,8 +84,8 @@ const poolKey = (endpoint: { baseUrl: string }, model: string) => modelKey(baseU
  * @param endpoint - The server, read for `baseUrl` alone.
  * @param model - The model the requests name.
  * @param total - The slots it has, as `servedSlots` reads them. Zero or less leaves none to hand out.
- * @returns The live allocator: two calls for one endpoint and model share every slot. Slots past a
- * smaller `total` than last time are dropped, and a holder of one releases into nothing.
+ * @returns The live allocator: two calls for one endpoint and model share every slot, and each
+ * hands out only what the latest `total` allows. A slot past a smaller `total` stays held.
  *
  * @remarks
  * A free slot is chosen in this order: the one the session last held, then one nobody has held,
@@ -88,19 +97,24 @@ export function slotAllocator(endpoint: { baseUrl: string }, model: string, tota
   const key = poolKey(endpoint, model);
   const pool = pools();
   const size = Math.max(0, Math.floor(total));
-  const known = pool.slots.get(key) ?? [];
-  // Resized onto the same slot objects, so an allocator handed out before the resize still
-  // releases what it acquired.
-  const slots =
-    known.length === size ? known : Array.from({ length: size }, (_, index) => known[index] ?? { released: 0 });
-  pool.slots.set(key, slots);
+  const known = getOrCreate(pool.slots, key, () => ({ slots: [], total: 0 }));
+  // Grown onto the same slot objects and never shrunk, so a slot held across a resize is still
+  // held, and is not handed to a second session when the count grows back.
+  for (let index = known.slots.length; index < size; index++) {
+    known.slots.push({ released: 0 });
+  }
+  known.total = size;
 
+  // Read on every call, so an allocator made before a resize hands out only what the pool has now.
   const acquire = (session: string): number | undefined => {
-    const holdsOne = slots.some((slot) => slot.holder === session);
+    const holdsOne = known.slots.some((slot) => slot.holder === session);
     if (holdsOne) {
       return undefined;
     }
-    const free = slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => slot.holder === undefined);
+    const free = known.slots
+      .slice(0, known.total)
+      .map((slot, index) => ({ slot, index }))
+      .filter(({ slot }) => slot.holder === undefined);
     const own = free.find(({ slot }) => slot.last === session);
     const unused = free.find(({ slot }) => slot.last === undefined);
     const oldest = free.reduce<(typeof free)[number] | undefined>(
@@ -117,7 +131,7 @@ export function slotAllocator(endpoint: { baseUrl: string }, model: string, tota
   };
 
   const release = (session: string) => {
-    const held = slots.find((slot) => slot.holder === session);
+    const held = known.slots.find((slot) => slot.holder === session);
     if (!held) {
       return;
     }
@@ -126,7 +140,13 @@ export function slotAllocator(endpoint: { baseUrl: string }, model: string, tota
     held.released = pool.clock;
   };
 
-  return { total: size, acquire, release };
+  return {
+    get total() {
+      return known.total;
+    },
+    acquire,
+    release,
+  };
 }
 
 /** What a run's `session` adds to its requests, and the slot it holds while it runs. */
