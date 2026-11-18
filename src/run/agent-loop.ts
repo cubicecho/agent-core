@@ -1480,9 +1480,8 @@ async function runTurns(
   const reasoningReplay = config.reasoningReplay ?? ReasoningReplay.All;
 
   // Started before the preselection rather than after it: neither reads the other, and in a row
-  // they cost the first request two round trips where one will do. A failing runner is a note, but
-  // an app's `onNote` that throws rejects the gather, perhaps while the preselection is still out:
-  // handled at once so that is no unhandled rejection, and still thrown below, where it always was.
+  // they cost the first request two round trips where one will do. `gather` never rejects, so it
+  // can wait unwatched while the preselection is out.
   const fired = hooks && firing(hooks);
   const gathering: Promise<Gathered> = hooks
     ? gather(hooks.run, fired?.before ?? [], hooks.context, {
@@ -1491,7 +1490,6 @@ async function runTurns(
         maxTokens: hooks.maxTokens,
       })
     : Promise.resolve({ context: '', notes: [] });
-  gathering.catch(() => undefined);
   const { proxied, onDemand, loaded, preselected } = await discoverTools(options, notice);
   const instructions =
     serverInstructions === false

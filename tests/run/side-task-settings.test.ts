@@ -537,10 +537,12 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(result.context).toContain('remembered');
   });
 
-  it("rejects with a note hearer's throw from the gather, not unhandled, while the preselection is out", async () => {
+  it("carries on past a note hearer's throw from the gather while the preselection is out", async () => {
     let answerPreselect: (value: unknown) => void = () => undefined;
-    create.mockImplementationOnce(() => new Promise((resolve) => (answerPreselect = resolve)));
-    const failing = run(onDemand({ toolSelect: { model: 'tiny' } }), {
+    create
+      .mockImplementationOnce(() => new Promise((resolve) => (answerPreselect = resolve)))
+      .mockResolvedValueOnce(says('hello'));
+    const running = run(onDemand({ toolSelect: { model: 'tiny' } }), {
       preselect: true,
       hooks: {
         // A runner that fails is a note, and the host's hearer of it throws.
@@ -550,15 +552,14 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
           throw new Error('hearer broke');
         },
       },
-    }).catch((thrown: unknown) => thrown);
-    // Long enough for the gather to have rejected with nothing yet awaiting it.
+    });
+    // Long enough for the gather to have finished with nothing yet awaiting it.
     await new Promise((resolve) => setTimeout(resolve, 20));
     answerPreselect(answer('["s__read"]'));
-    const error = await failing;
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe('hearer broke');
-    expect(failedRun(error)?.preselected).toEqual(['s__read']);
-    expect(create).toHaveBeenCalledTimes(1);
+    const result = await running;
+    expect(result.notes.map((note) => note.error)).toEqual(['hooks down']);
+    expect(result.preselected).toEqual(['s__read']);
+    expect(create).toHaveBeenCalledTimes(2);
   });
 
   it('says what it opened with when the run fails', async () => {

@@ -2750,24 +2750,17 @@ describe('runAgentLoop', () => {
 
   it('hands a failure before any turn the ledger it was given', async () => {
     const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
-    // A failing hook is a note, and a host that throws on the note rejects the gather, which the
-    // loop reads before its first request.
+    // `beforeTurn` runs ahead of the first request, so its throw is a failure before any turn.
     const error = await runAgentLoop({
       config,
       messages: question,
       dispatch: async () => 'ok',
       ledger: earlier,
-      hooks: {
-        run: async () => {
-          throw new Error('memory is down');
-        },
-        context: { session: { id: 's' } },
-        onNote: () => {
-          throw new Error('the host would not take a note');
-        },
+      beforeTurn: () => {
+        throw new Error('the host could not rebuild the transcript');
       },
     }).catch((caught: unknown) => caught);
-    expect(errorMessage(error)).toBe('the host would not take a note');
+    expect(errorMessage(error)).toBe('the host could not rebuild the transcript');
     expect(failedRun(error)?.ledger).toEqual(earlier);
     expect(create).not.toHaveBeenCalled();
   });

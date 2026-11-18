@@ -335,6 +335,20 @@ describe("a host's onNote that throws", () => {
     throw new Error('onNote blew up');
   };
 
+  it('does not make gather reject, and every note still reaches it', async () => {
+    const heard: string[] = [];
+    const gathered = await gather(
+      failing,
+      [HookEvent.BeforeExchange],
+      { session: { id: 's1' } },
+      {
+        onNote: throwing(heard),
+      },
+    );
+    expect(gathered.notes.map((note) => note.hookId)).toEqual(['one', 'two']);
+    expect(heard).toEqual(['one', 'two']);
+  });
+
   it('does not make notify reject, and every note still reaches it', async () => {
     const heard: string[] = [];
     const notes = await notify(failing, HookEvent.AfterExchange, { session: { id: 's1' } }, throwing(heard));

@@ -506,11 +506,12 @@ const tellSafely = (notes: readonly HookNote[], onNote?: OnNote) => {
  * budget is spent in.
  * @param context - What the hooks are told.
  * @param [options] - `signal` is handed to the runner, and should be the exchange's own: a user
- * who stopped the exchange stopped its recall. `onNote` hears each note as the whole is assembled.
+ * who stopped the exchange stopped its recall. `onNote` hears each note as the whole is assembled,
+ * and one it throws on is dropped.
  * `maxTokens` is the shared budget for this request, read as `assembleContext` reads it: absent
  * or unusable is the process's, from `configureHooks`.
  * @returns What `assembleContext` built from every event's outcomes together. Does not reject for a
- * runner that did.
+ * runner or an `onNote` that did.
  *
  * @remarks
  * This is on the path of the first token, so the events run together rather than one after the
@@ -527,9 +528,7 @@ export async function gather(
 ): Promise<Gathered> {
   const outcomes = await Promise.all(events.map((event) => runSafely(run, event, context, signal)));
   const gathered = assembleContext(outcomes.flat(), maxTokens);
-  for (const note of gathered.notes) {
-    onNote?.(note);
-  }
+  tellSafely(gathered.notes, onNote);
   return gathered;
 }
 
