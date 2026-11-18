@@ -346,6 +346,31 @@ describe('cleanup', () => {
     expect(emit('slow', { kind: RunEventKind.Output, text: 'after' }).seq).toBe(2);
   });
 
+  it('keeps a run waiting on handed-back calls past the unended clock, and its sequence with it', () => {
+    vi.useFakeTimers();
+    emit('handed', { kind: RunEventKind.ToolCall, id: 'c1', name: 'ask_person' });
+    emit('handed', { kind: RunEventKind.Wait, text: '1 call' });
+
+    // Nobody watching while a person takes an afternoon to answer.
+    vi.advanceTimersByTime(4 * 60 * 60_000);
+
+    expect(history('handed')).toHaveLength(2);
+    expect(emit('handed', { kind: RunEventKind.Output, text: 'resumed' }).seq).toBe(3);
+  });
+
+  it('forgets a waiting run once its own clock runs out, and an unended one on the unended clock again', () => {
+    vi.useFakeTimers();
+    configureEvents({ retainWaitingMs: 10 * 60_000 });
+    emit('handed', { kind: RunEventKind.Wait, text: '1 call' });
+    emit('resumed', { kind: RunEventKind.Wait, text: '1 call' });
+    emit('resumed', { kind: RunEventKind.Output, text: 'going on' });
+
+    vi.advanceTimersByTime(11 * 60_000);
+    expect(history('handed')).toEqual([]);
+    // Its last event is not a wait, so it is a live run that has gone quiet, on the longer clock.
+    expect(history('resumed')).toHaveLength(2);
+  });
+
   it('completes a watcher it is ending the run under', async () => {
     const seen: string[] = [];
     let finished = false;
@@ -424,6 +449,7 @@ describe('configureEvents', () => {
       trimSlack: 256,
       retainMs: 60_000,
       retainUnendedMs: 30 * 60_000,
+      retainWaitingMs: 24 * 60 * 60_000,
     });
   });
 });

@@ -1688,8 +1688,9 @@ import { stamp } from "@cubicecho/agent-core";
 const event = stamp(input, runId, ++lastSeq, Date.now()); // an `at` on the input wins
 ```
 
-The four numbers behind that — the backlog cap, the slack it is trimmed in batches of, and the two
-deadlines the sweep reaps on — are defaults rather than decisions. `configureEvents` moves them,
+The five numbers behind that — the backlog cap, the slack it is trimmed in batches of, and the
+three deadlines the sweep reaps on (a finished run, an unended one, and one waiting on calls it
+handed back) — are defaults rather than decisions. `configureEvents` moves them,
 and returns the whole set as it now stands:
 
 ```ts

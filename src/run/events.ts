@@ -56,10 +56,23 @@ export interface EventBusOptions {
    * reaped out from under itself.
    */
   retainUnendedMs?: number;
+  /**
+   * The same for a run whose last event is `wait`: one that handed calls back and stopped until
+   * they are answered, under the same id and the same numbering.
+   *
+   * @remarks
+   * A wait is a planned silence as long as the person answering takes, and the client watching it
+   * has usually gone by the time the run resumes. Reaping it on `retainUnendedMs` restarted `seq`,
+   * so a client reconnecting across the wait discarded the resumed run's events, `done` included.
+   */
+  retainWaitingMs?: number;
 }
 
 /** How many minutes an unended run's events are kept, absent a `retainUnendedMs`. */
 const RETAIN_UNENDED_MINUTES = 30;
+
+/** How many minutes a waiting run's events are kept, absent a `retainWaitingMs`: a day. */
+const RETAIN_WAITING_MINUTES = 24 * 60;
 
 /** The numbers a run of the shape this bus was written for wants. */
 const DEFAULTS: Required<EventBusOptions> = {
@@ -67,6 +80,7 @@ const DEFAULTS: Required<EventBusOptions> = {
   trimSlack: 256,
   retainMs: MS_PER_MINUTE,
   retainUnendedMs: RETAIN_UNENDED_MINUTES * MS_PER_MINUTE,
+  retainWaitingMs: RETAIN_WAITING_MINUTES * MS_PER_MINUTE,
 };
 
 /**
@@ -333,14 +347,46 @@ export const stamp = (input: RunEventInput, runId: string, seq: number, at: numb
   seq,
 });
 
+/** Where a stream's run stands, as its events so far say, which sets how long the sweep keeps it. */
+const StreamPhase = {
+  /** Still writing, or gone quiet with no `done`. */
+  Live: 'live',
+  /** Its last event is `wait`: stopped until the calls it handed back are answered. */
+  Waiting: 'waiting',
+  /** `done` has been seen. Nothing after it changes that. */
+  Ended: 'ended',
+} as const;
+
+/** Any one of the phases in `StreamPhase`. */
+type StreamPhase = (typeof StreamPhase)[keyof typeof StreamPhase];
+
+/** The setting that says how long an unwatched stream in each phase outlives its last event. */
+const RETENTION_BY_PHASE = {
+  [StreamPhase.Live]: 'retainUnendedMs',
+  [StreamPhase.Waiting]: 'retainWaitingMs',
+  [StreamPhase.Ended]: 'retainMs',
+} as const satisfies Record<StreamPhase, keyof EventBusOptions>;
+
+/**
+ * The phase an event puts a run in that has not ended, for the kinds that move it off `live`.
+ *
+ * @remarks
+ * A map rather than an object, so a kind a JavaScript caller made up, `constructor` say, is not
+ * looked up on the prototype.
+ */
+const PHASE_BY_KIND: ReadonlyMap<string, StreamPhase> = new Map([
+  [RunEventKind.Wait, StreamPhase.Waiting],
+  [RunEventKind.Done, StreamPhase.Ended],
+]);
+
 interface Stream {
   events: RunEvent[];
   listeners: Set<(event: RunEvent) => void>;
   seq: number;
   /** When this stream last saw an event, for the sweep below. */
   touched: number;
-  /** Whether `done` has been seen, so a watcher leaving knows the run is over. */
-  ended: boolean;
+  /** Where the run stands, so the sweep knows how long to keep it and a watcher leaving knows it is over. */
+  phase: StreamPhase;
 }
 
 /**
@@ -356,7 +402,7 @@ const streamFor = ({ streams }: Bus, runId: string): Stream =>
     listeners: new Set(),
     seq: 0,
     touched: Date.now(),
-    ended: false,
+    phase: StreamPhase.Live,
   }));
 
 /**
@@ -383,7 +429,8 @@ function sweep(held: Bus) {
     if (stream.listeners.size) {
       continue;
     }
-    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs)) {
+    const isExpired = stream.touched <= now - limits[RETENTION_BY_PHASE[stream.phase]];
+    if (isExpired) {
       streams.delete(runId);
     }
   }
@@ -449,10 +496,11 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   if (stream.events.length > limits.maxEvents + limits.trimSlack) {
     stream.events.splice(0, stream.events.length - limits.maxEvents);
   }
-  // Kept for a moment so a watcher that arrives just after the end still sees how it went,
-  // then dropped: a finished run's record is the row, not this.
-  if (event.kind === RunEventKind.Done) {
-    stream.ended = true;
+  // A finished run is kept for a moment so a watcher that arrives just after the end still sees
+  // how it went, then dropped: its record is the row, not this. A waiting one is kept far longer.
+  const isOver = stream.phase === StreamPhase.Ended;
+  if (isOver === false) {
+    stream.phase = PHASE_BY_KIND.get(event.kind) ?? StreamPhase.Live;
   }
   scheduleSweep(held);
 
@@ -615,7 +663,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // the last watcher of the old stream has no business deleting the new one.
     const stillFiled = streams.get(runId) === stream;
     const unwatched = stream.listeners.size === 0;
-    const nothingMoreToSay = stream.ended || stream.events.length === 0;
+    const nothingMoreToSay = stream.phase === StreamPhase.Ended || stream.events.length === 0;
     if (stillFiled && unwatched && nothingMoreToSay) {
       streams.delete(runId);
     }
