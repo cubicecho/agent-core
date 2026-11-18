@@ -120,7 +120,9 @@ import {
   readCalls,
   replaysReasoning,
   runCalls,
-  splitCalls,
+  type StepOutcome,
+  splitHandedBack,
+  stepMessages,
   type ToolDispatch,
   writtenMessage,
 } from './run-calls.ts';
@@ -543,6 +545,22 @@ export interface AgentLoopOptions {
    */
   dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
   /**
+   * Leaves calls for the host to answer later rather than dispatching them: the step's other calls
+   * run, and the run stops after the step, waiting, with the calls in the result's `pending`.
+   * `true` hands back every call to one of `hostTools`; a predicate is asked of every call that
+   * would reach `dispatch`, by the name and arguments it would be dispatched with.
+   *
+   * @defaultValue `false`
+   *
+   * @remarks
+   * For a call only something outside the run can answer — an app's own tool, a person's approval —
+   * where ending the run would lose it. The transcript holds the step's calls with the handed-back
+   * ones last, so tool messages appended in `pending` order answer them in the order of the call.
+   * A handed-back call is never deduplicated nor put to `parallel`, and a call of the same step
+   * that ends the run wins: see `AgentLoopResult.pending`.
+   */
+  handBack?: boolean | ((call: ToolCallRequest) => boolean);
+  /**
    * Collects artifacts from the two sources that take a guess, beside the `links` every run keeps:
    * `declare` has the model name them through `record_artifact`, and `detect` reads each successful
    * call for the shape of a write. Both off by default.
@@ -622,6 +640,10 @@ export interface AgentLoopOptions {
    * to be into `messages` as given here — see `rebaseLedger` for a transcript rewritten since.
    * This run's requests start a new epoch, because the loop cannot see whether the request before
    * its first one had the same system prompt and tools. Absent starts an empty one.
+   *
+   * @remarks
+   * A run resumed after `pending` passes the waiting run's ledger as it came back: the answers
+   * appended to its `messages` sit after every index in it, so it needs no rebase.
    */
   ledger?: TokenLedger;
   /** Stops the run: the request in flight, and between steps and calls. */
@@ -736,7 +758,7 @@ export interface AgentLoopOptions {
 export interface AgentLoopResult {
   /**
    * The last turn, as `onTurn` was handed it: the one that asked for no tools, or — where a call
-   * `ended` the run — the one that made that call.
+   * `ended` the run, or calls are `pending` — the one that made those calls.
    *
    * @remarks
    * Ended by a call, its `content` is what the model wrote beside its calls, which is often
@@ -757,6 +779,20 @@ export interface AgentLoopResult {
    * the reason — which is how `runMetrics` reads the same outcome off the events.
    */
   ended?: EndedBy;
+  /**
+   * The calls `handBack` left for the host, in the order asked, where the run stopped to wait for
+   * them: each by id, the name it was shown as, and its arguments. Absent where the run answered
+   * or ended.
+   *
+   * @remarks
+   * `messages` then end in the step's assistant message and the results of the calls the loop ran,
+   * with no result for these; `turn` is the turn that made them, `metrics.outcome` is `waiting`, a
+   * `wait` event was emitted, and the `afterTurn` hooks were not told. To go on, the host calls the
+   * loop again with `messages` and one tool message per call appended in this order, and with
+   * `ledger` and `loaded` from this result. A call of the same step that ended the run wins: the
+   * calls that would have been handed back are answered as not run, and none is pending.
+   */
+  pending?: ToolCallRequest[];
   /**
    * The transcript, with every assistant turn and tool result the run added. No system prompt.
    * Under `tool-loop`, no assistant message from the question on carries a scratchpad.
@@ -895,9 +931,9 @@ interface Standing {
  * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
  * @returns The turn that asked for no tools — or made the call that ended the run, with `ended`
- * naming it — and the run around it: the transcript with what the run added, usage, every call,
- * what is loaded and used, the hooks' notes and context, metrics and the ledger. See
- * `AgentLoopResult`.
+ * naming it, or the calls it waits on, in `pending` — and the run around it: the transcript with
+ * what the run added, usage, every call, what is loaded and used, the hooks' notes and context,
+ * metrics and the ledger. See `AgentLoopResult`.
  *
  * @remarks
  * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded`, `used`,
@@ -914,6 +950,11 @@ interface Standing {
  * `ToolAnswer` whose `end` is set, rather than by aborting it: the step's calls are all run and
  * answered, no further request is sent, and the loop resolves with `ended`. An end in the last step
  * `maxToolIterations` allows resolves too, since nothing was left undone.
+ *
+ * A call only the host can answer later — an app's own tool — is left unanswered with `handBack`:
+ * the step's other calls run, a `wait` event is emitted, and the loop resolves with the call in
+ * `pending`. The run goes on when the host calls the loop again with the answers appended; see
+ * `AgentLoopResult.pending`.
  *
  * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system
  * prompt unchanged from step to step, a load adds to the tool array — which every request sends
@@ -1524,14 +1565,49 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
 }
 
 /**
+ * Which calls a run hands back, as `handBack` says it.
+ *
+ * @param handBack - The option as given.
+ * @param hostNames - The host's own tools by name, which `true` hands back.
+ * @returns The predicate, or `undefined` where nothing is handed back.
+ */
+function handsBackFor(
+  handBack: NonNullable<AgentLoopOptions['handBack']>,
+  hostNames: ReadonlySet<string>,
+): ((call: ToolCallRequest) => boolean) | undefined {
+  if (handBack === true) {
+    return (call) => hostNames.has(call.name);
+  }
+  return handBack === false ? undefined : handBack;
+}
+
+/**
+ * How a run that stops after this step stopped.
+ *
+ * @param turn - The step's turn, read for its finish reason.
+ * @param settled - What its calls came to.
+ * @returns `ended` where a call ended it, `waiting` where calls were handed back, and otherwise
+ * what the finish reason says.
+ */
+function stepOutcome(turn: Turn, { ended, pending }: StepOutcome): RunOutcome {
+  if (ended) {
+    return RunOutcome.Ended;
+  }
+  if (pending.length > 0) {
+    return RunOutcome.Waiting;
+  }
+  return endingOf(turn.finishReason);
+}
+
+/**
  * The steps of `runAgentLoop`, throwing what they caught as it was caught.
  *
  * @param options - What `runAgentLoop` was given.
  * @param standing - Written to: once the steps have set themselves up, its `read` is theirs, so the
  * caller can read the run as it stands whether they return or throw.
  * @param [pin] - What the run's session adds to each request. Absent adds nothing.
- * @returns The result of the turn that asked for no tools or whose calls ended the run, or
- * `undefined` when `maxToolIterations` is spent.
+ * @returns The result of the turn that asked for no tools, whose calls ended the run, or whose
+ * calls were handed back, or `undefined` when `maxToolIterations` is spent.
  */
 async function runSteps(
   options: AgentLoopOptions,
@@ -1555,6 +1631,7 @@ async function runSteps(
     maxContinuations = 0,
     toolOrder = true,
     dedupeToolCalls = true,
+    handBack = false,
     preselectRouting = PRESELECT_EXCLUSIVE,
     serverInstructions = false,
     artifacts: collecting = {},
@@ -1699,6 +1776,7 @@ async function runSteps(
     declares: collecting.declare === true,
     detects,
     dedupable,
+    handsBack: handsBackFor(handBack, hostNames),
     dispatch,
     formatToolError,
     parallel,
@@ -1919,13 +1997,14 @@ async function runSteps(
     const replayed = replaysReasoning(reasoningReplay, !isAnswer)
       ? { reasoning: turn.reasoning, field: turn.reasoningField, details: turn.reasoningDetails }
       : undefined;
-    const assistant = assistantMessage(content, parsed, replayed);
+    // The handed-back calls go last, so the answers a host appends follow the results in call order.
+    const split = splitHandedBack(calling, parsed);
+    const assistant = assistantMessage(content, [...split.run, ...split.back.map(({ entry }) => entry)], replayed);
     // Split as it is written rather than only as it is sent, so the result's `messages` and the
     // host's stored rows are a transcript the model can be sent, and every later request replays
     // the same messages byte for byte. Read per step: the latch may have flipped on this request.
-    const pieces = singleCalls(config, modelCapabilitiesFor(supports, config.model))
-      ? splitCalls(assistant)
-      : [assistant];
+    const isSingle = singleCalls(config, modelCapabilitiesFor(supports, config.model));
+    const pieces = stepMessages(assistant, split.back.length, isSingle);
     messages.push(pieces[0]);
     // Recovered calls were never calls on the wire: what the model said is the text they came from.
     await announce(pieces[0], step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls, replayed) });
@@ -1939,10 +2018,15 @@ async function runSteps(
           }
         : undefined;
 
-    const ended = isAnswer ? undefined : await runCalls(calling, parsed, messages, step, opens);
+    const settled: StepOutcome = isAnswer ? { pending: [] } : await runCalls(calling, split, messages, step, opens);
+    const { ended, pending } = settled;
     if (ended) {
       const by = ended.reason ? `: ${ended.reason}` : '';
       notice(`${ended.name} ended the run${by}`);
+    }
+    const isWaiting = pending.length > 0;
+    if (isWaiting) {
+      onEvent({ kind: RunEventKind.Wait, text: `waiting for the host to answer ${counted(pending.length, 'call')}` });
     }
     // Written while the model was answering, it is answered too, while a step is left to do it in.
     const hasStepLeft = step + 1 < config.maxToolIterations;
@@ -1951,20 +2035,25 @@ async function runSteps(
       await admit(late, step + 1);
       continue;
     }
-    if (isAnswer || ended) {
+    if (isAnswer || ended || isWaiting) {
+      // A waiting run's tool loop goes on when the host answers, so it keeps its scratchpads and
+      // tells `afterTurn` nothing until then.
+      const isOver = isWaiting === false;
       // The tool loop is over, so its scratchpads go; what came before the question is the host's.
-      if (reasoningReplay === ReasoningReplay.ToolLoop) {
+      if (reasoningReplay === ReasoningReplay.ToolLoop && isOver) {
         messages = dropReasoning(messages, questionAt());
       }
       // Not awaited: the answer is ready, and remembering it is not something to hold it for.
       // Handed back instead, for a host that wants its notes.
       const afterTurn =
-        hooks && fired?.afterTurn ? tellAfterTurn(hooks, messages, questionAt(), turn.content) : Promise.resolve([]);
+        hooks && fired?.afterTurn && isOver
+          ? tellAfterTurn(hooks, messages, questionAt(), turn.content)
+          : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
-      const outcome: RunOutcome = ended ? RunOutcome.Ended : endingOf(turn.finishReason);
       return {
         turn: shown,
         ...(ended ? { ended } : {}),
+        ...(isWaiting ? { pending } : {}),
         messages,
         usage: loopUsage(usage, cacheReported),
         toolCalls,
@@ -1980,7 +2069,7 @@ async function runSteps(
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
-          outcome,
+          outcome: stepOutcome(turn, settled),
         },
         ledger,
         ...remoteRunOf(remote),
