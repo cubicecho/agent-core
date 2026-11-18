@@ -52,7 +52,7 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | M11 | Model change | One word per concept in prose and private names, the glossary's word; public names go to a decision. | Five names for the scratchpad, four for the window and three for each timeout become one each | — | in progress (R33; A3 deferred) |
 | R32 | Refactor [readability] | Rename private names that clash with another concept: `stepOutcome`, and the local `isRecord` in run-calls that shadows the guard. | M11 | — | done (`a4e4c7a`) |
 | R33 | Refactor [readability] | Use the glossary's word for the window, the scratchpad and compaction in doc comments and comments. | M11 | M11 | in progress |
-| A3 | API change | Rename the public names that mean two things or differ between modules (`compact`, `firstTokenMs`, `timeoutMs`, `startInReasoning`/`startInside`), with deprecated aliases. | M11, public half | M11 | deferred |
+| A3 | API change | Rename the public names that mean two things or differ between modules (`compact`, `firstTokenMs`, `timeoutMs`, `startInReasoning`/`startInside`), with deprecated aliases. | M11, public half | M11 | done (6.0.0: `0d3c247`, `41e4222`) |
 | B7 | Bug | Make `notify` and `consult` truly never reject when the host's note callback throws, as their docs say. | A buggy callback can no longer fail a compaction or a run, or crash a host that fires and forgets | — | done (`4c974a6`) |
 | B8 | Bug | Re-check a hook's inject and veto flags after layers merge, so a merged hook can't carry a flag its event can't use. | The resolved agent describes itself truthfully | — | done (`168e6ba`) |
 | B9 | Bug | Make an empty prompt-part text delete the part from the resolved prompt list, its file or URL reference included. | An operator can remove an inherited prompt part | — | done (`2f2ff14`) |
@@ -62,15 +62,15 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | B13 | Bug | Pair tool results with their calls by id in the run metrics, not by tool name. | Tool time is no longer inflated by a handed-back call's human wait | — | done (`68c3b8d`) |
 | B14 | Bug | Have a slot allocator read the current pool on each call, not the array it was made with. | Two runs are never pinned to one slot after the server's slot count changes | — | done (`e7b668e`) |
 | B15 | Bug | Keep a waiting run's event stream alive on the bus, or keep its numbering, so a resumed run's events are not discarded. | A handed-back run that waits longer than 30 minutes still shows its answer | — | done (`15023f2`) |
-| B16 | Bug | Key the client pool on the normalised URL, as the listings are. | One client per server, not one per spelling of its URL | B24 | after this pass (with B24) |
-| B17 | Bug (question) | Decide whether two fetch functions behind one URL share capability latches, as they do today, or are kept apart, as their listings are. | One backend's refusal stops degrading the other, if they are apart | B24 | after this pass (with B24) |
+| B16 | Bug | Key the client pool on the normalised URL, as the listings are. | One client per server, not one per spelling of its URL | B24 | done (6.0.0: `82c50b3`) |
+| B17 | Bug (question) | Decide whether two fetch functions behind one URL share capability latches, as they do today, or are kept apart, as their listings are. | One backend's refusal stops degrading the other, if they are apart | B24 | done (6.0.0: `82c50b3`) |
 | B18 | Bug | Report a dropped extension field's path so that two different paths can't print the same. | An import report a host can key on | — | done (`f6656b7`) |
 | B19 | Bug | Keep a turn's scratchpad in the order it arrived when it came both as a field and fenced in the text. | The replayed scratchpad matches what a watcher was streamed | — | done (`90a83b1`) |
 | B20 | Bug (question) | Decide which of the two rules latches a refused reasoning effort, since negotiation and side tasks latch it differently. | One rule for one latch; needed before R31 | — | done (`64ed163`) |
-| B21 | Bug (question) | Decide whether a served window should expire like the slot count read from the same answer. | A restarted server's new window is picked up, if they expire alike | — | after this pass |
-| B22 | Bug (question) | Decide whether negotiation should use the shared "refused request" test or keep reading every error by its text. | One definition of a refusal, if merged | — | after this pass |
-| B23 | Bug (question) | Decide who owns a run's outcome: today the loop decides it and the metrics decide it again from a `done` only the host sends. | One owner, and an outcome on the events that agrees with the result | — | after this pass (Q1) |
-| B24 | Bug (question) | Decide what "one endpoint" means across the caches; five caches key it five ways today. | One identity rule; settles B16 and B17 | — | after this pass (Q2) |
+| B21 | Bug (question) | Decide whether a served window should expire like the slot count read from the same answer. | A restarted server's new window is picked up, if they expire alike | — | done (6.0.0: `9beedba`) |
+| B22 | Bug (question) | Decide whether negotiation should use the shared "refused request" test or keep reading every error by its text. | One definition of a refusal, if merged | — | done (6.0.0: `42a063e` (documented)) |
+| B23 | Bug (question) | Decide who owns a run's outcome: today the loop decides it and the metrics decide it again from a `done` only the host sends. | One owner, and an outcome on the events that agrees with the result | — | done (6.0.0: `9e7991d`, `e1bd44d`) |
+| B24 | Bug (question) | Decide what "one endpoint" means across the caches; five caches key it five ways today. | One identity rule; settles B16 and B17 | — | done (6.0.0: `82c50b3`) |
 | B25 | Bug (question) | Decide whether calls that end the run first, stop or never run are told to the host's callbacks and events, or the docs stop saying "every call". | Callbacks and docs that agree | — | answered: documented as it is (D9) |
 | D6 | Docs | Bring `docs/agent-spec.md` up to date: it says nothing is implemented, lists answered questions, and has wrong counts, fields and line references. | A spec doc that describes the code | — | done (`f4f8b4a`) |
 | D7 | Docs | Fix comments that are no longer true: test paths, counts, keying claims, history that no longer describes the code. | Comments a reader can trust | — | done (`d9794a8`, `c091ce4`) |
@@ -85,8 +85,8 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | R39 | Refactor [readability] | Pick a run's outcome from its finish reason, and a hook setting's validator, from lookup tables. | P24 | — | done (`0acc178`) |
 | R40 | Refactor [readability] | Remove the one source type assertion that has a fix in the types. | P17 | — | done (`0a7b7ff`) |
 | R41 | Refactor [sweep] | Apply P14: derive the spec parser's closed-set checks from the vocabularies, and one list in the token breakdown. | Sweep; a new discovery mode or replay value is no longer dropped silently | — | done (`d78d3a6`) |
-| R42 | Refactor [sweep] | Apply P1/P20 to the 64 conditions that really take reading: clock arithmetic, three or more clauses, and inline `=== false`. | Sweep | — | deferred |
-| R43 | Refactor [sweep] | Apply P19, worst first: the 38 doc blocks of seven or more sentences and the 16 `//` runs of five lines or more. | Sweep | — | deferred |
+| R42 | Refactor [sweep] | Apply P1/P20 to the 64 conditions that really take reading: clock arithmetic, three or more clauses, and inline `=== false`. | Sweep | — | done (6.0.0: `80d2145`, `05d27b2`, `091e1c8`, `8ff298e`, `e564ba2`, `99de66c`) |
+| R43 | Refactor [sweep] | Apply P19, worst first: the 38 doc blocks of seven or more sentences and the 16 `//` runs of five lines or more. | Sweep | — | done (6.0.0: `92c40e2`, `6511708`, `4333781`, `5e4923c`, `ec5be16`, `6a47470`) |
 | T5 | Test [readability] | Type the 19 untyped SDK mocks, so about 45 casts in the tests go. | Fakes typed as what they stand in for | — | done (`e4f22f1`, `e0c6885`, `4fd07a9`) |
 | T6 | Test [pin] | Give `scope.ts` and `config.ts` tests of their own. | Pins per-scope state and settings before M10 | — | done (`db97208`) |
 | T7 | Test [pin] | Add a test file for the loop's failure classes and `failedRun`. | Pins them before R23 and R44 move them | — | done (`f2460fb`) |
@@ -95,32 +95,35 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | T10 | Test [pin] | Pin the capability snapshot's JSON byte for byte, hints included. | R30 provably leaves the stored format alone | — | done (`5048de8`) |
 | T12 | Test [pin] | Pin that a failure and a finished run carry the same run fields. | R29 provably changes nothing | — | done (`498717d`) |
 | A4 | API change | Export `OnNotice` and `EndpointIdentity`, which public signatures already use. | Hosts can name the types they pass | — | done (`d522ecd`) |
-| A5 | API change | Gather the tunables into one defaults module, internal ones first, host-imported ones as a separate decision. | P22; one place answers "what can be tuned" | — | deferred |
+| A5 | API change | Gather the tunables into one defaults module, internal ones first, host-imported ones as a separate decision. | P22; one place answers "what can be tuned" | — | approved (6.0.0, in progress) |
 | A6 | API change | Retire the deprecated usage aliases and the deprecated hook `events` option (breaking). | P25; one name per count | — | done (`4593a50`) |
 | A7 | API change | Stop exporting `AGENT_TASKS`, `PRESELECT_SYSTEM`, `requestIndex` and `SPEC_EVENTS`. | A smaller surface, if nobody relies on them | — | declined |
 | A9 | API change (breaking, 5.0.0) | Rename the hook events `beforeTurn`/`afterTurn` to `beforeExchange`/`afterExchange`. | The one place "turn" meant an exchange | M11 | done (`79d61c8`) |
 | A10 | API change (breaking, 5.0.0) | Rename everything that calls a turn a "step" to "turn": `beforeStep`, `StepWindow`, the `step` numbers on `AgentLoopRequest`, `beforeStep`, `onMessage` and `ArtifactFrom`. | Turn is the only word for one model reply and its tools | A9 | done (`4582bd6`) |
 | A11 | API change (breaking, 5.0.0) | Name the events that mark exchanges inside a run after exchanges: `RunEventKind.Step`, `RunEvent.step` and `RunMetrics.steps`. | "Step" leaves the vocabulary entirely | A10 | done (`7f5bd1d`) |
-| A12 | API change (breaking, 5.0.0; to decide) | Rename the public names that call an exchange a "run": `RunOutcome` on a loop result, and the outcome docs. | The code says exchange where the model does | A11, B23 | after this pass (with B23) |
+| A12 | API change (breaking, 5.0.0; to decide) | Rename the public names that call an exchange a "run": `RunOutcome` on a loop result, and the outcome docs. | The code says exchange where the model does | A11, B23 | done (6.0.0: `e1bd44d`) |
 | A8 | API change | Export the list of body fields a document may not set through extra body, so a host can apply #222 itself. | Hosts that build layers in code can follow the rule | B11 | declined (B11 covers documents; see B35) |
-| B28 | Bug | Make `gather` survive an `onNote` that throws, as `notify` and `consult` now do. | One rule for every hook firing | — | open |
-| B29 | Bug | Stop `assignSettings` writing keys that are not settings (`configureEvents({ bogus: 5 })` keeps `bogus` through a reset). | Settings hold only settings | — | open |
-| B30 | Bug | `recoverToolCalls` finds the fence in the lower-cased text and slices the original, which shifts on characters like `İ`; an unclosed fence is still searched. | Recovery never reads inside a scratchpad | — | open |
-| B31 | Bug (question) | A lone fence close that moves earlier answer text into the scratchpad lands after field reasoning that arrived in between (B19 edge). | Arrival order in every case | — | open |
-| B32 | Bug (question) | `parsePrompt` takes a part with both `text` and `ref`, and nothing says which wins; `text: ""` beside a `ref` deletes it. | One meaning per prompt part | — | open |
-| B33 | Bug · low value | A task key holding a dot reads ambiguously in `parseSpec`'s warnings (`dropped` now quotes it). | One path format | — | open |
-| B34 | Bug (question) | The remote-agent notice does not name `callIds` or `recoverToolCalls`, which it also sets aside. | The notice says everything it ignores | — | open |
-| B35 | Bug (question) | An app can still put spelled or reserved fields into `ResolvedAgent.extraBody` after resolving; only `buildBody`'s reserved filter guards the request. | #222 holds past resolution | A8 | open |
-| B36 | Bug (question) | After B20 a side task still retries once without the hints and the effort, so an effort the retry got past is sent again next time. Should the effort-only retry go? | One rule for a refused effort | — | open |
-| B37 | Bug (question) | A hook's veto is never honoured inside the loop: its own compaction does not pass `honourVeto` (`agent-loop.ts` ~1087), and `AgentLoopHooks` has no option for it. Should the loop honour a veto? | Hooks that can stop a summary do, wherever it runs | — | after this pass |
-| A13 | API change (breaking) | Rename `AgentLoopResult.afterTurn`, which holds the `afterExchange` notes, to `afterExchange`. | The result says what the hooks are named | A9 | open |
-| A14 | API change | Export `renamedEvent` (and `LEGACY_HOOK_EVENTS`) so apps that read stored 4.x events or documents themselves, like task_server's run stream and ai-router's timeline, use the same mapping. | One reading of old data | A9, A11 | open |
-| B38 | Bug (question) | The text the model and watchers are sent still uses the old words: "your next step" in the tool-loading prompts, "the run stopped/ended first" in the placeholder results, "No tool call in this run", the `wait` notice's "host", `pruneNotice`'s "window" and "fold", and `record_artifact`'s "this run". Changing what models are sent needs a decision. | Model-facing text in the glossary's words | — | open |
-| R47 | Refactor [pattern] | Have `importCapabilities` latch through `latchModel`/`latchFields`, the last writer M10 left. | One writer for the latches | — | open |
-| R48 | Refactor [simplify] | Stop exporting `StepCalls`, which only `run-calls.ts` reads (R37's list missed it). | The module surface | — | open |
-| T13 | Test [readability] | Narrow the SDK unions in tests without casts (`as OpenAI.ChatCompletionFunctionTool`, `.content as string`). | P17 in tests | — | open |
-| T14 | Test [consistency] | `tests/turn/side-task-settings.test.ts` drives the whole loop and imports `run/`; move it to `tests/run/`. | The layout rule | — | open |
-| D12 | Docs · low value | Start `discoverTools`'s doc with a verb. | A doc that matches its name | — | open |
+| B28 | Bug | Make `gather` survive an `onNote` that throws, as `notify` and `consult` now do. | One rule for every hook firing | — | done (6.0.0: `a49c6f7`) |
+| B29 | Bug | Stop `assignSettings` writing keys that are not settings (`configureEvents({ bogus: 5 })` keeps `bogus` through a reset). | Settings hold only settings | — | done (6.0.0: `39d27d1`) |
+| B30 | Bug | `recoverToolCalls` finds the fence in the lower-cased text and slices the original, which shifts on characters like `İ`; an unclosed fence is still searched. | Recovery never reads inside a scratchpad | — | done (6.0.0: `5f47709`) |
+| B31 | Bug (question) | A lone fence close that moves earlier answer text into the scratchpad lands after field reasoning that arrived in between (B19 edge). | Arrival order in every case | — | done (6.0.0: `66f5ae9` (documented)) |
+| B32 | Bug (question) | `parsePrompt` takes a part with both `text` and `ref`, and nothing says which wins; `text: ""` beside a `ref` deletes it. | One meaning per prompt part | — | done (6.0.0: `41aeb32`) |
+| B33 | Bug · low value | A task key holding a dot reads ambiguously in `parseSpec`'s warnings (`dropped` now quotes it). | One path format | — | done (6.0.0: `0b130bb`) |
+| B34 | Bug (question) | The remote-agent notice does not name `callIds` or `recoverToolCalls`, which it also sets aside. | The notice says everything it ignores | — | done (6.0.0: `f9d9c22`) |
+| B35 | Bug (question) | An app can still put spelled or reserved fields into `ResolvedAgent.extraBody` after resolving; only `buildBody`'s reserved filter guards the request. | #222 holds past resolution | A8 | closed: by design (an app may override after resolving) |
+| B36 | Bug (question) | After B20 a side task still retries once without the hints and the effort, so an effort the retry got past is sent again next time. Should the effort-only retry go? | One rule for a refused effort | — | done (6.0.0: `2ad1631`, `33595ed`, `86264e9`, `9189098`, `ab8e380`) |
+| B37 | Bug (question) | A hook's veto is never honoured inside the loop: its own compaction does not pass `honourVeto` (`agent-loop.ts` ~1087), and `AgentLoopHooks` has no option for it. Should the loop honour a veto? | Hooks that can stop a summary do, wherever it runs | — | done (6.0.0: `1d7a346`) |
+| A13 | API change (breaking) | Rename `AgentLoopResult.afterTurn`, which holds the `afterExchange` notes, to `afterExchange`. | The result says what the hooks are named | A9 | done (6.0.0: `c440a67`) |
+| A14 | API change | Export `renamedEvent` (and `LEGACY_HOOK_EVENTS`) so apps that read stored 4.x events or documents themselves, like task_server's run stream and ai-router's timeline, use the same mapping. | One reading of old data | A9, A11 | done (6.0.0: `39e87c7`, `18e115c`) |
+| B38 | Bug (question) | The text the model and watchers are sent still uses the old words: "your next step" in the tool-loading prompts, "the run stopped/ended first" in the placeholder results, "No tool call in this run", the `wait` notice's "host", `pruneNotice`'s "window" and "fold", and `record_artifact`'s "this run". Changing what models are sent needs a decision. | Model-facing text in the glossary's words | — | done (6.0.0: `eb680a4`) |
+| B39 | Bug | Across layers, a prompt part with only a `ref` above one with only `text` resolves to a part with both (`resolveAgentSpec` merges `{ ...below, ...above }`); B32 fixed it within one document only. | One meaning per prompt part, layered too | B32 | open |
+| B40 | Bug · low value | A dotted `extraBody` key is written unquoted in warning paths (`${path}.${key}`), unlike task keys since B33. | One path format | B33 | open |
+| R49 | Refactor [simplify] | `ModelCapabilities.thinkingHints` is written only by importing a pre-6.0.0 snapshot, since the hints latch as a refused field; under A14's decision (no old-data handling) it and its snapshot field go. | No flag kept only for old data | B36 | approved (6.0.0) |
+| R47 | Refactor [pattern] | Have `importCapabilities` latch through `latchModel`/`latchFields`, the last writer M10 left. | One writer for the latches | — | done (6.0.0: `dd8e5d2`) |
+| R48 | Refactor [simplify] | Stop exporting `StepCalls`, which only `run-calls.ts` reads (R37's list missed it). | The module surface | — | done (6.0.0: `de2629e`) |
+| T13 | Test [readability] | Narrow the SDK unions in tests without casts (`as OpenAI.ChatCompletionFunctionTool`, `.content as string`). | P17 in tests | — | done (6.0.0: `c310e96`) |
+| T14 | Test [consistency] | `tests/turn/side-task-settings.test.ts` drives the whole loop and imports `run/`; move it to `tests/run/`. | The layout rule | — | done (6.0.0: `1793b04`) |
+| D12 | Docs · low value | Start `discoverTools`'s doc with a verb. | A doc that matches its name | — | done (6.0.0: `1c0f691`) |
 | R45 | Refactor [readability] · low value | Rename the private `positive` wrapper and fold `Capabilities.since`'s speculative remark. | Small | — | declined (low value) |
 | R46 | Refactor [consistency] · low value | Write the `'*'` wildcard, the URL schemes and the redirect type as named words. | P16 one-offs | — | declined (low value) |
 | D11 | Docs · low value | Have the README's module table point to the glossary for terms. | One home for terms | D10 | declined (low value) |
@@ -130,6 +133,8 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 
 Status is `open`, `proposed` (an `M` item awaiting Gate 1), `approved`, `deferred`, `declined` or `done`.
 Gate 2 (2026-11-18) approved the recommended set; PR 1 carries the non-breaking items, PR 2 the 5.0.0 renames.
+The open questions were then walked through with the user one by one (2026-11-18); every answer
+is built in 6.0.0, and the item rows say how each was settled.
 
 ## Model changes
 
