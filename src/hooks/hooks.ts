@@ -174,6 +174,20 @@ const HOOK_DEFAULTS: Required<HookOptions> = {
 const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }));
 
 /**
+ * The check each hook setting's value must pass, one for every member of `HookOptions`.
+ *
+ * @remarks
+ * A map rather than an object, because the key is whatever a caller's config held and an object
+ * would look `constructor` up on its prototype.
+ */
+const USABLE_BY_SETTING: ReadonlyMap<string, (value: unknown) => boolean> = new Map(
+  Object.entries({
+    contextTokens: isPositive,
+    preface: (value: unknown) => typeof value === 'string',
+  } satisfies Record<keyof HookOptions, (value: unknown) => boolean>),
+);
+
+/**
  * Whether a value may be a hook setting: a budget above zero, or a preface that is a string.
  *
  * @param value - What a caller gave for the setting, of any type.
@@ -182,8 +196,7 @@ const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }))
  * @returns `true` when the value may be written under that name. `Infinity` is a usable budget and
  * an empty string a usable preface.
  */
-const usableHookSetting = (value: unknown, name: string) =>
-  name === 'preface' ? typeof value === 'string' : name === 'contextTokens' && isPositive(value);
+const usableHookSetting = (value: unknown, name: string) => USABLE_BY_SETTING.get(name)?.(value) ?? false;
 
 /**
  * Changes what hooks are held to, for a process whose windows are not the size these defaults

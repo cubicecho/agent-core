@@ -917,19 +917,25 @@ function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOut
 }
 
 /**
+ * The outcome of a run whose last turn finished for a reason other than an answer.
+ *
+ * @remarks
+ * A map rather than an object, because the key is whatever the server sent and an object would
+ * look `constructor` up on its prototype.
+ */
+const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, RunOutcome> = new Map([
+  [FinishReason.Length, RunOutcome.Truncated],
+  [FinishReason.ContentFilter, RunOutcome.Filtered],
+]);
+
+/**
  * How a run that ends on a turn ends, read off that turn's finish reason.
  *
  * @param finishReason - The last turn's `finish_reason`, as the server sent it.
  * @returns `truncated` for `length`, `filtered` for `content_filter`, and `answered` otherwise.
  */
 export function endingOf(finishReason: string | undefined): RunOutcome {
-  if (finishReason === FinishReason.Length) {
-    return RunOutcome.Truncated;
-  }
-  if (finishReason === FinishReason.ContentFilter) {
-    return RunOutcome.Filtered;
-  }
-  return RunOutcome.Answered;
+  return OUTCOME_BY_FINISH.get(finishReason) ?? RunOutcome.Answered;
 }
 
 /** What `runMetrics` takes besides the events. */
