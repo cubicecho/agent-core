@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { isRecord } from '../core/guards.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
-import { THINK_FENCE } from './thinking.ts';
+import { DEFAULT_FENCES } from './thinking.ts';
 import { FinishReason, FUNCTION_TOOL } from './wire.ts';
 
 /**
@@ -484,15 +484,21 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  * looked for — `<tool_call>` (Hermes, Qwen, Qwen3-Coder's markup included), `[TOOL_CALLS]`
  * (Mistral, both spellings) and `<|python_tag|>` (Llama 3) — and, failing those, a reply that is
  * nothing but a JSON call, or holds one fenced one, provided every name in it is in `names`. Only
- * text after the last `</think>` is searched, since a model deliberating about a call is not making
- * one.
+ * text after the last close of a fence in `DEFAULT_FENCES` is searched, since a model deliberating
+ * about a call is not making one.
  */
 export function recoverToolCalls(
   content: string,
   { names = [], mintCallId = defaultMinter }: { names?: Iterable<string>; mintCallId?: CallIdMinter } = {},
 ): { content: string; toolCalls: ToolCall[] } {
-  const thought = content.toLowerCase().lastIndexOf(THINK_FENCE.close);
-  const from = thought < 0 ? 0 : thought + THINK_FENCE.close.length;
+  const lower = content.toLowerCase();
+  const from = Math.max(
+    0,
+    ...DEFAULT_FENCES.map(({ close }) => {
+      const thought = lower.lastIndexOf(close);
+      return thought < 0 ? 0 : thought + close.length;
+    }),
+  );
   const tail = content.slice(from);
   let found = [...taggedCalls(tail), ...mistralCalls(tail), ...pythonTagCalls(tail)];
   if (!found.length) {

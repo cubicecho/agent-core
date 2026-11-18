@@ -747,8 +747,8 @@ A server whose tool-call parser was written for another template streams the mod
 plain text, and the run ends on a reply that is nothing but a call nobody made. Unless
 `recoverToolCalls: false`, a turn with no calls, some text, and tools to call is passed through
 `recoverToolCalls`, which finds `<tool_call>` blocks (Hermes, Qwen, Qwen3-Coder's markup),
-`[TOOL_CALLS]` (Mistral, both spellings) and `<|python_tag|>` (Llama 3) after the last `</think>`,
-and — naming only tools that exist — a reply that is only a JSON call or holds one fenced one.
+`[TOOL_CALLS]` (Mistral, both spellings) and `<|python_tag|>` (Llama 3) after the last close of a
+`DEFAULT_FENCES` scratchpad (`</think>`, harmony's `<|end|>`, Kimi's `◁/think▷`), and — naming only tools that exist — a reply that is only a JSON call or holds one fenced one.
 Found calls are run under ids of their own, the text is what is left, `onTurn` and the
 result see the turn that way, and a notice says so, since the real fix is the server's parser.
 

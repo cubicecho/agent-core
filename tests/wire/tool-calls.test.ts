@@ -148,6 +148,24 @@ describe('recoverToolCalls', () => {
     expect(recoverToolCalls(text, { names })).toEqual({ content: text, toolCalls: [] });
   });
 
+  it('ignores a call the model only thought about inside a harmony or Kimi fence', () => {
+    const call = '<tool_call>{"name": "read"}</tool_call>';
+    for (const text of [
+      `<|channel|>analysis<|message|>maybe ${call}<|end|><|start|>assistant<|channel|>final<|message|>Done.<|return|>`,
+      `◁think▷maybe ${call}◁/think▷Done.`,
+    ]) {
+      expect(recoverToolCalls(text, { names })).toEqual({ content: text, toolCalls: [] });
+    }
+  });
+
+  it('still recovers a call written after a fence closes', () => {
+    const text = '◁think▷I should read it.◁/think▷<tool_call>{"name": "read"}</tool_call>';
+    expect(recoverToolCalls(text, { names })).toMatchObject({
+      content: '◁think▷I should read it.◁/think▷',
+      toolCalls: [{ function: { name: 'read' } }],
+    });
+  });
+
   it('leaves plain text as it was', () => {
     expect(recoverToolCalls('The answer is {x}.', { names })).toEqual({
       content: 'The answer is {x}.',
