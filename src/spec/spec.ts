@@ -141,7 +141,7 @@ export interface ToolsSpec {
    * How tool definitions reach the model: all of them on every request, a name-only catalogue
    * the model loads from, or that catalogue behind a fixed `load_tools` and `call_tool`.
    */
-  discovery?: 'eager' | 'ondemand' | 'proxy';
+  discovery?: ToolDiscovery;
   /** The hard stop on a tool loop. At least one. */
   maxIterations?: number;
   /**
@@ -432,6 +432,28 @@ class Report {
   }
 
   /**
+   * A field that must be one member of a closed set, or nothing.
+   *
+   * @typeParam T - The set's members.
+   * @param path - Where the field is, for the warning.
+   * @param value - What the document held there.
+   * @param members - Every member, in the order the warning lists them.
+   * @returns The member as written. `undefined` where it is absent, and where it is not a member —
+   * dropped with a warning that lists them all.
+   */
+  oneOf<T extends string>(path: string, value: unknown, members: readonly T[]): T | undefined {
+    if (absent(value)) {
+      return undefined;
+    }
+    const member = members.find((known) => known === value);
+    if (member === undefined) {
+      const quoted = members.map((known) => `"${known}"`);
+      return void this.drop(path, `must be ${quoted.slice(0, -1).join(', ')} or ${quoted.at(-1)}`);
+    }
+    return member;
+  }
+
+  /**
    * A boolean field, or nothing.
    *
    * @param path - Where the field is, for the warning.
@@ -541,18 +563,7 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
   if (!isRecord(value)) {
     return void report.drop('model', 'must be an object');
   }
-  let reasoningReplay: ReasoningReplay | undefined;
-  if (!absent(value.reasoningReplay)) {
-    if (
-      value.reasoningReplay === ReasoningReplay.All ||
-      value.reasoningReplay === ReasoningReplay.ToolLoop ||
-      value.reasoningReplay === ReasoningReplay.None
-    ) {
-      reasoningReplay = value.reasoningReplay;
-    } else {
-      report.drop('model.reasoningReplay', 'must be "all", "tool-loop" or "none"');
-    }
-  }
+  const reasoningReplay = report.oneOf('model.reasoningReplay', value.reasoningReplay, Object.values(ReasoningReplay));
   return kept({
     model: report.string('model.model', value.model),
     ...parseSampling(report, 'model', value),
@@ -697,18 +708,7 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
   if (!isRecord(value)) {
     return void report.drop('tools', 'must be an object');
   }
-  let discovery: ToolsSpec['discovery'];
-  if (!absent(value.discovery)) {
-    if (
-      value.discovery === ToolDiscovery.Eager ||
-      value.discovery === ToolDiscovery.OnDemand ||
-      value.discovery === ToolDiscovery.Proxy
-    ) {
-      discovery = value.discovery;
-    } else {
-      report.drop('tools.discovery', 'must be "eager", "ondemand" or "proxy"');
-    }
-  }
+  const discovery = report.oneOf('tools.discovery', value.discovery, Object.values(ToolDiscovery));
   let servers: string[] | undefined;
   if (!absent(value.servers)) {
     if (!Array.isArray(value.servers)) {

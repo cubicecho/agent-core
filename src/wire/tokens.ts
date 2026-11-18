@@ -425,7 +425,11 @@ export function contextTokens(
   const per = divisor(charsPerToken);
   const tools = Math.ceil(chars.tools / per);
   const rest = Math.ceil((chars.total - chars.tools) / per);
-  const out = share(chars, ['system', 'history', 'toolResults'], rest);
+  const out = share(
+    chars,
+    PARTS.filter((part) => part !== 'tools'),
+    rest,
+  );
   out.tools = tools;
   out.total = rest + tools;
   return out;
