@@ -1,6 +1,5 @@
 import type OpenAI from 'openai';
 import type { Endpoint, EndpointIdentity } from '../core/config.ts';
-import { scoped } from '../core/scope.ts';
 import {
   type Capabilities,
   capabilitiesFor,
@@ -13,7 +12,7 @@ import {
   negotiate,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
-import { endpointId, getClient, modelKey, resolveApiKey, sameUrl } from '../endpoint/client.ts';
+import { getClient, resolveApiKey, sameUrl } from '../endpoint/client.ts';
 import { relaxSchema, sanitizeSchema } from '../endpoint/schema-compat.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { isAbort, refusesRequest } from '../wire/retry.ts';
@@ -35,50 +34,12 @@ import { JSON_SCHEMA_FORMAT, Role } from '../wire/wire.ts';
  * single retry without them, and is not offered them again.
  *
  * @remarks
- * Only the second half is latched here. `reasoning_effort` is a field `negotiate` already knows
- * how to be refused, so it is sent under `ModelCapabilities.reasoningEffort` instead — which
- * both narrows the fallback below to the field it is really about, and shares the answer with
- * the runs on that model rather than keeping a second opinion about it.
+ * The second half is latched as `ModelCapabilities.thinkingHints`. `reasoning_effort` is a field
+ * `negotiate` already knows how to be refused, so it is sent under
+ * `ModelCapabilities.reasoningEffort` instead, which narrows the fallback below to the field it is
+ * really about and shares the answer with the runs on that model.
  */
 const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
-
-/**
- * The models that turned out not to take the hints, by endpoint and model.
- *
- * @remarks
- * Keyed rather than global for the reason the client cache is keyed, and on the same
- * endpoint it is, by `endpointId`: a refusal is a fact about what is on the other end, not about this
- * process. A llama.cpp box and a cloud API are both reachable from one consumer over its
- * lifetime, and the first one's refusal must not stop the second from ever being asked.
- *
- * The model belongs in the key for the same reason. One base URL is routinely many models —
- * OpenRouter, LiteLLM, vLLM serving several at once — and whether `chat_template_kwargs` reaches
- * a chat template that reads it is a property of the model behind the route, not of the route.
- * Keyed on the host alone, the first model to refuse spoke for every model on it.
- *
- * Only the `chat_template_kwargs` half is here. `reasoning_effort` is `negotiate`'s to latch, on
- * the same (endpoint, model) pair, where a run on that model can read it too. A pair is held as
- * `modelKey(endpointId, model)`, which is what `importCapabilities` adds to it by.
- */
-const noHints = scoped(() => new Set<string>());
-
-/**
- * The pairs that refused the hints, the live set, for `exportCapabilities` and
- * `importCapabilities`.
- *
- * @returns The current scope's set itself and not a copy, each pair a
- * `modelKey(endpointId, model)`. Adding to it stops the hints being sent to that pair from the
- * next call.
- */
-export const refusedHints = (): Set<string> => noHints();
-
-/**
- * Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
- *
- * @remarks
- * The current scope's set is emptied in place, so a holder of it sees it empty.
- */
-export const resetHints = () => noHints().clear();
 
 /**
  * The input a side task applies its instruction to: text, or the content parts a vision model
@@ -308,10 +269,9 @@ async function complete(
       droppable: Object.keys(extraBody ?? {}),
     });
 
-  const key = modelKey(endpointId(config), model);
   // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
   // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
-  const hints = !level && !noHints().has(key);
+  const hints = !level && modelCapabilitiesFor(supports, model).thinkingHints;
   let response: Awaited<ReturnType<typeof send>>;
   try {
     response = await attempt(hints, true);
@@ -336,7 +296,7 @@ async function complete(
     // cannot latch is blamed; if it was the effort after all, the next call is left with only
     // the effort to drop and latches that instead.
     if (hints) {
-      noHints().add(key);
+      modelCapabilitiesFor(supports, model).thinkingHints = false;
     } else {
       modelCapabilitiesFor(supports, model).reasoningEffort = false;
     }

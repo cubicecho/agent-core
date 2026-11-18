@@ -145,6 +145,16 @@ export interface ModelCapabilities {
    * what `ModelParams.singleCallMessages` does from the start.
    */
   multiCallMessages: boolean;
+  /**
+   * Takes the no-thinking hints a side task sends, `chat_template_kwargs` asking the template to
+   * leave thinking off. Latched off by a side task, never by `negotiate`, since only a side task
+   * sends them.
+   *
+   * @remarks
+   * The model's rather than the endpoint's because one base URL is routinely many models, and
+   * whether the field reaches a chat template that reads it is a property of the model behind it.
+   */
+  thinkingHints: boolean;
 }
 
 /** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
@@ -168,6 +178,7 @@ export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
   assistantPrefill: true,
   reasoningContent: true,
   multiCallMessages: true,
+  thinkingHints: true,
 };
 
 /** The names of those flags, for a caller that reads or latches each in turn. */
@@ -291,6 +302,21 @@ export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
     return held;
   }
   return capabilities().delete(endpointId(endpoint));
+}
+
+/**
+ * Forgets which models refused the no-thinking hints, and nothing else they refused.
+ *
+ * @remarks
+ * A test seam, as `resetCapabilities` is. Every model the current scope knows is offered the hints
+ * again on its next side task; `resetCapabilities` forgets these with the rest.
+ */
+export function resetHints() {
+  for (const supports of capabilities().values()) {
+    for (const refused of supports.models.values()) {
+      refused.thinkingHints = true;
+    }
+  }
 }
 
 /**

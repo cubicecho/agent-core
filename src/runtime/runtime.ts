@@ -1,7 +1,7 @@
 import { compactTranscript, runCompaction, summariser } from '../context/compaction.ts';
 import { inScope, rootScope, type Scope } from '../core/scope.ts';
 import { calibrate, charsPerTokenFor, resetCalibration } from '../endpoint/calibration.ts';
-import { capabilitiesFor, expireCapabilities, resetCapabilities } from '../endpoint/capabilities.ts';
+import { capabilitiesFor, expireCapabilities, resetCapabilities, resetHints } from '../endpoint/capabilities.ts';
 import {
   type ClientPoolOptions,
   configureClients,
@@ -28,7 +28,7 @@ import { configureEvents, type EventBusOptions, emit, endRun, history, resetEven
 import { preselect } from '../tools/preselect.ts';
 import { continueTurn } from '../turn/continuation.ts';
 import { runTurn } from '../turn/run-turn.ts';
-import { ask, askJson, resetHints, tryAsk } from '../turn/side-task.ts';
+import { ask, askJson, tryAsk } from '../turn/side-task.ts';
 import { resetAll } from './reset.ts';
 import { exportCapabilities, importCapabilities } from './snapshot.ts';
 

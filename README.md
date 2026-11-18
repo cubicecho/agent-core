@@ -1852,7 +1852,7 @@ Nothing found through one function answers for another, or for the global `fetch
 `fetch` and once per function, in a `WeakMap` under the function, so two endpoints with one URL and
 different functions never share a client or a listing, and a function the host drops takes its
 copies with it. A host that makes a function per run makes a client per run too, which is cheap
-when the function is in process. The capability latches and the no-thinking hints stay keyed on the
+when the function is in process. The capability latches, the no-thinking hints among them, stay keyed on the
 URL and the key alone, since they are what a snapshot carries to the next process.
 
 A side task reaches the same function in two ways. `taskCall`, and so the loop's own `preselect` and
@@ -2060,9 +2060,10 @@ const result = await runAgentLoop({ config, preselect: { keywords: true }, compa
 
 ## What is kept for the life of the process
 
-Four caches outlive any one run: the `OpenAI` clients, the model listings, the latched
-capabilities, and `side-task`'s no-thinking hints. A fifth, the characters per token each model was
-measured at, is keyed on the endpoint's capabilities object, so it goes with them. All four are
+Three caches outlive any one run: the `OpenAI` clients, the model listings, and the latched
+capabilities, which include the models that refused a side task's no-thinking hints. A fourth, the
+characters per token each model was measured at, is keyed on the endpoint's capabilities object, so
+it goes with them. All three are
 held once per runtime — once per process, unless you make another, [below](#a-runtime-of-its-own)
 — and keyed on the same notion of an endpoint — its base URL and its API key — and the clients' key carries the request
 timeout as well, since that changes how a request is sent. The clients and listings are held apart
@@ -2112,9 +2113,9 @@ URL as `normalizeBaseUrl` writes it and the key, an absent key read as `NO_KEY` 
 cannot drift. `endpointKey` holds the key in the clear; `endpointId`, its SHA-256 digest, is the one
 that is safe to write down.
 
-`resetAll` drops all five, and `reset.ts` names each seam separately for a test that wants one —
+`resetAll` drops all four, and each has a seam of its own for a test that wants one —
 `resetCalibration` for the measured ratios, `resetHints` for the models that refused the
-no-thinking hints.
+no-thinking hints, leaving the other latches.
 
 The latches can outlive the process as well, because otherwise every restart spends one refused
 request per endpoint and model learning the same facts again. `exportCapabilities` returns every

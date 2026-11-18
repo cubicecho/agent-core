@@ -70,6 +70,7 @@ export {
   type NegotiateOptions,
   negotiate,
   resetCapabilities,
+  resetHints,
 } from './endpoint/capabilities.ts';
 export {
   type ClientPoolOptions,
@@ -317,7 +318,6 @@ export {
   clean,
   listLines,
   parseJson,
-  resetHints,
   type SideTask,
   type SideTaskInput,
   type SideTaskOptions,

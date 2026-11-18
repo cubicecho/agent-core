@@ -6,8 +6,6 @@ import {
   modelCapabilitiesFor,
   OPTIMISTIC_MODEL,
 } from '../endpoint/capabilities.ts';
-import { modelKey } from '../endpoint/client.ts';
-import { refusedHints } from '../turn/side-task.ts';
 
 /**
  * What endpoints and models refused, carried across a restart.
@@ -85,7 +83,6 @@ export interface CapabilitySnapshot {
  */
 const optimisticModel = (): ModelSnapshot => ({
   ...OPTIMISTIC_MODEL,
-  thinkingHints: true,
   refusedFields: [],
   refusedEfforts: [],
 });
@@ -95,13 +92,10 @@ const optimisticModel = (): ModelSnapshot => ({
  *
  * @param model - The snapshot. Its `supportedEfforts` is not read: a published list latches
  * nothing.
- * @returns `true` where a flag is off, the hints were refused, or either refused list has an entry.
+ * @returns `true` where a flag is off, the hints included, or either refused list has an entry.
  */
 const refusedAnything = (model: ModelSnapshot) =>
-  MODEL_FLAGS.some((flag) => !model[flag]) ||
-  !model.thinkingHints ||
-  model.refusedFields.length > 0 ||
-  (model.refusedEfforts?.length ?? 0) > 0;
+  MODEL_FLAGS.some((flag) => !model[flag]) || model.refusedFields.length > 0 || (model.refusedEfforts?.length ?? 0) > 0;
 
 /**
  * Latches every string in a stored list into a live set, skipping what is not a list of them.
@@ -136,19 +130,6 @@ const latchInto = (held: Set<string>, stored: unknown) => {
  */
 export function exportCapabilities(): CapabilitySnapshot {
   const endpoints: Record<string, EndpointSnapshot> = {};
-  const entry = (id: string) => {
-    const held = endpoints[id];
-    if (held) {
-      return held;
-    }
-    const fresh: EndpointSnapshot = { strictSchemas: true, usageInStream: true, models: {} };
-    const since = knownCapabilities().get(id)?.since;
-    if (since !== undefined) {
-      fresh.since = since;
-    }
-    endpoints[id] = fresh;
-    return fresh;
-  };
   for (const [id, supports] of knownCapabilities()) {
     const models: Record<string, ModelSnapshot> = {};
     for (const [name, refused] of supports.models) {
@@ -168,18 +149,13 @@ export function exportCapabilities(): CapabilitySnapshot {
       }
     }
     if (!supports.strictSchemas || !supports.usageInStream || Object.keys(models).length) {
-      Object.assign(entry(id), {
+      endpoints[id] = {
         strictSchemas: supports.strictSchemas,
         usageInStream: supports.usageInStream,
         models,
-      });
+        since: supports.since,
+      };
     }
-  }
-  for (const key of refusedHints()) {
-    const [id, name] = JSON.parse(key) as [string, string];
-    const models = entry(id).models;
-    models[name] ??= optimisticModel();
-    models[name].thinkingHints = false;
   }
   return { version: CAPABILITY_SNAPSHOT_VERSION, savedAt: new Date().toISOString(), endpoints };
 }
@@ -245,9 +221,6 @@ export function importCapabilities(snapshot: unknown): boolean {
         }
       }
       latchInto(refused.refusedFields, model.refusedFields);
-      if (model.thinkingHints === false) {
-        refusedHints().add(modelKey(id, name));
-      }
     }
   }
   return true;

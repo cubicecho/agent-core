@@ -284,8 +284,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Capabilities (latches):** what a model server turned out not to support, learned from its
   refusals and remembered. Owner: `Capabilities`, `capabilitiesFor` (`src/endpoint/capabilities.ts`).
 - **Model capabilities:** the same, per model: effort, the ceiling's spelling, a chosen
-  temperature, structured output, prefill, replayed reasoning, several calls per message, and
-  refused fields and efforts. Owner: `ModelCapabilities`, `modelCapabilitiesFor`.
+  temperature, structured output, prefill, replayed reasoning, several calls per message, the
+  no-thinking hints, and refused fields and efforts. Owner: `ModelCapabilities`,
+  `modelCapabilitiesFor`.
 - **Latch (downgrade):** turning a capability off for good after one refusal, so later requests
   are sent the lesser form at once. Owner: the `Answer`s in `ANSWERS`.
 - **Negotiation:** sending a request and re-sending it without whatever the server refused, until
@@ -342,7 +343,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   choosing its tools or summarising, and is never worth failing it. Owner: `ask`, `askReply`,
   `askJson` (`src/turn/side-task.ts`); `TaskSpec` in a document, `SideTask` in code.
 - **No-thinking hints:** fields sent so a reasoning model answers a side task directly, dropped
-  per model once refused. Owner: `NO_THINKING`, `refusedHints`.
+  per model once refused. Owner: `NO_THINKING`; the latch is `ModelCapabilities.thinkingHints`
+  (`src/endpoint/capabilities.ts`).
 - **Structured answer:** a side task's reply as JSON for a schema. Owner: `askJson`, `parseJson`.
 - **Forgiving side task:** a side task whose failure becomes "no answer" and a notice. Owner:
   `tryAsk`.

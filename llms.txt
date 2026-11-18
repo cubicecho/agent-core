@@ -88,6 +88,7 @@ What an endpoint turned out not to support, and answering it when it says so.
 - `NegotiateOptions` (type) — What `negotiate` takes besides the request.
 - `negotiate` — Sends a request, re-sending it each time the answer is this endpoint refusing something the request can do without.
 - `resetCapabilities` — Forgets what one endpoint refused, or every endpoint's when told none.
+- `resetHints` — Forgets which models refused the no-thinking hints, and nothing else they refused.
 
 ### client
 
@@ -419,7 +420,6 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `clean` — Strips the quoting and list punctuation models decorate short answers with.
 - `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
 - `parseJson` — The first array or object in a model's reply, parsed, whatever prose or fence surrounds it.
-- `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
 - `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
