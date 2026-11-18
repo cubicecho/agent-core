@@ -151,6 +151,13 @@ export const RunEventKind = {
    */
   Usage: 'usage',
   /**
+   * The run stopped to wait for the host to answer calls it handed back: the step's `tool-call`
+   * events with no `tool-result`, as `AgentLoopResult.pending` lists them. `text` says how many.
+   * Not an end: the run goes on, under the same id, once they are answered, and `watch` keeps
+   * following it until `done`.
+   */
+  Wait: 'wait',
+  /**
    * The run ended. Always last, and always sent. A run a tool call ended carries that call: `id`
    * the call's, `name` the tool, and `text` the reason, as `AgentLoopResult.ended` has them.
    */
@@ -791,7 +798,7 @@ export interface RunMetrics {
    * turn over its own `contextLength`, or over the one `runMetrics` was told where it has none.
    */
   largestPromptShare?: number;
-  /** How it ended, read off `done` and the last turn. */
+  /** How it ended, read off `done` and the last turn, or `waiting` after a `wait` nothing followed. */
   outcome?: RunOutcome;
 }
 
@@ -823,6 +830,11 @@ export const RunOutcome = {
    * does a `done` that names the tool.
    */
   Ended: 'ended',
+  /**
+   * The run is not over: it handed calls back and waits for the host to answer them, as a `wait`
+   * event with no `turn` or `done` after it says, and `AgentLoopResult.pending` lists them.
+   */
+  Waiting: 'waiting',
   /**
    * `done` said the run was not ok. Whether that was an error, a stop or the tool budget is in
    * the host's own `done` text and not here.
@@ -929,10 +941,16 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   // Calls waiting for their results, by tool name, oldest first.
   const pending = new Map<string, number[]>();
   let last: TurnReport | undefined;
+  // Whether the run's latest stretch stopped on a `wait`; the next turn is the run going on.
+  let waits = false;
 
   for (const event of events) {
     if (event.kind === RunEventKind.Step) {
       metrics.steps++;
+    } else if (event.kind === RunEventKind.Turn) {
+      waits = false;
+    } else if (event.kind === RunEventKind.Wait) {
+      waits = true;
     } else if (event.kind === RunEventKind.ToolCall) {
       if (event.name === LOAD_TOOLS) {
         metrics.loadCalls++;
@@ -1009,6 +1027,10 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
     }
   }
 
+  const isWaiting = waits && metrics.outcome === undefined;
+  if (isWaiting) {
+    metrics.outcome = RunOutcome.Waiting;
+  }
   if (events.length > 1) {
     metrics.wallMs = events[events.length - 1].at - events[0].at;
   }

@@ -865,6 +865,92 @@ await runAgentLoop({
 });
 ```
 
+### Calls handed back to the host
+
+Some calls are answered from outside the run, later: an app's own tool that a router hands back to
+the app as `finish_reason: "tool_calls"`, an approval a person gives tomorrow. Ending the run on
+them loses it, so `handBack` leaves them unanswered and the run waits instead. `true` hands back
+every call to one of `hostTools`; a predicate is asked of every call that would reach `dispatch`,
+with the name and arguments it would be dispatched with.
+
+```ts
+const result = await runAgentLoop({ ...options, hostTools: appTools, handBack: true });
+if (result.pending) {
+  // [{ id, name, args, raw, repaired }], in the order the model asked.
+  await store.wait(runId, {
+    messages: result.messages,
+    pending: result.pending,
+    ledger: result.ledger,
+    loaded: result.loaded,
+  });
+}
+```
+
+The step's other calls still run first, and are answered as usual; the handed-back ones are not
+dispatched, get no result and no `tool-result` event, are not counted in `used`, and the loop sends
+nothing after the step.
+Each is told as a `tool-call` event and to `onToolCall`, then one `wait` event says the run is
+waiting. `wait` is not `done`: the run goes on under the same id, and `watch` keeps following it.
+`metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The `afterTurn`
+hooks are not told, and under `reasoningReplay: "tool-loop"` the scratchpads stay, since the tool
+loop is not over. A wait in the last step `maxToolIterations` allows resolves like any other.
+
+The transcript holds the step's calls with the handed-back ones last, whatever order the model
+asked in, so `messages` end in the results of the calls the loop ran and a host that appends one
+tool message per pending call, in `pending` order, answers every call in its order. A template
+that pairs calls with results by position (Qwen, GLM, DeepSeek V3.2) reads that right. Written one
+call a message, the handed-back calls share one assistant message after the pairs, which
+`oneCallPerMessage` splits once their answers follow it.
+
+A host that finds the waiting run by the id an answer comes back with, across many runs, passes
+`callIds: 'minted'` as well: a server that counts its ids from zero gives two waiting runs the same
+`call_0`, and a minted id is unique wherever it is handed out.
+
+- **`parallel`.** A handed-back call is never put to the predicate and is no barrier: it does not
+  run. A call the model asked for after it runs before the host has answered it.
+- **`dedupeToolCalls`.** Never asked of a handed-back call. Two identical ones are both pending,
+  each under its own id: only the host knows whether asking twice means twice.
+- **A call that ends the run.** The end wins. The calls that would have been handed back are
+  answered `Not run: the run ended first.`, nothing is pending, and the result has `ended`.
+- **Arguments that do not parse.** Answered by the loop with the parse error, as always, so the
+  model fixes them: a call is handed back only where it would have been dispatched.
+
+To go on, call the loop again with the stored transcript and the answers appended. It is the same
+run as far as the host is concerned; the loop sees a transcript that ends in tool messages, which
+it has always taken.
+
+```ts
+const waiting = await store.waiting(runId);
+const result = await runAgentLoop({
+  ...options,
+  messages: [
+    ...waiting.messages,
+    ...waiting.pending.map(({ id }) => ({ role: "tool", tool_call_id: id, content: answers.get(id) })),
+  ],
+  ledger: waiting.ledger,   // its indexes are all before the answers, so no rebase
+  loaded: waiting.loaded,   // what was loaded on demand; proxied runs keep theirs in the history
+  hostTools: appTools,
+  handBack: true,
+  session: runId,           // the same slot and cache affinity as before
+});
+```
+
+What a host keeps for a resume is the result's `messages`, `pending`, `ledger` and `loaded`, and
+whatever it built the first call from that the transcript does not hold: the system prompt, the
+tools, and the config. A resume also needs:
+
+- **No second preselection.** Pass no `preselect`, or `preselected: []`. A proxied shortlist would
+  otherwise be written after the answers.
+- **The hooks told once.** Fire only `afterTurn` and `beforeCompact` on a resume, with `question`
+  the question as typed, and put the first call's `context` back with `withContext`, as for any
+  later call (see `hooks`).
+- **Its own budget.** `maxToolIterations` counts per call, and `usage` and `metrics` are per call
+  too; `runMetrics` over every stretch's events sums the run.
+- **An estimate on its first step.** The ledger carries, but the loop's own `prune` and `compact`
+  plan the first step of any call from an estimate: a figure carried from an earlier call cannot
+  be checked against a transcript the host may have folded since. A host planning in `beforeStep`
+  can measure with `estimateFrom(window.ledger, messages)`.
+
 ### Input that arrives while it runs
 
 A person who types while the run is working — "use the other file", "also check the tests" — is
@@ -889,7 +975,8 @@ const result = await runAgentLoop({
 // Anything still in `inbox` came after the last boundary: the host's to send as the next turn.
 ```
 
-Input that comes when no step is left, or after a call that ended the run, stays where it is: the
+Input that comes when no step is left, after a call that ended the run, or with calls handed
+back, stays where it is: the
 loop returns without asking, and the host sends it as a turn of its own. The question the hooks
 were gathered onto is still the question after input lands behind it, rebuilt transcript or not.
 
@@ -1056,7 +1143,7 @@ a lesser body and a continuation with the reply so far on the end, and neither i
 reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft
 acceptance, the largest prompt against its window, turns cut off, tool errors by name, what
 `load_tools` resolved to (`toolsLoaded`, `redundantLoads`, `unknownToolNames`, off each load's
-result as `loads`), and an `outcome` — `answered`, `truncated`, `filtered`, `ended` or `failed`. The loop returns it as `metrics`. Every turn carries its own
+result as `loads`), and an `outcome` — `answered`, `truncated`, `filtered`, `ended`, `waiting` or `failed`. The loop returns it as `metrics`. Every turn carries its own
 window and every load its own counts, so a host that runs one loop per step gets the whole run from
 `runMetrics` over all the loops' events, with no per-loop result to merge. It is a sibling of `fold`
 rather than part of it, since `fold`'s blocks are for display and a summary is not one:
@@ -1556,6 +1643,8 @@ already, and so are the ones `runCompaction` hands the `beforeCompact` hooks.
 ## Watching a run
 
 `watch` replays what the run has already emitted, then yields what happens next until `done`.
+A `wait` is not an end: a run that hands calls back goes on under the same id once they are
+answered, so its watcher stays.
 `emit` assigns `seq`, a per-run counter from 1, and that is what a client orders and
 de-duplicates on.
 

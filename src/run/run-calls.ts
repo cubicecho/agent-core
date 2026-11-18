@@ -76,6 +76,9 @@ const STOPPED_CALL = 'Stopped before this call finished.';
 /** The same for a call of that step the loop never got to. */
 const UNRUN_CALL = 'Not run: the run stopped first.';
 
+/** What a call that would have been handed back is answered with, where a call of its step ended the run. */
+const ENDED_CALL = 'Not run: the run ended first.';
+
 /**
  * What a tool's answer reads as where it said nothing: the words agent-mcp-pool uses for an MCP
  * result with no content, so an empty answer reads the same whichever dispatcher gave it.
@@ -351,6 +354,35 @@ export function oneCallPerMessage(messages: OpenAI.ChatCompletionMessageParam[])
 }
 
 /**
+ * The messages a step's assistant message is written into the transcript as.
+ *
+ * @param message - The step's assistant message, its handed-back calls last. Not written to.
+ * @param handedBack - How many of its calls, counted from the end, are handed back.
+ * @param single - Whether the model is written one call per message.
+ * @returns `[message]` unless `single`; otherwise `splitCalls`' pieces of the calls the loop runs,
+ * and after them one message holding every handed-back call.
+ *
+ * @remarks
+ * The handed-back calls share a message because no result can sit between them until the host
+ * answers. `oneCallPerMessage` splits it when it is sent, once the answers follow it.
+ */
+export function stepMessages(message: ReasonedMessage, handedBack: number, single: boolean): ReasonedMessage[] {
+  if (single === false) {
+    return [message];
+  }
+  const calls = message.tool_calls ?? [];
+  const runCount = calls.length - handedBack;
+  const isAllOneKind = handedBack === 0 || runCount === 0;
+  if (isAllOneKind) {
+    return handedBack === 0 ? splitCalls(message) : [message];
+  }
+  return [
+    ...splitCalls({ ...message, tool_calls: calls.slice(0, runCount) }),
+    { role: Role.Assistant, content: null, tool_calls: calls.slice(runCount) },
+  ];
+}
+
+/**
  * The transcript with `reasoning_content`, `reasoning` and `reasoning_details` taken off its
  * assistant messages from an index on.
  *
@@ -501,6 +533,8 @@ export interface Calling {
   /** Which successful calls are read for the shape of a write. Absent where none are. */
   detects: ((call: ToolCallRequest) => boolean) | undefined;
   dedupable: (call: ToolCallRequest) => boolean;
+  /** Which calls are left for the host to answer rather than dispatched. Absent where none are. */
+  handsBack: ((call: ToolCallRequest) => boolean) | undefined;
   dispatch: ToolDispatch;
   /** What the model reads for a dispatch that threw. */
   formatToolError: (error: unknown) => string;
@@ -681,17 +715,24 @@ interface Prepared {
   passed?: boolean;
 }
 
+/** A call looked through: the request every host callback is handed, and who answers it. */
+interface LookedThrough extends Pick<Prepared, 'request' | 'load' | 'record' | 'refused'> {
+  /** Whether it is a `call_tool` looked through to the tool it names. */
+  proxy: boolean;
+  /** Whether it would reach `dispatch`: its arguments read, and the loop not answering it itself. */
+  dispatched: boolean;
+}
+
 /**
  * A call looked through and built into the request every host callback is handed.
  *
  * @param run - The run the call belongs to. Read, never written to.
  * @param entry - The call, with its arguments read.
- * @returns The call, its request, and whether the loop answers it itself or may answer it from
- * an identical call. `dedupeToolCalls` is asked only of a call that would reach `dispatch`.
+ * @returns The request, whether the loop answers the call itself, and why a `call_tool` was refused.
  */
-function prepare(run: Calling, entry: ReadCall): Prepared {
+function lookThrough(run: Calling, entry: ReadCall): LookedThrough {
   const { catalog, onDemand } = run;
-  const { call, args, normal } = entry;
+  const { call, args } = entry;
   const proxy = run.proxies && call.function.name === CALL_TOOL;
   const { name, input: raw } = shownAs(run, entry);
   // Looked through before the call is announced, so a host is told of the tool it names with
@@ -719,9 +760,92 @@ function prepare(run: Calling, entry: ReadCall): Prepared {
   const load = onDemand && call.function.name === LOAD_TOOLS;
   const record = run.declares && call.function.name === RECORD_ARTIFACT;
   const dispatched = args !== undefined && load === false && record === false && refused === undefined;
+  return { request, load, record, refused, proxy, dispatched };
+}
+
+/**
+ * A call made ready to run: looked through, and keyed for `dedupeToolCalls`.
+ *
+ * @param run - The run the call belongs to. Read, never written to.
+ * @param entry - The call, with its arguments read.
+ * @returns The call, its request, and whether the loop answers it itself or may answer it from
+ * an identical call. `dedupeToolCalls` is asked only of a call that would reach `dispatch`.
+ */
+function prepare(run: Calling, entry: ReadCall): Prepared {
+  const { request, load, record, refused, proxy, dispatched } = lookThrough(run, entry);
   // Keyed on the inner call, so one made through `call_tool` and one made natively share.
-  const key = `${name}\0${proxy ? JSON.stringify(inner) : normal}`;
+  const key = `${request.name}\0${proxy ? JSON.stringify(request.args) : entry.normal}`;
   return { entry, request, load, record, refused, dedupable: dispatched && run.dedupable(request), key };
+}
+
+/** One call of a step handed back to the host: the call as read, and the request the host is handed. */
+export interface HandedBack {
+  entry: ReadCall;
+  request: ToolCallRequest;
+}
+
+/** A step's calls by who answers them: the loop, through `dispatch`, or the host, after the run. */
+export interface StepCalls {
+  /** The calls the loop runs, in the order asked. */
+  run: ReadCall[];
+  /** The calls handed back, in the order asked. */
+  back: HandedBack[];
+}
+
+/**
+ * A step's calls split into the ones the loop runs and the ones it hands back.
+ *
+ * @param run - The run, read for `handsBack`. Not written to.
+ * @param parsed - The step's calls, with their arguments read, in the order asked.
+ * @returns Every call under `run` where nothing is handed back. A call is handed back only where it
+ * would reach `dispatch` and `handsBack` passes it.
+ */
+export function splitHandedBack(run: Calling, parsed: ReadCall[]): StepCalls {
+  const { handsBack } = run;
+  if (!handsBack) {
+    return { run: parsed, back: [] };
+  }
+  const ran: ReadCall[] = [];
+  const back: HandedBack[] = [];
+  for (const entry of parsed) {
+    const { request, dispatched } = lookThrough(run, entry);
+    const isHandedBack = dispatched && handsBack(request);
+    if (isHandedBack) {
+      back.push({ entry, request });
+    } else {
+      ran.push(entry);
+    }
+  }
+  return { run: ran, back };
+}
+
+/**
+ * Counts a dispatched call's tool as used, loading it first where the model skipped `load_tools`.
+ *
+ * @param run - The run. Written to: its `used`, and its `loaded` for a catalogued tool on demand.
+ * @param name - The tool, as the call is shown.
+ *
+ * @remarks
+ * A model that calls a catalogued tool by name is right about what it wants. Not proxied, where
+ * loaded means its definition is in the history, and this call put none there.
+ */
+function markUsed(run: Calling, name: string) {
+  const { catalog, onDemand, proxied } = run;
+  if (onDemand && !proxied && inCatalog(catalog, name)) {
+    run.loaded.add(name);
+  }
+  run.used.add(name);
+}
+
+/**
+ * Tells the host a call has started, as a `tool-call` event and through `onToolCall`.
+ *
+ * @param run - The run, whose watchers and host hear of it.
+ * @param request - The call, under the name it is shown as.
+ */
+function announceCall(run: Calling, request: ToolCallRequest) {
+  run.onEvent({ kind: RunEventKind.ToolCall, id: request.id, name: request.name, text: preview(request.raw) });
+  run.onToolCall?.(request);
 }
 
 /**
@@ -814,12 +938,11 @@ async function runCall(
   answered: Map<string, Promise<string | ToolAnswer>>,
   step: number,
 ): Promise<Ran> {
-  const { catalog, onDemand, proxied, signal } = run;
+  const { signal } = run;
   const { entry, request, load, record, refused, dedupable, key } = prepared;
   const { call, args, error: unreadable } = entry;
-  const { name, raw } = request;
-  run.onEvent({ kind: RunEventKind.ToolCall, id: call.id, name, text: preview(raw) });
-  run.onToolCall?.(request);
+  const { name } = request;
+  announceCall(run, request);
   const { report, close } = reportFor(run, call.id, name);
   let content: string;
   let links: ResourceLink[] = [];
@@ -843,13 +966,7 @@ async function runCall(
       if (refused) {
         throw refused.error;
       }
-      // A model that skips `load_tools` and calls a catalogued tool by name is right about
-      // what it wants; load it and run it rather than refusing. Not proxied, where loaded
-      // means its definition is in the history, and this call put none there.
-      if (onDemand && !proxied && inCatalog(catalog, name)) {
-        run.loaded.add(name);
-      }
-      run.used.add(name);
+      markUsed(run, name);
       // Read before `once` looks, which it does before it awaits anything.
       shared = dedupable && answered.has(key);
       dispatched = true;
@@ -888,41 +1005,48 @@ async function runCall(
   return { result, end };
 }
 
+/** How a step's calls came out: the call that ended the run, or the calls left for the host. */
+export interface StepOutcome {
+  /** The first call, in the order asked, whose answer ended the run. */
+  ended?: EndedBy;
+  /** The calls handed back and still unanswered. Empty where none were, or where the run ended. */
+  pending: ToolCallRequest[];
+}
+
 /**
- * Runs a step's calls and writes each result into the transcript, in the order asked.
+ * Runs a step's calls and writes each result into the transcript, in the order asked, then hands
+ * back the rest.
  *
  * @param run - The run the step belongs to.
- * @param parsed - The step's calls, with their arguments read.
+ * @param calls - The step's calls, as `splitHandedBack` split them. The transcript holds them in
+ * that order: the calls the loop runs, then the ones it hands back.
  * @param messages - The transcript the results are written into.
  * @param step - Which step this is, for the host told of each result.
  * @param [opens] - Writes the single-call assistant message that call `at` is made under, for each
- * call after the first, whose message is written already. Given, the calls run one at a time,
- * each after its message and before the next, whatever `parallel` says.
- * @returns The first call, in the order asked, whose answer ended the run, or `undefined` where
- * none did.
+ * call after the first, whose message is written already; the handed-back calls share the last.
+ * Given, the calls run one at a time, each after its message and before the next.
+ * @returns The call that ended the run, or the calls handed back, each told as a `tool-call`.
  *
  * @remarks
- * A failure part-way leaves the transcript well-formed before it is rethrown: a call with no
- * result is a transcript no endpoint takes back, so every call of the step is answered — with what
- * it returned where it had, and otherwise with a line saying it was stopped, or never run.
+ * A failure part-way leaves the transcript well-formed before it is rethrown: every call of the
+ * step is answered, with what it returned or a line saying it was stopped or never run.
  *
- * An answer that ends the run does not end the step. The calls after it still run, in whatever
- * batch `parallel` puts them, because the model asked for them in the same breath and how a host
- * schedules calls is not what they mean: a reply that says "write the file, then hand off" in one
- * turn wants the file written whichever order it named the two in, and a call batched beside the
- * end was running already. A tool that must have nothing after it says so in its description.
- *
- * With `opens`, a call whose message was never written is not answered either: it is not in the
- * transcript, which ends at the last pair and is well-formed as it stands.
+ * An answer that ends the run does not end the step: the calls after it still run, since the model
+ * asked for them in the same breath. A handed-back call is the exception, and is answered as not
+ * run, because a run that has ended has nothing to wait for. With `opens`, a call whose message
+ * was never written is not answered either: it is not in the transcript.
  */
 export async function runCalls(
   run: Calling,
-  parsed: ReadCall[],
+  calls: StepCalls,
   messages: OpenAI.ChatCompletionMessageParam[],
   step: number,
   opens?: (at: number) => Promise<void>,
-): Promise<EndedBy | undefined> {
+): Promise<StepOutcome> {
   const { signal, toolCalls } = run;
+  const { back } = calls;
+  const ran = calls.run;
+  const parsed = [...ran, ...back.map(({ entry }) => entry)];
   // Per step, not per run: the answer to a call made two steps ago was true before the tools in
   // between ran, and the file the model read may be the file it has since written.
   const answered = new Map<string, Promise<string | ToolAnswer>>();
@@ -933,8 +1057,9 @@ export async function runCalls(
   // transcript. Both count from the front, since results are written in the order asked.
   let begun = 0;
   let kept = 0;
-  // How many of the calls are in the transcript: all of them, unless each is written as it runs.
-  let asked = opens ? 1 : parsed.length;
+  // How many of the calls are in the transcript: all of them, unless each is written as it runs —
+  // and the first message holds every handed-back call where the loop runs none.
+  let asked = opens && ran.length > 0 ? 1 : parsed.length;
   const keep = async (id: string, content: string) => {
     const result: OpenAI.ChatCompletionToolMessageParam = {
       role: Role.Tool,
@@ -955,10 +1080,10 @@ export async function runCalls(
     // One batch of every call, a batch per call, or batches split at the calls the host's
     // predicate does not pass; a batch's calls run together and the next waits for all of them.
     let from = 0;
-    while (from < parsed.length) {
+    while (from < ran.length) {
       signal?.throwIfAborted();
       const start = from;
-      const to = opens ? start + 1 : batchEnd(run, ready, start, parsed.length, answered);
+      const to = opens ? start + 1 : batchEnd(run, ready, start, ran.length, answered);
       if (opens && start > 0) {
         // Counted before it is awaited: the message is in the transcript once `opens` has pushed
         // it, and a host that throws on hearing of it leaves a call to answer as never run.
@@ -988,10 +1113,27 @@ export async function runCalls(
     const at = ends.findIndex((end) => end !== false);
     const end = ends[at];
     const outcome = outcomes[at];
-    if (end === undefined || end === false || outcome === undefined) {
-      return undefined;
+    const ended =
+      end === undefined || end === false || outcome === undefined
+        ? undefined
+        : { callId: outcome.id, name: outcome.name, ...(end.reason === undefined ? {} : { reason: end.reason }) };
+    const hasMessageToOpen = back.length > 0 && opens !== undefined && ran.length > 0;
+    if (hasMessageToOpen) {
+      asked = parsed.length;
+      await opens(ran.length);
     }
-    return { callId: outcome.id, name: outcome.name, ...(end.reason === undefined ? {} : { reason: end.reason }) };
+    if (ended) {
+      for (const { entry } of back) {
+        await keep(entry.call.id, ENDED_CALL);
+      }
+      return { ended, pending: [] };
+    }
+    // Told as made, but not counted as used: nothing ran them, and the run that answers them
+    // counts its own.
+    for (const { request } of back) {
+      announceCall(run, request);
+    }
+    return { pending: back.map(({ request }) => request) };
   } catch (error) {
     // Only a call that was made counts in `toolCalls`.
     for (const [at, entry] of parsed.entries()) {
