@@ -30,8 +30,8 @@ import {
   modelCapabilitiesFor,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
-import { firstTokenMs, getClient, loadingMs, servedSlots, timeoutMs } from '../endpoint/client.ts';
-import { CACHE_PROMPT_FIELD, SESSION_HEADER, SLOT_FIELD, slotAllocator } from '../endpoint/slots.ts';
+import { firstTokenMs, getClient, loadingMs, timeoutMs } from '../endpoint/client.ts';
+import { pinSession, type SessionPin, SLOT_FIELD } from '../endpoint/slots.ts';
 import { HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 import {
   configureHooks,
@@ -1001,7 +1001,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   let result: AgentLoopResult | undefined;
   const apart = hostToolsApart(withRecordTool(asRemoteAgent(options)));
   try {
-    pin = await pinSession(apart);
+    pin = await pinSession(apart.config, apart.session, {
+      signal: apart.signal,
+      // A remote agent's server picks the slots of the models it runs itself.
+      serverPins: apart.config.remoteAgent === true,
+      onNotice: (text) => apart.onEvent?.({ kind: RunEventKind.Notice, text }),
+    });
     result = await runSteps(apart, standing, pin);
   } catch (error) {
     // Wrapped rather than annotated: an abort's reason is one object shared by every run under
@@ -1017,62 +1022,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     return result;
   }
   throw new ToolIterationLimit(`Stopped after ${options.config.maxToolIterations} tool iterations.`, standing.read());
-}
-
-/** What a run's `session` adds to its requests, and the slot it holds while it runs. */
-interface SessionPin {
-  /** Laid under the config's `extraBody`: `id_slot` and `cache_prompt`, or nothing unpinned. */
-  fields: Record<string, unknown>;
-  /** Sent with every request: the session as `SESSION_HEADER`. */
-  headers: Record<string, string>;
-  /** The server reports slots, so each turn says whether it was `pinned`. */
-  slotted: boolean;
-  /** Frees the slot, where one is held. */
-  release: () => void;
-}
-
-/**
- * Pins a run to a llama.cpp slot where it has a session and the server has slots to hand out.
- *
- * @param options - The run's options. Read for `session`, the config and the signal; a notice goes
- * to `onEvent`.
- * @returns The pin, unpinned on a server without slots, one that refused `id_slot` or whose slots
- * are all held. `undefined` without a session. Rejects only with the reason of `signal`.
- */
-async function pinSession(options: AgentLoopOptions): Promise<SessionPin | undefined> {
-  const { config, session, signal } = options;
-  if (!session) {
-    return undefined;
-  }
-  const headers = { [SESSION_HEADER]: session };
-  const unpinned: SessionPin = { fields: {}, headers, slotted: false, release: () => {} };
-  const pinsItself = config.extraBody !== undefined && SLOT_FIELD in config.extraBody;
-  // A remote agent's server picks the slots of the models it runs itself.
-  if (pinsItself || config.remoteAgent === true) {
-    return unpinned;
-  }
-  const total = await servedSlots(config, { signal });
-  if (total === 0) {
-    return unpinned;
-  }
-  const notice = (text: string) => options.onEvent?.({ kind: RunEventKind.Notice, text });
-  const refused = modelCapabilitiesFor(capabilitiesFor(config.baseUrl, config.apiKey), config.model);
-  if (refused.refusedFields.has(SLOT_FIELD)) {
-    return { ...unpinned, slotted: true };
-  }
-  const slots = slotAllocator(config, config.model, total);
-  const slot = slots.acquire(session);
-  if (slot === undefined) {
-    notice(`no free slot of ${total} for this session; running unpinned`);
-    return { ...unpinned, slotted: true };
-  }
-  notice(`pinned to slot ${slot} of ${total}`);
-  return {
-    fields: { [SLOT_FIELD]: slot, [CACHE_PROMPT_FIELD]: true },
-    headers,
-    slotted: true,
-    release: () => slots.release(session),
-  };
 }
 
 /**

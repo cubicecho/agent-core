@@ -276,7 +276,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   says. Owner: `contextLimitFor`, `servedWindow`; `AgentConfig.contextLength`,
   `RunTurnOptions.contextLimit`, `CompactionOptions.limit`.
 - **Slot (`id_slot`):** one of a llama.cpp server's parallel caches; a session is pinned to one to
-  keep its prompt cache warm. Owner: `slotAllocator`, `servedSlots` (`src/endpoint/slots.ts`).
+  keep its prompt cache warm. Owner: `pinSession`, `slotAllocator` (`src/endpoint/slots.ts`),
+  `servedSlots` (`src/endpoint/client.ts`).
 
 ### What a model server and a model refuse
 

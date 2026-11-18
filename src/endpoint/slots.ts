@@ -1,6 +1,7 @@
-import { baseUrlKey } from '../core/config.ts';
+import { baseUrlKey, type Endpoint } from '../core/config.ts';
 import { scoped } from '../core/scope.ts';
-import { modelKey } from './client.ts';
+import { capabilitiesFor, modelCapabilitiesFor, type OnNotice } from './capabilities.ts';
+import { modelKey, servedSlots } from './client.ts';
 
 /**
  * Which slot of a multi-slot llama.cpp server each session is on, so concurrent runs stop
@@ -126,6 +127,74 @@ export function slotAllocator(endpoint: { baseUrl: string }, model: string, tota
   };
 
   return { total: size, acquire, release };
+}
+
+/** What a run's `session` adds to its requests, and the slot it holds while it runs. */
+export interface SessionPin {
+  /** Laid under the config's `extraBody`: `id_slot` and `cache_prompt`, or nothing unpinned. */
+  fields: Record<string, unknown>;
+  /** Sent with every request: the session as `SESSION_HEADER`. */
+  headers: Record<string, string>;
+  /** The server reports slots, so each turn says whether it was `pinned`. */
+  slotted: boolean;
+  /** Frees the slot, where one is held. */
+  release: () => void;
+}
+
+/** What `pinSession` takes besides the endpoint and the session. */
+export interface PinOptions {
+  /** Abandons the `/props` lookup, which then rejects with the signal's reason. */
+  signal?: AbortSignal;
+  /** The server picks its own slots, as a remote agent's does: the run is never pinned. */
+  serverPins?: boolean;
+  /** Told which slot the run was pinned to, or that none was free. */
+  onNotice?: OnNotice;
+}
+
+/**
+ * Pins a run to a llama.cpp slot where it has a session and the server has slots to hand out.
+ *
+ * @param config - The endpoint and the model its requests name. An `extraBody` naming `id_slot` pins itself.
+ * @param session - The run's own key. Absent pins nothing.
+ * @param [options] - Cancellation, whether the server pins its own, and where notices go.
+ * @returns The pin, unpinned on a server without slots, one that refused `id_slot` or whose slots
+ * are all held. `undefined` without a session. Rejects only with the reason of `signal`.
+ */
+export async function pinSession(
+  config: Endpoint & { model: string; extraBody?: Record<string, unknown> },
+  session: string | undefined,
+  { signal, serverPins = false, onNotice }: PinOptions = {},
+): Promise<SessionPin | undefined> {
+  if (!session) {
+    return undefined;
+  }
+  const headers = { [SESSION_HEADER]: session };
+  const unpinned: SessionPin = { fields: {}, headers, slotted: false, release: () => {} };
+  const pinsItself = config.extraBody !== undefined && SLOT_FIELD in config.extraBody;
+  if (pinsItself || serverPins) {
+    return unpinned;
+  }
+  const total = await servedSlots(config, { signal });
+  if (total === 0) {
+    return unpinned;
+  }
+  const refused = modelCapabilitiesFor(capabilitiesFor(config.baseUrl, config.apiKey), config.model);
+  if (refused.refusedFields.has(SLOT_FIELD)) {
+    return { ...unpinned, slotted: true };
+  }
+  const slots = slotAllocator(config, config.model, total);
+  const slot = slots.acquire(session);
+  if (slot === undefined) {
+    onNotice?.(`no free slot of ${total} for this session; running unpinned`);
+    return { ...unpinned, slotted: true };
+  }
+  onNotice?.(`pinned to slot ${slot} of ${total}`);
+  return {
+    fields: { [SLOT_FIELD]: slot, [CACHE_PROMPT_FIELD]: true },
+    headers,
+    slotted: true,
+    release: () => slots.release(session),
+  };
 }
 
 /** Forgets every endpoint's slots, held ones included. For tests, and `resetAll`. */
