@@ -609,9 +609,10 @@ const SPELLED_BODY_FIELDS: Readonly<Record<string, keyof ModelSpec & keyof TaskS
  */
 function unownedFields(extraBody: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(extraBody).filter(
-      ([key]) => RESERVED_BODY_FIELDS.includes(key) === false && Object.hasOwn(SPELLED_BODY_FIELDS, key) === false,
-    ),
+    Object.entries(extraBody).filter(([key]) => {
+      const isOwned = RESERVED_BODY_FIELDS.includes(key) || Object.hasOwn(SPELLED_BODY_FIELDS, key);
+      return isOwned === false;
+    }),
   );
 }
 
@@ -684,7 +685,8 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
       const raw = held.ref;
       const type = isRecord(raw) ? raw.type : undefined;
       const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
-      if ((type === REF_FILE || type === REF_URL) && value) {
+      const isKnownType = type === REF_FILE || type === REF_URL;
+      if (isKnownType && value) {
         ref = { type, value };
       } else {
         report.drop(`${path}.ref`, 'must be { type: "file" | "url", value }');
@@ -1419,7 +1421,8 @@ const writtenOut = (value: string) => value !== '' && VARIABLE.test(value) === f
  * that is not an absolute URL.
  */
 function urlSign(text: string): SecretSign | undefined {
-  if (URL_SCHEME.test(text) === false || URL.canParse(text) === false) {
+  const isAbsoluteUrl = URL_SCHEME.test(text) && URL.canParse(text);
+  if (isAbsoluteUrl === false) {
     return undefined;
   }
   const url = new URL(text);
@@ -1476,7 +1479,8 @@ function argumentSigns(words: readonly unknown[]): [index: number, sign: SecretS
       continue;
     }
     const isFlag = word.startsWith('-');
-    const sign = flagged && isFlag === false && writtenOut(word) ? SecretSign.Flag : wordSign(word);
+    const isFlaggedValue = flagged && isFlag === false && writtenOut(word);
+    const sign = isFlaggedValue ? SecretSign.Flag : wordSign(word);
     if (sign) {
       signs.push([index, sign]);
     }
@@ -1514,7 +1518,8 @@ function serverSecrets(server: SpecServer, path: string): SecretHint[] {
   }
   for (const [key, value] of Object.entries(server)) {
     const empty = isAbsent(value) || value === '' || (typeof value === 'string' && writtenOut(value) === false);
-    if (SERVER_KEYS_READ.has(key) === false && SECRET_NAME.test(key) && empty === false) {
+    const isSecretField = SERVER_KEYS_READ.has(key) === false && SECRET_NAME.test(key) && empty === false;
+    if (isSecretField) {
       hint(key, SecretSign.Field);
     }
   }

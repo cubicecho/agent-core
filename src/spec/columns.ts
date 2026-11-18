@@ -448,22 +448,26 @@ export function defineSpecColumns<Row>(
           offer(entry, pathText(path), value);
           return;
         }
-        if (path.length === 1 && path[0] === PROMPT && Array.isArray(value)) {
+        const isPromptList = path.length === 1 && path[0] === PROMPT && Array.isArray(value);
+        if (isPromptList) {
           walkPrompt(value);
           return;
         }
-        if (path.length === 1 && path[0] === HOOKS && Array.isArray(value)) {
+        const isHookList = path.length === 1 && path[0] === HOOKS && Array.isArray(value);
+        if (isHookList) {
           for (const [index, hook] of value.entries()) {
             drops.push({ path: `${HOOKS}[${index}]`, value: hook });
           }
           return;
         }
-        if (isRecord(value) && (isStructural(path) || mappedBeneath(path))) {
+        const shouldDescend = isRecord(value) && (isStructural(path) || mappedBeneath(path));
+        if (shouldDescend) {
           for (const [key, held] of Object.entries(value)) {
             const isToken = path.length === 0 && key === TOKEN;
-            if (isToken === false) {
-              walk(held, [...path, key]);
+            if (isToken) {
+              continue;
             }
+            walk(held, [...path, key]);
           }
           return;
         }
