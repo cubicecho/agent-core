@@ -659,6 +659,27 @@ describe('resolveAgentSpec', () => {
     expect(resolveAgentSpec([empty]).tasks.vision).not.toHaveProperty('extraBody');
   });
 
+  it('drops the body fields the loop owns or the spec spells from a layer that skipped parseSpec', () => {
+    // Built in code, so parseSpec never saw it: the rule has to hold at resolve time as well.
+    const owned = {
+      temperature: 0.9,
+      max_tokens: 9999,
+      max_completion_tokens: 1,
+      reasoning_effort: 'high',
+      stream: false,
+    };
+    const layer: AgentSpec = {
+      spec: AGENT_SPEC,
+      model: { model: 'm', temperature: 0, extraBody: { ...owned, top_k: 40 } },
+      tasks: { title: { model: 't', extraBody: { ...owned } } },
+    };
+    const resolved = resolveAgentSpec([layer]);
+    expect(resolved.temperature).toBe(0);
+    expect(resolved.extraBody).toEqual({ top_k: 40 });
+    // Nothing is left, so the task carries none.
+    expect(resolved.tasks.title).not.toHaveProperty('extraBody');
+  });
+
   it('unions requires, so a layer above cannot quietly drop one below it', () => {
     const base = parsed(doc({ requires: ['com.example.sandbox'] }));
     const over = parsed(doc({ requires: ['com.example.audit'] }));

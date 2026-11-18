@@ -189,7 +189,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | An effort is only stepped up the ladder, never down | `nextEffort`, `planEffortStep` |
 | A refused field is latched only if the caller offered it as droppable | `droppedFieldsAnswer` |
 | `extraBody` never sets `model`, `messages`, `stream` or `tools` | `extraFields`, `parseExtraBody` |
-| A parsed document's `extraBody` never sets what the spec spells elsewhere (a layer that skipped `parseSpec` still can) | `parseExtraBody` (`SPELLED_BODY_FIELDS`) |
+| A spec layer's `extraBody` never sets what the spec spells elsewhere, whether `parseSpec` read it or not | `parseExtraBody`, and `unownedFields` on resolve (`SPELLED_BODY_FIELDS`) |
 | An absent ceiling or temperature is never sent; a ceiling of zero or less is never sent | `ceilingAndTemperature` |
 | A loading wait never spends the retry budget | `runTurn` |
 | A request is size-checked at most once, and never against a window below 8192 tokens | `runTurn` (`SMALLEST_LIKELY_WINDOW`) |

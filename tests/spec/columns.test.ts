@@ -123,6 +123,18 @@ describe('defineSpecColumns', () => {
     expect(table.toLayer({ model: ' qwen ', maxTokens: 0 }).model).toEqual({ model: 'qwen', maxTokens: 0 });
   });
 
+  it('cannot override a stated temperature through an extraBody column', () => {
+    const table = defineSpecColumns<{ temperature: number; extraBody: Record<string, unknown> }>({
+      temperature: { path: 'model.temperature', inherit: -1 },
+      extraBody: { path: 'model.extraBody' },
+    });
+    // toLayer writes the row as it is, and resolving is what holds the rule.
+    const layer = table.toLayer({ temperature: 0, extraBody: { temperature: 0.9, top_k: 40 } });
+    const resolved = resolveAgentSpec([layer]);
+    expect(resolved.temperature).toBe(0);
+    expect(resolved.extraBody).toEqual({ top_k: 40 });
+  });
+
   it("writes task-server's profile layer as its hand-written projection does", () => {
     const EXTENSION = 'com.cubicecho.task-server';
     const text = (value: string) => value.trim() || undefined;

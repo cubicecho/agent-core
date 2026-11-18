@@ -578,6 +578,25 @@ const SPELLED_BODY_FIELDS: Readonly<Record<string, keyof ModelSpec & keyof TaskS
 });
 
 /**
+ * An `extraBody` less the fields something else sets: the `RESERVED_BODY_FIELDS` and the
+ * `SPELLED_BODY_FIELDS`.
+ *
+ * @param extraBody - Read, not written to.
+ * @returns A new object holding every other key.
+ *
+ * @remarks
+ * `parseExtraBody` drops the same fields from one document and warns. This holds the rule for a
+ * layer that never went through it: one built in code, or by `defineSpecColumns().toLayer`.
+ */
+function unownedFields(extraBody: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(extraBody).filter(
+      ([key]) => RESERVED_BODY_FIELDS.includes(key) === false && Object.hasOwn(SPELLED_BODY_FIELDS, key) === false,
+    ),
+  );
+}
+
+/**
  * Reads an `extraBody`, the agent's model's or a side task's.
  *
  * @param report - Where what is dropped is written.
@@ -1097,7 +1116,7 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
  *
  * @param layers - The documents, weakest first. None is written to.
  * @returns `model`, holding the last stated value of every field but `extraBody`, and `extraBody`
- * apart from it — empty where no layer had one.
+ * apart from it, less the fields something else sets — empty where nothing is left.
  */
 function mergeModel(layers: readonly AgentSpec[]) {
   const model: ModelSpec = {};
@@ -1114,7 +1133,7 @@ function mergeModel(layers: readonly AgentSpec[]) {
       }
     }
   }
-  return { model, extraBody };
+  return { model, extraBody: unownedFields(extraBody) };
 }
 
 /**
@@ -1153,7 +1172,8 @@ function mergeById<T extends object>(
  * @param layers - The documents, weakest first. None is written to.
  * @param endpoint - The agent's merged endpoint. Read, not written to.
  * @returns The tasks whose merged `model` is not empty, keyed as the documents keyed them — one a
- * layer declined with `model: ""` is not among them. A task's `extraBody` merges by key.
+ * layer declined with `model: ""` is not among them. A task's `extraBody` merges by key, less the
+ * fields something else sets.
  */
 function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
   const merged = new Map<string, TaskSpec>();
@@ -1175,13 +1195,14 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
     if (!task.model) {
       continue;
     }
+    const extraBody = task.extraBody && unownedFields(task.extraBody);
     tasks[key] = kept({
       model: task.model,
       endpoint: asEndpoint(mergeLayers([endpoint, task.endpoint])),
       maxTokens: task.maxTokens,
       temperature: task.temperature,
       reasoningEffort: task.reasoningEffort,
-      extraBody: task.extraBody && said(task.extraBody) ? task.extraBody : undefined,
+      extraBody: extraBody && said(extraBody) ? extraBody : undefined,
     });
   }
   return tasks;
