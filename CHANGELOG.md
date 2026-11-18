@@ -1,3 +1,10 @@
+# [4.27.0](https://github.com/cubicecho/agent-core/compare/v4.26.1...v4.27.0) (2026-11-18)
+
+
+### Features
+
+* **loop:** mint every tool call id, as an option, for hosts that match answers across runs ([cf3c3c6](https://github.com/cubicecho/agent-core/commit/cf3c3c6cfffbffc053dc20693259ffaf389e5024)), closes [#228](https://github.com/cubicecho/agent-core/issues/228)
+
 ## [4.26.1](https://github.com/cubicecho/agent-core/compare/v4.26.0...v4.26.1) (2026-11-18)
 
 
