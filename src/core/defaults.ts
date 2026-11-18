@@ -239,6 +239,20 @@ export const COMPACTION_DEFAULTS: Readonly<CompactionSettings> = Object.freeze({
   fewestCompactedMessages: 2,
 });
 
+/** Pruning: old tool results in a transcript replaced by a one-line stub. */
+export interface PruneSettings {
+  /** How many of the latest tool results a prune leaves whole. */
+  keepLastResults: number;
+  /** A result this long or shorter, in characters, is left whole wherever it is: a stub would save nothing. */
+  maxKeptChars: number;
+}
+
+/** What a prune leaves whole, where the caller does not say. */
+export const PRUNE_DEFAULTS: Readonly<PruneSettings> = Object.freeze({
+  keepLastResults: 5,
+  maxKeptChars: 256,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

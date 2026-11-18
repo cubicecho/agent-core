@@ -12,7 +12,7 @@ import {
   SUMMARY_LEAD,
   summaryInput,
 } from '../../src/context/compaction.ts';
-import { COMPACTION_DEFAULTS } from '../../src/core/defaults.ts';
+import { COMPACTION_DEFAULTS, PRUNE_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import { type HookRunner, turnMessages } from '../../src/hooks/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../../src/tools/tool-loading.ts';
@@ -116,10 +116,11 @@ describe('planPrune', () => {
     const messages = run(7);
     expect(planPrune(messages, 8000, { estimate: chars, through: 3 })).toBeUndefined();
     expect(planPrune(messages, 8000, { estimate: chars, through: 5 })).toBeUndefined();
-    // Five results or fewer: there is nothing outside the latest five.
-    expect(planPrune(run(5), 1000, { estimate: chars, at: 0 })).toBeUndefined();
+    // `keepLastResults` results or fewer: there is nothing outside the latest few.
+    const { keepLastResults } = PRUNE_DEFAULTS;
+    expect(planPrune(run(keepLastResults), 1000, { estimate: chars, at: 0 })).toBeUndefined();
     // Short results stay whole wherever the boundary is, so moving past them clears nothing.
-    const short = [user('q'), result('a'), result('b'), ...run(5).slice(1)];
+    const short = [user('q'), result('a'), result('b'), ...run(keepLastResults).slice(1)];
     expect(planPrune(short, 1000, { estimate: chars, at: 0, minShare: 0 })).toBeUndefined();
   });
 

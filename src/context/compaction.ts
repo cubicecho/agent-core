@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import type { Endpoint } from '../core/config.ts';
-import { COMPACTION_DEFAULTS } from '../core/defaults.ts';
+import { COMPACTION_DEFAULTS, PRUNE_DEFAULTS } from '../core/defaults.ts';
 import { isPositive } from '../core/guards.ts';
 import { HookEvent } from '../hooks/hook-events.ts';
 import { consult, type HookContext, type HookRunner, notify, type OnNote, turnMessages } from '../hooks/hooks.ts';
@@ -31,9 +31,6 @@ export const COMPACT_AT = 0.75;
  * grow again.
  */
 export const KEEP_RATIO = 0.35;
-
-/** How many of the latest tool results a prune leaves whole when the caller does not say. */
-const KEEP_LAST = 5;
 
 /** The locale a cleared result's length is written in, so the stub reads the same on every host. */
 const COUNT_LOCALE = 'en-US';
@@ -204,7 +201,7 @@ const PRUNED_LEAD = '[result cleared';
  */
 export function pruneToolResults(
   messages: Message[],
-  { keepLast = KEEP_LAST, maxChars = 256 }: PruneOptions = {},
+  { keepLast = PRUNE_DEFAULTS.keepLastResults, maxChars = PRUNE_DEFAULTS.maxKeptChars }: PruneOptions = {},
 ): Message[] {
   let kept = 0;
   let out: Message[] | undefined;
@@ -392,7 +389,7 @@ export function planPrune(
     used,
     from = 0,
     compacted = false,
-    keepLast = KEEP_LAST,
+    keepLast = PRUNE_DEFAULTS.keepLastResults,
     maxChars,
     charsPerToken,
     estimate = (message) => messageTokens(message, { charsPerToken }),
