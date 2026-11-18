@@ -1,13 +1,15 @@
 import OpenAI from 'openai';
+import { vi } from 'vitest';
 import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
 import { type HookOutcome, textOf } from '../src/hooks/hooks.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
-import { FinishReason, FUNCTION_TOOL, Role, SchemaType } from '../src/wire/wire.ts';
+import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire/wire.ts';
 
 /**
  * What more than one test file builds the same way: the fake client, the errors the SDK raises,
- * a streamed turn, a hook's outcome, and the smallest config, tool and message that will do.
+ * a streamed turn, a server answered by a function, a hook's outcome, and the smallest config,
+ * tool and message that will do.
  *
  * A helper only one file uses stays in that file. One that closes over a file's own mock (`create`,
  * `list`) stays there too, since `vi.mock` is hoisted per file and the mock cannot be shared.
@@ -96,6 +98,36 @@ export const reply = answer('ok');
  */
 export const apiError = (status: number, message = 'rejected') =>
   new OpenAI.APIError(status, { message }, undefined, undefined);
+
+/**
+ * A JSON answer, as a server on a port would send it.
+ *
+ * @param body - What the response carries.
+ * @param [status] - The HTTP status.
+ * @returns The response.
+ */
+export const respond = (body: unknown, status: number = HttpStatus.Ok) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+/**
+ * A streamed answer: each chunk as a server-sent event, then `[DONE]`.
+ *
+ * @param events - The chunks, in order.
+ * @returns The response.
+ */
+export const streamed = (...events: unknown[]) =>
+  new Response(`${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`, {
+    headers: { 'content-type': 'text/event-stream' },
+  });
+
+/**
+ * An `Endpoint.fetch` that answers every request itself, with no server on a port.
+ *
+ * @param handle - Answers one request, handed it whole: URL, method, headers and body.
+ * @returns The function, a mock, so a test can say what reached it.
+ */
+export const answeredBy = (handle: (request: Request) => Response | Promise<Response>) =>
+  vi.fn<typeof globalThis.fetch>(async (input, init) => handle(new Request(input, init)));
 
 /**
  * A tool definition that takes no arguments.

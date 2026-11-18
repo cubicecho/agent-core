@@ -541,8 +541,8 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * @param task - The task, ordinarily `resolved.tasks.<key>`.
  * @param [options] - What the host adds — cancellation, notices, `keywords` — and its own defaults
  * for the settings a task may leave out.
- * @param [agent] - The endpoint the main turn uses, key included. Absent sends the task's endpoint
- * as it stands.
+ * @param [agent] - The endpoint the main turn uses, key and `fetch` included. Absent sends the
+ * task's endpoint as it stands.
  * @returns The three arguments a side-task entry point takes. `options` is a new object, and
  * `endpoint` is the task's own object when no `agent` was given, a copy otherwise.
  *
@@ -561,14 +561,18 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  * the agent's key, so `capabilitiesFor` answers both with one object; a task on another endpoint
  * is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
  * agent's key is whatever the main turn is sent.
+ *
+ * The agent's `fetch` goes where its key would, to a task on the agent's endpoint with none of its
+ * own, and never to another endpoint, whose task sends through its own `endpoint.fetch`.
  */
 export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   task: SideTask,
   options?: Options,
-  agent?: EndpointIdentity,
+  agent?: EndpointIdentity & Pick<Endpoint, 'fetch'>,
 ): { endpoint: Endpoint; model: string; options: Options } {
   const own = task.endpoint;
   const shared = agent && (!own.baseUrl.trim() || sameUrl(own.baseUrl, agent.baseUrl));
+  const fetch = own.fetch ?? (shared ? agent.fetch : undefined);
   const stated: SideTaskOptions = {};
   if (task.maxTokens !== undefined) {
     stated.maxTokens = task.maxTokens;
@@ -588,6 +592,7 @@ export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
           ...own,
           ...(shared ? { baseUrl: agent.baseUrl } : {}),
           apiKey: resolveApiKey(own, agent, {}),
+          ...(fetch ? { fetch } : {}),
         }
       : own,
     model: task.model,

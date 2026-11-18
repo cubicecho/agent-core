@@ -440,7 +440,9 @@ setting configures nothing and the task is absent.
 It turns a `ResolvedTask` into the endpoint, model and options that `ask`, `askJson`, `summariser`
 and `preselect` take, with what the task states winning over the host's options. Given the agent's
 endpoint it also keys a task on that endpoint as the agent is keyed, so the two share one
-capability entry rather than learning each refusal twice. `runAgentLoop` reads `tasks.toolSelect`
+capability entry rather than learning each refusal twice, and passes it the agent's `fetch` where
+the host gave one. That function is never in a document: the host adds it to the resolved endpoint,
+and to a task's own endpoint where the task names another. `runAgentLoop` reads `tasks.toolSelect`
 under its `preselect` option and `tasks.compaction` under `compact`, both off by default. Asked to
 preselect with no `toolSelect` model, it asks the main model; asked to compact with no `compaction`
 model, it folds nothing.

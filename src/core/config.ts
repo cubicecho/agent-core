@@ -48,6 +48,15 @@ export interface Endpoint {
    * retry pays for that prefill again from nothing.
    */
   firstTokenSeconds?: number;
+  /**
+   * Sends this endpoint's requests in place of the global `fetch`. Runtime only: never in a document.
+   *
+   * @remarks
+   * Every request made to the endpoint goes through it: the SDK client's, the listing, the native
+   * routes and `probeEndpoint`. A side task on the same endpoint inherits it through `taskCall`, and
+   * one on another endpoint is given it by the host, as a key is.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 /**
@@ -55,8 +64,9 @@ export interface Endpoint {
  *
  * @remarks
  * The narrow half of `Endpoint`, for everything that only has to tell two endpoints apart — the
- * client pool, the capability latches, a side task borrowing the agent's key. The timeouts are
- * not in it, since a different patience is not a different server.
+ * client pool, the capability latches, a side task borrowing the agent's key. The timeouts and
+ * `fetch` are not in it: a different patience is not a different server, and this is what is
+ * digested and written down, which a function cannot be.
  */
 export interface EndpointIdentity {
   /**

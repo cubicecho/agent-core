@@ -318,6 +318,34 @@ describe('exportSpec', () => {
   });
 });
 
+describe("an endpoint's fetch", () => {
+  const fetch = async () => new Response('{}');
+  const spec = parsed(
+    doc({
+      endpoint: { baseUrl: 'http://router.internal/v1', fetch },
+      model: { model: 'big' },
+      tasks: { title: { model: 'tiny', endpoint: { baseUrl: 'http://side.internal/v1', fetch } } },
+    }),
+  );
+
+  it('is never read from a document', () => {
+    expect(spec.endpoint).toEqual({ baseUrl: 'http://router.internal/v1' });
+    expect(spec.tasks?.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1' });
+  });
+
+  it('is never written into an exported one', () => {
+    const out = exportSpec(spec);
+    expect(out.endpoint).toEqual({ baseUrl: 'http://router.internal/v1' });
+    expect(out.tasks?.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1' });
+  });
+
+  it('is never produced by resolving one, for the agent or a task', () => {
+    const resolved = resolveAgentSpec([spec]);
+    expect('fetch' in resolved).toBe(false);
+    expect(resolved.tasks.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1', apiKey: '' });
+  });
+});
+
 describe('findSpecSecrets', () => {
   /** The hints for a document bundling `servers`, as `path sign` lines. */
   const found = (...servers: Record<string, unknown>[]) =>
