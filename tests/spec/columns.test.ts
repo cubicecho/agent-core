@@ -249,9 +249,19 @@ describe('defineSpecColumns', () => {
       expect(table.dropped(spec).map((drop) => drop.path)).toEqual([
         'tasks.compaction.temperature',
         'tasks.followups',
-        `extensions.${EXTENSION}.colour`,
-        'extensions.org.other',
+        `extensions["${EXTENSION}"].colour`,
+        'extensions["org.other"]',
       ]);
+    });
+
+    it('quotes a key holding a dot, so two different fields never read as one path', () => {
+      // A bare `com` is a valid extension key too, and `com.acme` beneath it is not `com.acme` the key.
+      const table = defineSpecColumns<{ theme: string }>({ theme: { path: ['extensions', 'com', 'theme'] } });
+      const spec: AgentSpec = {
+        spec: AGENT_SPEC,
+        extensions: { 'com.acme': { plan: 'pro' }, com: { theme: 'dark', acme: 'other' } },
+      };
+      expect(table.dropped(spec).map((drop) => drop.path)).toEqual(['extensions["com.acme"]', 'extensions.com.acme']);
     });
 
     it('takes a prompt part by its id, and reports the others and any reference', () => {

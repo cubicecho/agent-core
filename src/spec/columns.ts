@@ -124,7 +124,10 @@ export interface SpecColumnsOptions {
 
 /** One thing a document says that a row will not keep. */
 export interface SpecDrop<Row> {
-  /** Where it is, in `parseSpec`'s spelling: `model.extraBody`, `prompt[1]`, `hooks[0]`. */
+  /**
+   * Where it is, in `parseSpec`'s spelling: `model.extraBody`, `prompt[1]`, `hooks[0]`. A key
+   * holding a dot is quoted, as in `extensions["com.acme"]`.
+   */
   path: string;
   /** What the document held there. */
   value: unknown;
@@ -220,6 +223,26 @@ function segmentsOf(path: SpecPath | ExtensionPath | SpecSection | `tasks.${stri
     return [PROMPT, path.slice(prefix.length)];
   }
   return path.split('.');
+}
+
+/**
+ * A path as text, in `parseSpec`'s spelling, with a segment holding a dot quoted so it reads as one.
+ *
+ * @param path - The segments.
+ * @returns `extensions["com.acme"].plan` for the key `com.acme`, and `extensions.com.acme` for
+ * the key `acme` beneath the key `com`.
+ */
+function pathText(path: readonly string[]): string {
+  let text = '';
+  for (const segment of path) {
+    const holdsDot = segment.includes('.');
+    if (holdsDot) {
+      text += `[${JSON.stringify(segment)}]`;
+    } else {
+      text += text === '' ? segment : `.${segment}`;
+    }
+  }
+  return text;
 }
 
 /**
@@ -448,7 +471,7 @@ export function defineSpecColumns<Row>(
         }
         const entry = columnAt(path);
         if (entry) {
-          offer(entry, path.join('.'), value);
+          offer(entry, pathText(path), value);
           return;
         }
         if (path.length === 1 && path[0] === PROMPT && Array.isArray(value)) {
@@ -470,7 +493,7 @@ export function defineSpecColumns<Row>(
           }
           return;
         }
-        drops.push({ path: path.join('.'), value });
+        drops.push({ path: pathText(path), value });
       };
 
       walk(spec, []);
