@@ -1,3 +1,10 @@
+## [4.26.1](https://github.com/cubicecho/agent-core/compare/v4.26.0...v4.26.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **spec:** drop the body fields a document spells elsewhere from its extraBody ([024852e](https://github.com/cubicecho/agent-core/commit/024852e561c4db24703a7a019d5e163f3aebe8f0)), closes [#222](https://github.com/cubicecho/agent-core/issues/222)
+
 # [4.26.0](https://github.com/cubicecho/agent-core/compare/v4.25.0...v4.26.0) (2026-11-18)
 
 
