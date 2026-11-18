@@ -105,9 +105,9 @@ async function chooseTools(options: DiscoveryOptions, notice: OnNotice): Promise
 export const PRESELECTED_NOTICE = 'tools picked before the run: ';
 
 /**
- * How this exchange finds its tools, and what it starts with in hand: the loop's own preselection
- * where it was asked for and the app has not already decided, and what an earlier question
- * carried over.
+ * Works out how this exchange finds its tools, and what it starts with in hand: the loop's own
+ * preselection where it was asked for and the app has not already decided, and what an earlier
+ * question carried over.
  *
  * @param options - The exchange's options. Read for the discovery mode, the catalogue, `loaded`,
  * `preselected` and `preselect`.
