@@ -11,7 +11,7 @@ import {
   modelCapabilitiesFor,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
-import { getClient, resolveApiKey, sameUrl, timeoutMs } from '../endpoint/client.ts';
+import { getClient, resolveApiKey, sameUrl, idleTimeoutMs } from '../endpoint/client.ts';
 import { relaxSchema, sanitizeSchema } from '../endpoint/schema-compat.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { isAbort } from '../wire/retry.ts';
@@ -293,7 +293,7 @@ async function complete(
     maxRetries,
     onNotice,
     signal,
-    idleMs: timeoutMs(config),
+    idleMs: idleTimeoutMs(config),
   });
   return { text: answerOf(turn), finishReason: turn.finishReason || undefined };
 }
