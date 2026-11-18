@@ -662,6 +662,18 @@ describe('resolveAgentSpec', () => {
     expect(resolved.mcpServers).toEqual([{ slug: 'fs', command: 'npx' }]);
   });
 
+  it('lets an empty id, name or description override the layer below', () => {
+    const base = parsed(doc({ id: 'base', name: 'Base', description: 'Base agent' }));
+    const over = parsed(doc({ id: '', name: '', description: '' }));
+    expect(resolveAgentSpec([base, over])).toMatchObject({ id: '', name: '', description: '' });
+    // Absent still inherits.
+    expect(resolveAgentSpec([base, parsed(doc())])).toMatchObject({
+      id: 'base',
+      name: 'Base',
+      description: 'Base agent',
+    });
+  });
+
   it('falls back only where no layer said anything', () => {
     const resolved: ResolvedAgent = resolveAgentSpec([parsed(doc())]);
     expect(resolved).toMatchObject({

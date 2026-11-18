@@ -1215,9 +1215,9 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     }
   }
 
-  const id = layers.findLast((layer) => layer.id)?.id ?? '';
-  const name = layers.findLast((layer) => layer.name)?.name;
-  const description = layers.findLast((layer) => layer.description)?.description;
+  const id = layers.findLast((layer) => !absent(layer.id))?.id ?? '';
+  const name = layers.findLast((layer) => !absent(layer.name))?.name;
+  const description = layers.findLast((layer) => !absent(layer.description))?.description;
 
   return {
     id,
