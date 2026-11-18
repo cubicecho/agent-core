@@ -292,9 +292,10 @@ function write(layer: Record<string, unknown>, segments: readonly string[], valu
   }
   let section = layer;
   for (const segment of segments.slice(0, -1)) {
-    const next = section[segment];
-    section[segment] = isRecord(next) ? next : {};
-    section = section[segment] as Record<string, unknown>;
+    const held = section[segment];
+    const next = isRecord(held) ? held : {};
+    section[segment] = next;
+    section = next;
   }
   section[segments[segments.length - 1]] = value;
 }
