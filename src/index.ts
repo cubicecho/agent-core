@@ -295,6 +295,7 @@ export {
 } from './turn/side-task.ts';
 export {
   type CallIdMinter,
+  CallIds,
   callIdMinter,
   callIdsIn,
   distinctCallIds,
