@@ -27,6 +27,12 @@ unstable APIs out of it. An install from a git URL gets no `dist/`: install from
 `tsconfig.json` checks everything and emits nothing; `tsconfig.build.json` is the only config
 that emits.
 
+## Terms
+
+`.agents/domain-model.md` is the domain model: the four levels (session, run, exchange, turn),
+the actors, lifecycles, invariants and a glossary. Use its words in code, tests, docs and commits.
+The refactor ledger is `.agents/coding-standards-todos.md`.
+
 ## Layout
 
 `src/` has one folder for each concept the package is about, and a module lives in the folder of
