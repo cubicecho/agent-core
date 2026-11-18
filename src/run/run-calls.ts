@@ -739,7 +739,8 @@ function lookThrough(run: Calling, entry: ReadCall): LookedThrough {
   // nothing a load could not, and the refusal is the call's answer.
   let inner = args ?? {};
   let refused: { error: unknown } | undefined;
-  if (proxy && args && run.hostNames.has(name)) {
+  const proxiesHostTool = proxy && args && run.hostNames.has(name);
+  if (proxiesHostTool) {
     // Declared already, so the model is pointed at the call it can make rather than told the
     // tool does not exist.
     refused = { error: new Error(`${name} is not in the catalogue; call it directly, not through ${CALL_TOOL}.`) };
@@ -831,7 +832,8 @@ export function splitHandedBack(run: Calling, parsed: ReadCall[]): TurnCalls {
  */
 function markUsed(run: Calling, name: string) {
   const { catalog, onDemand, proxied } = run;
-  if (onDemand && !proxied && inCatalog(catalog, name)) {
+  const countsAsLoaded = onDemand && proxied === false && inCatalog(catalog, name);
+  if (countsAsLoaded) {
     run.loaded.add(name);
   }
   run.used.add(name);
@@ -903,8 +905,8 @@ function batchEnd(
   for (let at = from; at < total; at++) {
     const prepared = ready(at);
     prepared.passed ??= answersItself(prepared, answered, batch) || parallel(prepared.request);
-    const reads = prepared.passed;
-    if (reads === false) {
+    const isWrite = prepared.passed === false;
+    if (isWrite) {
       return at === from ? at + 1 : at;
     }
     if (prepared.dedupable) {
@@ -1113,10 +1115,10 @@ export async function runCalls(
     const at = ends.findIndex((end) => end !== false);
     const end = ends[at];
     const outcome = outcomes[at];
-    const ended =
-      end === undefined || end === false || outcome === undefined
-        ? undefined
-        : { callId: outcome.id, name: outcome.name, ...(end.reason === undefined ? {} : { reason: end.reason }) };
+    const hasEndingCall = end !== undefined && end !== false && outcome !== undefined;
+    const ended = hasEndingCall
+      ? { callId: outcome.id, name: outcome.name, ...(end.reason === undefined ? {} : { reason: end.reason }) }
+      : undefined;
     const hasMessageToOpen = back.length > 0 && opens !== undefined && ran.length > 0;
     if (hasMessageToOpen) {
       asked = parsed.length;

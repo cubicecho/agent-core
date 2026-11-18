@@ -506,7 +506,8 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   const event = stamp(input, runId, ++stream.seq, at);
   stream.events.push(event);
   stream.touched = at;
-  if (stream.events.length > limits.maxEvents + limits.trimSlack) {
+  const isOverfull = stream.events.length > limits.maxEvents + limits.trimSlack;
+  if (isOverfull) {
     stream.events.splice(0, stream.events.length - limits.maxEvents);
   }
   // A finished run is kept for a moment so a watcher that arrives just after the end still sees
@@ -1016,7 +1017,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       getOrCreate(pending, event.id ?? event.name, () => []).push(event.at);
     } else if (event.kind === RunEventKind.ToolResult) {
       metrics.toolCalls++;
-      if (event.ok === false) {
+      const toolFailed = event.ok === false;
+      if (toolFailed) {
         metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
       }
       if (event.loads) {

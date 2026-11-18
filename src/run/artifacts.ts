@@ -444,7 +444,8 @@ export class RunArtifacts {
     // Over a link, only what it left out; over a guess, what the model said wins.
     const fill = (field: 'title' | 'description' | 'mimeType', value: string | undefined) => {
       const isTaken = isLinked && Boolean(known.link[field]);
-      if (value && isTaken === false) {
+      const shouldFill = value && isTaken === false;
+      if (shouldFill) {
         known.link = { ...known.link, [field]: value };
       }
     };

@@ -1249,7 +1249,8 @@ function forgetFolded(loaded: Set<string>, messages: readonly OpenAI.ChatComplet
     messages.flatMap((message) => (message.role === Role.Tool ? definedNames(textOf(message.content)) : [])),
   );
   for (const name of loaded) {
-    if (present.has(name) === false) {
+    const isDefinitionGone = present.has(name) === false;
+    if (isDefinitionGone) {
       loaded.delete(name);
     }
   }
@@ -1341,7 +1342,8 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
   // A call with no name is a fragment the server never finished sending: nothing to run, and
   // an assistant message naming it would be answered by nothing.
   const calls: ToolCall[] = turn.toolCalls.filter((call) => call.function.name);
-  if (!recoverable || calls.length || !turn.content) {
+  const hasNothingToRecover = !recoverable || calls.length > 0 || !turn.content;
+  if (hasNothingToRecover) {
     return { calls, content: turn.content, recovered: false };
   }
   const recovered = recoverToolCalls(turn.content, { names: recoverable, mintCallId: mint });
@@ -1601,15 +1603,15 @@ async function runTurns(
       ledger,
     });
     const given = rewritten ?? messages;
-    const isOwn = given === messages;
-    if (isOwn === false) {
+    const isRewritten = given !== messages;
+    if (isRewritten) {
       pruneBoundary = 0;
     }
     // Read again after the turn: a reported prompt calibrates it.
     const planRatio = charsPerTokenFor(supports, config.model);
     // The last request's prompt describes this transcript only while nothing has rewritten it,
     // and less what a prune has just won back of it.
-    const ownUsed = isOwn ? reported.used : undefined;
+    const ownUsed = isRewritten ? undefined : reported.used;
     const trimmed = options.prune
       ? pruneBeforeTurn(given, pruneBoundary, { options, used: ownUsed, charsPerToken: planRatio, notice })
       : { messages: given, through: pruneBoundary, tokens: 0 };
@@ -1766,6 +1768,7 @@ async function runTurns(
     // said either the same request is sent once more, unwritten, while a turn is left to send it.
     const isCallless = reply.finishReason === FinishReason.ToolCalls && calls.length === 0;
     const isSilent = content.trim() === '';
+    const endedWithNoAnswer = isSilent && calls.length === 0 && reply.finishReason !== FinishReason.ContentFilter;
     if (isCallless) {
       const canAskAgain = isSilent && askedAgain === false && turn + 1 < config.maxToolIterations;
       if (canAskAgain) {
@@ -1774,7 +1777,7 @@ async function runTurns(
         continue;
       }
       notice('the model said it was calling tools but sent none; taking its reply as the answer');
-    } else if (isSilent && calls.length === 0 && reply.finishReason !== FinishReason.ContentFilter) {
+    } else if (endedWithNoAnswer) {
       // Kept as the answer, written as `""`, so a stored transcript stays sendable: the app
       // is told.
       notice('the model ended its turn with no answer');
