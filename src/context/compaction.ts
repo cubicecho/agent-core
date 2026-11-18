@@ -595,7 +595,8 @@ const findCut = (
       if (isCut(at)) {
         cut = at;
         after = cost - folded + summaryTokens;
-        if (after <= limit * target) {
+        const reachesTarget = after <= limit * target;
+        if (reachesTarget) {
           break;
         }
       }
@@ -667,7 +668,8 @@ export function planCompaction(
     return undefined;
   }
   const cost = used ?? messages.reduce((total, message) => total + estimate(message), 0);
-  if (cost < limit * compactAt) {
+  const isUnderThreshold = cost < limit * compactAt;
+  if (isUnderThreshold) {
     return undefined;
   }
 
@@ -945,8 +947,10 @@ export function applyCompaction(
  * @param head - How many messages are kept ahead of the summary.
  * @returns `record.question` where it lies from `head` up to `through`, otherwise `undefined`.
  */
-const keptQuestion = ({ question, through }: Pick<CompactionRecord, 'through' | 'question'>, head: number) =>
-  question !== undefined && question >= head && question < through ? question : undefined;
+const keptQuestion = ({ question, through }: Pick<CompactionRecord, 'through' | 'question'>, head: number) => {
+  const isSummarisedAway = question !== undefined && question >= head && question < through;
+  return isSummarisedAway ? question : undefined;
+};
 
 /**
  * Where a stored index sits in the request `applyCompaction` builds, once a compaction has shifted

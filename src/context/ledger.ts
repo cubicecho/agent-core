@@ -329,7 +329,9 @@ function shares(ledger: TokenLedger, messages: readonly Message[]): Map<number, 
     if (from.epoch !== to.epoch || !(tokens > 0)) {
       continue;
     }
-    if (start < floor || end <= start || end > messages.length) {
+    const isOutOfOrder = start < floor || end <= start;
+    const isPastTranscript = end > messages.length;
+    if (isOutOfOrder || isPastTranscript) {
       continue;
     }
     floor = end;
