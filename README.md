@@ -1931,10 +1931,10 @@ is a command line and an environment map, so importing one is equivalent to runn
 that is a decision a host makes rather than inherits from a default.
 
 The subpath is separate from the main entry for one reason: `client.ts` and `hooks.ts` import
-`node:crypto`, and `spec.ts` imports nothing but types, so a browser validating a pasted document in
-a form can load it. Nothing in `src/` imports it — the same direction the config seam runs, which is
-what lets a document travel between hosts without the loop growing an opinion about where an agent
-comes from.
+`node:crypto`, and `spec.ts` imports only modules that need nothing from Node and import nothing
+themselves, so a browser validating a pasted document in a form can load it. Nothing outside
+`src/spec/` imports it — the same direction the config seam runs, which is what lets a document
+travel between hosts without the loop growing an opinion about where an agent comes from.
 
 ### From a row, and back
 

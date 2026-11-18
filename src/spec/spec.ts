@@ -18,8 +18,8 @@ import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
  * real ceiling of zero* in the third. This is the shape they can all write and all read, argued
  * out in `docs/agent-spec.md` before any of it was code.
  *
- * Nothing else in `src/` imports this module, and this module imports nothing that needs Node:
- * types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
+ * Nothing outside `src/spec/` imports this module, and this module imports nothing that needs
+ * Node: types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
  * loop takes the parts it reads, not a config object — and it is what lets the document travel
  * between hosts without the loop growing an opinion about where an agent comes from. It is also
  * why this is importable in a browser, where `client.ts` and `hooks.ts` are not: a host validating
@@ -966,10 +966,10 @@ const KNOWN = new Set([
  * uses, because a host showing an operator one error at a time makes them fix a document one
  * round trip at a time.
  *
- * There are exactly four hard errors, all of them about the document rather than a value: it is
- * not an object; the `spec` token is missing or of another major; a `requires` entry this host
- * does not understand; a container of the wrong kind. Everything else drops the offending field
- * and warns — the lesson a consumer learned the hard way when one stored out-of-range value
+ * The hard errors are all about the document rather than a value: it is not an object; the
+ * `spec` token is missing or of another major; a container of the wrong kind; a `requires` entry
+ * that is not a string, or that this host does not understand. Everything else drops the offending
+ * field and warns — the lesson a consumer learned the hard way when one stored out-of-range value
  * stopped its server booting. Out-of-range values are dropped rather than clamped, because a
  * clamp invents a number the author did not write while dropping falls back to one somebody did.
  *

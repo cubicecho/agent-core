@@ -3,8 +3,11 @@
 A versioned JSON document that defines an agent, which any application built on
 `@cubicecho/agent-core` can load, validate and run.
 
-This is a design document. Nothing in it is implemented yet; it exists to be agreed before code
-is written, because three consumers have to live with the result.
+It is implemented in `src/spec/`. `parseSpec` reads a document, `resolveAgentSpec` layers documents
+into the flat config the loop takes, `exportSpec` and `findSpecSecrets` prepare one to leave the
+host, and `defineSpecColumns` maps an app's stored row to a layer and back. This page began as the
+design, agreed before the code because three consumers have to live with the result, and now
+describes what the code does.
 
 ## Why
 
@@ -85,6 +88,9 @@ export interface AgentSpec {
   extensions?: Record<string, unknown>;
   /** Extension keys a host must understand, or it refuses to run this agent. */
   requires?: string[];
+
+  /** Keys from a later 1.x, kept so an edit-and-export cycle does not erase them. */
+  [key: string]: unknown;
 }
 
 export interface EndpointSpec {
@@ -113,7 +119,7 @@ export interface ModelSpec {
   /**
    * Request fields the interface cannot spell. `model`, `messages`, `stream` and `tools` are
    * dropped, and so are `temperature`, `max_tokens`, `max_completion_tokens` and
-   * `reasoning_effort`, which the fields above spell.
+   * `reasoning_effort`, which the fields above spell: on parse, and again on resolve.
    */
   extraBody?: Record<string, unknown>;
 }
@@ -121,7 +127,7 @@ export interface ModelSpec {
 export interface PromptPart {
   /** Names this layer: `project`, `identity`, `role`, `lane`. Merging happens on it. */
   id: string;
-  /** The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given. */
+  /** The text. Empty deletes the part a layer below contributed, `ref` included. Absent only when `ref` is given. */
   text?: string;
   /** Where the text lives instead. The shape is validated; the reference is never resolved. */
   ref?: { type: "file" | "url"; value: string };
@@ -165,7 +171,7 @@ export interface TaskSpec {
 export interface AgentHook {
   /** Unique within the agent. Merging happens on it. */
   id: string;
-  /** One of `HOOK_EVENTS`. An event this host never fires is a warning, not an error. */
+  /** One of `SPEC_EVENTS`. An event this host never fires is a warning, not an error. */
   on: HookEvent;
   /** The server whose tool this is, by effective slug. */
   server: string;
@@ -276,12 +282,19 @@ export interface ResolvedAgent extends AgentConfig {
   id: string;
   name: string;
   description: string;
-  /** The tri-state preserved: absent is every server, empty is none. */
+  /** The tri-state preserved: absent is every server the host offers, empty is none. */
   servers?: readonly string[];
-  /** Only the tasks the spec configured. `toolSelect`'s model also flattens to `toolSelectModel`. */
+  /** The merged prompt parts, in order, without the deleted ones. `systemPrompt` joins their texts. */
+  prompt: readonly PromptPart[];
+  /** Only the tasks a layer configured and none declined. `toolSelect` also flattens to `toolSelectModel`. */
   tasks: Readonly<Record<string, ResolvedTask>>;
+  /** Merged by id, less an `inject` or a `veto` the merged hook's event cannot honour. */
   hooks: readonly AgentHook[];
+  /** Bundled server definitions, merged by effective slug. Empty unless a bundle was parsed. */
+  mcpServers: readonly SpecServer[];
   extensions: Readonly<Record<string, unknown>>;
+  /** Every layer's requirements, unioned, so a layer above cannot quietly drop one below it. */
+  requires: readonly string[];
 }
 
 export interface ResolvedTask {
@@ -291,15 +304,20 @@ export interface ResolvedTask {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
+  /** Merged key by key across the layers. The agent's `model.extraBody` never reaches it. */
   extraBody?: Record<string, unknown>;
 }
 ```
 
-`ResolvedAgent extends AgentConfig` (`src/core/config.ts:108`), so it already satisfies
+`ResolvedAgent extends AgentConfig` (`src/core/config.ts`), so it already satisfies
 `AgentLoopOptions["config"]` (`src/run/agent-loop.ts`) structurally. `getClient(resolved)` and
 `runAgentLoop({ config: resolved })` take it unchanged and no adapter export is needed. The config
-seam survives on one rule: the spec module imports from `config.ts`, and nothing else in `src/`
-imports from the spec module.
+seam survives on one rule: the spec module imports only modules that need nothing from Node and
+import nothing themselves (`core/config.ts`, `core/guards.ts`, `hooks/hook-events.ts`), and nothing
+outside `src/spec/` imports it but `src/index.ts`.
+
+The result is always whole. `apiKey` is `""` whatever the layers said (see Trust), and an empty
+list of layers resolves to empty strings and `RESOLVED_DEFAULTS` rather than an error.
 
 ## Absent, present, empty
 
@@ -309,6 +327,9 @@ as `null` and refusing it would make every host write a stripper first.
 
 | Field | absent | present | its empty value |
 | --- | --- | --- | --- |
+| `id` | inherit; nowhere is `""` | this id | `""` — a value, not inherit |
+| `name` | inherit; nowhere is the resolved `id` | this name | `""` — a value, not inherit |
+| `description` | inherit; nowhere is `""` | this description | `""` — clears the one below |
 | `endpoint.baseUrl` | inherit | this endpoint | `""` — names none, cannot run |
 | `endpoint.requestTimeoutSeconds` | inherit; nowhere is no limit | this many seconds | `0` — no limit |
 | `endpoint.firstTokenSeconds` | inherit; nowhere is five times the above | this many | `0` — no limit |
@@ -317,13 +338,13 @@ as `null` and refusing it would make every host write a stripper first.
 | `model.temperature` | inherit | this temperature | `0` — deterministic, not inherit |
 | `model.reasoningReplay` | inherit; nowhere is `all` | as stated | — |
 | `model.contextLength` | inherit | this window | `0` — ask the endpoint |
-| `model.extraBody` | inherit | merged key by key | `{}` — adds nothing |
-| `prompt` | inherit | merged by part id | `[]` — adds nothing; `text: ""` deletes a part |
+| `model.extraBody` | inherit | merged key by key, less the fields the loop sets or the spec spells | `{}` — adds nothing |
+| `prompt` | inherit | merged by part id | `[]` — adds nothing; `text: ""` deletes a part, `ref` included |
 | `tools.servers` | **every server** | exactly these | `[]` — **no servers** |
 | `tools.discovery` | inherit; nowhere is `eager` | as stated | — |
 | `retry.maxRetries` | inherit; nowhere is `0` | this many | `0` — no retries |
 | `tasks.<key>` | not configured | configured | `model: ""` — the task is off |
-| `tasks.<key>.extraBody` | inherit | merged key by key | `{}` — adds nothing |
+| `tasks.<key>.extraBody` | inherit | merged key by key, less the same fields | `{}` — adds nothing |
 | `hooks` | inherit | merged by hook id | `[]` — adds none; `enabled: false` stops one |
 | `requires` | nothing required | all must be understood | `[]` — nothing required |
 
@@ -341,6 +362,23 @@ above cannot quietly drop a requirement below it.
 There is no `extends` field and no URL resolution: the package never fetches a layer. Which
 documents layer is the host's call, the same answer `resolveApiKey` already gives about keys.
 
+An empty `text` deletes a prompt part, and nothing that lay below the deletion survives, a `ref`
+included. A layer above it that names the id again starts the part afresh, in the place the id
+first had.
+
+Resolving also holds two rules that `parseSpec` holds within one document. It holds them for a
+layer that never went through `parseSpec` (one built in code, or by `defineSpecColumns().toLayer`
+from a row) and for what the merge itself makes:
+
+- `extraBody`, the agent's and each task's, loses `RESERVED_BODY_FIELDS` and the fields the spec
+  spells (`temperature`, `max_tokens`, `max_completion_tokens`, `reasoning_effort`), so a row
+  cannot send a temperature over the stated one, past the negotiation.
+- A hook merged by id loses an `inject` or a `veto` its merged event cannot honour. A layer can
+  move a hook from `beforeTurn` to `afterTurn` by id without restating it, and the `inject` from
+  below would otherwise come with it.
+
+Resolving has no warnings, so both drops are silent. `parseSpec` is where an operator is told.
+
 Merging by part id is what lets one rule express two behaviours that look unrelated today.
 Different ids stack, which is `kanban_server` composing project, identity, role and lane. The same
 id replaces, which is `task_server`'s settings to task to step chain. Neither host branches on
@@ -352,9 +390,11 @@ nobody can edit a third of.
 
 The core document references servers by **effective slug**, `row.slug ?? row.id`. A slug exists in
 all four repositories and is already what the model sees as `<slug>__<tool>`; a uuid is not
-portable between two databases. Narrowing never widens: an unresolvable slug is dropped with a
-warning, and if that empties a non-empty list the agent runs with no tools rather than falling back
-to "all". Getting that backwards is how a scoped agent silently gains every tool on the box.
+portable between two databases. Turning slugs into servers is the host's job, and nothing in
+`src/spec/` resolves one. A host that does it must narrow, never widen: drop an unresolvable slug
+with a warning, and if that empties a non-empty list, run the agent with no tools rather than
+falling back to "all". Getting that backwards is how a scoped agent silently gains every tool on
+the box.
 
 The optional `bundle.mcpServers` carries full definitions for an agent that must travel whole.
 This package deliberately does **not** restate `McpServerConfig`. Restating a union it never reads
@@ -369,7 +409,11 @@ the line where a host hands them to the pool.
 
 A bundle carries a command line and an environment map, so loading one is equivalent to running a
 program. It is exactly as dangerous as pasting somebody's `.mcp.json`, and hosts must gate import
-behind the same decision.
+behind the same decision. `parseSpec` reads `bundle` only when called as
+`parseSpec(document, { bundle: true })`; otherwise it drops the section with a warning.
+
+Agent-level hooks are in version 1, so an imported agent can bring tool calls the operator never
+configured. A host reviews them on import as it would the servers they name.
 
 There is **no credential field at any depth**, and a `${VAR}`-shaped string is never expanded — it
 is kept as the literal it is and warned about. Interpolation is the universal prior art and the
@@ -378,37 +422,42 @@ process has, which is why the tools that support it need a credential denylist b
 without interpolation needs no denylist. The attack this closes is a confused deputy — a document
 naming `https://attacker.example/v1` that causes the host's own provider key to be sent there.
 
-Resolution therefore yields `apiKey: ""`, which `getClient` turns into `NO_KEY` (`src/endpoint/client.ts:10`).
+Resolution therefore yields `apiKey: ""`, which `getClient` turns into `NO_KEY` (`src/endpoint/client.ts`).
 A host that wants inheritance applies `resolveApiKey` (`src/endpoint/client.ts`) afterwards — the
 existing seam, deliberately not applied by the loop, unchanged. `exportSpec(spec, { secrets })`
 mirrors `state({ secrets })` in the pool and strips every bundled server's `env` and `headers`,
-with the property that **a redacted spec is still a valid spec**.
+with the property that **a redacted spec is still a valid spec**. A server can still carry a
+credential where the format gives it no field, such as an `--api-key` among its `args` or a token
+in its `url`. `exportSpec` keeps those, since cutting them would point the agent at another server,
+and `findSpecSecrets` names where they are.
 
 ## Validation
 
 Hand-rolled guards in the house style of `src/runtime/snapshot.ts`, reporting every problem at once in the
-message shape `validateHooks` already uses (`temperature: must be between 0 and 2`), and
-importable in a browser.
+message shape `validateHooks` already uses (`model.temperature: must be between 0 and 2, and was
+dropped`), and importable in a browser.
 
-There are exactly four hard errors, all of them about the document rather than a value: it is not
-an object; the `spec` token is missing or unrecognised; a `requires` entry is not understood; a
-container is of the wrong kind, meaning `prompt` is not an array, `tasks` is not an object, or
-`hooks` is not an array. Everything else drops the offending field and warns — the lesson
-`coerceLlmConfig` learned the hard way when a stored out-of-range value stopped a server booting.
+The hard errors are all about the document rather than a value: it is not an object; the `spec`
+token is missing or names another format or major; a container is of the wrong kind, meaning
+`prompt`, `hooks` or `requires` is not an array, or `tasks` is not an object; or a `requires` entry
+is not a string, or names an extension this host does not understand. Everything else drops the
+offending field and warns — the lesson `coerceLlmConfig` learned the hard way when a stored
+out-of-range value stopped a server booting.
 
 Out-of-range values are **dropped, not clamped**. A clamp invents a number the author did not
 write, while dropping falls back to one somebody did. That is also the strongest argument for the
 no-sentinel rule: with sentinels, an invalid field degrades to a default nobody chose; without
 them, it degrades to the layer below.
 
-Version handling is the deliberate opposite of `importCapabilities` (`src/runtime/snapshot.ts:128`), which
+Version handling is the deliberate opposite of `importCapabilities` (`src/runtime/snapshot.ts`), which
 shrugs at a foreign version and returns `false`. *Degrade where the loss is performance; refuse
 where the loss is identity.* A snapshot of the wrong version costs a few refused requests; an agent
 of the wrong version is not the agent the author described. Additive optional fields need no bump,
 per the same snapshot precedent.
 
 `requires` is A2A's `AgentExtension.required` trimmed to its one working part. A host declares the
-extension keys it understands, an unrecognised entry refuses the load, and an agent that must not
+extension keys it understands (`parseSpec`'s `understands` option), an unrecognised entry refuses
+the load, and an agent that must not
 run without its sandbox extension can say so. It fails closed.
 
 Unknown keys are ignored, warned about, and **never dropped from storage**. A host stores the
@@ -418,13 +467,17 @@ that never warns.
 
 A hook bound to an event this host never fires is a note rather than an error. `task_server`
 currently refuses to save a `beforeCompact` hook because it never compacts, which makes an
-otherwise good agent unimportable. The validator takes the host's fired-event set, defaulting to
-`HOOK_EVENTS`, and warns.
+otherwise good agent unimportable. The validator takes the host's fired-event set (the `events`
+option), defaulting to `SPEC_EVENTS`, which is `HOOK_EVENTS`, and warns.
+
+An `inject: true` on an event outside `INJECT_EVENTS`, or a `veto: true` on any event but
+`beforeCompact`, is dropped with a warning and the hook is kept. Resolving drops the same flags
+again from a hook merged by id (see Layering).
 
 ## Side tasks
 
 `tasks` generalises `min-agent`'s `taskModels`, and each entry may carry **its own endpoint** —
-because every side task in this package already takes one: `summariser` (`src/context/compaction.ts:232`),
+because every side task in this package already takes one: `summariser` (`src/context/compaction.ts`),
 `preselect` (`src/tools/preselect.ts`) and `ask` (`src/turn/side-task.ts`). A 1.5B titler on a local
 llama.cpp beside a frontier main model is expressible here, and no published format serves it. An
 unknown task key is carried through untouched and not warned about, since a host may run tasks this
@@ -549,7 +602,7 @@ Resolved:
 ```jsonc
 {
   "baseUrl": "http://localhost:8080/v1",
-  "apiKey": "",              // its own baseUrl, so it does not inherit the OpenAI key
+  "apiKey": "",              // resolution never gives a key
   "requestTimeoutSeconds": 120,
   "model": "qwen3-coder:30b",
   "maxTokens": 8192,
@@ -563,9 +616,10 @@ Resolved:
 }
 ```
 
-`temperature: 0` survives, which is the exact bug the `-1` sentinel exists to dodge. The agent
-points at its own server, so it gets no key rather than somebody else's. And the resolved object is
-the flat shape `runAgentLoop` already takes.
+`temperature: 0` survives, which is the exact bug the `-1` sentinel exists to dodge. Resolution
+gives every agent `apiKey: ""`, and `resolveApiKey` applied afterwards gives this one none either,
+since it points at its own server rather than the one the OpenAI key is for. And the resolved
+object is the flat shape `runAgentLoop` already takes.
 
 The job then composes on top as parts rather than one string:
 
@@ -667,13 +721,6 @@ explicit trust decision before it is parsed.
 
 ## Open questions
 
-**Agent-level hooks in version 1 at all?** The pool puts hooks on server rows, shared by every
-agent. Agent-level hooks are new capability, and the merge rule means an imported agent can add
-tool calls the operator never configured.
-
-**Bundle parsing.** Should the parser refuse a bundle unless the caller opts in, as
-`parseSpec(document, { bundle: true })`, so that the unsafe path is never the default?
-
 **Server identity.** Slug alone is portable; `{ slug, id? }` would make an intra-host round trip
 lossless. Carrying both invites a host to prefer the id and lose portability quietly.
 
@@ -683,21 +730,19 @@ the single place `null` should mean "remove" rather than "absent"?
 **A `.agent.md` surface form**, frontmatter plus body, parsing to the same object — a consumer's
 business, or never?
 
-## Before any of this is implemented
+## Checking it against the consumers
 
-The design is checked against the real rows first, on paper, because that is far cheaper than
-finding out afterwards.
+The type-level claim is a test: `resolveAgentSpec` › `is the flat shape the loop already takes`
+assigns a resolved agent to `AgentLoopOptions["config"]`. If that line stops compiling, the flat
+resolution is wrong and an adapter is needed after all.
 
-Take a real `kanban_server` settings row and agent row and hand-resolve them through these rules;
-the result must match what `resolveAgent` produces today, including the case where the agent names
-its own `baseUrl` and gets `NO_KEY` rather than the inherited key. Repeat for `task_server`'s
-`resolveConfig` across its sentinel matrix, and for a `min-agent` settings row round-tripping back
-through `coerceLlmConfig` without a warning. If any of the three disagrees, the design is wrong.
+The check against real rows is each consumer's to make as it adopts the format. Take a real
+`kanban_server` settings row and agent row and resolve them; the result must match what
+`resolveAgent` produces today, including the case where the agent names its own `baseUrl` and gets
+`NO_KEY` rather than the inherited key. Repeat for `task_server`'s `resolveConfig` across its
+sentinel matrix, and for a `min-agent` settings row round-tripping back through `coerceLlmConfig`
+without a warning. If any of the three disagrees, the format is wrong.
 
 The tri-state round trip is the likeliest single bug, since it is inverted between two consumers
 today: `kanban_server`'s empty join must become `[]` and then no tools, while `task_server`'s null
 `mcpServerIds` must become absent and then every server.
-
-And the type-level claim the implementation carries as a test:
-`ResolvedAgent satisfies AgentLoopOptions["config"]`. If that line cannot be written, the flat
-resolution is wrong and an adapter is needed after all.
