@@ -1,3 +1,67 @@
+# [5.0.0](https://github.com/cubicecho/agent-core/compare/v4.30.0...v5.0.0) (2026-11-18)
+
+
+* feat!: call a turn a turn, not a step ([4582bd6](https://github.com/cubicecho/agent-core/commit/4582bd64e0b10125839b88ac654a0202cc6bd102))
+* feat!: name the events that mark exchanges after exchanges ([7f5bd1d](https://github.com/cubicecho/agent-core/commit/7f5bd1db65ea1fca62d6e1c92d159724a1b89221))
+* feat!: name the exchange's hook events beforeExchange and afterExchange ([79d61c8](https://github.com/cubicecho/agent-core/commit/79d61c865ded503ee332eb4473db3cce47dea8e2))
+* feat!: retire the deprecated usage names and the hooks' events option ([4593a50](https://github.com/cubicecho/agent-core/commit/4593a50c82253c198bd93a9f7ee2a0d4dd861078))
+
+
+### BREAKING CHANGES
+
+* RunEventKind.Step, RunEvent.step and RunMetrics.steps
+are gone, and the bus, watch, history and stamp produce
+`kind: 'exchange'` and an `exchange` field instead of `kind: 'step'` and
+`step`. Migrate by emitting RunEventKind.Exchange and setting `exchange`
+where `step` was set, reading `event.exchange` and `metrics.exchanges`,
+and matching the raw string 'exchange' where code matched 'step'. Events
+stored or relayed under the old names need no migration for fold,
+runMetrics, progressEvent and progressEvents; code that reads a stored
+event's `step` field itself must read `exchange` and fall back to
+`step` for old rows. Upgrade task_server and ai-router together.
+* hook runners are now called with 'beforeExchange' and
+'afterExchange' instead of 'beforeTurn' and 'afterTurn', and HOOK_EVENTS
+and INJECT_EVENTS hold the new strings. Code comparing against
+HookEvent.BeforeTurn or HookEvent.AfterTurn keeps working; code
+comparing against the raw strings 'beforeTurn' or 'afterTurn' (in a
+runner, in a list passed to gather or hooks.fire, or in parseSpec's
+`events` option) no longer matches. Migrate by using
+HookEvent.BeforeExchange and HookEvent.AfterExchange, or the strings
+'beforeExchange' and 'afterExchange'. AgentLoopResult.afterTurn keeps
+its name.
+* `LoopUsage` is `UsageTotals`, and `AgentLoopHooks.events`
+is gone.
+
+- `result.usage` and a failed exchange's `usage` (`failedRun(error).usage`,
+  `AgentLoopError.usage`, `AgentLoopOverflow.usage`) no longer carry
+  `prompt`, `completion`, `total` and `cached`. Read `promptTokens`,
+  `completionTokens`, `totalTokens` and `cachedTokens`, the same numbers,
+  and `cacheReported` for whether a cache count was reported. A turn's own
+  `TurnUsage` keeps its short names.
+- `hooks.events` is no longer read. Without `fire` the loop fires
+  `beforeTurn`, `beforeCompact` and `afterTurn`, as `events` left out did.
+  An app that passed `events: [...]` passes
+  `fire: [...events, HookEvent.BeforeCompact, HookEvent.AfterTurn]`
+  instead, leaving out whichever of the two it fires itself.
+* the turn number is `turn` where it was `step`.
+
+Aliased, deprecated, and still working:
+- `beforeStep` is read where `beforeTurn` is not given. Rename the option
+  to `beforeTurn`; it is handed the same arguments.
+- `StepWindow` is a type alias of `TurnWindow`. Rename the import.
+
+Not aliased (fields of objects the loop hands over):
+- `AgentLoopRequest.step` is `AgentLoopRequest.turn`. In `onRequest`,
+  read `request.turn` for `request.step`.
+- `RunArtifact.step` is `RunArtifact.turn`, on `result.artifacts` and on
+  `failedRun(error).artifacts`. Read `artifact.turn` for `artifact.step`.
+
+Positional parameters, renamed in the types only: the second argument of
+`beforeTurn`, `onTurn` and `onMessage` is named `turn` (was `step`), and
+the `Turn` they are handed beside it is named `reply` (`onTurn`'s first,
+`onMessage`'s third; was `turn`). Same positions and values, so a callback
+needs no change.
+
 # [4.30.0](https://github.com/cubicecho/agent-core/compare/v4.29.0...v4.30.0) (2026-11-18)
 
 
