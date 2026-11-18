@@ -2682,6 +2682,57 @@ describe('runAgentLoop', () => {
     ]);
   });
 
+  it('hands a failure in the last step the same run fields the finished run returns', async () => {
+    const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__write', description: 'writes' }] }];
+    const script = () =>
+      create
+        .mockReturnValueOnce(reportedCall(100, 0, LOAD_TOOLS, '{"names":["s__write"]}'))
+        .mockReturnValueOnce(reportedCall(160, 100, 's__write'))
+        .mockReturnValueOnce(reported(200, 160, { content: 'done' }));
+    const run = (onMessage?: (message: Message) => void) =>
+      runAgentLoop({
+        config: { ...config, toolDiscovery: ToolDiscovery.OnDemand },
+        messages: question,
+        tools: [tool('s__write')],
+        catalog,
+        dispatch: async () => ({ text: 'saved', links: [{ uri: 'doc://a', name: 'a' }] }),
+        // The second step's `c0` is taken, so it is minted: the same id in both runs.
+        mintCallId: callIdMinter(7),
+        ...(onMessage ? { onMessage } : {}),
+      });
+    /** The fields a failure and a result both carry. */
+    const runFields = (run: Record<string, unknown> | undefined) => ({
+      messages: run?.messages,
+      usage: run?.usage,
+      toolCalls: run?.toolCalls,
+      artifacts: run?.artifacts,
+      loaded: run?.loaded,
+      used: run?.used,
+      preselected: run?.preselected,
+      ledger: run?.ledger,
+      remoteRunId: run?.remoteRunId,
+    });
+
+    script();
+    const result = await run();
+    script();
+    // The answer is in the transcript, counted and on the ledger, before the host is told of it.
+    const error = await run((message) => {
+      if (message.role === Role.Assistant && message.content === 'done') {
+        throw new Error('the host is down');
+      }
+    }).catch((caught: unknown) => caught);
+
+    expect(errorMessage(error)).toBe('the host is down');
+    const failed = failedRun(error);
+    expect(runFields(failed ? { ...failed } : undefined)).toEqual(runFields({ ...result }));
+    // Compared on fields that hold something, not on empties.
+    expect(result.loaded).toEqual(['s__write']);
+    expect(result.used).toEqual(['s__write']);
+    expect(result.artifacts).toHaveLength(1);
+    expect(result.ledger).toHaveLength(3);
+  });
+
   it('hands a failure before any step the ledger it was given', async () => {
     const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
     // A failing hook is a note, and a host that throws on the note rejects the gather, which the
