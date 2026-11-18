@@ -35,82 +35,97 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 
 | ID | Kind | What it does | Buys | Needs | Status |
 |---|---|---|---|---|---|
-| M7 | Model change | The wire folder holds only what is sent and comes back; the run's failure record and the dispatcher's contract move to the run folder. | Removes the one dependency pointing the wrong way, and leaves `tool-calls` one concept | — | approved |
-| R23 | Refactor [pattern] | Move the loop's failure classes and `failedRun` out of the wire folder into a run module of their own. | M7 | T7 | open |
-| R24 | Refactor [pattern] | Move the types a dispatcher is handed and answers with (request, answer, result, artifact, log entry) out of the call-reading module into a run module. | M7 | — | open |
-| R44 | Refactor [reuse] | Give the loop's two failure classes one way to copy the run onto themselves, not two ten-line copies. | M7; one copy to keep in step | R23, T7 | open |
-| M8 | Model change | The plain-text helpers for message text and fencing untrusted text get a browser-safe home below hooks, tools and context. | Context and tools stop loading the hook module, and its crypto import, for two string helpers | — | approved |
-| R25 | Refactor [pattern] | Move `textOf`, `untrusted` and `UNTRUSTED_PREFACE` out of `hooks.ts` into a wire module. | M8 | — | open |
-| M9 | Model change | The loop module owns the loop: tool-discovery choice moves to tools, session pinning to slots, cache diagnosis to the ledger, and the result is built in one place. | A 2081-line file loses four concepts that have folders of their own | — | approved |
-| R26 | Refactor [pattern] | Move the choice of discovery mode and the preselection call from the loop into the tools folder. | M9 | — | open |
-| R27 | Refactor [pattern] | Move pinning a run's session to a llama.cpp slot from the loop into the slots module. | M9 | — | open |
-| R28 | Refactor [pattern] | Move the guess at why a prompt cache broke from the loop into the ledger module. | M9 | — | open |
-| R29 | Refactor [reuse] | Build the run's result in one function used by both a failure and a finished run. | M9; the field list can no longer drift between the two | T12 | open |
-| M10 | Model change | Capability latches have one store and one way to write them: the no-thinking-hints latch joins the others, and continuation and side tasks latch through the capabilities module. | Four writers in three folders become one owner; snapshot and reset stop reaching into turn | B20 | approved |
-| R30 | Refactor [pattern] | Keep the side-task "refused the no-thinking hints" latch with the other capabilities, leaving the snapshot JSON unchanged. | M10 | T10 | open |
-| R31 | Refactor [pattern] | Have continuation and side tasks latch a refusal through the capabilities module's functions instead of setting fields themselves. | M10 | R30, B20 | open |
-| M11 | Model change | One word per concept in prose and private names, the glossary's word; public names go to a decision. | Five names for the scratchpad, four for the window and three for each timeout become one each | — | approved |
-| R32 | Refactor [readability] | Rename private names that clash with another concept: `stepOutcome`, and the local `isRecord` in run-calls that shadows the guard. | M11 | — | open |
-| R33 | Refactor [readability] | Use the glossary's word for the window, the scratchpad and compaction in doc comments and comments. | M11 | M11 | open |
-| A3 | API change | Rename the public names that mean two things or differ between modules (`compact`, `firstTokenMs`, `timeoutMs`, `startInReasoning`/`startInside`), with deprecated aliases. | M11, public half | M11 | open |
-| B7 | Bug | Make `notify` and `consult` truly never reject when the host's note callback throws, as their docs say. | A buggy callback can no longer fail a compaction or a run, or crash a host that fires and forgets | — | open |
-| B8 | Bug | Re-check a hook's inject and veto flags after layers merge, so a merged hook can't carry a flag its event can't use. | The resolved agent describes itself truthfully | — | open |
-| B9 | Bug | Make an empty prompt-part text delete the part from the resolved prompt list, its file or URL reference included. | An operator can remove an inherited prompt part | — | open |
-| B10 | Bug | Let an empty id, name or description in an upper layer override the one below, as `""` is a value. | The "absent vs empty" rule holds for every field | — | open |
-| B11 | Bug | Apply the #222 rule when layers are resolved too, so a layer built in code or from stored columns can't override the temperature or ceiling through extra body fields. | #222 holds on every path, not only `parseSpec` | — | open |
-| B12 | Bug | Have the text-call recoverer skip every scratchpad fence, not only `<think>`. | A direct caller no longer runs a call the model was only deliberating about | — | open |
-| B13 | Bug | Pair tool results with their calls by id in the run metrics, not by tool name. | Tool time is no longer inflated by a handed-back call's human wait | — | open |
-| B14 | Bug | Have a slot allocator read the current pool on each call, not the array it was made with. | Two runs are never pinned to one slot after the server's slot count changes | — | open |
-| B15 | Bug | Keep a waiting run's event stream alive on the bus, or keep its numbering, so a resumed run's events are not discarded. | A handed-back run that waits longer than 30 minutes still shows its answer | — | open |
-| B16 | Bug | Key the client pool on the normalised URL, as the listings are. | One client per server, not one per spelling of its URL | B24 | open |
-| B17 | Bug (question) | Decide whether two fetch functions behind one URL share capability latches, as they do today, or are kept apart, as their listings are. | One backend's refusal stops degrading the other, if they are apart | B24 | open |
-| B18 | Bug | Report a dropped extension field's path so that two different paths can't print the same. | An import report a host can key on | — | open |
-| B19 | Bug | Keep a turn's scratchpad in the order it arrived when it came both as a field and fenced in the text. | The replayed scratchpad matches what a watcher was streamed | — | open |
-| B20 | Bug (question) | Decide which of the two rules latches a refused reasoning effort, since negotiation and side tasks latch it differently. | One rule for one latch; needed before R31 | — | open |
-| B21 | Bug (question) | Decide whether a served window should expire like the slot count read from the same answer. | A restarted server's new window is picked up, if they expire alike | — | open |
-| B22 | Bug (question) | Decide whether negotiation should use the shared "refused request" test or keep reading every error by its text. | One definition of a refusal, if merged | — | open |
-| B23 | Bug (question) | Decide who owns a run's outcome: today the loop decides it and the metrics decide it again from a `done` only the host sends. | One owner, and an outcome on the events that agrees with the result | — | open |
-| B24 | Bug (question) | Decide what "one endpoint" means across the caches; five caches key it five ways today. | One identity rule; settles B16 and B17 | — | open |
-| B25 | Bug (question) | Decide whether calls that end the run first, stop or never run are told to the host's callbacks and events, or the docs stop saying "every call". | Callbacks and docs that agree | — | open |
-| D6 | Docs | Bring `docs/agent-spec.md` up to date: it says nothing is implemented, lists answered questions, and has wrong counts, fields and line references. | A spec doc that describes the code | — | open |
-| D7 | Docs | Fix comments that are no longer true: test paths, counts, keying claims, history that no longer describes the code. | Comments a reader can trust | — | open |
-| D8 | Docs | Fix lead sentences that `llms.txt` publishes wrongly, attach the orphaned doc comment, and give `CallIds` its own doc. | The published index says what each export is | — | open |
-| D9 | Docs | Say in the option docs where behaviour is narrower than "every": one-call-per-message turning parallel off, a remote agent ignoring `callIds`, dedupe keying on normalised arguments. | Options say what they do | — | open |
-| D10 | Docs | Add `remote` to AGENTS.md's run row, and point AGENTS.md to the glossary in `.agents/domain-model.md`. | The layout table is complete; the terms have one home | — | open |
-| R34 | Refactor [sweep] | Apply P6/P7: merge four duplicated helpers (clip text to a token budget, `absent`, "listing still fresh", the pruned-result marker). | Sweep; one copy each, and pruning can't silently re-prune after a wording change | — | open |
-| R35 | Refactor [reuse] | Merge three spellings of "a positive finite number". | One check | — | open |
-| R36 | Refactor [reuse] | Write the `load_tools` parameter schema once for the on-demand and proxied tools. | One schema to change | — | open |
-| R37 | Refactor [simplify] | Stop exporting module-level names only their own module reads. | A smaller internal surface | — | open |
-| R38 | Refactor [readability] | Replace a `map` with a side effect, and two `forEach` pushes, with loops. | P13 one-offs | — | open |
-| R39 | Refactor [readability] | Pick a run's outcome from its finish reason, and a hook setting's validator, from lookup tables. | P24 | — | open |
-| R40 | Refactor [readability] | Remove the one source type assertion that has a fix in the types. | P17 | — | open |
-| R41 | Refactor [sweep] | Apply P14: derive the spec parser's closed-set checks from the vocabularies, and one list in the token breakdown. | Sweep; a new discovery mode or replay value is no longer dropped silently | — | open |
-| R42 | Refactor [sweep] | Apply P1/P20 to the 64 conditions that really take reading: clock arithmetic, three or more clauses, and inline `=== false`. | Sweep | — | open |
-| R43 | Refactor [sweep] | Apply P19, worst first: the 38 doc blocks of seven or more sentences and the 16 `//` runs of five lines or more. | Sweep | — | open |
-| T5 | Test [readability] | Type the 19 untyped SDK mocks, so about 45 casts in the tests go. | Fakes typed as what they stand in for | — | open |
-| T6 | Test [pin] | Give `scope.ts` and `config.ts` tests of their own. | Pins per-scope state and settings before M10 | — | open |
-| T7 | Test [pin] | Add a test file for the loop's failure classes and `failedRun`. | Pins them before R23 and R44 move them | — | open |
-| T8 | Test [pin] | Add a slots case to the reset test, and a drift test that every per-scope store has a reset and a runtime method. | A new store can't be left out of `resetAll` | — | open |
-| T9 | Test [pin] | Test `refusesRequest` and `isModelLoading`. | Pins two retry predicates before B22 | — | open |
-| T10 | Test [pin] | Pin the capability snapshot's JSON byte for byte, hints included. | R30 provably leaves the stored format alone | — | open |
-| T12 | Test [pin] | Pin that a failure and a finished run carry the same run fields. | R29 provably changes nothing | — | open |
-| A4 | API change | Export `OnNotice` and `EndpointIdentity`, which public signatures already use. | Hosts can name the types they pass | — | open |
-| A5 | API change | Gather the tunables into one defaults module, internal ones first, host-imported ones as a separate decision. | P22; one place answers "what can be tuned" | — | open |
-| A6 | API change | Retire the deprecated usage aliases and the deprecated hook `events` option (breaking). | P25; one name per count | — | open |
-| A7 | API change | Stop exporting `AGENT_TASKS`, `PRESELECT_SYSTEM`, `requestIndex` and `SPEC_EVENTS`. | A smaller surface, if nobody relies on them | — | open |
-| A9 | API change (breaking, 5.0.0) | Rename the hook events `beforeTurn`/`afterTurn` to `beforeExchange`/`afterExchange`. | The one place "turn" meant an exchange | M11 | approved |
-| A10 | API change (breaking, 5.0.0) | Rename everything that calls a turn a "step" to "turn": `beforeStep`, `StepWindow`, the `step` numbers on `AgentLoopRequest`, `beforeStep`, `onMessage` and `ArtifactFrom`. | Turn is the only word for one model reply and its tools | A9 | approved |
-| A11 | API change (breaking, 5.0.0) | Name the events that mark exchanges inside a run after exchanges: `RunEventKind.Step`, `RunEvent.step` and `RunMetrics.steps`. | "Step" leaves the vocabulary entirely | A10 | approved |
-| A12 | API change (breaking, 5.0.0; to decide) | Rename the public names that call an exchange a "run": `RunOutcome` on a loop result, and the outcome docs. | The code says exchange where the model does | A11, B23 | open |
-| A8 | API change | Export the list of body fields a document may not set through extra body, so a host can apply #222 itself. | Hosts that build layers in code can follow the rule | B11 | open |
-| R45 | Refactor [readability] · low value | Rename the private `positive` wrapper and fold `Capabilities.since`'s speculative remark. | Small | — | open |
-| R46 | Refactor [consistency] · low value | Write the `'*'` wildcard, the URL schemes and the redirect type as named words. | P16 one-offs | — | open |
-| D11 | Docs · low value | Have the README's module table point to the glossary for terms. | One home for terms | D10 | open |
-| T11 | Test [consistency] · low value | Move the test of negotiation over a streamed turn out of a file named for a module that does not exist. | The one-test-per-module layout | — | open |
-| B26 | Bug (question) · low value | Decide whether the loop's `userText` and the hooks' `textOf`, which join text and refusals differently, should agree. | One definition of a message's text | M8 | open |
-| B27 | Bug · low value (unverified) | Stop formatting a loading wait of 1000 seconds or more as "1.0ks". | A readable notice | — | open |
+| M7 | Model change | The wire folder holds only what is sent and comes back; the run's failure record and the dispatcher's contract move to the run folder. | Removes the one dependency pointing the wrong way, and leaves `tool-calls` one concept | — | done (its R items) |
+| R23 | Refactor [pattern] | Move the loop's failure classes and `failedRun` out of the wire folder into a run module of their own. | M7 | T7 | done (`9b27cff`) |
+| R24 | Refactor [pattern] | Move the types a dispatcher is handed and answers with (request, answer, result, artifact, log entry) out of the call-reading module into a run module. | M7 | — | done (`1f0b765`, `19f503a`, `d0233a2`) |
+| R44 | Refactor [reuse] | Give the loop's two failure classes one way to copy the run onto themselves, not two ten-line copies. | M7; one copy to keep in step | R23, T7 | done (`5ad2b5b`) |
+| M8 | Model change | The plain-text helpers for message text and fencing untrusted text get a browser-safe home below hooks, tools and context. | Context and tools stop loading the hook module, and its crypto import, for two string helpers | — | done (its R items) |
+| R25 | Refactor [pattern] | Move `textOf`, `untrusted` and `UNTRUSTED_PREFACE` out of `hooks.ts` into a wire module. | M8 | — | done (`83bb6a7`) |
+| M9 | Model change | The loop module owns the loop: tool-discovery choice moves to tools, session pinning to slots, cache diagnosis to the ledger, and the result is built in one place. | A 2081-line file loses four concepts that have folders of their own | — | done (its R items) |
+| R26 | Refactor [pattern] | Move the choice of discovery mode and the preselection call from the loop into the tools folder. | M9 | — | done (`bd78ae8`, `67d8fd5`) |
+| R27 | Refactor [pattern] | Move pinning a run's session to a llama.cpp slot from the loop into the slots module. | M9 | — | done (`708aa8a`) |
+| R28 | Refactor [pattern] | Move the guess at why a prompt cache broke from the loop into the ledger module. | M9 | — | done (`c667e5d`) |
+| R29 | Refactor [reuse] | Build the run's result in one function used by both a failure and a finished run. | M9; the field list can no longer drift between the two | T12 | done (`00e5856`) |
+| M10 | Model change | Capability latches have one store and one way to write them: the no-thinking-hints latch joins the others, and continuation and side tasks latch through the capabilities module. | Four writers in three folders become one owner; snapshot and reset stop reaching into turn | B20 | done (its R items) |
+| R30 | Refactor [pattern] | Keep the side-task "refused the no-thinking hints" latch with the other capabilities, leaving the snapshot JSON unchanged. | M10 | T10 | done (`51f9a2b`, `d544f2e`, `d8bd2b9`, `39eb7e9`) |
+| R31 | Refactor [pattern] | Have continuation and side tasks latch a refusal through the capabilities module's functions instead of setting fields themselves. | M10 | R30, B20 | done (`9190551`) |
+| M11 | Model change | One word per concept in prose and private names, the glossary's word; public names go to a decision. | Five names for the scratchpad, four for the window and three for each timeout become one each | — | in progress (R33; A3 deferred) |
+| R32 | Refactor [readability] | Rename private names that clash with another concept: `stepOutcome`, and the local `isRecord` in run-calls that shadows the guard. | M11 | — | done (`a4e4c7a`) |
+| R33 | Refactor [readability] | Use the glossary's word for the window, the scratchpad and compaction in doc comments and comments. | M11 | M11 | in progress |
+| A3 | API change | Rename the public names that mean two things or differ between modules (`compact`, `firstTokenMs`, `timeoutMs`, `startInReasoning`/`startInside`), with deprecated aliases. | M11, public half | M11 | deferred |
+| B7 | Bug | Make `notify` and `consult` truly never reject when the host's note callback throws, as their docs say. | A buggy callback can no longer fail a compaction or a run, or crash a host that fires and forgets | — | done (`4c974a6`) |
+| B8 | Bug | Re-check a hook's inject and veto flags after layers merge, so a merged hook can't carry a flag its event can't use. | The resolved agent describes itself truthfully | — | done (`168e6ba`) |
+| B9 | Bug | Make an empty prompt-part text delete the part from the resolved prompt list, its file or URL reference included. | An operator can remove an inherited prompt part | — | done (`2f2ff14`) |
+| B10 | Bug | Let an empty id, name or description in an upper layer override the one below, as `""` is a value. | The "absent vs empty" rule holds for every field | — | done (`1632605`) |
+| B11 | Bug | Apply the #222 rule when layers are resolved too, so a layer built in code or from stored columns can't override the temperature or ceiling through extra body fields. | #222 holds on every path, not only `parseSpec` | — | done (`a7109e1`) |
+| B12 | Bug | Have the text-call recoverer skip every scratchpad fence, not only `<think>`. | A direct caller no longer runs a call the model was only deliberating about | — | done (`21b3266`) |
+| B13 | Bug | Pair tool results with their calls by id in the run metrics, not by tool name. | Tool time is no longer inflated by a handed-back call's human wait | — | done (`68c3b8d`) |
+| B14 | Bug | Have a slot allocator read the current pool on each call, not the array it was made with. | Two runs are never pinned to one slot after the server's slot count changes | — | done (`e7b668e`) |
+| B15 | Bug | Keep a waiting run's event stream alive on the bus, or keep its numbering, so a resumed run's events are not discarded. | A handed-back run that waits longer than 30 minutes still shows its answer | — | done (`15023f2`) |
+| B16 | Bug | Key the client pool on the normalised URL, as the listings are. | One client per server, not one per spelling of its URL | B24 | after this pass (with B24) |
+| B17 | Bug (question) | Decide whether two fetch functions behind one URL share capability latches, as they do today, or are kept apart, as their listings are. | One backend's refusal stops degrading the other, if they are apart | B24 | after this pass (with B24) |
+| B18 | Bug | Report a dropped extension field's path so that two different paths can't print the same. | An import report a host can key on | — | done (`f6656b7`) |
+| B19 | Bug | Keep a turn's scratchpad in the order it arrived when it came both as a field and fenced in the text. | The replayed scratchpad matches what a watcher was streamed | — | done (`90a83b1`) |
+| B20 | Bug (question) | Decide which of the two rules latches a refused reasoning effort, since negotiation and side tasks latch it differently. | One rule for one latch; needed before R31 | — | done (`64ed163`) |
+| B21 | Bug (question) | Decide whether a served window should expire like the slot count read from the same answer. | A restarted server's new window is picked up, if they expire alike | — | after this pass |
+| B22 | Bug (question) | Decide whether negotiation should use the shared "refused request" test or keep reading every error by its text. | One definition of a refusal, if merged | — | after this pass |
+| B23 | Bug (question) | Decide who owns a run's outcome: today the loop decides it and the metrics decide it again from a `done` only the host sends. | One owner, and an outcome on the events that agrees with the result | — | after this pass (Q1) |
+| B24 | Bug (question) | Decide what "one endpoint" means across the caches; five caches key it five ways today. | One identity rule; settles B16 and B17 | — | after this pass (Q2) |
+| B25 | Bug (question) | Decide whether calls that end the run first, stop or never run are told to the host's callbacks and events, or the docs stop saying "every call". | Callbacks and docs that agree | — | answered: documented as it is (D9) |
+| D6 | Docs | Bring `docs/agent-spec.md` up to date: it says nothing is implemented, lists answered questions, and has wrong counts, fields and line references. | A spec doc that describes the code | — | done (`f4f8b4a`) |
+| D7 | Docs | Fix comments that are no longer true: test paths, counts, keying claims, history that no longer describes the code. | Comments a reader can trust | — | done (`d9794a8`, `c091ce4`) |
+| D8 | Docs | Fix lead sentences that `llms.txt` publishes wrongly, attach the orphaned doc comment, and give `CallIds` its own doc. | The published index says what each export is | — | done (`afbfda0`, `cc33955`) |
+| D9 | Docs | Say in the option docs where behaviour is narrower than "every": one-call-per-message turning parallel off, a remote agent ignoring `callIds`, dedupe keying on normalised arguments. | Options say what they do | — | done (`9007db3`) |
+| D10 | Docs | Add `remote` to AGENTS.md's run row, and point AGENTS.md to the glossary in `.agents/domain-model.md`. | The layout table is complete; the terms have one home | — | done (`663dee0`) |
+| R34 | Refactor [sweep] | Apply P6/P7: merge four duplicated helpers (clip text to a token budget, `absent`, "listing still fresh", the pruned-result marker). | Sweep; one copy each, and pruning can't silently re-prune after a wording change | — | done (`531d50d`, `eadb553`, `96e3864`, `d57384b`, `41f6640`) |
+| R35 | Refactor [reuse] | Merge three spellings of "a positive finite number". | One check | — | done (`895cd98`) |
+| R36 | Refactor [reuse] | Write the `load_tools` parameter schema once for the on-demand and proxied tools. | One schema to change | — | done (`213a608`) |
+| R37 | Refactor [simplify] | Stop exporting module-level names only their own module reads. | A smaller internal surface | — | done (`8bea2db`) |
+| R38 | Refactor [readability] | Replace a `map` with a side effect, and two `forEach` pushes, with loops. | P13 one-offs | — | done (`a9fd8c2`) |
+| R39 | Refactor [readability] | Pick a run's outcome from its finish reason, and a hook setting's validator, from lookup tables. | P24 | — | done (`0acc178`) |
+| R40 | Refactor [readability] | Remove the one source type assertion that has a fix in the types. | P17 | — | done (`0a7b7ff`) |
+| R41 | Refactor [sweep] | Apply P14: derive the spec parser's closed-set checks from the vocabularies, and one list in the token breakdown. | Sweep; a new discovery mode or replay value is no longer dropped silently | — | done (`d78d3a6`) |
+| R42 | Refactor [sweep] | Apply P1/P20 to the 64 conditions that really take reading: clock arithmetic, three or more clauses, and inline `=== false`. | Sweep | — | deferred |
+| R43 | Refactor [sweep] | Apply P19, worst first: the 38 doc blocks of seven or more sentences and the 16 `//` runs of five lines or more. | Sweep | — | deferred |
+| T5 | Test [readability] | Type the 19 untyped SDK mocks, so about 45 casts in the tests go. | Fakes typed as what they stand in for | — | done (`e4f22f1`, `e0c6885`, `4fd07a9`) |
+| T6 | Test [pin] | Give `scope.ts` and `config.ts` tests of their own. | Pins per-scope state and settings before M10 | — | done (`db97208`) |
+| T7 | Test [pin] | Add a test file for the loop's failure classes and `failedRun`. | Pins them before R23 and R44 move them | — | done (`f2460fb`) |
+| T8 | Test [pin] | Add a slots case to the reset test, and a drift test that every per-scope store has a reset and a runtime method. | A new store can't be left out of `resetAll` | — | done (`a089711`) |
+| T9 | Test [pin] | Test `refusesRequest` and `isModelLoading`. | Pins two retry predicates before B22 | — | done (`eb14d41`) |
+| T10 | Test [pin] | Pin the capability snapshot's JSON byte for byte, hints included. | R30 provably leaves the stored format alone | — | done (`5048de8`) |
+| T12 | Test [pin] | Pin that a failure and a finished run carry the same run fields. | R29 provably changes nothing | — | done (`498717d`) |
+| A4 | API change | Export `OnNotice` and `EndpointIdentity`, which public signatures already use. | Hosts can name the types they pass | — | done (`d522ecd`) |
+| A5 | API change | Gather the tunables into one defaults module, internal ones first, host-imported ones as a separate decision. | P22; one place answers "what can be tuned" | — | deferred |
+| A6 | API change | Retire the deprecated usage aliases and the deprecated hook `events` option (breaking). | P25; one name per count | — | approved (PR 2) |
+| A7 | API change | Stop exporting `AGENT_TASKS`, `PRESELECT_SYSTEM`, `requestIndex` and `SPEC_EVENTS`. | A smaller surface, if nobody relies on them | — | declined |
+| A9 | API change (breaking, 5.0.0) | Rename the hook events `beforeTurn`/`afterTurn` to `beforeExchange`/`afterExchange`. | The one place "turn" meant an exchange | M11 | approved (PR 2) |
+| A10 | API change (breaking, 5.0.0) | Rename everything that calls a turn a "step" to "turn": `beforeStep`, `StepWindow`, the `step` numbers on `AgentLoopRequest`, `beforeStep`, `onMessage` and `ArtifactFrom`. | Turn is the only word for one model reply and its tools | A9 | approved (PR 2) |
+| A11 | API change (breaking, 5.0.0) | Name the events that mark exchanges inside a run after exchanges: `RunEventKind.Step`, `RunEvent.step` and `RunMetrics.steps`. | "Step" leaves the vocabulary entirely | A10 | approved (PR 2) |
+| A12 | API change (breaking, 5.0.0; to decide) | Rename the public names that call an exchange a "run": `RunOutcome` on a loop result, and the outcome docs. | The code says exchange where the model does | A11, B23 | after this pass (with B23) |
+| A8 | API change | Export the list of body fields a document may not set through extra body, so a host can apply #222 itself. | Hosts that build layers in code can follow the rule | B11 | declined (B11 covers documents; see B35) |
+| B28 | Bug | Make `gather` survive an `onNote` that throws, as `notify` and `consult` now do. | One rule for every hook firing | — | open |
+| B29 | Bug | Stop `assignSettings` writing keys that are not settings (`configureEvents({ bogus: 5 })` keeps `bogus` through a reset). | Settings hold only settings | — | open |
+| B30 | Bug | `recoverToolCalls` finds the fence in the lower-cased text and slices the original, which shifts on characters like `İ`; an unclosed fence is still searched. | Recovery never reads inside a scratchpad | — | open |
+| B31 | Bug (question) | A lone fence close that moves earlier answer text into the scratchpad lands after field reasoning that arrived in between (B19 edge). | Arrival order in every case | — | open |
+| B32 | Bug (question) | `parsePrompt` takes a part with both `text` and `ref`, and nothing says which wins; `text: ""` beside a `ref` deletes it. | One meaning per prompt part | — | open |
+| B33 | Bug · low value | A task key holding a dot reads ambiguously in `parseSpec`'s warnings (`dropped` now quotes it). | One path format | — | open |
+| B34 | Bug (question) | The remote-agent notice does not name `callIds` or `recoverToolCalls`, which it also sets aside. | The notice says everything it ignores | — | open |
+| B35 | Bug (question) | An app can still put spelled or reserved fields into `ResolvedAgent.extraBody` after resolving; only `buildBody`'s reserved filter guards the request. | #222 holds past resolution | A8 | open |
+| B36 | Bug (question) | After B20 a side task still retries once without the hints and the effort, so an effort the retry got past is sent again next time. Should the effort-only retry go? | One rule for a refused effort | — | open |
+| R47 | Refactor [pattern] | Have `importCapabilities` latch through `latchModel`/`latchFields`, the last writer M10 left. | One writer for the latches | — | open |
+| R48 | Refactor [simplify] | Stop exporting `StepCalls`, which only `run-calls.ts` reads (R37's list missed it). | The module surface | — | open |
+| T13 | Test [readability] | Narrow the SDK unions in tests without casts (`as OpenAI.ChatCompletionFunctionTool`, `.content as string`). | P17 in tests | — | open |
+| T14 | Test [consistency] | `tests/turn/side-task-settings.test.ts` drives the whole loop and imports `run/`; move it to `tests/run/`. | The layout rule | — | open |
+| D12 | Docs · low value | Start `discoverTools`'s doc with a verb. | A doc that matches its name | — | open |
+| R45 | Refactor [readability] · low value | Rename the private `positive` wrapper and fold `Capabilities.since`'s speculative remark. | Small | — | declined (low value) |
+| R46 | Refactor [consistency] · low value | Write the `'*'` wildcard, the URL schemes and the redirect type as named words. | P16 one-offs | — | declined (low value) |
+| D11 | Docs · low value | Have the README's module table point to the glossary for terms. | One home for terms | D10 | declined (low value) |
+| T11 | Test [consistency] · low value | Move the test of negotiation over a streamed turn out of a file named for a module that does not exist. | The one-test-per-module layout | — | declined (low value) |
+| B26 | Bug (question) · low value | Decide whether the loop's `userText` and the hooks' `textOf`, which join text and refusals differently, should agree. | One definition of a message's text | M8 | declined (low value) |
+| B27 | Bug · low value (unverified) | Stop formatting a loading wait of 1000 seconds or more as "1.0ks". | A readable notice | — | declined (low value) |
 
-Status is `open`, `proposed` (an `M` item awaiting Gate 1), `approved`, `declined` or `done`.
+Status is `open`, `proposed` (an `M` item awaiting Gate 1), `approved`, `deferred`, `declined` or `done`.
+Gate 2 (2026-11-18) approved the recommended set; PR 1 carries the non-breaking items, PR 2 the 5.0.0 renames.
 
 ## Model changes
 
@@ -135,7 +150,7 @@ To-be: `wire/` is what is sent and what comes back. The failure record is a run 
 the dispatcher contract. `errorMessage` stays in `wire/errors.ts`. Every export stays at the
 package root under the same name.
 Why it is simpler: every dependency points downward, and each module holds one concept.
-Implemented by: R23, R24, R44. Status: approved at Gate 1 (2026-11-18).
+Implemented by: R23, R24, R44. Status: done (2026-11-18): R23, R24 (with ResourceLink and ServerLogLevel, `19f503a`), R44.
 
 ### M8 — Give the message-text and untrusted-fence helpers a browser-safe home
 
@@ -145,7 +160,7 @@ and `tools/instructions` load the hook module for them alone.
 To-be: they live in a wire module, beside the message vocabulary they read, with no crypto
 import. `hooks.ts` keeps firing hooks.
 Why it is simpler: a string helper's users stop depending on hook firing, and the hook module is
-one concept. Implemented by: R25. Status: approved at Gate 1 (2026-11-18).
+one concept. Implemented by: R25. Status: done (2026-11-18).
 
 ### M9 — The loop module owns the loop
 
@@ -158,7 +173,7 @@ As-is: `run/agent-loop.ts` is 2081 lines. Beside the loop it owns:
 To-be: discovery belongs to `tools/`, pinning to `endpoint/slots`, and cache diagnosis to
 `context/ledger`. One builder makes the result for a failure and for a finished run.
 Why it is simpler: each concept sits in the folder AGENTS.md names for it, and the result's fields
-are written once. Implemented by: R26, R27, R28, R29. Status: approved at Gate 1 (2026-11-18).
+are written once. Implemented by: R26, R27, R28, R29. Status: done (2026-11-18); `discovery` became `discoverTools` (`67d8fd5`).
 
 ### M10 — Capability latches have one store and one writer
 
@@ -171,7 +186,7 @@ To-be: every capability, the hints latch included, lives in the capabilities sto
 `endpoint/`, and the other modules latch through its functions. The snapshot JSON keeps its
 shape.
 Why it is simpler: one owner per piece of state ("Two writers" in modeling.md).
-Implemented by: R30, R31. Needs: B20 answered, T10. Status: approved at Gate 1 (2026-11-18).
+Implemented by: R30, R31. Needs: B20 answered, T10. Status: done (2026-11-18), B20 answered: negotiation's rule. `importCapabilities` still writes the latches itself (R47).
 
 ### M11 — One word per concept
 
