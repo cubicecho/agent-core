@@ -613,6 +613,26 @@ describe('resolveAgentSpec', () => {
     ]);
   });
 
+  it('keeps the text of a prompt part that also has a reference, and drops the reference', () => {
+    const ref = { type: REF_FILE, value: './p.md' };
+    const result = parseSpec(
+      doc({
+        prompt: [
+          { id: 'identity', text: 'You are X.', ref },
+          { id: 'role', text: '', ref },
+          { id: 'lane', text: 'Review.', ref: { type: 'http', value: 'x' } },
+        ],
+      }),
+    );
+    expect(result.spec?.prompt).toEqual([
+      { id: 'identity', text: 'You are X.' },
+      { id: 'role', text: '' },
+      { id: 'lane', text: 'Review.' },
+    ]);
+    expect(result.warnings).toHaveLength(3);
+    expect(result.warnings.every((warning) => /^prompt\[\d\]\.ref: .*text/.test(warning))).toBe(true);
+  });
+
   it('replaces a server list whole rather than unioning it', () => {
     const base = parsed(doc({ tools: { servers: ['git', 'fs', 'web'] } }));
     const narrow = parsed(doc({ tools: { servers: ['git'] } }));

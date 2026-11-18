@@ -127,7 +127,10 @@ export interface ModelSpec {
 export interface PromptPart {
   /** Names this layer: `project`, `identity`, `role`, `lane`. Merging happens on it. */
   id: string;
-  /** The text. Empty deletes the part a layer below contributed, `ref` included. Absent only when `ref` is given. */
+  /**
+   * The text. Empty deletes the part a layer below contributed, `ref` included. Absent only when
+   * `ref` is given: a `ref` beside a text is dropped, with a warning.
+   */
   text?: string;
   /** Where the text lives instead. The shape is validated; the reference is never resolved. */
   ref?: { type: "file" | "url"; value: string };

@@ -129,7 +129,10 @@ export const REF_URL = 'url' as const;
 export interface PromptPart {
   /** Names this layer: `project`, `identity`, `role`, `lane`. Merging happens on it. */
   id: string;
-  /** The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given. */
+  /**
+   * The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given:
+   * `parseSpec` drops a `ref` beside a text.
+   */
   text?: string;
   /** Where the text lives instead. The shape is validated; the reference is never resolved. */
   ref?: { type: typeof REF_FILE | typeof REF_URL; value: string };
@@ -643,8 +646,8 @@ function parseExtraBody(report: Report, path: string, value: unknown): Record<st
  *
  * @remarks
  * A part goes whole where it is not an object, has no id or an empty one, or has neither a text
- * nor a usable reference. A malformed `ref` beside a text goes alone. An empty text is kept: it is
- * how a layer deletes the part below it.
+ * nor a usable reference. A `ref` beside a text goes alone, the text winning, and so does a
+ * malformed one. An empty text is kept: it is how a layer deletes the part below it.
  */
 function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
   const parts: PromptPart[] = [];
@@ -661,7 +664,11 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
     }
     const text = report.string(`${path}.text`, held.text);
     let ref: PromptPart['ref'];
-    if (!isAbsent(held.ref)) {
+    const hasRef = isAbsent(held.ref) === false;
+    const hasText = text !== undefined;
+    if (hasRef && hasText) {
+      report.drop(`${path}.ref`, 'sits beside a text, which is used instead');
+    } else if (hasRef) {
       const raw = held.ref;
       const type = isRecord(raw) ? raw.type : undefined;
       const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
