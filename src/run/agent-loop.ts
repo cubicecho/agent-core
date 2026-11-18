@@ -1501,21 +1501,22 @@ async function runSteps(
   let inFlight: InFlight = {};
   // Declared before `standing.read`, which a failure in the hooks' gather already reads.
   let ledger: TokenLedger = options.ledger ?? [];
+  // The run as it stands, which a failure and a result both carry: written once so they cannot drift.
+  const runSoFar = () => ({
+    messages,
+    usage: loopUsage(usage, cacheReported),
+    toolCalls,
+    artifacts: artifacts.list(),
+    // Proxied, nothing is loaded that the history does not hold.
+    loaded: proxied ? [] : [...loaded],
+    used: [...used],
+    preselected: [...preselected],
+    ledger,
+    ...remoteRunOf(remote),
+  });
   standing.read = () => {
     const partial = inFlight.read?.();
-    return {
-      messages,
-      ...(partial ? { partial } : {}),
-      usage: loopUsage(usage, cacheReported),
-      toolCalls,
-      artifacts: artifacts.list(),
-      // As the result would have said it: proxied, nothing is loaded that the history does not hold.
-      loaded: proxied ? [] : [...loaded],
-      used: [...used],
-      preselected: [...preselected],
-      ledger,
-      ...remoteRunOf(remote),
-    };
+    return { ...runSoFar(), ...(partial ? { partial } : {}) };
   };
   const announce = announcer(onMessage);
   // What `takeInput` handed over, which are user messages the question has to be told apart from.
@@ -1853,13 +1854,7 @@ async function runSteps(
         turn: shown,
         ...(ended ? { ended } : {}),
         ...(isWaiting ? { pending } : {}),
-        messages,
-        usage: loopUsage(usage, cacheReported),
-        toolCalls,
-        artifacts: artifacts.list(),
-        loaded: proxied ? [] : [...loaded],
-        used: [...used],
-        preselected: [...preselected],
+        ...runSoFar(),
         notes: gathered.notes,
         context: gathered.context,
         preface,
@@ -1870,8 +1865,6 @@ async function runSteps(
           wallMs: Date.now() - started,
           outcome: stepOutcome(turn, settled),
         },
-        ledger,
-        ...remoteRunOf(remote),
       };
     }
   }
