@@ -56,6 +56,7 @@ What this package needs to know about a caller's configuration.
 
 - `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
 - `Endpoint` (type) — Where to send a request and how long to wait.
+- `EndpointIdentity` (type) — What makes an endpoint the one it is: where it lives and whose key reaches it.
 - `ModelParams` (type) — What to ask the model for.
 - `normalizeBaseUrl` — A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
 - `ReasoningReplay` — Any one of the policies in `ReasoningReplay`.
@@ -87,6 +88,7 @@ What an endpoint turned out not to support, and answering it when it says so.
 - `modelCapabilitiesFor` — What this model on this endpoint is known not to support.
 - `NegotiateOptions` (type) — What `negotiate` takes besides the request.
 - `negotiate` — Sends a request, re-sending it each time the answer is this endpoint refusing something the request can do without.
+- `OnNotice` (type) — Hears one line of operator text: what was given up on, what is being waited out, what was chosen.
 - `resetCapabilities` — Forgets what one endpoint refused, or every endpoint's when told none.
 - `resetHints` — Forgets which models refused the no-thinking hints, and nothing else they refused.
 

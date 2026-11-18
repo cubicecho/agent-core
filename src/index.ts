@@ -48,6 +48,7 @@ export {
 export {
   type AgentConfig,
   type Endpoint,
+  type EndpointIdentity,
   type ModelParams,
   normalizeBaseUrl,
   ReasoningReplay,
@@ -69,6 +70,7 @@ export {
   modelCapabilitiesFor,
   type NegotiateOptions,
   negotiate,
+  type OnNotice,
   resetCapabilities,
   resetHints,
 } from './endpoint/capabilities.ts';
