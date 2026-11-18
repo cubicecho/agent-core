@@ -27,8 +27,9 @@ export type Message = OpenAI.ChatCompletionMessageParam;
 /**
  * The SDK's `chat.completions.create` as the code calls it, which every fake of it is typed as.
  *
- * The body is either kind, since a side task asks without streaming. What the fake answers is left
- * to the test: the SDK promises a whole stream or completion, which no test builds.
+ * The body is either kind, since a test may call the client itself without streaming. What the
+ * fake answers is left to the test: the SDK promises a whole stream or completion, which no test
+ * builds.
  */
 export type Create = (body: OpenAI.ChatCompletionCreateParams, options?: OpenAI.RequestOptions) => unknown;
 
@@ -92,35 +93,26 @@ export interface AnswerParts {
 }
 
 /**
- * A side task's reply, which reads as a whole completion and iterates as a stream, so one fake
- * answers a request made either way.
+ * A side task's reply, streamed: what it says as one delta, then why it stopped.
  *
  * @param content - What the model says.
  * @param [parts] - Why it stopped, and a scratchpad in its own field.
- * @returns The completion, with its first choice's message and finish reason set, which is also
- * a stream of the same: the message as one delta, then the finish reason.
+ * @returns The stream.
  */
-export const answer = (content: string, { finishReason = null, reasoning }: AnswerParts = {}) => {
-  const said = { content, ...(reasoning === undefined ? {} : { reasoning_content: reasoning }) };
-  return Object.assign(
-    chunks({ choices: [{ delta: said }] }, { choices: [{ delta: {}, finish_reason: finishReason }] }),
-    {
-      choices: [{ message: said, finish_reason: finishReason }],
-    },
+export const answer = (content: string, { finishReason = null, reasoning }: AnswerParts = {}) =>
+  chunks(
+    { choices: [{ delta: { content, ...(reasoning === undefined ? {} : { reasoning_content: reasoning }) } }] },
+    { choices: [{ delta: {}, finish_reason: finishReason }] },
   );
-};
 
 /**
- * A reply in words as a server on a port sends it: streamed where the request asked for a stream.
+ * A streamed reply in words, as a server on a port sends one.
  *
- * @param body - The request, read for `stream`.
  * @param content - What the model says.
  * @returns The response.
  */
-export const respondAsAsked = (body: { stream?: boolean }, content: string) =>
-  body.stream
-    ? streamed({ choices: [{ index: 0, delta: { content }, finish_reason: FinishReason.Stop }] })
-    : respond(answer(content));
+export const respondInWords = (content: string) =>
+  streamed({ choices: [{ index: 0, delta: { content }, finish_reason: FinishReason.Stop }] });
 
 /** An answer for a test that does not care what was said. */
 export const reply = answer('ok');

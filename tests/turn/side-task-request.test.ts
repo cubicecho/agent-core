@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetAll } from '../../src/runtime/reset.ts';
 import { ask, askJson, askReply, tryAsk } from '../../src/turn/side-task.ts';
 import { HttpStatus, SchemaType } from '../../src/wire/wire.ts';
-import { answeredBy, respond, respondAsAsked } from '../helpers.ts';
+import { answeredBy, respond, respondInWords } from '../helpers.ts';
 
 /**
  * What a side task promises whichever way it is sent, seen from the model server's side: the
@@ -23,7 +23,7 @@ const answering = (content: string) => {
   const fetch = answeredBy(async (request) => {
     const body = (await request.json()) as Sent;
     bodies.push(body);
-    return respondAsAsked(body, content);
+    return respondInWords(content);
   });
   return { config: { baseUrl: 'http://side/v1', apiKey: '', requestTimeoutSeconds: 60, fetch }, bodies };
 };
@@ -68,13 +68,12 @@ const schema = {
  */
 const failing = (times: number, status: number, error: Record<string, unknown>) => {
   let failed = 0;
-  const fetch = answeredBy(async (request) => {
-    const body = (await request.json()) as Sent;
+  const fetch = answeredBy(async () => {
     if (failed < times) {
       failed++;
       return respond({ error }, status);
     }
-    return respondAsAsked(body, 'ok');
+    return respondInWords('ok');
   });
   return { baseUrl: 'http://busy/v1', apiKey: '', requestTimeoutSeconds: 60, fetch };
 };

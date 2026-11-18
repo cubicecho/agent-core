@@ -15,8 +15,8 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
 
 const { ask, askReply } = await import('../../src/turn/side-task.ts');
 
-/** A reply with no choice in it, read whole or streamed. */
-const noChoices = Object.assign(chunks(), { choices: [] });
+/** A reply with no choice in it. */
+const noChoices = chunks();
 
 /** What the caller gets back when the model replies with this content. */
 const answerTo = (content: string) => {

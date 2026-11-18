@@ -12,7 +12,7 @@ import { resetAll } from '../../src/runtime/reset.ts';
 import { exportCapabilities } from '../../src/runtime/snapshot.ts';
 import { ask } from '../../src/turn/side-task.ts';
 import { HttpStatus } from '../../src/wire/wire.ts';
-import { answer, answeredBy, respond, respondAsAsked } from '../helpers.ts';
+import { answeredBy, respond, respondInWords } from '../helpers.ts';
 
 /** An address only the function answers: nothing listens there, and no resolver knows the host. */
 const internal = { baseUrl: 'http://router.internal/v1', apiKey: '' };
@@ -34,7 +34,7 @@ const router = (window: number) =>
       return respond({ default_generation_settings: { n_ctx: window }, total_slots: 4 });
     }
     if (pathname === '/v1/chat/completions') {
-      return respond(answer(`window ${window}`));
+      return respond({ choices: [{ message: { content: `window ${window}` } }] });
     }
     return respond({ error: 'no such route' }, HttpStatus.NotFound);
   });
@@ -161,7 +161,7 @@ describe('an endpoint answered by a function, written down', () => {
             { error: { message: 'Unrecognized request argument supplied: chat_template_kwargs' } },
             HttpStatus.BadRequest,
           )
-        : respondAsAsked(body, 'named');
+        : respondInWords('named');
     });
     const endpoint = { ...internal, apiKey: 'sk-router', fetch };
     expect(await ask(endpoint, 'm', 'Name this.', 'hi')).toBe('named');

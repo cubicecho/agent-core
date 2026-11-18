@@ -4,7 +4,7 @@ import { runAgentLoop } from '../../src/run/agent-loop.ts';
 import { resetAll } from '../../src/runtime/reset.ts';
 import { AGENT_SPEC, type AgentSpec, parseSpec, type ResolvedAgent, resolveAgentSpec } from '../../src/spec/spec.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { answeredBy, respondAsAsked, streamed, tool, user } from '../helpers.ts';
+import { answeredBy, respondInWords, streamed, tool, user } from '../helpers.ts';
 
 /**
  * A router's forwarding function, answering a preselection with `s__read` and a streamed turn in
@@ -12,10 +12,10 @@ import { answeredBy, respondAsAsked, streamed, tool, user } from '../helpers.ts'
  */
 const router = () =>
   answeredBy(async (request) => {
-    const body = (await request.json()) as { stream?: boolean; response_format?: unknown };
-    // The preselection is the request that asks for a schema, however it is sent.
+    const body = (await request.json()) as { response_format?: unknown };
+    // The preselection is the request that asks for a schema.
     if (body.response_format) {
-      return respondAsAsked(body, '["s__read"]');
+      return respondInWords('["s__read"]');
     }
     return streamed(
       { choices: [{ index: 0, delta: { content: 'hel' } }] },
