@@ -5,7 +5,7 @@ import {
   ReasoningReplay,
   ToolDiscovery,
 } from '../core/config.ts';
-import { isRecord } from '../core/guards.ts';
+import { isAbsent, isRecord } from '../core/guards.ts';
 import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 
 /**
@@ -331,14 +331,6 @@ export interface ParseSpecOptions {
   understands?: readonly string[];
 }
 
-/**
- * Absent and null are the same thing: a nullable column round-trips through JSON as `null`.
- *
- * @param value - Whatever a document held under a key.
- * @returns `true` for `undefined` and `null` only — `0`, `""`, `false` and `[]` are values.
- */
-const absent = (value: unknown) => value === undefined || value === null;
-
 /** A `${VAR}`-shaped string, which is kept as the literal it is rather than expanded. */
 const VARIABLE = /\$\{[^}]*\}/;
 
@@ -391,7 +383,7 @@ class Report {
    * which is why the formats that do it need a credential denylist bolted on afterwards.
    */
   string(path: string, value: unknown): string | undefined {
-    if (absent(value)) {
+    if (isAbsent(value)) {
       return undefined;
     }
     if (typeof value !== 'string') {
@@ -414,7 +406,7 @@ class Report {
    * number or lies outside the bounds — dropped with a warning, never clamped.
    */
   number(path: string, value: unknown, least: number, most = Infinity): number | undefined {
-    if (absent(value)) {
+    if (isAbsent(value)) {
       return undefined;
     }
     if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -442,7 +434,7 @@ class Report {
    * dropped with a warning that lists them all.
    */
   oneOf<T extends string>(path: string, value: unknown, members: readonly T[]): T | undefined {
-    if (absent(value)) {
+    if (isAbsent(value)) {
       return undefined;
     }
     const member = members.find((known) => known === value);
@@ -462,7 +454,7 @@ class Report {
    * `true` or `false` — dropped with a warning, never coerced.
    */
   boolean(path: string, value: unknown): boolean | undefined {
-    if (absent(value)) {
+    if (isAbsent(value)) {
       return undefined;
     }
     if (typeof value !== 'boolean') {
@@ -513,7 +505,7 @@ const said = (value: object) => Object.keys(value).length > 0;
  * An `apiKey` or an `api_key` is dropped with a warning: a document carries no credentials.
  */
 function parseEndpoint(report: Report, path: string, value: unknown): EndpointSpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -524,7 +516,7 @@ function parseEndpoint(report: Report, path: string, value: unknown): EndpointSp
     requestTimeoutSeconds: report.number(`${path}.requestTimeoutSeconds`, value.requestTimeoutSeconds, 0),
     firstTokenSeconds: report.number(`${path}.firstTokenSeconds`, value.firstTokenSeconds, 0),
   });
-  if (!absent(value.apiKey) || !absent(value.api_key)) {
+  if (!isAbsent(value.apiKey) || !isAbsent(value.api_key)) {
     report.drop(`${path}.apiKey`, 'is not part of this format — a document carries no credentials');
   }
   return said(endpoint) ? endpoint : undefined;
@@ -557,7 +549,7 @@ const parseSampling = (report: Report, path: string, value: Record<string, unkno
  * section is absent or is not an object.
  */
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -618,7 +610,7 @@ function unownedFields(extraBody: Record<string, unknown>): Record<string, unkno
  * survives as an empty one.
  */
 function parseExtraBody(report: Report, path: string, value: unknown): Record<string, unknown> | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -668,7 +660,7 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
     }
     const text = report.string(`${path}.text`, held.text);
     let ref: PromptPart['ref'];
-    if (!absent(held.ref)) {
+    if (!isAbsent(held.ref)) {
       const raw = held.ref;
       const type = isRecord(raw) ? raw.type : undefined;
       const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
@@ -702,7 +694,7 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
  * still a list.
  */
 function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -710,7 +702,7 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
   }
   const discovery = report.oneOf('tools.discovery', value.discovery, Object.values(ToolDiscovery));
   let servers: string[] | undefined;
-  if (!absent(value.servers)) {
+  if (!isAbsent(value.servers)) {
     if (!Array.isArray(value.servers)) {
       report.drop('tools.servers', 'must be an array of slugs');
     } else {
@@ -743,7 +735,7 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
  * or held nothing usable.
  */
 function parseRetry(report: Report, value: unknown): RetrySpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -769,7 +761,7 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
   const tasks: Record<string, TaskSpec> = {};
   for (const [key, held] of Object.entries(value)) {
     const path = `tasks.${key}`;
-    if (absent(held)) {
+    if (isAbsent(held)) {
       continue;
     }
     if (!isRecord(held)) {
@@ -868,7 +860,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
         on: event,
         server,
         tool,
-        args: absent(held.args) ? undefined : held.args,
+        args: isAbsent(held.args) ? undefined : held.args,
         inject,
         veto,
         maxTokens: report.number(`${path}.maxTokens`, held.maxTokens, 0),
@@ -894,13 +886,13 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
  * repeats the effective slug of one before it. Nothing else about it is read.
  */
 function parseBundle(report: Report, value: unknown): SpecBundle | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
     return void report.drop('bundle', 'must be an object');
   }
-  if (absent(value.mcpServers)) {
+  if (isAbsent(value.mcpServers)) {
     return undefined;
   }
   if (!Array.isArray(value.mcpServers)) {
@@ -1000,18 +992,18 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
 
   // Containers are checked before their contents: "prompt must be an array" is a different
   // mistake from "this prompt part has no id", and only the first is worth refusing over.
-  if (!absent(document.prompt) && !Array.isArray(document.prompt)) {
+  if (!isAbsent(document.prompt) && !Array.isArray(document.prompt)) {
     report.fail('prompt', 'must be an array');
   }
-  if (!absent(document.tasks) && !isRecord(document.tasks)) {
+  if (!isAbsent(document.tasks) && !isRecord(document.tasks)) {
     report.fail('tasks', 'must be an object');
   }
-  if (!absent(document.hooks) && !Array.isArray(document.hooks)) {
+  if (!isAbsent(document.hooks) && !Array.isArray(document.hooks)) {
     report.fail('hooks', 'must be an array');
   }
 
   const requires: string[] = [];
-  if (!absent(document.requires)) {
+  if (!isAbsent(document.requires)) {
     if (!Array.isArray(document.requires)) {
       report.fail('requires', 'must be an array');
     } else {
@@ -1030,7 +1022,7 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
   }
 
   let extensions: Record<string, unknown> | undefined;
-  if (!absent(document.extensions)) {
+  if (!isAbsent(document.extensions)) {
     if (!isRecord(document.extensions)) {
       report.drop('extensions', 'must be an object');
     }
@@ -1041,7 +1033,7 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
     }
   }
 
-  if (!absent(document.bundle) && !options.bundle) {
+  if (!isAbsent(document.bundle) && !options.bundle) {
     report.drop('bundle', 'carries a command line, so it is only read with { bundle: true }');
   }
 
@@ -1061,7 +1053,7 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
       hooks: Array.isArray(document.hooks) ? parseHooks(report, document.hooks, events) : undefined,
       bundle: options.bundle ? parseBundle(report, document.bundle) : undefined,
       extensions,
-      requires: absent(document.requires) ? undefined : requires,
+      requires: isAbsent(document.requires) ? undefined : requires,
     }),
   };
 
@@ -1278,9 +1270,9 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     }
   }
 
-  const id = layers.findLast((layer) => !absent(layer.id))?.id ?? '';
-  const name = layers.findLast((layer) => !absent(layer.name))?.name;
-  const description = layers.findLast((layer) => !absent(layer.description))?.description;
+  const id = layers.findLast((layer) => !isAbsent(layer.id))?.id ?? '';
+  const name = layers.findLast((layer) => !isAbsent(layer.name))?.name;
+  const description = layers.findLast((layer) => !isAbsent(layer.description))?.description;
 
   return {
     id,
@@ -1516,7 +1508,7 @@ function serverSecrets(server: SpecServer, path: string): SecretHint[] {
     }
   }
   for (const [key, value] of Object.entries(server)) {
-    const empty = absent(value) || value === '' || (typeof value === 'string' && writtenOut(value) === false);
+    const empty = isAbsent(value) || value === '' || (typeof value === 'string' && writtenOut(value) === false);
     if (SERVER_KEYS_READ.has(key) === false && SECRET_NAME.test(key) && empty === false) {
       hint(key, SecretSign.Field);
     }

@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { isRecord } from '../core/guards.ts';
+import { isAbsent, isRecord } from '../core/guards.ts';
 import { MS_PER_SECOND } from '../core/platform.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { EndpointSilent } from './retry.ts';
@@ -396,7 +396,7 @@ function appendReasoningDetail(details: ReasoningDetail[], block: ReasoningDetai
   for (const [key, value] of Object.entries(block)) {
     if (key === textKey) {
       last[key] = `${typeof last[key] === 'string' ? last[key] : ''}${typeof value === 'string' ? value : ''}`;
-    } else if (last[key] === undefined || last[key] === null) {
+    } else if (isAbsent(last[key])) {
       last[key] = value;
     }
   }
@@ -932,7 +932,8 @@ export async function streamTurn(
         const carries = part as Partial<Record<CallExtraKey, unknown>>;
         for (const key of CALL_EXTRA_KEYS) {
           const value = carries[key];
-          if (value !== undefined && value !== null && call.extras[key] === undefined) {
+          const isFirstToCarry = isAbsent(value) === false && call.extras[key] === undefined;
+          if (isFirstToCarry) {
             call.extras[key] = value;
           }
         }

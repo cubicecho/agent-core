@@ -20,6 +20,14 @@ export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
+ * Whether a value is absent: `undefined` or `null`, which a JSON round trip makes of a missing value.
+ *
+ * @param value - Anything, usually a field of a parsed document or a server's answer.
+ * @returns True for `undefined` and `null` only: `0`, `""`, `false` and `[]` are values.
+ */
+export const isAbsent = (value: unknown): value is null | undefined => value === undefined || value === null;
+
+/**
  * Whether a value is a number above zero, which is what a limit has to be to be one.
  *
  * @param value - Anything, usually a setting that may be absent, zero or mistyped.

@@ -1,4 +1,4 @@
-import { isRecord } from '../core/guards.ts';
+import { isAbsent, isRecord } from '../core/guards.ts';
 import {
   AGENT_SPEC,
   type AgentSpec,
@@ -200,14 +200,6 @@ const HOOKS = 'hooks';
 const TOKEN = 'spec';
 
 /**
- * Absent and null are the same thing, as they are to `parseSpec`.
- *
- * @param value - A column's or a field's value.
- * @returns `true` for `undefined` and `null` only.
- */
-const absent = (value: unknown): value is null | undefined => value === undefined || value === null;
-
-/**
  * A path as segments.
  *
  * @param path - A dotted path or an extension's segments.
@@ -384,12 +376,12 @@ export function defineSpecColumns<Row>(
       const layer: Record<string, unknown> = { spec: AGENT_SPEC };
       for (const { column, segments, hasMarker, definition } of entries) {
         const value = row[column];
-        const inherits = absent(value) || (hasMarker && value === definition.inherit);
+        const inherits = isAbsent(value) || (hasMarker && value === definition.inherit);
         if (inherits) {
           continue;
         }
         const said = definition.toSpec ? definition.toSpec(value as Exclude<Row[keyof Row], null | undefined>) : value;
-        if (absent(said) === false) {
+        if (isAbsent(said) === false) {
           write(layer, segments, said);
         }
       }
@@ -402,7 +394,7 @@ export function defineSpecColumns<Row>(
       const row: Partial<Row> = {};
       for (const entry of entries) {
         const value = read(layer, entry.segments);
-        const kept = absent(value) ? undefined : stored(entry, value);
+        const kept = isAbsent(value) ? undefined : stored(entry, value);
         if (kept !== undefined) {
           row[entry.column] = kept;
         } else if (entry.hasMarker) {
@@ -450,7 +442,7 @@ export function defineSpecColumns<Row>(
             drops.push({ path: `${PROMPT}[${index}]`, value: part });
             continue;
           }
-          if (absent(part.text) === false) {
+          if (isAbsent(part.text) === false) {
             offer(entry, `${PROMPT}[${index}].text`, part.text);
           }
           if (part.ref) {
@@ -466,7 +458,7 @@ export function defineSpecColumns<Row>(
        * @param path - Where it is, as segments.
        */
       const walk = (value: unknown, path: readonly string[]) => {
-        if (absent(value) || isHandled(path)) {
+        if (isAbsent(value) || isHandled(path)) {
           return;
         }
         const entry = columnAt(path);

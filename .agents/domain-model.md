@@ -218,7 +218,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A remote agent's turn events are not said twice, and its `done` is not forwarded | `remoteRun` |
 | A remote agent's turn sends one idempotency key across its retries | `remoteRun.turnHeaders`, once per turn |
 | Each runtime has its own copy of module state | `scoped`, `currentScope` |
-| An absent or `null` spec field inherits; `0`, `""` and `[]` are values | `absent`, `mergeLayers`, `resolveAgentSpec` |
+| An absent or `null` spec field inherits; `0`, `""` and `[]` are values | `isAbsent`, `mergeLayers`, `resolveAgentSpec` |
 
 ## Glossary
 
@@ -505,7 +505,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Layer:** one document in an ordered stack, weakest first, such as settings, agent, task and
   stage. Owner: `resolveAgentSpec`.
 - **Inherit:** an absent or `null` field takes the layer below's value; `0`, `""` and `[]` are
-  values. Owner: `absent`, `mergeLayers`, `resolveAgentSpec`.
+  values. Owner: `isAbsent`, `mergeLayers`, `resolveAgentSpec`.
 - **Parse:** checking any input into a document, dropping bad fields with warnings and refusing
   only what cannot be identified. Owner: `parseSpec`.
 - **Resolved agent:** the flat config the layers come to, plus prompt parts, tasks, hooks and

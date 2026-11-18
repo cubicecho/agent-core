@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { isRecord } from '../core/guards.ts';
+import { isAbsent, isRecord } from '../core/guards.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { DEFAULT_FENCES } from './thinking.ts';
 import { FinishReason, FUNCTION_TOOL } from './wire.ts';
@@ -176,7 +176,7 @@ export function parseToolArguments(
   if (isRecord(raw)) {
     return raw;
   }
-  if (raw === null || raw === undefined) {
+  if (isAbsent(raw)) {
     return {};
   }
   const text = typeof raw === 'string' ? raw.trim() : JSON.stringify(raw);
