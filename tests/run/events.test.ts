@@ -358,6 +358,15 @@ describe('cleanup', () => {
     expect(emit('handed', { kind: RunEventKind.Output, text: 'resumed' }).seq).toBe(3);
   });
 
+  it('keeps a run waiting through the end of the exchange that handed its calls back', () => {
+    vi.useFakeTimers();
+    emit('handed', { kind: RunEventKind.Wait, text: '1 call' });
+    emit('handed', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Waiting, ok: true, pending: ['c1'] });
+
+    vi.advanceTimersByTime(4 * 60 * 60_000);
+    expect(history('handed')).toHaveLength(2);
+  });
+
   it('forgets a waiting run once its own clock runs out, and an unended one on the unended clock again', () => {
     vi.useFakeTimers();
     configureEvents({ retainWaitingMs: 10 * 60_000 });
@@ -609,6 +618,7 @@ describe('runMetrics', () => {
         turn: { prompt: 500, completion: 5, total: 505, cached: 0, finishReason: FinishReason.Stop },
       },
     });
+    emit('r', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Answered, ok: true });
     at(2000);
     emit('r', { kind: RunEventKind.Done, ok: true });
 
@@ -701,34 +711,36 @@ describe('runMetrics', () => {
     expect(runMetrics([call('a', 0), result('z', 5), result('a', 50)]).toolMs).toBe(50);
   });
 
-  it("reads the outcome off the last turn and the run's end", () => {
-    const turn = (finishReason: string) => ({
-      kind: RunEventKind.Usage,
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        turn: { prompt: 0, completion: 0, total: 0, cached: 0, finishReason },
-      },
-    });
-    emit('cut', turn(FinishReason.Length));
-    emit('cut', { kind: RunEventKind.Done, ok: true });
-    expect(runMetrics(history('cut')).outcome).toBe(ExchangeOutcome.Truncated);
-    emit('withheld', turn(FinishReason.ContentFilter));
-    emit('withheld', { kind: RunEventKind.Done, ok: true });
-    expect(runMetrics(history('withheld')).outcome).toBe(ExchangeOutcome.Filtered);
-    emit('broke', turn(FinishReason.Stop));
-    emit('broke', { kind: RunEventKind.Done, ok: false });
-    expect(runMetrics(history('broke')).outcome).toBe(ExchangeOutcome.Failed);
-    emit('running', turn(FinishReason.Stop));
+  it('counts the exchanges from their start events', () => {
+    emit('staged', { kind: RunEventKind.Exchange, name: 'plan' });
+    emit('staged', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Answered, ok: true });
+    emit('staged', { kind: RunEventKind.Exchange, name: 'act' });
+    expect(runMetrics(history('staged')).exchanges).toBe(2);
+  });
+
+  it("reads the outcome off the last exchange's end, and none while an exchange is going", () => {
+    const end = (outcome: ExchangeOutcome) => ({ kind: RunEventKind.ExchangeEnd, outcome, ok: true });
+    emit('two', { kind: RunEventKind.Exchange });
+    emit('two', end(ExchangeOutcome.Truncated));
+    emit('two', { kind: RunEventKind.Exchange });
+    expect(runMetrics(history('two'))).not.toHaveProperty('outcome');
+    emit('two', end(ExchangeOutcome.Ended));
+    expect(runMetrics(history('two')).outcome).toBe(ExchangeOutcome.Ended);
+    emit('two', { kind: RunEventKind.Done, ok: true });
+    expect(runMetrics(history('two')).outcome).toBe(ExchangeOutcome.Ended);
+    emit('running', { kind: RunEventKind.Turn });
     expect(runMetrics(history('running'))).not.toHaveProperty('outcome');
   });
 
-  it('reads a run as ended by a tool where its done names one, and as failed where it was not ok', () => {
-    emit('asked', { kind: RunEventKind.Done, ok: true, id: 'c0', name: 'ask_person', text: 'needs a key' });
-    expect(runMetrics(history('asked')).outcome).toBe(ExchangeOutcome.Ended);
-    emit('ended-badly', { kind: RunEventKind.Done, ok: false, name: 'ask_person' });
-    expect(runMetrics(history('ended-badly')).outcome).toBe(ExchangeOutcome.Failed);
+  it('reads a run whose done was not ok as failed, unless its last exchange said how it failed', () => {
+    emit('broke', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Answered, ok: true });
+    emit('broke', { kind: RunEventKind.Done, ok: false });
+    expect(runMetrics(history('broke')).outcome).toBe(ExchangeOutcome.Failed);
+    emit('unstarted', { kind: RunEventKind.Done, ok: false });
+    expect(runMetrics(history('unstarted')).outcome).toBe(ExchangeOutcome.Failed);
+    emit('stopped', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Stopped, ok: false });
+    emit('stopped', { kind: RunEventKind.Done, ok: false });
+    expect(runMetrics(history('stopped')).outcome).toBe(ExchangeOutcome.Stopped);
   });
 
   it('counts the turns a session run served on no slot of its own, and only where any said', () => {

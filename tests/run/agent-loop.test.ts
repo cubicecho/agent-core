@@ -225,6 +225,7 @@ describe('runAgentLoop', () => {
       cacheReported: false,
     });
     expect(events.map((e) => e.kind)).toEqual([
+      RunEventKind.Exchange,
       RunEventKind.Turn,
       RunEventKind.Usage,
       RunEventKind.ToolCall,
@@ -234,6 +235,7 @@ describe('runAgentLoop', () => {
       RunEventKind.Turn,
       RunEventKind.Output,
       RunEventKind.Usage,
+      RunEventKind.ExchangeEnd,
     ]);
   });
 

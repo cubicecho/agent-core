@@ -730,9 +730,9 @@ saying which tool ended it. `turn` is the reply that made the call, so its `cont
 the model wrote beside its calls, often nothing; the exchange's answer is what the ending tool took.
 The tool, its definition and its wording stay the app's: this is only the exit.
 
-An app's `done` that carries the call — `id`, `name` the tool, `text` the reason — is read by
-`runMetrics` as `ended` too, so the outcome is the same whether it is read off the result or the
-events.
+The exchange's `exchange-end` event carries the call as well — `id`, `name` the tool, `text` the
+reason — and its `outcome` is `ended`, so `runMetrics` reads the same outcome off the events as the
+result has.
 
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
@@ -894,7 +894,9 @@ dispatched, get no result and no `tool-result` event, are not counted in `used`,
 nothing after the turn.
 Each is told as a `tool-call` event and to `onToolCall`, then one `wait` event says the exchange is
 waiting. `wait` is not `done`: the run goes on under the same id, and `watch` keeps following it.
-`metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The
+The exchange's `exchange-end` follows the `wait`, with `outcome` `waiting` and the calls' ids in
+`pending`. `metrics.outcome` is `waiting`, and `runMetrics` reads it so until the next exchange
+begins. The
 `afterExchange` hooks are not told, and under `reasoningReplay: "tool-loop"` the scratchpads stay,
 since the tool loop is not over. A wait in the last turn `maxToolIterations` allows resolves like any other.
 
@@ -1157,8 +1159,10 @@ const metrics = runMetrics(history(runId), { contextLength: config.contextLength
 ```
 
 Counts are always present; every other field is absent where no turn reported what it is made of.
-What it cannot say: whether a failed run was stopped, errored or ran out of tool iterations, and
-whether the app compacted — neither is in the events.
+`exchanges` counts the `exchange` events, one for each loop and any the app sends of its own, and
+`outcome` is the run's: its last `exchange-end`'s, or `failed` where the app's `done` was not ok
+and that exchange had not already failed or stopped. It is absent while an exchange is going. What
+it cannot say: whether the app compacted, which is not in the events.
 
 `beforeTurn` is handed the transcript before each request and may return a replacement, which is
 where compaction goes (below). Its third argument is `{ used, limit, ledger }` — the prompt the
@@ -1365,8 +1369,9 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   `turn`, `thinking`, `output`, `tool-call`, `tool-result` or `usage` of its own: the server already
   tells a handed-back call's `tool-call`, and its `tool-result` when the answer resumes the run, so
   neither is shown twice. The loop's own notices, `input`, and the `artifact` and `server-log` of the
-  app's own dispatches are still said. The server's `done` is not forwarded, since the loop's run
-  goes on past it and its end is the app's to say. `emit` files a forwarded event under the app's
+  app's own dispatches are still said. The server's `exchange`, `exchange-end` and `done` are not
+  forwarded: the loop's own start and end say the app's exchange, and the run's end is the app's to
+  say. A forwarded event that names no exchange gets the loop's `exchange`. `emit` files a forwarded event under the app's
   run and numbering and keeps its `at`; with progress off, the loop says everything itself.
 - **Call ids are kept as the server sent them**, never renamed by `distinctCallIds`, because the
   next request resumes the server's run by them.
@@ -1698,10 +1703,21 @@ import { stamp } from "@cubicecho/agent-core";
 const event = stamp(input, runId, ++lastSeq, Date.now()); // an `at` on the input wins
 ```
 
-A run that holds several exchanges, such as a task's stages, says so itself: an `exchange` event as
-each begins (`name` names it), and `exchange` on every event inside it, so a watcher can group the
-run the way the work is written and `fold` never joins text across two of them. `runMetrics` counts
-them as `exchanges`. The loop never sends either. Before 5.0.0 these were the `step` kind and the
+Each exchange says where it starts and ends. `runAgentLoop` sends an `exchange` event first and an
+`exchange-end` last, on every way out: with `outcome` and, where a call ended it, that call, or the
+handed-back calls' ids in `pending`; and just before it throws, with `outcome` `failed`, or
+`stopped` where the app's signal aborted, and the error's message as `text`. Given an `exchange`
+name — a task's stage — it names the start with it and puts it on every event of the exchange that
+names none, so a watcher can group a run of several exchanges the way the work is written and
+`fold` never joins text across two of them. `runMetrics` counts the starts as `exchanges` and reads
+the outcome off the ends. A `wait` stays what keeps a run that handed calls back on the waiting
+clock; its exchange's end follows it.
+
+```ts
+await runAgentLoop({ ...options, exchange: "triage", onEvent: (event) => emit(runId, event) });
+```
+
+Before 5.0.0 these were the `step` kind and the
 `step` field, and since 6.0.0 nothing reads events stored or relayed that way: an app that keeps
 them renames them when it reads them back.
 

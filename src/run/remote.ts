@@ -48,6 +48,12 @@ const SERVER_OWNED: ReadonlySet<string> = new Set([
   RunEventKind.Usage,
 ]);
 
+/**
+ * The kinds of event a remote agent's progress says of its own run and exchange, which are not
+ * forwarded: the loop's own start and end describe the app's exchange, and the run's end is the app's.
+ */
+const UNFORWARDED: ReadonlySet<string> = new Set([RunEventKind.Exchange, RunEventKind.ExchangeEnd, RunEventKind.Done]);
+
 /** Every kind a `RunEvent` may be, for telling one off the wire from something else. */
 const KINDS: ReadonlySet<string> = new Set(Object.values(RunEventKind));
 
@@ -219,8 +225,9 @@ interface RemoteRun {
  * @remarks
  * With progress on, the server says the `turn`, `thinking`, `output`, `tool-call`, `tool-result`
  * and `usage` of each of its turns, its handed-back calls included, so the loop says none of those
- * itself. The server's `done` is not forwarded: the run goes on past a remote stretch, and its end
- * is the app's to say. With progress off, the loop's own events are all there is, and all are said.
+ * itself. The server's `exchange`, `exchange-end` and `done` are not forwarded: the loop's own start
+ * and end say the app's exchange, and the run's end is the app's to say. With progress off, the
+ * loop's own events are all there is, and all are said.
  */
 export function remoteRun(
   extraBody: Record<string, unknown> | undefined,
@@ -245,7 +252,8 @@ export function remoteRun(
         return;
       }
       runId = event.runId;
-      if (event.kind !== RunEventKind.Done) {
+      const isForwarded = UNFORWARDED.has(event.kind) === false;
+      if (isForwarded) {
         told(event);
       }
     },

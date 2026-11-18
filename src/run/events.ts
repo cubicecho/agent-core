@@ -126,8 +126,8 @@ export function configureEvents(options: EventBusOptions = {}): Required<EventBu
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export const RunEventKind = {
   /**
-   * An exchange began: one of the app's own, such as a task's stage. `name` names it, `text` its
-   * kind.
+   * An exchange began. `runAgentLoop` sends one first, `name` its `exchange` option; an app may
+   * send its own too, `text` its kind.
    */
   Exchange: 'exchange',
   /** A deciding exchange chose an arm. `text` is the arm it took. */
@@ -173,15 +173,22 @@ export const RunEventKind = {
   /**
    * The exchange stopped to wait for the app to answer calls it handed back: the turn's `tool-call`
    * events with no `tool-result`, as `AgentLoopResult.pending` lists them. `text` says how many.
-   * Not an end: the run goes on, under the same id, once they are answered, and `watch` keeps
-   * following it until `done`.
+   *
+   * @remarks
+   * The exchange's `exchange-end` follows it, outcome `waiting`. The run's is not an end: it goes
+   * on, under the same id, once they are answered, and the bus keeps it on `retainWaitingMs`.
    */
   Wait: 'wait',
   /**
+   * An exchange ended, last of its events, whether it returned or threw. `outcome` says how; on
+   * `ended`, `id`, `name` and `text` are the call, its tool and the reason, and on `waiting`,
+   * `pending` the handed-back calls' ids. `text` is the error's message on `failed` or `stopped`,
+   * and `ok` is false on those two alone.
+   */
+  ExchangeEnd: 'exchange-end',
+  /**
    * The run ended, as the app announces it: `runAgentLoop` never sends it, and `endRun` sends one
-   * only to a run still watched. Last where it is sent. Where a tool call ended the exchange, it
-   * carries that call: `id` the call's, `name` the tool, and `text` the reason, as
-   * `AgentLoopResult.ended` has them.
+   * only to a run still watched. Last where it is sent. `ok` false is a run that failed.
    */
   Done: 'done',
 } as const;
@@ -299,7 +306,7 @@ export interface RunEvent {
    * exchange, and empty throughout for an app that sends no `exchange` events.
    */
   exchange: string;
-  /** Outcome on `tool-result` and `done`, otherwise null. */
+  /** Outcome on `tool-result`, `exchange-end` and `done`, otherwise null. */
   ok: boolean | null;
   /** Running totals on `usage`, otherwise null. */
   usage: RunUsage | null;
@@ -318,6 +325,13 @@ export interface RunEvent {
    * whose arguments did not parse, which loaded nothing. Optional for the reason `id` is.
    */
   loads?: LoadCounts;
+  /** How the exchange ended, on `exchange-end` and on no other kind. Optional for the reason `id` is. */
+  outcome?: ExchangeOutcome;
+  /**
+   * The ids of the calls handed back, on an `exchange-end` whose outcome is `waiting`, in the order
+   * asked. Optional for the reason `id` is.
+   */
+  pending?: string[];
 }
 
 /**
@@ -508,8 +522,10 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   }
   // A finished run is kept for a moment so a watcher that arrives just after the end still sees
   // how it went, then dropped: its record is the row, not this. A waiting one is kept far longer.
+  // An exchange's end says nothing of whether the run goes on: after a `wait`, it is still waiting.
   const isOver = stream.phase === StreamPhase.Ended;
-  if (isOver === false) {
+  const movesPhase = isOver === false && event.kind !== RunEventKind.ExchangeEnd;
+  if (movesPhase) {
     stream.phase = PHASE_BY_KIND.get(event.kind) ?? StreamPhase.Live;
   }
   scheduleSweep(held);
@@ -783,7 +799,7 @@ export function fold(events: RunEvent[]): RunEvent[] {
  * a mean of a number a server never sent would be a number nobody measured.
  */
 export interface RunMetrics {
-  /** The caller's own `exchange` events. */
+  /** `exchange` events: one per exchange `runAgentLoop` ran, and any the app sent of its own. */
   exchanges: number;
   /** Turns of the agent loop, one per `usage` report. */
   turns: number;
@@ -859,8 +875,9 @@ export interface RunMetrics {
    */
   largestPromptShare?: number;
   /**
-   * How the run ended, in an exchange's terms: off `done` and the last turn, or `waiting` after a
-   * `wait` nothing followed.
+   * How the run ended, in an exchange's terms: its last `exchange-end`'s outcome, or `failed` where
+   * a `done` was not ok and that exchange did not fail already. Absent where no exchange has ended
+   * since the last one began, and no `done` said the run failed.
    */
   outcome?: ExchangeOutcome;
 }
@@ -890,17 +907,17 @@ export const ExchangeOutcome = {
   Filtered: 'filtered',
   /**
    * The exchange did not fail, and a tool call ended it: `AgentLoopResult.ended` says which, and so
-   * does a `done` that names the tool.
+   * does its `exchange-end`.
    */
   Ended: 'ended',
   /**
-   * The exchange stopped: it handed calls back and waits for the app to answer them, as a `wait`
-   * event with no `turn` or `done` after it says, and `AgentLoopResult.pending` lists them.
+   * The exchange stopped: it handed calls back and waits for the app to answer them, as
+   * `AgentLoopResult.pending` and its `exchange-end` list them.
    */
   Waiting: 'waiting',
   /**
-   * `done` said the run was not ok. Whether that was an error, a stop or the tool budget is in
-   * the app's own `done` text and not here.
+   * The exchange threw: a request or a callback failed, it overflowed, or its turns ran out. Never on
+   * a result; for a run, also a `done` that was not ok.
    */
   Failed: 'failed',
   /** The app's signal stopped the exchange, which then threw: never on a result. */
@@ -911,25 +928,16 @@ export const ExchangeOutcome = {
 export type ExchangeOutcome = (typeof ExchangeOutcome)[keyof typeof ExchangeOutcome];
 
 /**
- * How a run that reported `done` ended.
+ * How a run ended, from its last exchange's end and its `done`.
  *
- * @param done - The `done` event. Only an `ok` of `false` is a failure; one that names a tool was
- * ended by it; anything else is read off the turn.
- * @param last - The last turn a `usage` event reported, if any did.
- * @returns `failed` for a `done` that was not ok, `ended` for one that names the tool that ended
- * the exchange, `truncated` where the last turn ran into the reply ceiling, `filtered` where a
- * content filter withheld it, and `answered` otherwise.
+ * @param ending - The last `exchange-end`, where no exchange began after it.
+ * @param failed - Whether a `done` said the run was not ok.
+ * @returns `failed` where the run failed and that exchange did not, else that exchange's outcome;
+ * `undefined` where neither says anything.
  */
-function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): ExchangeOutcome {
-  if (ok === false) {
-    return ExchangeOutcome.Failed;
-  }
-  // Read as a truthy string, so an event put together by hand without one is not ended.
-  const isEnded = Boolean(name);
-  if (isEnded) {
-    return ExchangeOutcome.Ended;
-  }
-  return endingOf(last?.finishReason);
+function runOutcome(ending: RunEvent | undefined, failed: boolean): ExchangeOutcome | undefined {
+  const failedAfter = failed && ending?.ok !== false;
+  return failedAfter ? ExchangeOutcome.Failed : ending?.outcome;
 }
 
 /**
@@ -970,7 +978,7 @@ export interface RunMetricsOptions {
  * that has lost its oldest events to the cap sums what it still has.
  * @param [options] - The served context window, for how full the run came to it.
  * @returns A summary of the caller's own. The counts are zero for an empty list, and `outcome` is
- * absent for a run that has not reported `done`.
+ * what `RunMetrics.outcome` says: absent while an exchange is going.
  *
  * @remarks
  * A sibling of `fold` rather than part of it. `fold` hands back events, and a client renders
@@ -1012,17 +1020,16 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   // Calls waiting for their results, by call id, oldest first. An event built without an id is
   // paired by its tool's name, which is all it carries.
   const pending = new Map<string, number[]>();
-  let last: TurnReport | undefined;
-  // Whether the run's latest stretch stopped on a `wait`; the next turn is the run going on.
-  let waits = false;
+  // The last exchange's end, until another exchange begins, and whether a `done` said the run failed.
+  let ending: RunEvent | undefined;
+  let failed = false;
 
   for (const event of events) {
     if (event.kind === RunEventKind.Exchange) {
       metrics.exchanges++;
-    } else if (event.kind === RunEventKind.Turn) {
-      waits = false;
-    } else if (event.kind === RunEventKind.Wait) {
-      waits = true;
+      ending = undefined;
+    } else if (event.kind === RunEventKind.ExchangeEnd) {
+      ending = event;
     } else if (event.kind === RunEventKind.ToolCall) {
       if (event.name === LOAD_TOOLS) {
         metrics.loadCalls++;
@@ -1053,7 +1060,6 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       }
     } else if (event.kind === RunEventKind.Usage && event.usage?.turn) {
       const turn = event.usage.turn;
-      last = turn;
       metrics.turns++;
       metrics.requests += 1 + (turn.continuations ?? 0);
       metrics.promptTokens += turn.prompt;
@@ -1095,13 +1101,13 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
         }
       }
     } else if (event.kind === RunEventKind.Done) {
-      metrics.outcome = outcomeOf(event, last);
+      failed = event.ok === false;
     }
   }
 
-  const isWaiting = waits && metrics.outcome === undefined;
-  if (isWaiting) {
-    metrics.outcome = ExchangeOutcome.Waiting;
+  const outcome = runOutcome(ending, failed);
+  if (outcome) {
+    metrics.outcome = outcome;
   }
   if (events.length > 1) {
     metrics.wallMs = events[events.length - 1].at - events[0].at;

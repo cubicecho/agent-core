@@ -662,7 +662,14 @@ export interface AgentLoopOptions {
    */
   session?: string;
   /**
-   * Told what the exchange is doing, as the events a watcher reads.
+   * The exchange's name, such as a task's stage: on the `exchange` event the loop opens with, and on
+   * every event it emits that names no exchange of its own. Absent leaves `name` and `exchange`
+   * empty.
+   */
+  exchange?: string;
+  /**
+   * Told what the exchange is doing, as the events a watcher reads: an `exchange` event first and
+   * an `exchange-end` last, the second sent too just before the loop throws.
    *
    * @remarks
    * On a `remoteAgent` config, the server's events arrive whole, under its run id and numbering
@@ -777,8 +784,8 @@ export interface AgentLoopResult {
    * Every other field is as a finished exchange has it: `messages` close on the turn's tool results
    * with no assistant message after them, the hooks are told `afterExchange` with `turn.content`,
    * and `metrics.outcome` is `ended`. No `beforeTurn` or `compact` runs after the end, since no request
-   * follows it. An app saying `done` passes the call on it — `id` the call, `name` the tool, `text`
-   * the reason — which is how `runMetrics` reads the same outcome off the events.
+   * follows it. The `exchange-end` event carries the call too, `id`, `name` and the reason as `text`,
+   * which is how `runMetrics` reads the same outcome off the events.
    */
   ended?: EndedBy;
   /**
@@ -789,9 +796,9 @@ export interface AgentLoopResult {
    * @remarks
    * `messages` then end in the turn's assistant message and the results of the calls the loop ran,
    * with no result for these; `turn` is the reply that made them, `metrics.outcome` is `waiting`, a
-   * `wait` event was emitted, and the `afterExchange` hooks were not told. To go on, the app calls the
-   * loop again with `messages` and one tool message per call appended in this order, and with
-   * `ledger` and `loaded` from this result. A call of the same turn that ended the exchange wins:
+   * `wait` event and then an `exchange-end` listing their ids were emitted, and the `afterExchange`
+   * hooks were not told. To go on, the app calls the loop again with `messages` and one tool
+   * message per call appended in this order, and with `ledger` and `loaded` from this result. A call of the same turn that ended the exchange wins:
    * the calls that would have been handed back are answered as not run, and none is pending.
    */
   pending?: ToolCallRequest[];
@@ -899,6 +906,10 @@ interface Standing {
  * notes and context, metrics and the ledger. See `AgentLoopResult`.
  *
  * @remarks
+ * Its first event is an `exchange` and its last an `exchange-end`, sent on every way out: with how
+ * the exchange ended where it returns, and with `failed`, or `stopped` once the app's signal has
+ * aborted, just before it throws. `exchange` names the exchange on both and on every event between.
+ *
  * What it throws carries the exchange as it stood — `messages`, `usage`, `toolCalls`, `loaded`,
  * `used`, `preselected` and `ledger` — because the turns before a failure were real and an app that
  * stores its transcript has nothing else to store them from. What the request in flight had said
@@ -960,6 +971,7 @@ interface Standing {
  * (`remoteRun`).
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
+  const record = recorder(options.onEvent, options.exchange);
   let pin: SessionPin | undefined;
   // Until the turns have set themselves up there is only what the caller handed over.
   const standing: Standing = {
@@ -975,29 +987,77 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }),
   };
   let result: AgentLoopResult | undefined;
-  const apart = hostToolsApart(withRecordTool(asRemoteAgent(options)));
   try {
+    record.onEvent({ kind: RunEventKind.Exchange, name: options.exchange ?? '' });
+    const apart = hostToolsApart(withRecordTool(asRemoteAgent({ ...options, onEvent: record.onEvent })));
     pin = await pinSession(apart.config, apart.session, {
       signal: apart.signal,
       // A remote agent's server picks the slots of the models it runs itself.
       serverPins: apart.config.remoteAgent === true,
-      onNotice: (text) => apart.onEvent?.({ kind: RunEventKind.Notice, text }),
+      onNotice: (text) => record.onEvent({ kind: RunEventKind.Notice, text }),
     });
-    result = await runTurns(apart, standing, pin);
+    result = await runTurns(apart, standing, record, pin);
   } catch (error) {
     // Wrapped rather than annotated: an abort's reason is one object shared by every exchange under
     // the signal, so the exchange cannot be hung on the error itself. An overflow keeps its class,
     // because `instanceof ContextOverflow` is how a caller knows to compact and try again.
-    throw error instanceof ContextOverflow
-      ? new AgentLoopOverflow(error.message, standing.read(), { cause: error })
-      : new AgentLoopError(errorMessage(error), standing.read(), { cause: error });
+    const failure =
+      error instanceof ContextOverflow
+        ? new AgentLoopOverflow(error.message, standing.read(), { cause: error })
+        : new AgentLoopError(errorMessage(error), standing.read(), { cause: error });
+    throw endedBy(failure, record, options.signal);
   } finally {
     pin?.release();
   }
   if (result) {
     return result;
   }
-  throw new ToolIterationLimit(`Stopped after ${options.config.maxToolIterations} tool iterations.`, standing.read());
+  const spent = new ToolIterationLimit(
+    `Stopped after ${options.config.maxToolIterations} tool iterations.`,
+    standing.read(),
+  );
+  throw endedBy(spent, record, options.signal);
+}
+
+/**
+ * Tells the app that an exchange ended in a throw, unless its end was told already.
+ *
+ * @param failure - What the exchange is about to throw. Its message is the event's `text`.
+ * @param record - The exchange's events so far, and what it emits through.
+ * @param [signal] - The app's signal: aborted, the outcome is `stopped` rather than `failed`.
+ * @returns `failure`, for the caller to throw.
+ *
+ * @remarks
+ * An exchange whose own `onEvent` threw on the end it was returning with has told its end already,
+ * and is not told a second. What the app throws on this end is dropped, so the exchange's own
+ * failure is the one thrown.
+ */
+function endedBy<E extends Error>(failure: E, { recorded, onEvent }: Recorder, signal?: AbortSignal): E {
+  const hasEnded = recorded.at(-1)?.kind === RunEventKind.ExchangeEnd;
+  if (hasEnded) {
+    return failure;
+  }
+  const outcome = signal?.aborted ? ExchangeOutcome.Stopped : ExchangeOutcome.Failed;
+  try {
+    onEvent({ kind: RunEventKind.ExchangeEnd, outcome, ok: false, text: failure.message });
+  } catch {
+    // Dropped: the exchange's own failure is the one thrown.
+  }
+  return failure;
+}
+
+/**
+ * The event that says how an exchange that returned ended.
+ *
+ * @param outcome - How it ended, as its result's `metrics.outcome` says.
+ * @param settled - What its last turn's calls came to: the call that ended it, or those pending.
+ * @returns An `exchange-end`, with the ending call's `id`, `name` and reason where one ended it,
+ * and the pending calls' ids where it waits.
+ */
+function exchangeEnd(outcome: ExchangeOutcome, { ended, pending }: TurnOutcome): RunEventInput {
+  const endedWith = ended ? { id: ended.callId, name: ended.name, text: ended.reason ?? '' } : {};
+  const waitingOn = pending.length > 0 ? { pending: pending.map((call) => call.id) } : {};
+  return { kind: RunEventKind.ExchangeEnd, outcome, ok: true, ...endedWith, ...waitingOn };
 }
 
 /**
@@ -1206,20 +1266,32 @@ const tellAfterExchange = (
 const isQuestion = (message: OpenAI.ChatCompletionMessageParam) =>
   message.role === Role.User && isSummary(message) === false;
 
+/** What an exchange emits through, and its own record of what it emitted. */
+interface Recorder {
+  /** Every event emitted so far, less the token deltas, stamped. */
+  recorded: RunEvent[];
+  /** Emits one event: names its exchange, records it, and tells the app. */
+  onEvent: (input: RunEventInput | RunEvent) => void;
+}
+
 /**
  * The loop's own record of what it emitted, less the token deltas, for `runMetrics` at the end.
  *
  * @param heard - The app's `onEvent`, still told of every event, deltas included. Absent records
  * all the same.
+ * @param [exchange] - The exchange's name, put on each event that names none. Absent or empty puts
+ * nothing.
  * @returns `recorded`, the array each event is added to as it is emitted, and `onEvent`, which the
  * loop emits through in place of the app's.
  *
  * @remarks
  * Stamped here rather than by the bus, which the loop does not know about.
  */
-function recorder(heard: AgentLoopOptions['onEvent']) {
+function recorder(heard: AgentLoopOptions['onEvent'], exchange = ''): Recorder {
   const recorded: RunEvent[] = [];
-  const onEvent = (input: RunEventInput | RunEvent) => {
+  const onEvent = (given: RunEventInput | RunEvent) => {
+    const isUnnamed = exchange !== '' && !given.exchange;
+    const input = isUnnamed ? { ...given, exchange } : given;
     if (input.kind !== RunEventKind.Thinking && input.kind !== RunEventKind.Output) {
       recorded.push(stamp(input, '', recorded.length + 1, Date.now()));
     }
@@ -1449,6 +1521,7 @@ function exchangeOutcome(reply: Turn, { ended, pending }: TurnOutcome): Exchange
  * @param options - What `runAgentLoop` was given.
  * @param standing - Written to: once the turns have set themselves up, its `read` is theirs, so the
  * caller can read the exchange as it stands whether they return or throw.
+ * @param record - What the turns emit through, and its record, which the metrics are read from.
  * @param [pin] - What the exchange's session adds to each request. Absent adds nothing.
  * @returns The result of the turn that asked for no tools, whose calls ended the exchange, or whose
  * calls were handed back, or `undefined` when `maxToolIterations` is spent.
@@ -1456,6 +1529,7 @@ function exchangeOutcome(reply: Turn, { ended, pending }: TurnOutcome): Exchange
 async function runTurns(
   options: AgentLoopOptions,
   standing: Standing,
+  { recorded, onEvent: told }: Recorder,
   pin?: SessionPin,
 ): Promise<AgentLoopResult | undefined> {
   const { config, system = '', tools = [], catalog = [], dispatch, hooks, signal } = options;
@@ -1482,7 +1556,6 @@ async function runTurns(
   } = options;
   const dedupable = typeof dedupeToolCalls === 'function' ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
-  const { recorded, onEvent: told } = recorder(options.onEvent);
   const remote =
     config.remoteAgent === true ? remoteRun(config.extraBody, told, { field: config.progressField }) : undefined;
   const onEvent = remote?.emit ?? told;
@@ -1897,6 +1970,8 @@ async function runTurns(
         hooks && fired?.afterExchange && isOver
           ? tellAfterExchange(hooks, messages, questionAt(), reply.content)
           : Promise.resolve([]);
+      const outcome = exchangeOutcome(reply, settled);
+      onEvent(exchangeEnd(outcome, settled));
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
       return {
         turn: shown,
@@ -1911,7 +1986,7 @@ async function runTurns(
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
-          outcome: exchangeOutcome(reply, settled),
+          outcome,
         },
       };
     }

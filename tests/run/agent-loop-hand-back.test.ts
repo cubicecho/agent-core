@@ -15,7 +15,6 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
 
 const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
 const { oneCallPerMessage } = await import('../../src/run/run-calls.ts');
-const { runMetrics, stamp } = await import('../../src/run/events.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
 const { failedRun } = await import('../../src/run/failure.ts');
@@ -125,12 +124,14 @@ describe('handBack', () => {
     const told = events
       .filter((event) => event.kind !== RunEventKind.Notice && event.kind !== RunEventKind.Usage)
       .filter((event) => event.kind !== RunEventKind.Turn)
-      .map((event) => `${event.kind} ${event.id ?? event.text}`);
+      .map((event) => [event.kind, event.id ?? event.text ?? ''].join(' ').trim());
     expect(told).toEqual([
+      'exchange',
       'tool-call c1',
       'tool-result c1',
       'tool-call c0',
       'wait waiting for the app to answer 1 call',
+      'exchange-end',
     ]);
     expect(heard).toEqual(['call c1', 'result c1', 'call c0']);
     const notices = events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text);
@@ -468,19 +469,5 @@ describe('handBack', () => {
       const names = toolNames(bodies()[2].tools);
       expect(names).toContain('s__write');
     });
-  });
-});
-
-describe('runMetrics', () => {
-  const at = (kind: RunEventInput['kind'], seq: number) => stamp({ kind }, 'r', seq, seq);
-
-  it('reads a run whose last stretch stopped on `wait` as waiting', () => {
-    expect(runMetrics([at(RunEventKind.Turn, 1), at(RunEventKind.Wait, 2)]).outcome).toBe(ExchangeOutcome.Waiting);
-  });
-
-  it('reads a run that went on after its `wait` as not done, and by its `done` once it is', () => {
-    const resumed = [at(RunEventKind.Turn, 1), at(RunEventKind.Wait, 2), at(RunEventKind.Turn, 3)];
-    expect(runMetrics(resumed).outcome).toBeUndefined();
-    expect(runMetrics([...resumed, at(RunEventKind.Done, 4)]).outcome).toBe(ExchangeOutcome.Answered);
   });
 });

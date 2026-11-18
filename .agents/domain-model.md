@@ -38,7 +38,7 @@ stage and a fix stage, runs one exchange per stage inside a single run.
 ```
 agent settings (optional document) ──┐
 the app's tools and callbacks ───────┼→ exchange: ask the model → run the tools it asked for → repeat → result
-                                     └→ events about each turn → anyone watching
+                                     └→ events: the exchange's start, each turn, its end → anyone watching
 ```
 
 - **An exchange:** given a conversation ending in a question, ask the model, run the tools it
@@ -65,7 +65,7 @@ agent document, stands apart and uses only a few small pieces, so it also loads 
 
 | Actor | Is | Reaches the package through | Can affect |
 |---|---|---|---|
-| App | the application using the package | the settings and callbacks it passes in | everything an exchange starts from: the model, the conversation, the tools; it can rewrite the conversation before each turn, add a message mid-exchange, and decide whether a paused exchange continues. It alone announces that a run is over (the `done` event) and reports its own exchange events |
+| App | the application using the package | the settings and callbacks it passes in | everything an exchange starts from: the model, the conversation, the tools; it can rewrite the conversation before each turn, add a message mid-exchange, and decide whether a paused exchange continues. It alone announces that a run is over (the `done` event), and it names each exchange the loop runs |
 | Model | the AI model on the server | its replies | what it says, which tools it calls and with what arguments, and which extra tools it loads. It cannot end or pause an exchange, except by replying without asking for tools |
 | Model server | the server the model runs on | its answers and errors | which request features are used from then on (a refused feature is not sent again), how big requests are estimated to be, and whether a reply was cut short or filtered |
 | Remote agent's server | a server that runs its own agent loop | progress reports streamed with its replies | what watchers see of its own turns, the ids of the calls it hands back, and the id of its own run |
@@ -87,11 +87,13 @@ From a question to what the app is told at the end.
 - Running → Running (tools answered and turns remain, or the app had a new message waiting)
 - Running → Failed with "too many turns" (the turn limit ran out)
 - Any → Failed (the app stopped it, a callback threw, a request failed, or it overflowed)
+- Any → Stopped (the app's signal aborted it, and it throws)
 - Waiting → Starting (the app answers the waiting calls and starts again: a new exchange)
 
-The outcome is on the result; a failed exchange throws and has none. The events work the outcome
-out again, and there "failed" comes only from the app's own `done` event. A reserved slot is
-always released.
+The loop says the exchange started, with an `exchange` event, and how it ended, with an
+`exchange-end` that carries the outcome, on every way out: a failed or stopped exchange sends it
+just before it throws. The outcome is on the result too; a failed exchange throws and has none
+there. A reserved slot is always released.
 
 ### A turn
 
@@ -216,8 +218,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A failure carries the exchange as it stood | `standing.read`, `runAgentLoop` |
 | At most `maxToolIterations` turns | `runTurns`, `ToolIterationLimit` |
 | Event `seq` and `runId` are the bus's to give | `stamp` |
+| Every exchange the loop runs opens with one `exchange` event and closes with one `exchange-end`, whether it returns or throws | `runAgentLoop`, `endedBy`, `exchangeEnd` |
+| An exchange's end never moves a run off waiting | `emit` |
 | A bus listener that throws never reaches the emitter | `emit` |
-| A remote agent's turn events are not said twice, and its `done` is not forwarded | `remoteRun` |
+| A remote agent's turn events are not said twice, and its `exchange`, `exchange-end` and `done` are not forwarded | `remoteRun` (`SERVER_OWNED`, `UNFORWARDED`) |
 | A remote agent's turn sends one idempotency key across its retries | `remoteRun.turnHeaders`, once per turn |
 | Each runtime has its own copy of module state | `scoped`, `currentScope` |
 | An absent or `null` spec field inherits; `0`, `""` and `[]` are values | `isAbsent` in `parseSpec` and `toLayer` (a `null` becomes absent), then `mergeLayers`, `mergeModel` and `resolveAgentSpec` |
@@ -243,11 +247,14 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   (`src/wire/stream.ts`) is the reply part, run by `runTurn`, and the `turn` event and
   `RunMetrics.turns` count them. A turn's number, from zero, is `turn`: on `AgentLoopRequest` and
   `RunArtifact`, and the number `beforeTurn`, `onTurn` and `onMessage` are handed.
-- **Exchange events:** what an app emits when one run holds several exchanges, such as a task's
-  stages: an exchange began, which exchange each event belongs to, and which arm a deciding
-  exchange chose. Owner: `RunEventKind.Exchange`, `RunEvent.exchange`, `RunMetrics.exchanges` and
-  `RunEventKind.Decision`; the loop never sends them. Events stored or relayed before 5.0.0 say
-  `step` for the first two, and the package no longer reads them.
+- **Exchange events:** where an exchange starts and how it ended, which exchange each event belongs
+  to, and which arm a deciding exchange chose. The loop sends the start and the end of each
+  exchange it runs, the end with its outcome even when it throws, and names every event with the
+  app's name for the exchange; the app sends the choices. Owner: `RunEventKind.Exchange`,
+  `RunEventKind.ExchangeEnd`, `RunEvent.exchange`, `RunEvent.outcome`, `AgentLoopOptions.exchange`,
+  `RunMetrics.exchanges` and `RunEventKind.Decision`. A remote agent's own starts and ends are not
+  passed on. Events stored or relayed before 5.0.0 say `step` for the first and third, and the
+  package no longer reads them.
 
 ### Reaching a server
 
@@ -373,9 +380,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`; its
   `afterExchange` is the `afterExchange` hooks' notes, as a promise the loop does not wait for.
 - **Outcome:** how an exchange ended: answered, cut short, filtered, ended, waiting, or (as events
-  tell it) failed or stopped. A run's outcome is told in the same words, read off its events.
-  Owner: `ExchangeOutcome` (`src/run/events.ts`), decided by `exchangeOutcome`; a run's is
-  `RunMetrics.outcome`.
+  tell it) failed or stopped. A run's outcome is told in the same words: its last exchange's,
+  unless the app's `done` says the run failed. Owner: `ExchangeOutcome` (`src/run/events.ts`),
+  decided by `exchangeOutcome` and carried by `exchange-end`; a run's is `RunMetrics.outcome`.
 - **Failure:** what an exchange throws, carrying it as it stood. Owner: `AgentLoopError`,
   `AgentLoopOverflow`, `ToolIterationLimit`, `failedRun` (`src/run/failure.ts`).
 - **Stop (abort):** the app cancelling an exchange through its signal. Owner:
@@ -407,8 +414,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **End (ended):** a tool's answer saying the job is done, which ends the exchange once the turn's
   calls are answered. Owner: `ToolAnswer.end`, `AgentLoopResult.ended`, `ExchangeOutcome.Ended`.
 - **Hand back (pending, waiting):** leaving a call for the app to answer later; the exchange stops
-  after the turn, waiting. Owner: `AgentLoopOptions.handBack`, `AgentLoopResult.pending`,
-  `ExchangeOutcome.Waiting`, `RunEventKind.Wait`.
+  after the turn, waiting, with a `wait` event and then its end. Owner: `AgentLoopOptions.handBack`,
+  `AgentLoopResult.pending`, `ExchangeOutcome.Waiting`, `RunEventKind.Wait`, `RunEvent.pending`.
 - **Resume:** calling the loop again with a waiting exchange's transcript, its pending calls
   answered, and its ledger and loaded tools. Owner: the app; described on `AgentLoopResult.pending`.
 
