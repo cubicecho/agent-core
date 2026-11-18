@@ -34,6 +34,7 @@ only, Node >=22.
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its model server reports: `charsPerTokenFor`, `calibrate`. |
 | `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
+| `defaults` | Every number this package chose, grouped by what it tunes: `RETRY_DEFAULTS`, `COMPACTION_DEFAULTS`, `HOOK_DEFAULTS` and the rest, each a frozen object with a `…Settings` type. [Below](#the-numbers-it-was-written-with). |
 | `config` | The structural interfaces every function here asks for, and `normalizeBaseUrl`, the one rule for when two base URLs are one model server. |
 | `run-turn` | `runTurn`: one request with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: one exchange — `runTurn` per turn, the tools between, `load_tools` and preselection handled, until the model stops asking. |
@@ -1052,7 +1053,7 @@ anything, under its label, with the text inside an `untrusted` fence. The text i
 in the one place a model most takes literally, so it is named rather than folded into the
 operator's prompt: the model can weigh one server's advice against what the user asked, and a
 surprising turn can be traced back to where the instruction came from. A text over
-`maxTokensPerServer` (`SERVER_INSTRUCTION_TOKENS`, 1000, by default; zero keeps it whole) is cut,
+`maxTokensPerServer` (`TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens`, 1000, by default; zero keeps it whole) is cut,
 and the cut is said after the fence.
 
 ```ts
@@ -1560,10 +1561,10 @@ const sent = pruneThrough(messages, stored);
 ```
 
 A plan never moves the boundary backwards and never moves it for nothing. It moves to the earliest
-of the latest `keepLast` (5) results once the context window is past `at` (`COMPACT_AT`,
-compaction's own line) — by the larger of `used` and the estimate, since a report does not count the
-results that came after it — and only when what it clears is at least `minShare` (`PRUNE_SHARE`, a
-tenth) of the context window. `compacted: true`, beside a compaction that has rewritten the head
+of the latest `keepLast` (`PRUNE_DEFAULTS.keepLastResults`, 5) results once the context window is past
+`at` (`COMPACTION_DEFAULTS.compactAtShare`, compaction's own line) — by the larger of `used` and the estimate, since a report does not count the
+results that came after it — and only when what it clears is at least `minShare`
+(`PRUNE_DEFAULTS.minShare`, a tenth) of the context window. `compacted: true`, beside a compaction that has rewritten the head
 anyway, skips both gates: the cache is already lost, so the move is free. `from` leaves out results
 a compaction has already taken out of the request. `at: 0` with a larger `minShare` is a pure
 hysteresis on what is won back.
@@ -1821,7 +1822,7 @@ app that stores what the user typed never stores the context as something they s
 beside the question instead, and put back on every later request: a question that loses its blocks
 on the next exchange rewrites the prompt from there on, and the server's prefix cache with it.
 `runAgentLoop` hands back `context` and `preface` for the same purpose. Every
-injecting hook shares `HOOK_CONTEXT_TOKENS` (2000) by default, each held to its own `maxTokens`
+injecting hook shares `HOOK_DEFAULTS.contextTokens` (2000) by default, each held to its own `maxTokens`
 inside that, so a generous hook cannot crowd out the conversation it was meant to inform.
 
 The budget is the caller's to move, at either level. `configureHooks` sets it for the process, and
@@ -1840,7 +1841,7 @@ Either one given something that is not a number above zero keeps what was there,
 `configureEvents` does, so a `0` threaded through for "no opinion" does not switch recall off.
 `resetHooks` (and `resetAll`) puts the default back.
 
-The preface said above the blocks moves the same way. `HOOK_PREFACE` names no app, so an app that
+The preface said above the blocks moves the same way. `HOOK_DEFAULTS.preface` names no app, so an app that
 wants its own name says so once with `configureHooks({ preface })`, and a `preface` passed to
 `withContext` (or on `runAgentLoop`'s `hooks`) wins over it for one request. An empty string is a
 preface of nothing — the blocks lead the question on their own, with no blank line above them —
@@ -2008,7 +2009,9 @@ that is a decision an app makes rather than inherits from a default.
 
 The subpath is separate from the main entry for one reason: `client.ts` and `hooks.ts` import
 `node:crypto`, and `spec.ts` imports only modules that need nothing from Node and import nothing
-themselves, so a browser validating a pasted document in a form can load it. Nothing outside
+themselves, so a browser validating a pasted document in a form can load it. Its entry,
+`src/spec/entry.ts`, is `spec.ts` and `AGENT_DEFAULTS`, the fallbacks `resolveAgentSpec` fills in,
+which live with the other groups in `core/defaults.ts`. Nothing outside
 `src/spec/` imports it — the same direction the config seam runs, which is what lets a document
 travel between apps without the loop growing an opinion about where an agent comes from.
 
@@ -2133,6 +2136,49 @@ await preselect(config, settings.toolSelectModel || settings.model, catalog, pro
 ```ts
 const result = await runAgentLoop({ config, preselect: { keywords: true }, compact: true, ... });
 ```
+
+## The numbers it was written with
+
+Every value here that somebody chose — a limit, a wait, a share of the context window, a retry
+count — is in one module, `src/core/defaults.ts`, as a member of a group named for what it tunes.
+Each group is a frozen object of plain JSON values with a written-out `…Settings` type, and all of
+them are exported, so "what can be changed about compaction?" has one answer:
+
+```ts
+import { configureEvents, EVENT_BUS_DEFAULTS } from "@cubicecho/agent-core";
+
+// Tool calls that take an hour want twice the unended retention, whatever the default is.
+configureEvents({ retainUnendedMs: EVENT_BUS_DEFAULTS.retainUnendedMs * 2 });
+```
+
+| Group | Tunes |
+| --- | --- |
+| `CLIENT_POOL_DEFAULTS` | the client pool: `maxClients`, `listingMissMs`, `lookupTimeoutMs` |
+| `MODEL_SERVER_DEFAULTS` | waiting on a model server: the first token, the probe's listing, a model loading |
+| `RETRY_DEFAULTS` | the backoff between attempts at a lost request |
+| `REQUEST_SIZE_DEFAULTS` | sizing a request with no tokenizer: the ratio, its calibration, the smallest window believed |
+| `CONTINUATION_DEFAULTS` | carrying on a cut-off answer |
+| `TOOL_CALL_DEFAULTS` | quoting a call back, and minting an id for one |
+| `SIDE_TASK_DEFAULTS` | a side task's ceiling, temperature and retries |
+| `PRESELECT_DEFAULTS` | choosing tools before an exchange, by model or by keyword |
+| `TOOL_DISCOVERY_DEFAULTS` | how many tools a load takes and a conversation carries, and a server's instruction budget |
+| `HOOK_DEFAULTS` | the context hooks share, and the preface above it |
+| `COMPACTION_DEFAULTS` | when to compact, how much to keep, what a summary may cost |
+| `PRUNE_DEFAULTS` | what a prune leaves whole, and what it has to win back |
+| `TOKEN_LEDGER_DEFAULTS` | telling a kept prompt cache from a broken one |
+| `EVENT_BUS_DEFAULTS` | what the bus keeps of a run, and for how long |
+| `AGENT_DEFAULTS` | what `resolveAgentSpec` gives a field no layer set (also on `@cubicecho/agent-core/spec`) |
+
+Nothing reads a group as a switch. A function a caller varies takes the setting as an option, and
+its default is the member: `ask`'s `maxTokens` is `SIDE_TASK_DEFAULTS.maxTokens` until a call says
+otherwise. The three process-wide ones are moved by `configureClients`, `configureEvents` and
+`configureHooks` (or a runtime's options), which take a `Partial` of the group's settings and hand
+back what is in force. A group itself never changes while the program runs. A unit is in each
+member's name, in the unit a person would edit, except where an app already sets the value by name:
+`retainMs` and `listingMissMs` stayed in milliseconds rather than break every `configureEvents` call.
+
+The facts that could not be otherwise, `MS_PER_SECOND` and `MS_PER_MINUTE`, are beside it in
+`src/core/consts.ts`, and are not exported.
 
 ## What is kept for the life of the process
 

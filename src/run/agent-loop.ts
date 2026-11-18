@@ -343,7 +343,7 @@ export interface AgentLoopOptions {
    * way. The block is built once, from the catalogue rather than from what is loaded, so it is the
    * same text on every turn and covers a server none of whose tools is loaded; the preselected
    * first turn keeps it too, which leaves that turn's system prompt a prefix of the next one's.
-   * `true` cuts each server's text at `SERVER_INSTRUCTION_TOKENS`; an object moves the budget.
+   * `true` cuts each server's text at `TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens`; an object moves the budget.
    */
   serverInstructions?: boolean | ServerInstructionsOptions;
   /**

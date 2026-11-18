@@ -5,6 +5,7 @@ import {
   ReasoningReplay,
   ToolDiscovery,
 } from '../core/config.ts';
+import { AGENT_DEFAULTS } from '../core/defaults.ts';
 import { isAbsent, isRecord } from '../core/guards.ts';
 import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 
@@ -276,25 +277,6 @@ export interface ResolvedAgent extends AgentConfig {
   /** Every layer's requirements, unioned, so a layer above cannot quietly drop one below it. */
   requires: readonly string[];
 }
-
-/**
- * What a field falls back to when no layer said anything at all.
- *
- * @remarks
- * Not sentinels, and not invented: `toolDiscovery`, `maxRetries` and `contextLength` are the
- * "absent everywhere" column of the document's own table, and `temperature` and `maxToolIterations`
- * are what all three consumers store as their defaults today. `maxTokens: 0` sends no ceiling,
- * leaving the reply's length to the model server. A field left out here is left out of the
- * resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no opinion".
- */
-export const RESOLVED_DEFAULTS = {
-  temperature: 0.7,
-  maxTokens: 0,
-  contextLength: 0,
-  toolDiscovery: ToolDiscovery.Eager,
-  maxToolIterations: 20,
-  maxRetries: 0,
-} as const;
 
 /** What `parseSpec` hands back. A refused document is `spec: null` with the reasons in `errors`. */
 export interface ParsedSpec {
@@ -1220,7 +1202,7 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * @param layers - The documents, weakest first: settings, then the agent, then a task, then
  * a stage.
  * @returns The resolved agent, built new. Always whole: an empty list gives empty strings and
- * `RESOLVED_DEFAULTS` rather than an error, and `apiKey` is `""` whatever the layers said.
+ * `AGENT_DEFAULTS` rather than an error, and `apiKey` is `""` whatever the layers said.
  *
  * @remarks
  * Absent inherits, and nothing else does: `0`, `-1`, `""` and `[]` are values that mean what they
@@ -1297,13 +1279,13 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
       servers: tools.servers,
     }),
     model: model.model ?? '',
-    maxTokens: model.maxTokens ?? RESOLVED_DEFAULTS.maxTokens,
-    temperature: model.temperature ?? RESOLVED_DEFAULTS.temperature,
-    contextLength: model.contextLength ?? RESOLVED_DEFAULTS.contextLength,
-    toolDiscovery: tools.discovery ?? RESOLVED_DEFAULTS.toolDiscovery,
+    maxTokens: model.maxTokens ?? AGENT_DEFAULTS.maxTokens,
+    temperature: model.temperature ?? AGENT_DEFAULTS.temperature,
+    contextLength: model.contextLength ?? AGENT_DEFAULTS.contextLength,
+    toolDiscovery: tools.discovery ?? AGENT_DEFAULTS.toolDiscovery,
     toolSelectModel: tasks.toolSelect?.model ?? '',
-    maxToolIterations: tools.maxIterations ?? RESOLVED_DEFAULTS.maxToolIterations,
-    maxRetries: retry.maxRetries ?? RESOLVED_DEFAULTS.maxRetries,
+    maxToolIterations: tools.maxIterations ?? AGENT_DEFAULTS.maxToolIterations,
+    maxRetries: retry.maxRetries ?? AGENT_DEFAULTS.maxRetries,
     // Byte-identical to what a consumer's `systemPromptFor` produces today, so four sources
     // survive a round trip instead of flattening into one blob nobody can edit a third of.
     systemPrompt: prompt

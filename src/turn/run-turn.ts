@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import { MS_PER_SECOND } from '../core/consts.ts';
-import { MODEL_SERVER_DEFAULTS } from '../core/defaults.ts';
+import { MODEL_SERVER_DEFAULTS, REQUEST_SIZE_DEFAULTS } from '../core/defaults.ts';
 import { calibrate, charsPerTokenFor } from '../endpoint/calibration.ts';
 import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from '../endpoint/capabilities.ts';
 import { errorMessage } from '../wire/errors.ts';
@@ -11,7 +11,6 @@ import {
   isModelLoading,
   isOverflow,
   isTransient,
-  SMALLEST_LIKELY_WINDOW,
   sleep,
 } from '../wire/retry.ts';
 import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from '../wire/stream.ts';
@@ -53,7 +52,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * rather than by the model server one round trip later. It is opt-in because the number is the
    * caller's to find: `contextLimitFor` asks the model server, an operator's own setting overrides
    * it, and neither is something a turn should be doing network I/O to discover. A context window
-   * below `SMALLEST_LIKELY_WINDOW` is not believed — a model with one that small is rare enough
+   * below `REQUEST_SIZE_DEFAULTS.smallestLikelyWindowTokens` is not believed — a model with one that small is rare enough
    * that the number is far more likely a caller threading a placeholder through, and refusing an
    * exchange over one would be the guard failing exactly the callers it was meant to help.
    */
@@ -195,7 +194,7 @@ export async function runTurn(
   const measured = (capabilities: Capabilities, forModel: ModelCapabilities | undefined) => {
     const body = request(capabilities, forModel);
     sent = body;
-    if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
+    if (!sized && contextLimit >= REQUEST_SIZE_DEFAULTS.smallestLikelyWindowTokens) {
       sized = true;
       refuseOversized(body, contextLimit, charsPerTokenFor(supports, body.model));
     }

@@ -1,13 +1,12 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HOOK_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import {
   assembleContext,
   configureHooks,
   consult,
   gather,
-  HOOK_CONTEXT_TOKENS,
-  HOOK_PREFACE,
   type HookRunner,
   notify,
   resetHooks,
@@ -103,8 +102,8 @@ describe('withContext', () => {
     expect(withContext(history, 3, 'ctx', 'From min-agent:')[3].content).toBe('From min-agent:\n\nctx\n\nnow');
   });
 
-  it('says HOOK_PREFACE until something moves it', () => {
-    expect(withContext(history, 3, 'ctx')[3].content).toBe(`${HOOK_PREFACE}\n\nctx\n\nnow`);
+  it('says the default preface until something moves it', () => {
+    expect(withContext(history, 3, 'ctx')[3].content).toBe(`${HOOK_DEFAULTS.preface}\n\nctx\n\nnow`);
   });
 
   it('says nothing above the blocks for an empty preface, not a blank line', () => {
@@ -176,14 +175,14 @@ describe('the budget', () => {
   const spent = (gathered: { notes: { tokens?: number }[] }) =>
     gathered.notes.reduce((sum, note) => sum + (note.tokens ?? 0), 0);
 
-  it('is HOOK_CONTEXT_TOKENS until something moves it', () => {
-    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_CONTEXT_TOKENS);
+  it('is the default budget until something moves it', () => {
+    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_DEFAULTS.contextTokens);
   });
 
   it('follows configureHooks for every call that does not give its own', async () => {
     expect(configureHooks({ contextTokens: 500 })).toEqual({
       contextTokens: 500,
-      preface: HOOK_PREFACE,
+      preface: HOOK_DEFAULTS.preface,
     });
     expect(spent(assembleContext([hungry('a'), hungry('b')]))).toBe(500);
     const run: HookRunner = async () => [hungry('a')];
@@ -209,7 +208,7 @@ describe('the budget', () => {
   it('goes back to the default on resetHooks', () => {
     configureHooks({ contextTokens: 500 });
     resetHooks();
-    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_CONTEXT_TOKENS);
+    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_DEFAULTS.contextTokens);
   });
 });
 
@@ -220,7 +219,7 @@ describe('the preface', () => {
 
   it('follows configureHooks for every call that does not give its own', () => {
     expect(configureHooks({ preface: 'From min-agent:' })).toEqual({
-      contextTokens: HOOK_CONTEXT_TOKENS,
+      contextTokens: HOOK_DEFAULTS.contextTokens,
       preface: 'From min-agent:',
     });
     expect(withContext(history, 0, 'ctx')[0].content).toBe('From min-agent:\n\nctx\n\nnow');
@@ -241,11 +240,11 @@ describe('the preface', () => {
     }
   });
 
-  it('is left alone by a budget-only call, and goes back to HOOK_PREFACE on resetHooks', () => {
+  it('is left alone by a budget-only call, and goes back to the default on resetHooks', () => {
     configureHooks({ preface: 'From min-agent:' });
     expect(configureHooks({ contextTokens: 500 }).preface).toBe('From min-agent:');
     resetHooks();
-    expect(configureHooks()).toEqual({ contextTokens: HOOK_CONTEXT_TOKENS, preface: HOOK_PREFACE });
+    expect(configureHooks()).toEqual(HOOK_DEFAULTS);
   });
 });
 

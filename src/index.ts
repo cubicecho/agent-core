@@ -12,14 +12,11 @@
 
 export {
   applyCompaction,
-  COMPACT_AT,
   type CompactionOptions,
   type CompactionPlan,
   type CompactionRecord,
   type CompactionRunOptions,
   compactTranscript,
-  KEEP_RATIO,
-  PRUNE_SHARE,
   type PruneOptions,
   type PrunePlan,
   type PrunePlanOptions,
@@ -57,6 +54,38 @@ export {
   ToolDiscovery,
   type ToolPolicy,
 } from './core/config.ts';
+export {
+  AGENT_DEFAULTS,
+  type AgentSettings,
+  CLIENT_POOL_DEFAULTS,
+  type ClientPoolSettings,
+  COMPACTION_DEFAULTS,
+  CONTINUATION_DEFAULTS,
+  type CompactionSettings,
+  type ContinuationSettings,
+  EVENT_BUS_DEFAULTS,
+  type EventBusSettings,
+  HOOK_DEFAULTS,
+  type HookSettings,
+  MODEL_SERVER_DEFAULTS,
+  type ModelServerSettings,
+  PRESELECT_DEFAULTS,
+  PRUNE_DEFAULTS,
+  type PreselectSettings,
+  type PruneSettings,
+  REQUEST_SIZE_DEFAULTS,
+  RETRY_DEFAULTS,
+  type RequestSizeSettings,
+  type RetrySettings,
+  SIDE_TASK_DEFAULTS,
+  type SideTaskSettings,
+  TOKEN_LEDGER_DEFAULTS,
+  TOOL_CALL_DEFAULTS,
+  TOOL_DISCOVERY_DEFAULTS,
+  type TokenLedgerSettings,
+  type ToolCallSettings,
+  type ToolDiscoverySettings,
+} from './core/defaults.ts';
 export { calibrate, charsPerTokenFor, resetCalibration } from './endpoint/calibration.ts';
 export {
   type Capabilities,
@@ -118,8 +147,6 @@ export {
   consult,
   type Gathered,
   gather,
-  HOOK_CONTEXT_TOKENS,
-  HOOK_PREFACE,
   type HookContext,
   type HookMessage,
   type HookNote,
@@ -254,7 +281,6 @@ export {
   parseSpec,
   REF_FILE,
   REF_URL,
-  RESOLVED_DEFAULTS,
   type ResolvedAgent,
   type ResolvedTask,
   type RetrySpec,
@@ -269,11 +295,7 @@ export {
 } from './spec/spec.ts';
 export type { CatalogServer } from './tools/catalog.ts';
 export { PRESELECTED_NOTICE } from './tools/discovery.ts';
-export {
-  SERVER_INSTRUCTION_TOKENS,
-  type ServerInstructionsOptions,
-  serverInstructionsPrompt,
-} from './tools/instructions.ts';
+export { type ServerInstructionsOptions, serverInstructionsPrompt } from './tools/instructions.ts';
 export {
   type KeywordPreselection,
   type KeywordPreselectOptions,
@@ -344,7 +366,6 @@ export {
   isModelLoading,
   isOverflow,
   isTransient,
-  SMALLEST_LIKELY_WINDOW,
 } from './wire/retry.ts';
 export {
   CacheBreakReason,

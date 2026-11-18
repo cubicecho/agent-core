@@ -126,7 +126,7 @@ describe('planPrune', () => {
 
   it('waits for the window to fill past `at`, by the larger of the report and the estimate', () => {
     const messages = run(7);
-    // 7001 characters in a window of 10,000 is under COMPACT_AT.
+    // 7001 characters in a window of 10,000 is under `compactAtShare`.
     expect(planPrune(messages, 10_000, { estimate: chars })).toBeUndefined();
     expect(planPrune(messages, 10_000, { estimate: chars, used: 7500 })?.through).toBe(3);
     // A report that predates the latest results does not hold the estimate down.
@@ -160,7 +160,7 @@ describe('planPrune', () => {
     expect(planPrune(run(7), 8000, { estimate: chars, maxChars: 1000, at: 0, minShare: 0 })).toBeUndefined();
   });
 
-  it('expresses both hosts: the gate past COMPACT_AT with a tenth to win, and a marker moved on a quarter', () => {
+  it('expresses both hosts: the gate past compactAtShare with a tenth to win, and a marker moved on a quarter', () => {
     // task-server: no stored marker, gated at three quarters of the window, a tenth to win back.
     const filling = run(9);
     expect(planPrune(filling, 12_000, { estimate: chars })).toEqual({ through: 5, cleared: 4, tokens: 4 * SAVED });

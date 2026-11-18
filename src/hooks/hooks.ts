@@ -134,20 +134,6 @@ export interface Gathered {
 }
 
 /**
- * The most context all of a request's hooks add between them by default, in estimated tokens:
- * `HOOK_DEFAULTS.contextTokens`. `configureHooks` moves it for a process, and `gather` and
- * `assembleContext` for one request.
- */
-export const HOOK_CONTEXT_TOKENS = HOOK_DEFAULTS.contextTokens;
-
-/**
- * Said once, above the blocks, so the model reads them as background rather than instructions:
- * `HOOK_DEFAULTS.preface`. `configureHooks` sets another for a process, and `withContext` for one
- * request.
- */
-export const HOOK_PREFACE = HOOK_DEFAULTS.preface;
-
-/**
  * What hooks may be told to change, across a process: any of `HookSettings`, the rest left as they
  * are. See `configureHooks`.
  */
@@ -256,7 +242,7 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
  * @param outcomes - What the runners returned. An injecting outcome on an event that cannot inject
  * adds nothing; a failed one is noted wherever it falls, including past the budget.
  * @param [maxTokens] - The budget every block shares. Absent, or not a number above zero, is what
- * `configureHooks` last set — `HOOK_CONTEXT_TOKENS` unless something moved it.
+ * `configureHooks` last set — `HOOK_DEFAULTS.contextTokens` unless something moved it.
  * @returns The blocks joined by a blank line — an empty string when nothing was injected — and the
  * notes in the order of `outcomes`.
  *

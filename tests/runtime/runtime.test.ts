@@ -23,7 +23,7 @@ const OpenAI = (await import('openai')).default;
 const { configureClients, getClient } = await import('../../src/endpoint/client.ts');
 const { capabilitiesFor } = await import('../../src/endpoint/capabilities.ts');
 const { configureEvents, emit, history } = await import('../../src/run/events.ts');
-const { configureHooks, HOOK_PREFACE, withContext } = await import('../../src/hooks/hooks.ts');
+const { configureHooks, withContext } = await import('../../src/hooks/hooks.ts');
 const { ask } = await import('../../src/turn/side-task.ts');
 const { resetAll } = await import('../../src/runtime/reset.ts');
 const { charsPerTokenFor } = await import('../../src/endpoint/calibration.ts');
@@ -113,7 +113,7 @@ describe('createRuntime', () => {
     // Not inherited from the default runtime: the part left out is the package's default.
     expect(runtime.configureClients()).toEqual({ ...CLIENT_POOL_DEFAULTS, maxClients: 7 });
     expect(runtime.configureEvents().maxEvents).toBe(EVENT_BUS_DEFAULTS.maxEvents);
-    expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_PREFACE });
+    expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_DEFAULTS.preface });
     // And nothing it was given reached the process.
     expect(configureClients().maxClients).toBe(2);
     expect(configureHooks()).toEqual({ contextTokens: HOOK_DEFAULTS.contextTokens, preface: "the process's" });

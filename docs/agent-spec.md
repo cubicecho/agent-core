@@ -320,7 +320,7 @@ import nothing themselves (`core/config.ts`, `core/guards.ts`, `hooks/hook-event
 outside `src/spec/` imports it but `src/index.ts`.
 
 The result is always whole. `apiKey` is `""` whatever the layers said (see Trust), and an empty
-list of layers resolves to empty strings and `RESOLVED_DEFAULTS` rather than an error.
+list of layers resolves to empty strings and `AGENT_DEFAULTS` rather than an error.
 
 ## Absent, present, empty
 

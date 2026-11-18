@@ -50,9 +50,11 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 | `context` | keeping a run inside its window | `ledger` `compaction` |
 | `run` | the loop, and watching it | `agent-loop` `dispatch` `run-calls` `failure` `artifacts` `request-body` `events` `remote` |
 | `runtime` | the process's state: scoping it, clearing it, saving it | `runtime` `reset` `snapshot` |
-| `spec` | an agent as a document | `spec` `columns` |
+| `spec` | an agent as a document | `spec` `columns` `entry` |
 
-`src/index.ts` is the only file that re-exports. A folder has no `index.ts` of its own; a module
+`src/index.ts` is the main re-exporter. The one other is `src/spec/entry.ts`, the browser-safe
+`./spec` subpath, which re-exports `spec.ts` and `AGENT_DEFAULTS` because the fallbacks it resolves
+with live in `core/defaults.ts`. A folder has no `index.ts` of its own; a module
 imports another by its full path (`../core/guards.ts`). Biome sorts the exports in `index.ts` by
 path, so they are grouped by folder, and `llms.txt` lists them in that order.
 

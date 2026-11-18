@@ -1,7 +1,7 @@
 /**
- * Every value in this package somebody chose, where a different choice would still be a working
- * program: a limit, a wait, a share of the context window, a retry count.
+ * Every value this package chose where another choice would still work, grouped by what it tunes.
  *
+ * A limit, a wait, a share of the context window, a retry count: each is a member of one group.
  * A leaf with no imports, so the browser-safe `spec/` modules can read it too. Each group is named
  * for the concept it tunes, is frozen, and holds plain JSON values, so a group can be printed,
  * compared, or later filled from a host's own settings without touching the code that reads it.
@@ -99,6 +99,24 @@ export interface RequestSizeSettings {
    * `charsPerToken` is a server that reported the uncached part of the prompt as all of it.
    */
   maxPlausibleCharsPerToken: number;
+  /**
+   * The smallest context window, in tokens, worth believing in, and the floor under `runTurn`'s
+   * guard.
+   *
+   * @remarks
+   * `runTurn`'s `contextLimit` reads it as a sanity check on a number it was handed: below this,
+   * the limit is taken for a placeholder — an unset column, a listing that said nothing — rather
+   * than a context window worth refusing an exchange over. `contextLimitFor` asks the model server
+   * whatever the number.
+   *
+   * A model with a context window smaller than this exists, and the reason not to refuse an
+   * exchange over one is that the number far more often came from a caller threading a placeholder
+   * through than from such a model. A request that really does overrun a tiny context window is
+   * left to the model server's own complaint, which `isOverflow` reads properly either way — so
+   * what the floor costs is a round trip on the exchanges it declines to guard, and what it saves
+   * is refusing the ones it would have guarded wrongly.
+   */
+  smallestLikelyWindowTokens: number;
 }
 
 /** The ratio a request is sized by, and the bounds a measured one is held to. */
@@ -107,6 +125,7 @@ export const REQUEST_SIZE_DEFAULTS: Readonly<RequestSizeSettings> = Object.freez
   calibrationReadings: 4,
   minPlausibleCharsPerToken: 1,
   maxPlausibleCharsPerToken: 8,
+  smallestLikelyWindowTokens: 8192,
 });
 
 /** Carrying on a reply that stopped at its ceiling mid-answer. */
@@ -252,12 +271,21 @@ export interface ToolDiscoverySettings {
    * off first. `carryOver` takes a cap of its own as `max`.
    */
   maxCarried: number;
+  /**
+   * The most of one server's instructions, in estimated tokens, `serverInstructionsPrompt` carries.
+   *
+   * @remarks
+   * Most servers send a paragraph or two; this leaves room for a long one and stops a server that
+   * pasted its README from crowding out the operator's prompt and the catalogue after it.
+   */
+  serverInstructionTokens: number;
 }
 
 /** The caps on-demand tool loading was written with. */
 export const TOOL_DISCOVERY_DEFAULTS: Readonly<ToolDiscoverySettings> = Object.freeze({
   maxPerLoad: 12,
   maxCarried: 16,
+  serverInstructionTokens: 1000,
 });
 
 /** Hooks: what the context they inject is held to. Set for a process by `configureHooks`. */
@@ -291,6 +319,13 @@ export const HOOK_DEFAULTS: Readonly<HookSettings> = Object.freeze({
 
 /** Compaction: the oldest stretch of a transcript folded into a summary the model writes itself. */
 export interface CompactionSettings {
+  /** The share of the context window in use before a summary is worth its own round trip. */
+  compactAtShare: number;
+  /**
+   * The share of the context window the kept tail may fill, leaving room for the exchange to grow
+   * again.
+   */
+  keepShare: number;
   /**
    * The summary's ceiling, in tokens, as `summariser` asks for it, and what `planCompaction`
    * assumes a summary will cost when it plans to a `target`.
@@ -304,6 +339,8 @@ export interface CompactionSettings {
 
 /** When and how far a transcript is compacted, where the caller does not say. */
 export const COMPACTION_DEFAULTS: Readonly<CompactionSettings> = Object.freeze({
+  compactAtShare: 0.75,
+  keepShare: 0.35,
   summaryTokens: 1024,
   summaryMessageChars: 4000,
   fewestCompactedMessages: 2,
@@ -315,12 +352,19 @@ export interface PruneSettings {
   keepLastResults: number;
   /** A result this long or shorter, in characters, is left whole wherever it is: a stub would save nothing. */
   maxKeptChars: number;
+  /**
+   * The share of the context window a prune has to win back on its own before it is worth the
+   * prompt cache it costs. Below it the request after a prune is barely smaller than the one
+   * before, and every token of it is processed again anyway.
+   */
+  minShare: number;
 }
 
 /** What a prune leaves whole, where the caller does not say. */
 export const PRUNE_DEFAULTS: Readonly<PruneSettings> = Object.freeze({
   keepLastResults: 5,
   maxKeptChars: 256,
+  minShare: 0.1,
 });
 
 /** The token ledger: what each request cost, and whether its prompt cache held. */
@@ -412,4 +456,43 @@ export const EVENT_BUS_DEFAULTS: Readonly<EventBusSettings> = Object.freeze({
   retainMs: 60_000,
   retainUnendedMs: 1_800_000,
   retainWaitingMs: 86_400_000,
+});
+
+/**
+ * What an agent document falls back to where no layer said anything at all, as
+ * `resolveAgentSpec` resolves it.
+ *
+ * @remarks
+ * Not sentinels, and not invented: `toolDiscovery`, `maxRetries` and `contextLength` are the
+ * "absent everywhere" column of the document's own table, and `temperature` and
+ * `maxToolIterations` are what all three consumers store as their defaults. A field left out here
+ * is left out of the resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no
+ * opinion".
+ */
+export interface AgentSettings {
+  /** The main model's sampling temperature. */
+  temperature: number;
+  /** The reply's ceiling, in tokens. Zero sends none, leaving the reply's length to the model server. */
+  maxTokens: number;
+  /** The model's context window, in tokens. Zero is unknown, and is asked of the model server. */
+  contextLength: number;
+  /**
+   * How tool definitions reach the model: one of `ToolDiscovery`, spelled out here because this
+   * module imports nothing.
+   */
+  toolDiscovery: 'eager' | 'ondemand' | 'proxy';
+  /** How many tool rounds one exchange may take before it is stopped. */
+  maxToolIterations: number;
+  /** Re-sends of a request lost before the model produced anything. Zero is none. */
+  maxRetries: number;
+}
+
+/** What `resolveAgentSpec` gives a field no layer set. */
+export const AGENT_DEFAULTS: Readonly<AgentSettings> = Object.freeze({
+  temperature: 0.7,
+  maxTokens: 0,
+  contextLength: 0,
+  toolDiscovery: 'eager',
+  maxToolIterations: 20,
+  maxRetries: 0,
 });

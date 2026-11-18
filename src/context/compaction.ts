@@ -23,15 +23,6 @@ import { FUNCTION_TOOL, Role } from '../wire/wire.ts';
 
 type Message = OpenAI.ChatCompletionMessageParam;
 
-/** The fraction of the context window in use before a summary is worth its own round trip. */
-export const COMPACT_AT = 0.75;
-
-/**
- * The fraction of the context window the kept tail may fill, leaving room for the exchange to
- * grow again.
- */
-export const KEEP_RATIO = 0.35;
-
 /** The locale a cleared result's length is written in, so the stub reads the same on every host. */
 const COUNT_LOCALE = 'en-US';
 
@@ -231,13 +222,6 @@ export function pruneToolResults(
   return out ?? messages;
 }
 
-/**
- * The share of the context window a prune has to win back on its own before it is worth the prompt
- * cache it costs. Below it the request after a prune is barely smaller than the one before, and
- * every token of it is processed again anyway.
- */
-export const PRUNE_SHARE = 0.1;
-
 /** What `planPrune` takes beside the transcript and the context window. */
 export interface PrunePlanOptions extends PruneOptions {
   /**
@@ -251,14 +235,14 @@ export interface PrunePlanOptions extends PruneOptions {
    * The share of the context window a move has to clear, in tokens, to be made on its own. Zero
    * makes any move that clears something.
    *
-   * @defaultValue `PRUNE_SHARE`
+   * @defaultValue `PRUNE_DEFAULTS.minShare`
    */
   minShare?: number;
   /**
    * The share of the context window in use before a move is considered at all. Zero considers one
    * on every turn, and the hysteresis is `minShare`'s alone.
    *
-   * @defaultValue `COMPACT_AT`, so a prune is paid for when a compaction would be
+   * @defaultValue `COMPACTION_DEFAULTS.compactAtShare`, so a prune is paid for when a compaction would be
    */
   at?: number;
   /**
@@ -384,8 +368,8 @@ export function planPrune(
   window: number,
   {
     through = 0,
-    minShare = PRUNE_SHARE,
-    at = COMPACT_AT,
+    minShare = PRUNE_DEFAULTS.minShare,
+    at = COMPACTION_DEFAULTS.compactAtShare,
     used,
     from = 0,
     compacted = false,
@@ -454,13 +438,13 @@ export interface CompactionOptions {
   /**
    * The fraction of `limit` in use before compacting.
    *
-   * @defaultValue `COMPACT_AT`
+   * @defaultValue `COMPACTION_DEFAULTS.compactAtShare`
    */
   compactAt?: number;
   /**
    * The fraction of `limit` the kept tail may fill.
    *
-   * @defaultValue `KEEP_RATIO`
+   * @defaultValue `COMPACTION_DEFAULTS.keepShare`
    */
   keepRatio?: number;
   /**
@@ -643,8 +627,8 @@ export function planCompaction(
   {
     limit,
     used,
-    compactAt = COMPACT_AT,
-    keepRatio = KEEP_RATIO,
+    compactAt = COMPACTION_DEFAULTS.compactAtShare,
+    keepRatio = COMPACTION_DEFAULTS.keepShare,
     target,
     summaryTokens = COMPACTION_DEFAULTS.summaryTokens,
     charsPerToken,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { REQUEST_SIZE_DEFAULTS } from '../../src/core/defaults.ts';
-import { SERVER_INSTRUCTION_TOKENS, serverInstructionsPrompt } from '../../src/tools/instructions.ts';
+import { REQUEST_SIZE_DEFAULTS, TOOL_DISCOVERY_DEFAULTS } from '../../src/core/defaults.ts';
+import { serverInstructionsPrompt } from '../../src/tools/instructions.ts';
 
 describe('serverInstructionsPrompt', () => {
   it('is empty when no server sent anything', () => {
@@ -39,9 +39,13 @@ describe('serverInstructionsPrompt', () => {
   });
 
   it('keeps a text whole at a budget of zero, and cuts at the default otherwise', () => {
-    const long = 'x'.repeat((SERVER_INSTRUCTION_TOKENS + 1) * REQUEST_SIZE_DEFAULTS.charsPerToken);
+    const long = 'x'.repeat(
+      (TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens + 1) * REQUEST_SIZE_DEFAULTS.charsPerToken,
+    );
     const servers = [{ label: 'Long', instructions: long }];
     expect(serverInstructionsPrompt(servers, { maxTokensPerServer: 0 })).toContain(long);
-    expect(serverInstructionsPrompt(servers)).toContain(`Cut to about ${SERVER_INSTRUCTION_TOKENS} of the`);
+    expect(serverInstructionsPrompt(servers)).toContain(
+      `Cut to about ${TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens} of the`,
+    );
   });
 });

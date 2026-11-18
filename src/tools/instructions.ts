@@ -5,25 +5,17 @@
  * tools, the things a tool description has no room for. This is where that text is put in front
  * of a model, attributed and fenced, so every app says it the same way.
  */
+import { TOOL_DISCOVERY_DEFAULTS } from '../core/defaults.ts';
 import { untrusted } from '../wire/text.ts';
 import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
 import type { CatalogServer } from './catalog.ts';
-
-/**
- * The most of one server's instructions the block carries by default, in estimated tokens.
- *
- * @remarks
- * Most servers send a paragraph or two; this leaves room for a long one and stops a server that
- * pasted its README from crowding out the operator's prompt and the catalogue after it.
- */
-export const SERVER_INSTRUCTION_TOKENS = 1000;
 
 /** How `serverInstructionsPrompt` cuts the text, and what `runAgentLoop`'s `serverInstructions` takes. */
 export interface ServerInstructionsOptions {
   /**
    * The most of one server's text kept, in estimated tokens. Zero keeps it whole.
    *
-   * @defaultValue `SERVER_INSTRUCTION_TOKENS`
+   * @defaultValue `TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens`
    */
   maxTokensPerServer?: number;
 }
@@ -48,7 +40,7 @@ export interface ServerInstructionsOptions {
  */
 export function serverInstructionsPrompt(
   servers: readonly Pick<CatalogServer, 'label' | 'instructions'>[],
-  { maxTokensPerServer = SERVER_INSTRUCTION_TOKENS }: ServerInstructionsOptions = {},
+  { maxTokensPerServer = TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens }: ServerInstructionsOptions = {},
 ): string {
   const sections = servers.flatMap(({ label, instructions }) => {
     const text = instructions?.trim() ?? '';

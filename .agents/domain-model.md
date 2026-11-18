@@ -199,7 +199,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A spec layer's `extraBody` never sets what the spec spells elsewhere, whether `parseSpec` read it or not | `parseExtraBody`, and `unownedFields` on resolve (`SPELLED_BODY_FIELDS`) |
 | An absent ceiling or temperature is never sent; a ceiling of zero or less is never sent | `ceilingAndTemperature` |
 | A loading wait never spends the retry budget | `runTurn` |
-| A request is size-checked at most once, and never against a window below 8192 tokens | `runTurn` (`SMALLEST_LIKELY_WINDOW`) |
+| A request is size-checked at most once, and never against a window below `smallestLikelyWindowTokens` | `runTurn` (`REQUEST_SIZE_DEFAULTS`) |
 | An overflow, however found, stays a `ContextOverflow` | `refuseOversized`, `runTurn`, `AgentLoopOverflow` |
 | A rate-limit message is never read as an overflow | `isOverflow` |
 | Tool arguments handed to a dispatcher are always an object; replayed arguments are valid JSON | `parseToolArguments`, `readCall` |
@@ -277,7 +277,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   so an app can answer them in process; each gets its own clients, caches and capabilities. Owner:
   `Endpoint.fetch`, `perFetch` (`src/endpoint/client.ts`).
 - **Client:** the pooled SDK client for one model server, made once and reused. Owner: `getClient`;
-  settings in `ClientPoolOptions`, `configureClients`.
+  settings in `ClientPoolSettings` (`CLIENT_POOL_DEFAULTS`), moved by `configureClients`.
 - **Key inheritance:** a model server with no key of its own borrows the configured one only when it
   points at the same server. Owner: `resolveApiKey`.
 - **Idle timeout (request timeout):** how long a streamed reply may go quiet once it has started.
@@ -499,7 +499,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `SUMMARY_LEAD`, `SUMMARY_ACK`.
 - **Compact threshold:** how full the context window must be before pruning or compaction is
   considered.
-  Owner: `COMPACT_AT`.
+  Owner: `COMPACTION_DEFAULTS.compactAtShare`.
 
 ### Watching a run
 
@@ -542,7 +542,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Parse:** checking any input into a document, dropping bad fields with warnings and refusing
   only what cannot be identified. Owner: `parseSpec`.
 - **Resolved agent:** the flat config the layers come to, plus prompt parts, tasks, hooks and
-  servers. Owner: `ResolvedAgent`, `RESOLVED_DEFAULTS`.
+  servers. Owner: `ResolvedAgent`, `AGENT_DEFAULTS`; served on the `./spec` subpath by
+  `src/spec/entry.ts`.
 - **Prompt part:** one named piece of system prompt, text or a reference to a file. Owner:
   `PromptPart`.
 - **Agent hook:** a tool call bound to a hook event, which the app runs. Owner: `AgentHook`.
@@ -559,6 +560,12 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 
 ### Process state
 
+- **Defaults:** every value the package chose — a limit, a wait, a share — as a frozen group of
+  plain values named for what it tunes, with a `…Settings` type. A function a caller varies takes
+  the setting as an option defaulting to the member; the client pool, event bus and hooks are moved
+  per runtime by `configure*`, which take a `Partial` of the settings. Owner: the `*_DEFAULTS`
+  groups (`src/core/defaults.ts`). The facts beside them, unit conversions, are in
+  `src/core/consts.ts`.
 - **Runtime:** one isolated set of the package's caches, with every stateful function as a
   method, for apps whose tenants must not share them. Owner: `createRuntime`, `defaultRuntime`
   (`src/runtime/runtime.ts`).

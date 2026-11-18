@@ -71,25 +71,6 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
 export const isOverflow = (detail: string) =>
   !RATE_LIMITED.test(detail) && OVERFLOW.some((pattern) => pattern.test(detail)) && /token|context/i.test(detail);
 
-/**
- * The smallest context window worth believing in, and the floor under `runTurn`'s guard.
- *
- * @remarks
- * `runTurn`'s `contextLimit` reads it as a sanity check on a number it was handed: below this,
- * the limit is taken for a placeholder — an unset column, a listing that said nothing — rather
- * than a context window worth refusing an exchange over. That is the whole of what reads it;
- * `contextLimitFor` asks the model server whatever the number, and `client.ts` does not import
- * this file.
- *
- * A model with a context window smaller than this exists, and the reason not to refuse an
- * exchange over one is that the number far more often came from a caller threading a placeholder
- * through than from such a model. A request that really does overrun a tiny context window is
- * left to the model server's own complaint, which `isOverflow` reads properly either way — so
- * what the floor costs is a round trip on the exchanges it declines to guard, and what it saves is
- * refusing the ones it would have guarded wrongly.
- */
-export const SMALLEST_LIKELY_WINDOW = 8192;
-
 /** The statuses below 500 that say "not now" rather than "not this": a timeout, a conflict, a rate limit. */
 const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([
   HttpStatus.RequestTimeout,
