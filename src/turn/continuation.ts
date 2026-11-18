@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { CONTINUATION_DEFAULTS } from '../core/defaults.ts';
 import {
   type Capabilities,
   latchFields,
@@ -28,6 +29,8 @@ import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from '.
  * model carry on from the last token as if nothing had happened, which costs the rest of the
  * reply and a prefill the cache mostly already holds.
  */
+
+const { restartProbeChars, restartMinChars } = CONTINUATION_DEFAULTS;
 
 /** What `continueTurn` takes besides what `runTurn` does. */
 export interface ContinueTurnOptions extends RunTurnOptions {
@@ -108,12 +111,6 @@ function refusePrefillFields(refused: ModelCapabilities, detail: string): boolea
   return true;
 }
 
-/** How much of the answer's opening a reply has to repeat to have started over. */
-const RESTART_PROBE = 40;
-
-/** The shortest opening worth testing for a restart; shorter ones are repeated by chance. */
-const RESTART_MIN = 12;
-
 /**
  * Whether the continuation began the answer again rather than carrying it on — how a server that
  * ignores the prefill shows itself, since it takes the request without complaint.
@@ -121,11 +118,11 @@ const RESTART_MIN = 12;
  * @param answer - The answer so far, as it was sent back as the prefill.
  * @param continuation - The content the continuation came back with.
  * @returns True where the continuation opens with the answer's own opening, leading whitespace
- * aside on both. Never true for an answer whose opening is shorter than `RESTART_MIN`.
+ * aside on both. Never true for an answer whose opening is shorter than `CONTINUATION_DEFAULTS.restartMinChars`.
  */
 const restarted = (answer: string, continuation: string) => {
-  const opening = answer.trimStart().slice(0, RESTART_PROBE);
-  return opening.length >= RESTART_MIN && continuation.trimStart().startsWith(opening);
+  const opening = answer.trimStart().slice(0, restartProbeChars);
+  return opening.length >= restartMinChars && continuation.trimStart().startsWith(opening);
 };
 
 /** The fields of a usage that add across two requests, when both reported them. */
@@ -249,7 +246,11 @@ export async function continueTurn(
   supports: Capabilities,
   request: RequestBuilder,
   turn: Turn,
-  { maxContinuations = 1, replayReasoning = true, ...options }: ContinueTurnOptions = {},
+  {
+    maxContinuations = CONTINUATION_DEFAULTS.maxContinuations,
+    replayReasoning = true,
+    ...options
+  }: ContinueTurnOptions = {},
 ): Promise<Turn> {
   const refused = options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
   const who = modelLabel(options.model);

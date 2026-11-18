@@ -68,6 +68,26 @@ export const REQUEST_SIZE_DEFAULTS: Readonly<RequestSizeSettings> = Object.freez
   maxPlausibleCharsPerToken: 8,
 });
 
+/** Carrying on a reply that stopped at its ceiling mid-answer. */
+export interface ContinuationSettings {
+  /**
+   * How many more requests `continueTurn` gives one answer. The cap is what stops a model that
+   * never reaches a stop token from looping on the ceiling.
+   */
+  maxContinuations: number;
+  /** How much of the answer's opening, in characters, a continuation has to repeat to have started over. */
+  restartProbeChars: number;
+  /** The shortest opening, in characters, worth testing for a restart; shorter ones are repeated by chance. */
+  restartMinChars: number;
+}
+
+/** How far `continueTurn` carries an answer on, and how it tells a server that started over. */
+export const CONTINUATION_DEFAULTS: Readonly<ContinuationSettings> = Object.freeze({
+  maxContinuations: 1,
+  restartProbeChars: 40,
+  restartMinChars: 12,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */
