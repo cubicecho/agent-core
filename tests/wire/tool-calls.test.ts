@@ -166,6 +166,29 @@ describe('recoverToolCalls', () => {
     });
   });
 
+  it('finds a fence in any case, where lower-casing the text would move it', () => {
+    const text = 'İİ<THINK>Read it.</THINK><tool_call>{"name": "read"}</tool_call>';
+    expect(recoverToolCalls(text, { names })).toMatchObject({
+      content: 'İİ<THINK>Read it.</THINK>',
+      toolCalls: [{ function: { name: 'read' } }],
+    });
+  });
+
+  it('ignores a call inside a scratchpad that never closes', () => {
+    const call = '<tool_call>{"name": "read"}</tool_call>';
+    for (const text of [`<think>maybe ${call}`, `<think>a</think>Then.<think>maybe ${call}`]) {
+      expect(recoverToolCalls(text, { names })).toEqual({ content: text, toolCalls: [] });
+    }
+  });
+
+  it('still recovers a call written before a scratchpad that never closes', () => {
+    const text = '<tool_call>{"name": "read"}</tool_call><think>Now wait.';
+    expect(recoverToolCalls(text, { names })).toMatchObject({
+      content: '<think>Now wait.',
+      toolCalls: [{ function: { name: 'read' } }],
+    });
+  });
+
   it('leaves plain text as it was', () => {
     expect(recoverToolCalls('The answer is {x}.', { names })).toEqual({
       content: 'The answer is {x}.',

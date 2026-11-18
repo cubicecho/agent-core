@@ -469,6 +469,49 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
 }
 
 /**
+ * A fence marker as a pattern that matches it in any case, for searching a reply.
+ *
+ * @param marker - The marker as `DEFAULT_FENCES` spells it.
+ * @returns A global, case-insensitive pattern for the marker, every character taken literally.
+ *
+ * @remarks
+ * Matched in the reply itself rather than in a lower-cased copy, whose length can differ: `İ`
+ * lower-cases to two code units, and an index found in the copy then cuts the reply in the wrong
+ * place.
+ */
+const markerPattern = (marker: string) => new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+
+/**
+ * The part of a reply that is answer rather than scratchpad: after the last fence close, and before
+ * a fence opened after it.
+ *
+ * @param content - The turn's text.
+ * @returns Where the answer starts and ends in `content`. Without fences, the whole of it.
+ *
+ * @remarks
+ * A fence opened after the last close never closed, so everything from it on is still the model
+ * deliberating, as a reply cut off at its ceiling inside its scratchpad is.
+ */
+function answerSpan(content: string): { from: number; to: number } {
+  let from = 0;
+  for (const { close } of DEFAULT_FENCES) {
+    for (const match of content.matchAll(markerPattern(close))) {
+      from = Math.max(from, match.index + match[0].length);
+    }
+  }
+  let to = content.length;
+  for (const { open } of DEFAULT_FENCES) {
+    const pattern = markerPattern(open);
+    pattern.lastIndex = from;
+    const opened = pattern.exec(content);
+    if (opened) {
+      to = Math.min(to, opened.index);
+    }
+  }
+  return { from, to };
+}
+
+/**
  * Tool calls a model wrote into its reply as text, taken out of it and made into calls.
  *
  * @param content - The turn's text.
@@ -484,22 +527,15 @@ function bareCalls(text: string, names: ReadonlySet<string>): Found[] {
  * are looked for — `<tool_call>` (Hermes, Qwen, Qwen3-Coder's markup included), `[TOOL_CALLS]`
  * (Mistral, both spellings) and `<|python_tag|>` (Llama 3) — and, failing those, a reply that is
  * nothing but a JSON call, or holds one fenced one, provided every name in it is in `names`. Only
- * text after the last close of a fence in `DEFAULT_FENCES` is searched, since a model deliberating
- * about a call is not making one.
+ * text after the last close of a fence in `DEFAULT_FENCES`, and before a fence that never closes, is
+ * searched, since a model deliberating about a call is not making one.
  */
 export function recoverToolCalls(
   content: string,
   { names = [], mintCallId = defaultMinter }: { names?: Iterable<string>; mintCallId?: CallIdMinter } = {},
 ): { content: string; toolCalls: ToolCall[] } {
-  const lower = content.toLowerCase();
-  const from = Math.max(
-    0,
-    ...DEFAULT_FENCES.map(({ close }) => {
-      const thought = lower.lastIndexOf(close);
-      return thought < 0 ? 0 : thought + close.length;
-    }),
-  );
-  const tail = content.slice(from);
+  const { from, to } = answerSpan(content);
+  const tail = content.slice(from, to);
   let found = [...taggedCalls(tail), ...mistralCalls(tail), ...pythonTagCalls(tail)];
   if (!found.length) {
     found = bareCalls(tail, new Set(names));
@@ -528,5 +564,5 @@ export function recoverToolCalls(
     }
   }
   rest += tail.slice(cursor);
-  return { content: `${content.slice(0, from)}${rest}`.trim(), toolCalls };
+  return { content: `${content.slice(0, from)}${rest}${content.slice(to)}`.trim(), toolCalls };
 }
