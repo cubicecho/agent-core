@@ -1381,14 +1381,14 @@ function handsBackFor(
 }
 
 /**
- * How a run that stops after this step stopped.
+ * How an exchange that stops after this step ended.
  *
  * @param turn - The step's turn, read for its finish reason.
  * @param settled - What its calls came to.
  * @returns `ended` where a call ended it, `waiting` where calls were handed back, and otherwise
  * what the finish reason says.
  */
-function stepOutcome(turn: Turn, { ended, pending }: StepOutcome): RunOutcome {
+function exchangeOutcome(turn: Turn, { ended, pending }: StepOutcome): RunOutcome {
   if (ended) {
     return RunOutcome.Ended;
   }
@@ -1863,7 +1863,7 @@ async function runSteps(
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
-          outcome: stepOutcome(turn, settled),
+          outcome: exchangeOutcome(turn, settled),
         },
       };
     }

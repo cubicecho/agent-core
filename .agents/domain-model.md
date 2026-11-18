@@ -364,7 +364,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `AgentLoopOptions.beforeStep`, `StepWindow`.
 - **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`.
 - **Outcome:** how an exchange ended: answered, cut short, filtered, ended, waiting, or (as events
-  tell it) failed. Owner: `RunOutcome` (`src/run/events.ts`), decided by `stepOutcome`.
+  tell it) failed. Owner: `RunOutcome` (`src/run/events.ts`), decided by `exchangeOutcome`.
 - **Failure:** what an exchange throws, carrying it as it stood. Owner: `AgentLoopError`,
   `AgentLoopOverflow`, `ToolIterationLimit`, `failedRun` (`src/run/failure.ts`).
 - **Stop (abort):** the app cancelling an exchange through its signal. Owner:

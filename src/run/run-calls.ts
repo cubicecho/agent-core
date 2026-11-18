@@ -1097,9 +1097,9 @@ export async function runCalls(
       // A declaration describes what the batch beside it stored, so it waits for the rest of the
       // batch: run together, it would be checked before the write it names had answered.
       const positions = parsed.slice(start, to).map((_, offset) => start + offset);
-      const isRecord = (at: number) => ready(at).record;
-      await Promise.all(positions.filter((at) => isRecord(at) === false).map(runAt));
-      await Promise.all(positions.filter(isRecord).map(runAt));
+      const isRecordCall = (at: number) => ready(at).record;
+      await Promise.all(positions.filter((at) => isRecordCall(at) === false).map(runAt));
+      await Promise.all(positions.filter(isRecordCall).map(runAt));
       for (const { id, name, ok, content } of outcomes.slice(from, to).flatMap((outcome) => outcome ?? [])) {
         toolCalls.push({ id, name, ok });
         await keep(id, content);
