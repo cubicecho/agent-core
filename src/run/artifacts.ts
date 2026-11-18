@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
-import type { ResourceLink } from './dispatch.ts';
 import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
+import type { ResourceLink } from './dispatch.ts';
 import { ArtifactAction, ArtifactSource, type RunArtifact, type ToolCallRequest } from './dispatch.ts';
 
 /**
