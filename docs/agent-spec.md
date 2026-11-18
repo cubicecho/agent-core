@@ -110,7 +110,11 @@ export interface ModelSpec {
   reasoningReplay?: 'tool-loop' | 'all' | 'none';
   /** What the operator says this model reads, in tokens. Zero asks the endpoint. */
   contextLength?: number;
-  /** Request fields the interface cannot spell. `model`, `messages`, `stream`, `tools` are dropped. */
+  /**
+   * Request fields the interface cannot spell. `model`, `messages`, `stream` and `tools` are
+   * dropped, and so are `temperature`, `max_tokens`, `max_completion_tokens` and
+   * `reasoning_effort`, which the fields above spell.
+   */
   extraBody?: Record<string, unknown>;
 }
 
@@ -154,7 +158,7 @@ export interface TaskSpec {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
-  /** As `model.extraBody`, for this task alone. `model`, `messages`, `stream`, `tools` are dropped. */
+  /** As `model.extraBody`, for this task alone, and dropping the same fields. */
   extraBody?: Record<string, unknown>;
 }
 
