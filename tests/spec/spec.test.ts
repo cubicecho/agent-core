@@ -685,6 +685,20 @@ describe('resolveAgentSpec', () => {
     expect(resolved.mcpServers).toEqual([{ slug: 'fs', command: 'npx' }]);
   });
 
+  it('drops an inject or a veto the merged hook can no longer honour', () => {
+    const hook = { id: 'h', server: 'mem', tool: 'recall' };
+    const injects = parsed(doc({ hooks: [{ ...hook, on: HookEvent.BeforeTurn, inject: true }] }));
+    const vetoes = parsed(doc({ hooks: [{ ...hook, on: HookEvent.BeforeCompact, veto: true }] }));
+    const after = parsed(doc({ hooks: [{ ...hook, on: HookEvent.AfterTurn }] }));
+    expect(resolveAgentSpec([injects, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterTurn }]);
+    expect(resolveAgentSpec([vetoes, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterTurn }]);
+    // A flag the merged event still honours is kept.
+    const sessionStart = parsed(doc({ hooks: [{ ...hook, on: HookEvent.SessionStart }] }));
+    expect(resolveAgentSpec([injects, sessionStart]).hooks).toEqual([
+      { ...hook, on: HookEvent.SessionStart, inject: true },
+    ]);
+  });
+
   it('lets an empty id, name or description override the layer below', () => {
     const base = parsed(doc({ id: 'base', name: 'Base', description: 'Base agent' }));
     const over = parsed(doc({ id: '', name: '', description: '' }));

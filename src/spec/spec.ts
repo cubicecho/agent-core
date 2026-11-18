@@ -270,6 +270,10 @@ export interface ResolvedAgent extends AgentConfig {
   prompt: readonly PromptPart[];
   /** Only the tasks a layer configured and none declined. `toolSelect` also flattens to `toolSelectModel`. */
   tasks: Readonly<Record<string, ResolvedTask>>;
+  /**
+   * Merged by id. An `inject` or a `veto` the merged hook's event cannot honour is dropped, as
+   * `parseSpec` drops it from one layer, but silently: resolving reports nothing.
+   */
   hooks: readonly AgentHook[];
   /** Bundled server definitions, merged by effective slug. Empty unless a bundle was parsed. */
   mcpServers: readonly SpecServer[];
@@ -766,6 +770,32 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
 }
 
 /**
+ * A hook's `inject` and `veto`, less the ones its event cannot honour.
+ *
+ * @param hook - The event, and the flags as stated.
+ * @returns Each flag as stated, or `undefined` where it is `true` on an event that cannot honour
+ * it, and why under `dropped`, by flag. `dropped` is empty where both stand.
+ *
+ * @remarks
+ * Only `INJECT_EVENTS` run before a model reply a hook's result could reach, and only
+ * `beforeCompact` announces something a hook can decline.
+ */
+function honouredFlags({ on, inject, veto }: Pick<AgentHook, 'on' | 'inject' | 'veto'>) {
+  const dropped: { inject?: string; veto?: string } = {};
+  if (inject && !INJECT_EVENTS.has(on)) {
+    dropped.inject = `"${on}" runs after the model has already answered`;
+  }
+  if (veto && on !== HookEvent.BeforeCompact) {
+    dropped.veto = `"${on}" announces nothing a hook can decline`;
+  }
+  return {
+    inject: dropped.inject ? undefined : inject,
+    veto: dropped.veto ? undefined : veto,
+    dropped,
+  };
+}
+
+/**
  * Reads the `hooks` array, hook by hook.
  *
  * @param report - Where what is dropped or noted is written.
@@ -805,15 +835,13 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
     if (!events.includes(on)) {
       report.note(`${path}.on`, `"${on}" is never fired by this host`);
     }
-    let inject = report.boolean(`${path}.inject`, held.inject);
-    if (inject && !INJECT_EVENTS.has(event)) {
-      report.drop(`${path}.inject`, `"${on}" runs after the model has already answered`);
-      inject = undefined;
-    }
-    let veto = report.boolean(`${path}.veto`, held.veto);
-    if (veto && event !== HookEvent.BeforeCompact) {
-      report.drop(`${path}.veto`, `"${on}" announces nothing a hook can decline`);
-      veto = undefined;
+    const { dropped, inject, veto } = honouredFlags({
+      on: event,
+      inject: report.boolean(`${path}.inject`, held.inject),
+      veto: report.boolean(`${path}.veto`, held.veto),
+    });
+    for (const [flag, reason] of Object.entries(dropped)) {
+      report.drop(`${path}.${flag}`, reason);
     }
     hooks.push(
       kept({
@@ -1203,10 +1231,15 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     (part) => part.id,
     (part) => part.text === '',
   );
+  // Each layer's flags were checked against that layer's event, and the merge may have moved the
+  // hook to another one, so they are checked again. Nothing is reported: resolving has no warnings.
   const hooks = mergeById(
     layers.flatMap((layer) => layer.hooks ?? []),
     (hook) => hook.id,
-  );
+  ).map((hook) => {
+    const { dropped, ...flags } = honouredFlags(hook);
+    return kept({ ...hook, ...flags });
+  });
   const servers = mergeById(
     layers.flatMap((layer) => layer.bundle?.mcpServers ?? []),
     (server) => (server.slug ?? server.id) || undefined,
