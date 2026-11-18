@@ -190,7 +190,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A reply that has produced anything is never sent again | `Produced`, checked in `negotiate` and `runTurn` |
 | The caller's abort is never reported as `EndpointSilent`, and an aborted stream never returns a reply | `streamTurn` |
 | One refusal gets at most one answer, and negotiation ends | `negotiate` over `ANSWERS`, `flagsOf` |
-| Capability flags and refused fields only latch off while their entry lives, except the no-thinking hints, which `resetHints` offers again | `endpointAnswer`, `latchModel`, `latchFields` |
+| Capability flags and refused fields only latch off while their entry lives, except the no-thinking hints, which `resetHints` offers again | `latchEndpoint`, `latchModel`, `latchFields`, `latchEfforts` |
 | An effort is only stepped up the ladder, never down | `nextEffort`, `planEffortStep` |
 | A refused field is latched only if the caller offered it as droppable | `droppedFieldsAnswer` |
 | `extraBody` never sets `model`, `messages`, `stream` or `tools` | `extraFields`, `parseExtraBody` |
@@ -298,8 +298,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   no-thinking hints, and refused fields and efforts. Owner: `ModelCapabilities`,
   `modelCapabilitiesFor`.
 - **Latch (downgrade):** turning a capability off for good after one refusal, so later requests
-  are sent the lesser form at once. Owner: `latchModel`, `latchFields`, through which `negotiate`'s
-  `Answer`s in `ANSWERS` and a continuation latch a model's capabilities.
+  are sent the lesser form at once. Owner: `latchEndpoint`, `latchModel`, `latchFields` and
+  `latchEfforts`, through which `negotiate`'s `Answer`s in `ANSWERS`, a continuation and
+  `importCapabilities` latch a model server's and a model's capabilities.
 - **Negotiation:** sending a request and re-sending it without whatever the server refused, until
   it answers or refuses something nothing can drop. A refusal that names nothing it can drop is
   not guessed at, for a side task as for a turn. Owner: `negotiate`, which `runTurn` calls for

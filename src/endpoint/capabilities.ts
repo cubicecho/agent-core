@@ -257,6 +257,21 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
   }));
 }
 
+/** The name of one of a model server's own on/off flags: every `boolean` on `Capabilities`. */
+type EndpointFlag = {
+  [Key in keyof Capabilities]-?: Capabilities[Key] extends boolean ? Key : never;
+}[keyof Capabilities];
+
+/**
+ * Turns one of a model server's own flags off for good, the only way one is latched.
+ *
+ * @param supports - The model server's, as `capabilitiesFor` hands it over. Written to.
+ * @param flag - The flag to latch off. One already off stays off.
+ */
+export function latchEndpoint(supports: Capabilities, flag: EndpointFlag): void {
+  supports[flag] = false;
+}
+
 /**
  * Turns one of a model's flags off for good, the only way a flag is latched.
  *
@@ -281,6 +296,24 @@ export function latchModel(refused: ModelCapabilities, flag: ModelFlag): void {
 export function latchFields(refused: ModelCapabilities, fields: Iterable<string>): void {
   for (const field of fields) {
     refused.refusedFields.add(field);
+  }
+}
+
+/**
+ * Latches efforts a model refused by value, so `effortFor` steps past them from the next request.
+ *
+ * @param refused - The model's, as `modelCapabilitiesFor` hands it over. Written to: each effort
+ * joins `refusedEfforts`, and a published list replaces `supportedEfforts`.
+ * @param efforts - The efforts refused, as the request spelled them.
+ * @param [supported] - The efforts the model published as its own, in its order. Absent leaves the
+ * list held as it was.
+ */
+export function latchEfforts(refused: ModelCapabilities, efforts: Iterable<string>, supported?: string[]): void {
+  for (const effort of efforts) {
+    refused.refusedEfforts.add(effort);
+  }
+  if (supported) {
+    refused.supportedEfforts = supported;
   }
 }
 
@@ -946,12 +979,12 @@ type Answer = (refusal: Refusal) => string | undefined;
  * `undefined` having touched nothing.
  */
 const endpointAnswer =
-  (flag: 'strictSchemas' | 'usageInStream', matches: (detail: string) => boolean, notice: string): Answer =>
+  (flag: EndpointFlag, matches: (detail: string) => boolean, notice: string): Answer =>
   ({ detail, supports }) => {
     if (!supports[flag] || !matches(detail)) {
       return undefined;
     }
-    supports[flag] = false;
+    latchEndpoint(supports, flag);
     return notice;
   };
 
@@ -988,10 +1021,7 @@ const effortStepAnswer: Answer = ({ detail, named }) => {
   if (!named || !stepped) {
     return undefined;
   }
-  named.refused.refusedEfforts.add(stepped.value);
-  if (stepped.supported) {
-    named.refused.supportedEfforts = stepped.supported;
-  }
+  latchEfforts(named.refused, [stepped.value], stepped.supported);
   return `${named.name} does not reason at ${stepped.value}; retrying at ${stepped.next}`;
 };
 

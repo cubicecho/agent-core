@@ -2,6 +2,10 @@ import { isRecord } from '../core/guards.ts';
 import {
   capabilitiesById,
   knownCapabilities,
+  latchEfforts,
+  latchEndpoint,
+  latchFields,
+  latchModel,
   MODEL_FLAGS,
   modelCapabilitiesFor,
   OPTIMISTIC_MODEL,
@@ -101,22 +105,14 @@ const refusedAnything = (model: ModelSnapshot) =>
   MODEL_FLAGS.some((flag) => !model[flag]) || model.refusedFields.length > 0 || (model.refusedEfforts?.length ?? 0) > 0;
 
 /**
- * Latches every string in a stored list into a live set, skipping what is not a list of them.
+ * The strings in a stored list, skipping what is not a list of them.
  *
- * @param held - The live set. Written to, and only ever added to.
- * @param stored - The list as the snapshot holds it. Anything but an array is skipped whole, and
- * an entry that is not a string is skipped on its own.
+ * @param stored - The list as the snapshot holds it.
+ * @returns Its strings, in order. Anything but an array reads as none, and an entry that is not a
+ * string is skipped on its own.
  */
-const latchInto = (held: Set<string>, stored: unknown) => {
-  if (!Array.isArray(stored)) {
-    return;
-  }
-  for (const value of stored) {
-    if (typeof value === 'string') {
-      held.add(value);
-    }
-  }
-};
+const storedStrings = (stored: unknown): string[] =>
+  Array.isArray(stored) ? stored.filter((value) => typeof value === 'string') : [];
 
 /**
  * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
@@ -191,10 +187,10 @@ export function importCapabilities(snapshot: unknown): boolean {
     }
     const supports = capabilitiesById(id);
     if (endpoint.strictSchemas === false) {
-      supports.strictSchemas = false;
+      latchEndpoint(supports, 'strictSchemas');
     }
     if (endpoint.usageInStream === false) {
-      supports.usageInStream = false;
+      latchEndpoint(supports, 'usageInStream');
     }
     // Older of the two, so a snapshot ages an entry and never rejuvenates one: importing must not
     // be a way to keep a latch from ever reaching `expireCapabilities`.
@@ -211,19 +207,14 @@ export function importCapabilities(snapshot: unknown): boolean {
       const refused = modelCapabilitiesFor(supports, name);
       for (const flag of MODEL_FLAGS) {
         if (model[flag] === false) {
-          refused[flag] = false;
+          latchModel(refused, flag);
         }
       }
-      latchInto(refused.refusedEfforts, model.refusedEfforts);
       // Replaced rather than merged: two lists of what one model takes are two readings of the
       // same fact, and the stored one is at least as recent as an empty absent.
-      if (Array.isArray(model.supportedEfforts)) {
-        const listed = model.supportedEfforts.filter((value) => typeof value === 'string');
-        if (listed.length) {
-          refused.supportedEfforts = listed;
-        }
-      }
-      latchInto(refused.refusedFields, model.refusedFields);
+      const listed = storedStrings(model.supportedEfforts);
+      latchEfforts(refused, storedStrings(model.refusedEfforts), listed.length ? listed : undefined);
+      latchFields(refused, storedStrings(model.refusedFields));
     }
   }
   return true;
