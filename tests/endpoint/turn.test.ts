@@ -1,8 +1,7 @@
-import type OpenAI from 'openai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFor, negotiate, resetCapabilities } from '../../src/endpoint/capabilities.ts';
 import { streamTurn } from '../../src/wire/stream.ts';
-import { clientOf, text } from '../helpers.ts';
+import { type Body, clientOf, text } from '../helpers.ts';
 import { NO_GRAMMAR } from '../refusals.ts';
 
 /**
@@ -29,7 +28,7 @@ const refusesOnce = (words: string[], { after }: { after: number }) => {
   });
 };
 
-const body = {} as OpenAI.ChatCompletionCreateParamsStreaming;
+const body: Body = { model: 'm', messages: [], stream: true };
 
 beforeEach(() => resetCapabilities());
 

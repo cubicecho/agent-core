@@ -1,9 +1,8 @@
-import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EndpointSilent } from '../../src/wire/retry.ts';
 import { type InFlight, reportsCache, streamTurn } from '../../src/wire/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
-import { type Chunk, chunk, chunks, clientOf, MINTED_ID, text } from '../helpers.ts';
+import { type Body, type Chunk, chunk, chunks, clientOf, MINTED_ID, text } from '../helpers.ts';
 
 /**
  * A stream that yields what it has and then stops answering, the way an endpoint that dies
@@ -23,11 +22,11 @@ const stalls = (signal: AbortSignal, ...list: Chunk[]) => ({
   },
 });
 
-const body = {
+const body: Body = {
   model: 'm',
   messages: [],
   stream: true,
-} as OpenAI.ChatCompletionCreateParamsStreaming;
+};
 
 afterEach(() => vi.useRealTimers());
 

@@ -4,18 +4,17 @@ import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../../
 import { runTurn } from '../../src/turn/run-turn.ts';
 import { ContextOverflow, EndpointSilent } from '../../src/wire/retry.ts';
 import { Role } from '../../src/wire/wire.ts';
-import { apiError, type Create, chunk, chunks, clientOf, text } from '../helpers.ts';
+import { apiError, type Body, type Create, chunk, chunks, clientOf, text } from '../helpers.ts';
 
 /** Lost rather than refused: nothing about the request, and the only thing worth waiting out. */
 const lost = () => new OpenAI.APIConnectionError({ message: 'socket hang up' });
 
-const body = (supports: { usageInStream: boolean }) =>
-  ({
-    model: 'm',
-    messages: [],
-    stream: true,
-    ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
-  }) as OpenAI.ChatCompletionCreateParamsStreaming;
+const body = (supports: { usageInStream: boolean }): Body => ({
+  model: 'm',
+  messages: [],
+  stream: true,
+  ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
+});
 
 /** Runs everything the backoff sleeps through, however many attempts it takes. */
 const runOutTheClock = async () => {
@@ -257,13 +256,12 @@ describe('runTurn', () => {
     const turn = await runTurn(
       clientOf(create),
       known,
-      (_supports, model) =>
-        ({
-          model: 'gpt-5',
-          messages: [],
-          stream: true,
-          ...(model?.legacyTokenLimit ? { max_tokens: 256 } : { max_completion_tokens: 256 }),
-        }) as OpenAI.ChatCompletionCreateParamsStreaming,
+      (_supports, model): Body => ({
+        model: 'gpt-5',
+        messages: [],
+        stream: true,
+        ...(model?.legacyTokenLimit ? { max_tokens: 256 } : { max_completion_tokens: 256 }),
+      }),
       { model: 'gpt-5' },
     );
 
@@ -293,12 +291,11 @@ describe('runTurn', () => {
 describe('contextLimit', () => {
   const supports = () => capabilitiesFor('http://local/v1');
   /** A body whose transcript is comfortably over any limit worth setting. */
-  const big = () =>
-    ({
-      model: 'm',
-      messages: [{ role: Role.User, content: 'x'.repeat(200_000) }],
-      stream: true,
-    }) as OpenAI.ChatCompletionCreateParamsStreaming;
+  const big = (): Body => ({
+    model: 'm',
+    messages: [{ role: Role.User, content: 'x'.repeat(200_000) }],
+    stream: true,
+  });
 
   it('refuses a request too big for the window before it is sent', async () => {
     const create = vi.fn<Create>();
