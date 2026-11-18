@@ -499,22 +499,11 @@ export const listLines = (text: string, max: number, maxChars: number) =>
  *
  * @remarks
  * A helper rather than a second signature on each entry point, so a setting added to a task later
- * arrives through `options` without an app's call changing. What the task states wins over the
- * same field in `options`: the app's code is written once and the task is what an operator
- * configured over it, so an app passes its own ceiling as the value for a task that names none.
- * `extraBody` is merged key by key, the task's keys winning, as layers merge it.
- * A setting the task leaves out and `options` does too is absent from the result, which is what
- * leaves it to the entry point's own default — 0.3, not the agent's temperature.
- *
- * A resolved spec carries no key, so a task on the agent's own model server would otherwise go out
- * unkeyed, and be remembered under a second capability entry beside the agent's. Given `agent`,
- * such a task is sent the agent's `baseUrl` as the agent spells it and, having no key of its own,
- * the agent's key, so `capabilitiesFor` answers both with one object; a task on another model
- * server is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
- * agent's key is whatever the main turn is sent.
- *
- * The agent's `fetch` goes where its key would, to a task on the agent's model server with none of
- * its own, and never to another model server, whose task sends through its own `endpoint.fetch`.
+ * arrives without an app's call changing. What the task states wins over `options`, `extraBody`
+ * merged key by key, and a setting neither gives is left absent for the entry point's own default
+ * (0.3, not the agent's temperature). Given `agent`, a task on the agent's own model server is sent
+ * the agent's `baseUrl`, key and `fetch`, so `capabilitiesFor` answers both with one object, and a
+ * task on another model server only its own (README, "Its side tasks").
  */
 export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   task: SideTask,

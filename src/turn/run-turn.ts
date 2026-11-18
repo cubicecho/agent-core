@@ -21,28 +21,12 @@ import { formatTokens, requestTokens } from '../wire/tokens.ts';
 /**
  * One request, given as many attempts as the caller allows.
  *
- * Two different things are being recovered from here, and they nest. The inner one is a capability
- * the model server turns out not to have — `stream_options`, a grammar keyword — or that the model
- * does not, given `model` below. Either is a refusal: it is answered by sending a lesser request,
- * and it latches for the life of the process against the model server or against that one model on
- * it, so it costs one failed call rather than one an exchange. The outer one is the model server
- * being unreachable, busy or silent, which is not about this request at all and is worth simply
- * waiting out.
- *
- * A request too big for the context window is neither, and comes out of here as `ContextOverflow`
- * however it was found out about — by the `contextLimit` guard below before a round trip was
- * spent, or by the model server's own refusal after one. The option decides how early the caller
- * hears, not what it hears.
- *
- * Both are bounded by the same rule: nothing is sent again once the model has started
- * answering. The tokens are already out and on their way to whoever is watching, and a second
- * attempt would say everything twice. That is what `produced` is, one box per attempt — set by
- * a chunk that carried something rather than by a chunk arriving, so the empty opening chunk
- * most servers send does not cost the retry.
- *
- * What the turn cost in attempts comes back on its usage — `wallMs`, `retries`, `timeouts` — and
- * what its prompt was reported at calibrates the ratio the next request to that model is sized
- * with. See `calibrate`.
+ * It recovers from two things, nested: a capability the model server or the model turns out not to
+ * have, answered with a lesser request and latched for the life of the process, and the model
+ * server being unreachable, busy or silent, which is waited out. A request too big for the context
+ * window is neither, and comes out as `ContextOverflow` whether the `contextLimit` guard or the model
+ * server found it. Nothing is sent again once the model has started answering (`produced`, set by a
+ * chunk that carried something), since a second attempt would say everything twice.
  */
 
 /** What `runTurn` takes besides the client, the capabilities and the request. */
@@ -245,16 +229,8 @@ export async function runTurn(
       if (produced.any || stream.signal?.aborted) {
         throw error;
       }
-      // The model server's own refusal, classified here rather than left to the caller. One failure
-      // had two error types depending on an option about something else: a caller that gave a
-      // `contextLimit` got `ContextOverflow` from the guard above, and one that did not — the
-      // default — got a raw SDK error and had to know to run `isOverflow` over its message
-      // itself. `runTurn` is offered as the whole loop, so the classification this package
-      // already knows how to do belongs inside it.
-      //
-      // The original is kept as `cause`, because the model server's wording is the half that names
-      // the number. A rate limit borrows the same words and is not one of these — `isOverflow`
-      // rules it out, and it goes on to be retried below as the 429 it is.
+      // Classified here so one failure has one error type whether or not the caller gave a
+      // `contextLimit`; the original is the `cause`, since its wording names the number.
       if (!(error instanceof ContextOverflow) && isOverflow(errorMessage(error))) {
         throw new ContextOverflow(errorMessage(error), { cause: error });
       }

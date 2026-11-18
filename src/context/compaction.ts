@@ -382,25 +382,13 @@ const keepBoundary = (messages: Message[], keepLast: number): number => {
  * @returns The plan, or `undefined`. `messages` is not written to.
  *
  * @remarks
- * `pruneToolResults` keeps a sliding window of results: applied on every turn, each new result
- * pushes an older one out, rewrites a message in the middle of the history and loses the prompt
- * cache from there on, once per tool call. A plan is a boundary instead. The app stores
- * `through` and sends `pruneThrough(messages, through)` on every request, and between moves a
- * request is the one before it with only its tail added.
- *
- * The rule, in the order it is asked:
- *
- * - **Never backwards, and never for nothing.** The target is the earliest of the latest
- *   `keepLast` results. If that is not past `through`, or moving there would clear nothing still
- *   being sent, there is no plan.
- * - **With a compaction, for free.** Given `compacted`, the move is made.
- * - **Otherwise once the context window is filling**, past `at` of it, and only when what it clears
- *   is at least `minShare` of it. An exchange sitting just over the line would otherwise slide the
- *   boundary forward and lose the cache on every turn for a few hundred tokens each time.
- *
- * What is weighed is what the move would *clear*, by `estimate`: a short result and a proxied
- * load's definitions stay whole wherever the boundary is, a stub is not cleared twice, and a
- * result before `from` is not being sent.
+ * A plan is a boundary rather than `pruneToolResults`'s sliding window: the app stores `through`
+ * and sends `pruneThrough(messages, through)` on every request, so the prompt cache is lost once per
+ * move rather than once per tool call. It never moves backwards or for nothing, moves for free
+ * beside a compaction (`compacted`), and otherwise only past `at` of the context window and for at
+ * least `minShare` of it, so an exchange just over the line does not lose the cache every turn. What
+ * is weighed is what the move would clear, by `estimate` (README, "A prune boundary that keeps the
+ * cache").
  */
 export function planPrune(
   messages: Message[],
@@ -648,36 +636,17 @@ const lastUser = (messages: Message[]): number => messages.findLastIndex((messag
  * @param options - The context window, what is in use, the ratios, and where the last compaction
  * ended. See `CompactionOptions`.
  * @returns The plan, its `toSummarise` a new array of the same message objects, or `undefined` when
- * there is nothing to compact. `messages` is not written to.
+ * the context window is not full enough or no legal cut summarises enough to pay for the summary.
+ * `messages` is not written to.
  *
  * @remarks
- * The kept tail is walked back from the end until it fills `keepRatio` of the context window, then
- * moved forward onto a user message: a transcript resuming mid-exchange — a tool result with no
- * call before it, a reply with no question — is malformed and servers refuse it. The system prompts
- * at the head are never compacted, and a summary an earlier compaction left there is continued
- * rather than summarised as if it were conversation. No plan comes back when the context window is
- * not full enough, or when the only legal cut summarises too little to pay for the summary.
- *
- * A transcript that is one question and a long tool loop has no user message to cut at, so where
- * no user cut summarises anything the plan cuts inside the last question's loop instead: the question
- * is kept whole as `question`, the assistant and tool messages after it are summarised up to an
- * assistant message, and the tail resumes there — every tool result in it still follows its call.
- * `applyCompaction` sends the question after the summary. A transcript with a user cut is planned
- * exactly as it was.
- *
- * Both of those are recovered by reading the transcript, which is what an app whose array holds
- * everything it sends has to do. An app that keeps its compaction as a record beside an append-only
- * transcript — its system prompt a separate argument, no summary message in the array at all —
- * knows them exactly, and passes `from` and `previous` instead of hoping the scan agrees.
- *
- * `keepRatio` bounds the kept tail alone, and the system prompt, the tool schemas and the summary
- * sit in the context window on top of it uncounted. Given a `target` the plan is made against what
- * the request will be afterwards instead: the cut is the first user message at which `used`, less
- * the summarised messages, plus the summary's ceiling, is at or under that share of the context
- * window. Where no cut gets there the plan summarises up to the last user message, which is as near
- * as a legal one comes, and `after` says how far short it fell. An earlier summary the new one
- * replaces is not credited, so `after` errs high by at most that much. It is only as good as
- * `estimate` — see `estimateFrom` for one that is measured.
+ * The kept tail fills `keepRatio` of the context window and starts on a user message, since a
+ * transcript resuming mid-exchange is refused; one question and a long tool loop is cut inside that
+ * loop instead, keeping the question whole as `question`. System prompts at the head are never
+ * compacted, an earlier summary is continued, and an app that keeps its compaction beside an
+ * append-only transcript passes `from` and `previous` rather than relying on the scan. Given a
+ * `target`, the cut is made against what the whole request will be afterwards, and `after` says what
+ * that leaves (README, "Keeping a long exchange inside its context window").
  */
 export function planCompaction(
   messages: Message[],
@@ -1028,19 +997,12 @@ export const requestIndex = (
  * new array.
  *
  * @remarks
- * `beforeCompact` is told what is being compacted while the summary is written, beside it rather
- * than ahead of it — a memory server filing it is not a rescue worth making the exchange wait for,
- * and `notify` never rejects. An app that wants its hooks able to stop a compaction sets
- * `honourVeto`, and then they run first and the summary waits on them: any `ok` outcome carrying
- * `veto` leaves the transcript as it was, and each vetoing hook is noted by name. A `forced`
- * compaction ignores a veto and runs the hooks beside the summary as before, because an exchange
- * already past its context window has no better option — a veto there only trades the summary for
- * a `ContextOverflow`. An empty summary compacts nothing either. Rewrites the prefix; see the
- * module comment on when to run it.
- *
- * `runCompaction` and `applyCompaction` are its two halves, and it is nothing but the two in
- * order, so an app that stores the compaction instead of the array gets the same summary at the
- * same cut rather than a second implementation that drifts from this one.
+ * `beforeCompact` is told what is being compacted beside the summary rather than ahead of it, since
+ * a memory server filing it is not worth making the exchange wait for. With `honourVeto` the hooks
+ * run first and a `veto` leaves the transcript as it was, unless the compaction is `forced`, where a
+ * veto would only trade the summary for a `ContextOverflow`. It is `runCompaction` then
+ * `applyCompaction` and nothing more, so an app that stores the compaction instead of the array gets
+ * the same summary at the same cut; either way it rewrites the prefix (see the module comment).
  */
 export async function compactTranscript(
   messages: Message[],

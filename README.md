@@ -1624,7 +1624,8 @@ kept tail alone, with the system prompt, the tool schemas and the summary sittin
 uncounted; given a `target`, the cut is the first user message at which `used`, less what is
 compacted, plus the summary's ceiling (`summaryTokens`, 1024 unless given) is at or under it, and the
 plan's `after` says what that leaves. Where no cut reaches it the plan compacts as far as the last
-user message and `after` says how far short it fell. Without `target` nothing changes.
+user message and `after` says how far short it fell. An earlier summary the new one replaces is not
+credited, so `after` errs high by at most that much. Without `target` nothing changes.
 
 A new epoch starts whenever a request did more than append: a compaction or a prune in `beforeTurn`, a
 system prompt that moved, and a tool array that grew — a `load_tools` in on-demand mode adds a

@@ -237,27 +237,11 @@ function joinPartial(sofar: Turn, piece: PartialTurn | undefined): PartialTurn {
  *
  * @remarks
  * Only a turn cut off at the ceiling, with an answer begun and no tool call in it, is continued;
- * any other comes back as it was. Content and scratchpad are joined in order, the tool calls a
- * continuation makes are kept, and usage is summed across the requests with `continuations`
- * counting them. The continuation is read as starting in the answer, whatever `startInScratchpad`
- * says: a template that opens a fence for a fresh reply does not open one for a prefill. Its tokens
- * reach `onOutput` as they arrive, so a watcher sees one answer carry on rather than two.
- *
- * The request also says `continue_final_message: true` and `add_generation_prompt: false`, without
- * which vLLM answers afresh. They are this request's rather than the conversation's, so they win
- * over a key of the same name in what `request` builds: vLLM refuses `add_generation_prompt: true`
- * beside the other. A model that refuses either by name stops being sent both, latched in its
- * `refusedFields`, and the continuation is sent again without them before anything is concluded
- * about the prefill.
- *
- * Whether the server continues at all is latched per model as `assistantPrefill`. A refusal of the
- * request latches it off, and so does a continuation that begins the answer again, which is how a
- * server that takes the request and ignores the prefill — hosted OpenAI among them — shows itself;
- * that check is only as good as a restart being word for word. Either way the answer so far is
- * kept, with a notice. So is it when the continuation fails any other way, since the tokens
- * already in hand are worth more than the error; only a stop is thrown. An `inFlight` box reads
- * the answer so far with the continuation's piece joined on, so a stop mid-continuation keeps it
- * all.
+ * any other comes back as it was. The continuation is read as starting in the answer whatever
+ * `startInScratchpad` says, since a template that opens a fence for a fresh reply does not open one
+ * for a prefill. The answer so far is kept with a notice however the continuation fails, short of a
+ * stop; the fields it sends and the `assistantPrefill` latch are in the README's "What the servers
+ * say about themselves".
  */
 export async function continueTurn(
   client: OpenAI,
