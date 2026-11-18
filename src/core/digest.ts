@@ -1,5 +1,5 @@
 /**
- * The one digest this package takes, of an endpoint's key and of a turn's text.
+ * The one digest this package takes, of a model server's key and of a message's text.
  *
  * Apart from `platform.ts` because it loads `node:crypto`, which a browser-safe module must not
  * come to import by reaching for a constant.

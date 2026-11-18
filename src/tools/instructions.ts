@@ -3,10 +3,10 @@
  *
  * An MCP server may send `instructions` when it connects: its author's guidance on using its
  * tools, the things a tool description has no room for. This is where that text is put in front
- * of a model, attributed and fenced, so every host says it the same way.
+ * of a model, attributed and fenced, so every app says it the same way.
  */
-import { untrusted } from '../hooks/hooks.ts';
-import { CHARS_PER_TOKEN, estimateTokens } from '../wire/tokens.ts';
+import { untrusted } from '../wire/text.ts';
+import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
 import type { CatalogServer } from './catalog.ts';
 
 /**
@@ -90,7 +90,7 @@ function section(label: string, text: string, maxTokens: number): string {
   if (isOver === false) {
     return `## ${label}\n\n${untrusted(text, { source: label })}`;
   }
-  const kept = `${text.slice(0, maxTokens * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+  const kept = clipToTokens(text, maxTokens);
   return [
     `## ${label}`,
     '',

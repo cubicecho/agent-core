@@ -57,7 +57,7 @@ describe('slotAllocator', () => {
     expect(slotAllocator(endpoint, 'other', 1).acquire('b')).toBe(0);
   });
 
-  it('drops the slots a smaller count no longer has, and a holder of one releases into nothing', () => {
+  it('hands out only what a smaller count leaves, even once a slot held past it is released', () => {
     const before = slotAllocator(endpoint, 'm', 2);
     before.acquire('a');
     before.acquire('b');
@@ -67,6 +67,32 @@ describe('slotAllocator', () => {
     expect(after.acquire('c')).toBeUndefined();
     before.release('a');
     expect(after.acquire('c')).toBe(0);
+  });
+
+  it('never hands out, from an allocator made before a shrink, a slot past the new total', () => {
+    const before = slotAllocator(endpoint, 'm', 4);
+    before.acquire('a');
+    before.acquire('b');
+    before.acquire('c');
+    const after = slotAllocator(endpoint, 'm', 2);
+    expect(before.total).toBe(2);
+    expect(before.acquire('d')).toBeUndefined();
+    expect(after.acquire('e')).toBeUndefined();
+  });
+
+  it('never hands out a slot held across a shrink and a regrow a second time', () => {
+    const first = slotAllocator(endpoint, 'm', 4);
+    first.acquire('a');
+    first.acquire('b');
+    expect(first.acquire('c')).toBe(2);
+    slotAllocator(endpoint, 'm', 2);
+    const regrown = slotAllocator(endpoint, 'm', 4);
+    // `c` still holds slot 2, so the newcomers get the one nobody holds, and then nothing.
+    expect(regrown.acquire('f')).toBe(3);
+    expect(regrown.acquire('g')).toBeUndefined();
+    // And `c` gives it back through the allocator it took it from.
+    first.release('c');
+    expect(regrown.acquire('g')).toBe(2);
   });
 
   it('hands out nothing on a server with no slots', () => {

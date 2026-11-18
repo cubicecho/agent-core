@@ -5,7 +5,7 @@ import { callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import {
   apiError,
-  type Body,
+  type Create,
   chunks,
   config,
   type Message,
@@ -18,7 +18,7 @@ import {
   user,
 } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
@@ -26,14 +26,14 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
 }));
 
 const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
-const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = await import('../../src/wire/errors.ts');
+const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = await import('../../src/run/failure.ts');
 const { ContextOverflow } = await import('../../src/wire/retry.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
 const { dropReasoning } = await import('../../src/run/run-calls.ts');
 
 type Turn = import('../../src/wire/stream.ts').Turn;
-type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
+type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
 type WrittenMessage = import('../../src/run/agent-loop.ts').WrittenMessage;
 
@@ -395,8 +395,12 @@ describe('a run that throws', () => {
 });
 
 /** A stream that hands over its chunks and then waits for the stop, ending as an aborted one does. */
-const stalls = (signal: AbortSignal, ...list: unknown[]) => ({
+const stalls = (signal: AbortSignal | null | undefined, ...list: unknown[]) => ({
   async *[Symbol.asyncIterator]() {
+    const isUnstoppable = signal === undefined || signal === null;
+    if (isUnstoppable) {
+      throw new Error('The request was sent without a signal, so this stream would never end.');
+    }
     yield* list;
     await new Promise<void>((resolve) => {
       if (signal.aborted) {
@@ -421,9 +425,9 @@ const breaksWith = (error: unknown, ...list: unknown[]) => ({
 describe('the request in flight', () => {
   it('is kept on a stop mid-stream, with its reasoning, and not in the transcript', async () => {
     const controller = new AbortController();
-    create.mockImplementationOnce((_body: Body, { signal }: { signal: AbortSignal }) =>
+    create.mockImplementationOnce((_body, options) =>
       stalls(
-        signal,
+        options?.signal,
         { choices: [{ delta: { reasoning_content: 'sky, light' } }] },
         { choices: [{ delta: { content: 'The sky is ' } }] },
         {
@@ -484,12 +488,10 @@ describe('the request in flight', () => {
 
   it('joins a continuation in flight onto the answer it was continuing', async () => {
     const controller = new AbortController();
-    create
-      .mockReturnValueOnce(says('The sky is', FinishReason.Length))
-      .mockImplementationOnce((_body: Body, { signal }: { signal: AbortSignal }) => {
-        queueMicrotask(() => controller.abort());
-        return stalls(signal, text(' blue'));
-      });
+    create.mockReturnValueOnce(says('The sky is', FinishReason.Length)).mockImplementationOnce((_body, options) => {
+      queueMicrotask(() => controller.abort());
+      return stalls(options?.signal, text(' blue'));
+    });
     const error = await thrown(
       runAgentLoop({
         config,
@@ -685,7 +687,7 @@ describe('a stop while the tools run', () => {
       tools: [tool('a'), tool('b')],
       dispatch: async () => '',
     });
-    const replayed = (create.mock.calls[1][0] as Body).messages;
+    const replayed = create.mock.calls[1][0].messages;
     const asked = replayed.flatMap((message) =>
       message.role === Role.Assistant ? (message.tool_calls ?? []).map((call) => call.id) : [],
     );
@@ -780,7 +782,7 @@ describe('prune', () => {
   /** Four thousand characters, a thousand tokens at the default ratio. */
   const long = 'x'.repeat(4000);
   /** Every request's messages, as they were sent. */
-  const sentMessages = () => create.mock.calls.map(([body]) => (body as Body).messages.map((m) => JSON.stringify(m)));
+  const sentMessages = () => create.mock.calls.map(([body]) => body.messages.map((m) => JSON.stringify(m)));
   /** A run of `steps` calls, each answered with a long result, then an answer. */
   const toolRun = (steps: number) => {
     for (let step = 0; step < steps; step++) {
@@ -872,7 +874,7 @@ describe('reasoning replay', () => {
       { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
     );
   /** What each request carried, in the order they were sent. */
-  const sentMessages = () => create.mock.calls.map(([body]) => (body as Body).messages);
+  const sentMessages = () => create.mock.calls.map(([body]) => body.messages);
   /** The `reasoning_content` of each assistant message, `undefined` where it has none. */
   const scratchpads = (messages: readonly Message[]) =>
     messages
@@ -1110,7 +1112,7 @@ describe('one call per message', () => {
       const ids = message.role === Role.Assistant ? (message.tool_calls ?? []).map(({ id }) => id) : [];
       return ids.length ? `${message.role} ${ids.join(' ')}` : message.role;
     });
-  const sentBodies = () => create.mock.calls.map(([body]) => body as Body);
+  const sentBodies = () => create.mock.calls.map(([body]) => body);
 
   it('writes two calls as two pairs, runs them one at a time, and replays them that way', async () => {
     create
@@ -1298,7 +1300,7 @@ describe('call ids', () => {
     expect(minted.every((id) => MINTED_ID.test(id))).toBe(true);
     expect(new Set([...minted, 'kept00001']).size).toBe(minted.length + 1);
     // Every request replays the ids the one before it sent, so none is ever made up again.
-    const sent = create.mock.calls.map(([body]) => (body as Body).messages);
+    const sent = create.mock.calls.map(([body]) => body.messages);
     for (const [at, request] of sent.entries()) {
       expect(callIds(sent[at + 1] ?? result.messages).slice(0, callIds(request).length)).toEqual(callIds(request));
     }
@@ -1308,8 +1310,7 @@ describe('call ids', () => {
     create.mockReturnValueOnce(unnamed()).mockReturnValueOnce(written()).mockReturnValueOnce(says('done'));
     const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch: async () => 'ok' });
     expect(resultIds(result.messages)).toEqual(callIds(result.messages));
-    const [body] = create.mock.calls.at(-1) ?? [];
-    const last = (body as Body).messages;
+    const last = create.mock.lastCall?.[0].messages ?? [];
     expect(resultIds(last)).toEqual(callIds(last));
     expect(callIds(last)).toEqual(callIds(result.messages));
   });
@@ -1358,7 +1359,7 @@ describe('a turn with nothing to say', () => {
     });
     expect(notices).toEqual(['the model ended its turn with no answer']);
 
-    create.mockImplementationOnce((body: Body) => {
+    create.mockImplementationOnce((body) => {
       const refusal = ollamaRefusal(body.messages);
       if (refusal) {
         throw apiError(400, refusal);
@@ -1392,7 +1393,7 @@ describe('a turn with nothing to say', () => {
     const { result, notices } = await run();
     expect(create).toHaveBeenCalledTimes(2);
     // The same request again: nothing of the empty turn was written into it.
-    expect((create.mock.calls[1][0] as Body).messages).toEqual((create.mock.calls[0][0] as Body).messages);
+    expect(create.mock.calls[1][0].messages).toEqual(create.mock.calls[0][0].messages);
     expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
     expect(notices).toEqual(['the model said it was calling tools but sent none; asking again']);
     expect(result.metrics.outcome).toBe('answered');

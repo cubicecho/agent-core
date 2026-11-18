@@ -5,7 +5,7 @@ import { Role } from './wire.ts';
 /**
  * The ids of tool calls the loop makes up itself, and keeping every id in a transcript its own.
  *
- * A server that streams a call with no id, a call recovered from text, and a proxied run's
+ * A server that streams a call with no id, a call recovered from text, and a proxied exchange's
  * preselected load all need an id nobody sent. The shape is the strictest any server holds them
  * to: Mistral's tokenizers before V13 take exactly nine characters from `[A-Za-z0-9]` and refuse
  * the request otherwise, and nine alphanumerics are also inside OpenAI's forty and anything
@@ -62,8 +62,9 @@ function seededFractions(seed: number): () => number {
  * @returns A minter, to pass as `mintCallId` wherever one is taken.
  *
  * @remarks
- * This is the shape vLLM's `MistralToolCall.generate_random_id` makes. Uniqueness within a run is
- * not left to chance: `distinctCallIds` checks each id against the transcript and asks again.
+ * This is the shape vLLM's `MistralToolCall.generate_random_id` makes. Uniqueness within a
+ * transcript is not left to chance: `distinctCallIds` checks each id against the transcript and
+ * asks again.
  */
 export function callIdMinter(seed?: number): CallIdMinter {
   const fraction = seed === undefined ? Math.random : seededFractions(seed);
@@ -87,7 +88,7 @@ export const mintCallId: CallIdMinter = callIdMinter();
  * @returns The ids, as a set to add to.
  *
  * @remarks
- * A result is counted as well as its call, so a host history that kept a result whose call was
+ * A result is counted as well as its call, so an app's history that kept a result whose call was
  * trimmed away still keeps its id from being handed out again.
  */
 export function callIdsIn(messages: readonly OpenAI.ChatCompletionMessageParam[]): Set<string> {
@@ -128,9 +129,11 @@ export function freshCallId(taken: Set<string>, mint: CallIdMinter = mintCallId)
 export const CallIds = {
   /** The server's id, as sent, unless it is empty or the transcript already uses it. */
   Kept: 'kept',
-  /** A minted id for every call, for a host that matches answers to calls across transcripts. */
+  /** A minted id for every call, for an app that matches answers to calls across transcripts. */
   Minted: 'minted',
 } as const;
+
+/** Any one of the policies in `CallIds`. */
 export type CallIds = (typeof CallIds)[keyof typeof CallIds];
 
 /**
@@ -152,9 +155,9 @@ export type CallIds = (typeof CallIds)[keyof typeof CallIds];
  * and the result that answers it carry the new id on every request after; the one request whose
  * cache it can cost is the next, and an id answered twice costs more than that.
  *
- * Unique within one transcript is not unique across several: two runs of a server that counts
- * from zero both hold a `call_0`. `minted` is for a host that hands calls out of the run and
- * matches the answers back by id, as one resuming a waiting run does.
+ * Unique within one transcript is not unique across several: two exchanges with a server that
+ * counts from zero both hold a `call_0`. `minted` is for an app that hands calls out of the
+ * exchange and matches the answers back by id, as one resuming a waiting exchange does.
  */
 export function distinctCallIds(
   calls: readonly ToolCall[],
@@ -163,12 +166,15 @@ export function distinctCallIds(
   ids: CallIds = CallIds.Kept,
 ): ToolCall[] {
   const taken = callIdsIn(messages);
-  return calls.map((call) => {
+  const distinct: ToolCall[] = [];
+  for (const call of calls) {
     const isFree = ids === CallIds.Kept && call.id !== '' && taken.has(call.id) === false;
     if (isFree) {
       taken.add(call.id);
-      return call;
+      distinct.push(call);
+      continue;
     }
-    return { ...call, id: freshCallId(taken, mint) };
-  });
+    distinct.push({ ...call, id: freshCallId(taken, mint) });
+  }
+  return distinct;
 }

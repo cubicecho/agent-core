@@ -27,6 +27,12 @@ unstable APIs out of it. An install from a git URL gets no `dist/`: install from
 `tsconfig.json` checks everything and emits nothing; `tsconfig.build.json` is the only config
 that emits.
 
+## Terms
+
+`.agents/domain-model.md` is the domain model: the four levels (session, run, exchange, turn),
+the actors, lifecycles, invariants and a glossary. Use its words in code, tests, docs and commits.
+The refactor ledger is `.agents/coding-standards-todos.md`.
+
 ## Layout
 
 `src/` has one folder for each concept the package is about, and a module lives in the folder of
@@ -36,13 +42,13 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 | Folder | The concept | Modules |
 | --- | --- | --- |
 | `core` | what every other folder shares, and no concept of its own | `guards` `platform` `digest` `scope` `config` |
-| `wire` | what is sent, what comes back, and how it fails | `wire` `stream` `thinking` `tool-calls` `call-ids` `tokens` `retry` `errors` |
+| `wire` | what is sent, what comes back, and how it fails | `wire` `text` `stream` `thinking` `tool-calls` `call-ids` `tokens` `retry` `errors` |
 | `endpoint` | one server, and what it turned out to support | `client` `capabilities` `calibration` `schema-compat` `slots` |
 | `turn` | one request, negotiated and retried | `run-turn` `continuation` `side-task` |
-| `tools` | which tools the model is shown, and what their servers say of them | `catalog` `tool-loading` `preselect` `instructions` |
+| `tools` | which tools the model is shown, and what their servers say of them | `catalog` `discovery` `tool-loading` `preselect` `instructions` |
 | `hooks` | what a host is told, and what it may inject | `hooks` `hook-events` |
 | `context` | keeping a run inside its window | `ledger` `compaction` |
-| `run` | the loop, and watching it | `agent-loop` `run-calls` `artifacts` `request-body` `events` `remote` |
+| `run` | the loop, and watching it | `agent-loop` `dispatch` `run-calls` `failure` `artifacts` `request-body` `events` `remote` |
 | `runtime` | the process's state: scoping it, clearing it, saving it | `runtime` `reset` `snapshot` |
 | `spec` | an agent as a document | `spec` `columns` |
 

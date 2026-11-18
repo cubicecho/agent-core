@@ -8,6 +8,8 @@ import {
   exportSpec,
   findSpecSecrets,
   parseSpec,
+  REF_FILE,
+  REF_URL,
   type ResolvedAgent,
   resolveAgentSpec,
   SecretSign,
@@ -535,7 +537,28 @@ describe('resolveAgentSpec', () => {
   it('lets an empty text delete a part a layer below contributed', () => {
     const base = parsed(doc({ prompt: [{ id: 'lane', text: 'Only the card.' }] }));
     const over = parsed(doc({ prompt: [{ id: 'lane', text: '' }] }));
-    expect(resolveAgentSpec([base, over]).systemPrompt).toBe('');
+    const resolved = resolveAgentSpec([base, over]);
+    expect(resolved.systemPrompt).toBe('');
+    expect(resolved.prompt).toEqual([]);
+  });
+
+  it('deletes a referenced part whole, so a host resolving refs cannot bring it back', () => {
+    const base = parsed(
+      doc({
+        prompt: [
+          { id: 'role', ref: { type: REF_FILE, value: 'role.md' } },
+          { id: 'identity', text: 'You are X.' },
+        ],
+      }),
+    );
+    const over = parsed(doc({ prompt: [{ id: 'role', text: '' }] }));
+    expect(resolveAgentSpec([base, over]).prompt).toEqual([{ id: 'identity', text: 'You are X.' }]);
+    // A layer above the deletion starts the part afresh, in the place the id first had.
+    const back = parsed(doc({ prompt: [{ id: 'role', ref: { type: REF_URL, value: 'https://x/role.md' } }] }));
+    expect(resolveAgentSpec([base, over, back]).prompt).toEqual([
+      { id: 'role', ref: { type: REF_URL, value: 'https://x/role.md' } },
+      { id: 'identity', text: 'You are X.' },
+    ]);
   });
 
   it('validates a prompt reference without ever resolving it', () => {
@@ -636,6 +659,27 @@ describe('resolveAgentSpec', () => {
     expect(resolveAgentSpec([empty]).tasks.vision).not.toHaveProperty('extraBody');
   });
 
+  it('drops the body fields the loop owns or the spec spells from a layer that skipped parseSpec', () => {
+    // Built in code, so parseSpec never saw it: the rule has to hold at resolve time as well.
+    const owned = {
+      temperature: 0.9,
+      max_tokens: 9999,
+      max_completion_tokens: 1,
+      reasoning_effort: 'high',
+      stream: false,
+    };
+    const layer: AgentSpec = {
+      spec: AGENT_SPEC,
+      model: { model: 'm', temperature: 0, extraBody: { ...owned, top_k: 40 } },
+      tasks: { title: { model: 't', extraBody: { ...owned } } },
+    };
+    const resolved = resolveAgentSpec([layer]);
+    expect(resolved.temperature).toBe(0);
+    expect(resolved.extraBody).toEqual({ top_k: 40 });
+    // Nothing is left, so the task carries none.
+    expect(resolved.tasks.title).not.toHaveProperty('extraBody');
+  });
+
   it('unions requires, so a layer above cannot quietly drop one below it', () => {
     const base = parsed(doc({ requires: ['com.example.sandbox'] }));
     const over = parsed(doc({ requires: ['com.example.audit'] }));
@@ -660,6 +704,32 @@ describe('resolveAgentSpec', () => {
       { id: 'h1', on: HookEvent.SessionStart, server: 'git', tool: 'log', enabled: false },
     ]);
     expect(resolved.mcpServers).toEqual([{ slug: 'fs', command: 'npx' }]);
+  });
+
+  it('drops an inject or a veto the merged hook can no longer honour', () => {
+    const hook = { id: 'h', server: 'mem', tool: 'recall' };
+    const injects = parsed(doc({ hooks: [{ ...hook, on: HookEvent.BeforeTurn, inject: true }] }));
+    const vetoes = parsed(doc({ hooks: [{ ...hook, on: HookEvent.BeforeCompact, veto: true }] }));
+    const after = parsed(doc({ hooks: [{ ...hook, on: HookEvent.AfterTurn }] }));
+    expect(resolveAgentSpec([injects, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterTurn }]);
+    expect(resolveAgentSpec([vetoes, after]).hooks).toEqual([{ ...hook, on: HookEvent.AfterTurn }]);
+    // A flag the merged event still honours is kept.
+    const sessionStart = parsed(doc({ hooks: [{ ...hook, on: HookEvent.SessionStart }] }));
+    expect(resolveAgentSpec([injects, sessionStart]).hooks).toEqual([
+      { ...hook, on: HookEvent.SessionStart, inject: true },
+    ]);
+  });
+
+  it('lets an empty id, name or description override the layer below', () => {
+    const base = parsed(doc({ id: 'base', name: 'Base', description: 'Base agent' }));
+    const over = parsed(doc({ id: '', name: '', description: '' }));
+    expect(resolveAgentSpec([base, over])).toMatchObject({ id: '', name: '', description: '' });
+    // Absent still inherits.
+    expect(resolveAgentSpec([base, parsed(doc())])).toMatchObject({
+      id: 'base',
+      name: 'Base',
+      description: 'Base agent',
+    });
   });
 
   it('falls back only where no layer said anything', () => {

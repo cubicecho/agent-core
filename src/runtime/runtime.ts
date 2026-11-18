@@ -1,7 +1,7 @@
 import { compactTranscript, runCompaction, summariser } from '../context/compaction.ts';
 import { inScope, rootScope, type Scope } from '../core/scope.ts';
 import { calibrate, charsPerTokenFor, resetCalibration } from '../endpoint/calibration.ts';
-import { capabilitiesFor, expireCapabilities, resetCapabilities } from '../endpoint/capabilities.ts';
+import { capabilitiesFor, expireCapabilities, resetCapabilities, resetHints } from '../endpoint/capabilities.ts';
 import {
   type ClientPoolOptions,
   configureClients,
@@ -28,7 +28,7 @@ import { configureEvents, type EventBusOptions, emit, endRun, history, resetEven
 import { preselect } from '../tools/preselect.ts';
 import { continueTurn } from '../turn/continuation.ts';
 import { runTurn } from '../turn/run-turn.ts';
-import { ask, askJson, resetHints, tryAsk } from '../turn/side-task.ts';
+import { ask, askJson, tryAsk } from '../turn/side-task.ts';
 import { resetAll } from './reset.ts';
 import { exportCapabilities, importCapabilities } from './snapshot.ts';
 
@@ -99,7 +99,8 @@ export interface RuntimeOptions {
  * Each method is the top-level function of the same name, with the same signature and doc
  * comment, run against this runtime's state instead of the process's: its pooled clients and
  * model listings, latched capabilities, measured characters per token, no-thinking hints, event
- * bus, and hook settings. `resetAll` and the six narrower resets clear this runtime alone.
+ * bus, hook settings and slot holders. `resetAll` and the seven narrower resets clear this runtime
+ * alone.
  */
 export type Runtime = typeof STATEFUL & {
   /**
@@ -133,29 +134,30 @@ function bind(scope: Scope): Runtime {
   ) as typeof STATEFUL;
   return {
     ...methods,
-    // What it hands back is called later, by `compactTranscript` or by the host, and asks then.
+    // What it hands back is called later, by `compactTranscript` or by the app, and asks then.
     summariser: (...args) => within(summariser(...args)),
     run: (fn) => inScope(scope, fn),
   };
 }
 
 /**
- * A runtime of its own: separate clients, listings, capability latches, hints, event bus and hook
- * settings from the process's and from every other runtime's.
+ * A runtime of its own: separate clients, listings, capability latches, hints, measured
+ * characters per token, event bus, hook settings and slots from the process's and every other
+ * runtime's.
  *
  * @param [options] - What to configure it with before first use. A part left out keeps the
  * defaults — not the default runtime's settings, which a new runtime does not inherit.
  * @returns A runtime whose state starts empty, with whatever `options` gave already applied.
  *
  * @remarks
- * For a host that must not share them — one that mints a key per tenant, where a shared pool has
+ * For an app that must not share them — one that mints a key per tenant, where a shared pool has
  * tenants evicting each other's clients and a shared bus has one tenant's run id readable by
  * another — and for tests, where a runtime per case needs no `resetAll` between them and can run
- * in parallel. A host with one deployment's worth of endpoints does not need one: the top-level
+ * in parallel. An app with one deployment's worth of model servers does not need one: the top-level
  * functions are the default runtime's methods.
  *
  * The runtime is carried by async context rather than by argument, so `runAgentLoop` called as a
- * method uses this runtime all the way down, and so does a top-level function the host calls from
+ * method uses this runtime all the way down, and so does a top-level function the app calls from
  * inside it — from `dispatch`, a hook, `onEvent`. Outside a method or `run`, a top-level function
  * is the default runtime's again; a request handler that emits to a run a runtime started calls
  * `runtime.emit`.

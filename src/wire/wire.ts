@@ -98,8 +98,9 @@ export const PARALLEL_TOOL_CALLS = 'parallel_tool_calls' as const;
 export type ReasoningField = typeof REASONING_CONTENT | typeof REASONING;
 
 /**
- * OpenRouter's field for reasoning as blocks: summaries, raw text with a signature, or encrypted
- * data. It comes beside `reasoning` and goes back on the assistant message unmodified and in order.
+ * OpenRouter's field for the scratchpad as blocks: summaries, raw text with a signature, or
+ * encrypted data. It comes beside `reasoning` and goes back on the assistant message unmodified and
+ * in order.
  */
 export const REASONING_DETAILS = 'reasoning_details' as const;
 
@@ -108,8 +109,8 @@ export const REASONING_DETAILS = 'reasoning_details' as const;
  * the call and sent back as they came.
  *
  * @remarks
- * `extra_content` is where Gemini puts `google.thought_signature`, on the first call of a step, and
- * Gemini refuses with a 400 a request that replays the step without it. It is an allowlist rather
+ * `extra_content` is where Gemini puts `google.thought_signature`, on the first call of a turn, and
+ * Gemini refuses with a 400 a request that replays the turn without it. It is an allowlist rather
  * than every key a server sent, because a key no server asked to have back is one a strict server
  * may refuse. llama.cpp keeps an unknown key of a call aside, and vLLM ignores it.
  */

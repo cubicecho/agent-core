@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FinishReason } from '../../src/wire/wire.ts';
-import { answer, endpoint } from '../helpers.ts';
+import { answer, type Create, endpoint } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /**
  * The SDK-touching half of the client module, replaced. Partial rather than whole: the rest of
  * it is pure — `endpointKey` is what every cache in this package agrees an endpoint is — and a

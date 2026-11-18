@@ -206,7 +206,7 @@ describe('rebaseLedger', () => {
   });
 
   it("moves the kept tail's boundaries with it when the head is folded", () => {
-    const after = [{ role: Role.System, content: 'summary' } as Message, ...before.slice(2)];
+    const after = [{ role: Role.System, content: 'summary' } satisfies Message, ...before.slice(2)];
     const moved = rebaseLedger(kept, before, after);
     expect(moved).toEqual([
       { through: 1, prompt: 100, epoch: 1 },

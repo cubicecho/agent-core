@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiError, reply } from '../helpers.ts';
+import { apiError, type Create, reply } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
   getClient: () => ({ chat: { completions: { create } } }),
@@ -24,6 +24,116 @@ afterEach(() => {
 });
 
 describe('capability snapshots', () => {
+  it('writes the same JSON byte for byte, the refused hints included, and reads it back to the same', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-02T03:04:05.000Z'));
+    try {
+      const other = { ...config, baseUrl: 'http://other/v1', apiKey: '' };
+      const quiet = { ...config, baseUrl: 'http://quiet/v1' };
+
+      const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+      supports.strictSchemas = false;
+      const big = modelCapabilitiesFor(supports, 'big');
+      big.legacyTokenLimit = false;
+      big.chosenTemperature = false;
+      big.refusedFields.add('top_k').add('min_p');
+      big.refusedEfforts.add('none');
+      big.supportedEfforts = ['minimal', 'low', 'high'];
+      // Asked about and refused nothing, so it is left out.
+      modelCapabilitiesFor(supports, 'idle');
+      capabilitiesFor(quiet.baseUrl, quiet.apiKey).usageInStream = false;
+
+      // The hints refused by a model with other refusals, by one with none, and on an endpoint
+      // with nothing else latched.
+      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      await ask(config, 'big', 'system', 'user');
+      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      await ask(config, 'small', 'system', 'user');
+      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      await ask(other, 'tiny', 'system', 'user');
+
+      const written = JSON.stringify(exportCapabilities(), null, 2);
+      expect(written).toBe(`{
+  "version": 1,
+  "savedAt": "2026-01-02T03:04:05.000Z",
+  "endpoints": {
+    "${endpointId(config)}": {
+      "strictSchemas": false,
+      "usageInStream": true,
+      "models": {
+        "big": {
+          "reasoningEffort": true,
+          "legacyTokenLimit": false,
+          "chosenTemperature": false,
+          "structuredOutput": true,
+          "assistantPrefill": true,
+          "reasoningContent": true,
+          "multiCallMessages": true,
+          "thinkingHints": false,
+          "refusedFields": [
+            "min_p",
+            "top_k"
+          ],
+          "refusedEfforts": [
+            "none"
+          ],
+          "supportedEfforts": [
+            "minimal",
+            "low",
+            "high"
+          ]
+        },
+        "small": {
+          "reasoningEffort": true,
+          "legacyTokenLimit": true,
+          "chosenTemperature": true,
+          "structuredOutput": true,
+          "assistantPrefill": true,
+          "reasoningContent": true,
+          "multiCallMessages": true,
+          "thinkingHints": false,
+          "refusedFields": [],
+          "refusedEfforts": []
+        }
+      },
+      "since": 1767323045000
+    },
+    "${endpointId(quiet)}": {
+      "strictSchemas": true,
+      "usageInStream": false,
+      "models": {},
+      "since": 1767323045000
+    },
+    "${endpointId(other)}": {
+      "strictSchemas": true,
+      "usageInStream": true,
+      "models": {
+        "tiny": {
+          "reasoningEffort": true,
+          "legacyTokenLimit": true,
+          "chosenTemperature": true,
+          "structuredOutput": true,
+          "assistantPrefill": true,
+          "reasoningContent": true,
+          "multiCallMessages": true,
+          "thinkingHints": false,
+          "refusedFields": [],
+          "refusedEfforts": []
+        }
+      },
+      "since": 1767323045000
+    }
+  }
+}`);
+
+      resetAll();
+      expect(importCapabilities(JSON.parse(written))).toBe(true);
+      expect(JSON.stringify(exportCapabilities(), null, 2)).toBe(written);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('holds nothing for a process that met no refusals', () => {
     capabilitiesFor(config.baseUrl, config.apiKey);
     const snapshot = exportCapabilities();

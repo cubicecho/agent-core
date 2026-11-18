@@ -4,9 +4,9 @@ import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookRunner } from '../../src/hooks/hooks.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { type Body, chunks, config, type Message, outcome, says, tool, user } from '../helpers.ts';
+import { type Create, chunks, config, type Message, outcome, says, tool, user } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
@@ -36,7 +36,7 @@ const outline = (messages: readonly Message[]) =>
 
 /** The messages the request at `at` sent, the system prompt left out. */
 const sent = (at: number) =>
-  outline((create.mock.calls[at][0] as Body).messages.filter((message) => message.role !== Role.System));
+  outline(create.mock.calls[at][0].messages.filter((message) => message.role !== Role.System));
 
 /** A `takeInput` that hands over `text` on its `on`th ask, counting from one, and nothing otherwise. */
 const inputOn = (on: number, text: string) => {
@@ -138,7 +138,7 @@ describe('takeInput', () => {
       dispatch: async () => 'a ran',
       takeInput: inputOn(2, 'use b instead'),
       // New message objects every step, as a host reading its store would hand back.
-      beforeStep: (messages) => messages.map((message) => ({ ...message }) as Message),
+      beforeStep: (messages) => messages.map((message) => ({ ...message })),
       hooks: { run, context: { session: { id: 's1' } } },
     });
     const [question, , , input] = sent(1);

@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { isRecord } from '../core/guards.ts';
+import { isAbsent, isRecord } from '../core/guards.ts';
 import { MS_PER_SECOND } from '../core/platform.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { EndpointSilent } from './retry.ts';
@@ -17,14 +17,13 @@ import {
 } from './wire.ts';
 
 /**
- * Reading one streamed turn back into a message.
+ * Reading one streamed reply back into a message.
  *
  * The rest of a request is the caller's — which model, which tools, which transcript — but the
  * reading of the answer is the same everywhere, and it is fiddly in ways the API does not
- * advertise: tool calls arrive in pieces, an aborted stream ends rather than throws, reasoning
- * has two spellings and is in no published type, and an endpoint that stops answering mid-stream
- * hangs the turn until somebody presses stop. `EndpointSilent` and `timeoutMs` were exported for
- * this loop long before the loop itself was.
+ * advertise: tool calls arrive in pieces, an aborted stream ends rather than throws, the
+ * scratchpad has two spellings and is in no published type, and a model server that stops
+ * answering mid-stream hangs the turn until somebody presses stop.
  */
 
 /**
@@ -59,7 +58,7 @@ export type CacheBreakReason = (typeof CacheBreakReason)[keyof typeof CacheBreak
  * than zero when nothing reported or measured it, because a zero cache hit and a server that says
  * nothing about its cache are different findings, and a consumer drawing one as the other is
  * explaining a slow turn with a number nobody sent. Which layer fills each is said on the field:
- * `streamTurn` reads what the endpoint sends, `runTurn` measures the attempts, and
+ * `streamTurn` reads what the model server sends, `runTurn` measures the attempts, and
  * `runAgentLoop` compares one request with the one before it.
  */
 export interface TurnUsage {
@@ -67,7 +66,7 @@ export interface TurnUsage {
   completion: number;
   total: number;
   /**
-   * How much of `prompt` came from the endpoint's prompt cache — a part of it, not in addition.
+   * How much of `prompt` came from the model server's prompt cache — a part of it, not in addition.
    *
    * @remarks
    * The only way a caller can tell whether the prefix it is careful to keep still is actually
@@ -83,7 +82,9 @@ export interface TurnUsage {
    * zero `cached` reads as unknown.
    */
   uncached?: number;
-  /** How much of `completion` was reasoning, where the usage block breaks it out. Never estimated. */
+  /**
+   * How much of `completion` was scratchpad, where the usage block breaks it out. Never estimated.
+   */
   reasoningTokens?: number;
   /** Prefill time, from llama.cpp's `timings`. On a local box it dominates once the cache misses. */
   promptMs?: number;
@@ -109,7 +110,7 @@ export interface TurnUsage {
   wallMs?: number;
   /** How many times `runTurn` sent a lost request again. A downgrade is not a retry. */
   retries?: number;
-  /** How many of those were the endpoint going silent, rather than refusing or dropping it. */
+  /** How many of those were the model server going silent, rather than refusing or dropping it. */
   timeouts?: number;
   /** How many requests `continueTurn` joined onto the first. Absent on a turn not continued. */
   continuations?: number;
@@ -130,9 +131,9 @@ export interface TurnUsage {
   /** How many tools the request declared, filled by `runAgentLoop`. */
   toolsDeclared?: number;
   /**
-   * The turn was served on the llama.cpp slot its run holds, filled by `runAgentLoop`. Present only
-   * for a run given a `session` on a server that reports slots: `false` is one that could not be
-   * pinned, every slot being held or the server refusing `id_slot`.
+   * The request was served on the llama.cpp slot its exchange holds, filled by `runAgentLoop`.
+   * Present only for an exchange given a `session` on a server that reports slots: `false` is one
+   * that could not be pinned, every slot being held or the server refusing `id_slot`.
    */
   pinned?: boolean;
   /**
@@ -168,30 +169,30 @@ export const noUsage = (): TurnUsage => ({ prompt: 0, completion: 0, total: 0, c
  * A run's token totals, in the spelling every run-level usage shares.
  *
  * @remarks
- * The spelling of `RunUsage`, which is what the `usage` events carry and what hosts persist, so a
- * host reads a loop's result and its events with one mapping rather than two. A single turn's own
- * report, `TurnUsage`, keeps its shorter names: it is a different thing, a turn's measurements,
- * and every field on it is that turn's.
+ * The spelling of `RunUsage`, which is what the `usage` events carry and what apps persist, so an
+ * app reads a loop's result and its events with one mapping rather than two. A single reply's own
+ * report, `TurnUsage`, keeps its shorter names: it is a different thing, one reply's
+ * measurements, and every field on it is that reply's.
  */
 export interface UsageTotals {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  /** How much of `promptTokens` came from the endpoint's prompt cache. Zero where none said. */
+  /** How much of `promptTokens` came from the model server's prompt cache. Zero where none said. */
   cachedTokens: number;
   /**
-   * Whether any turn of the run reported a cache count, which is what tells a `cachedTokens` of
-   * zero that is a miss from one the endpoint never reports. A turn reported one where its usage
-   * carries `uncached`.
+   * Whether any reply counted here reported a cache count, which is what tells a `cachedTokens`
+   * of zero that is a miss from one the model server never reports. A reply reported one where its
+   * usage carries `uncached`.
    */
   cacheReported: boolean;
 }
 
 /**
- * What a loop spent, as `AgentLoopResult.usage` and a failed run's `usage` carry it.
+ * What a loop spent, as `AgentLoopResult.usage` and a failed exchange's `usage` carry it.
  *
  * @remarks
- * `UsageTotals`, with the four counts also under the names this field had before it: a host that
+ * `UsageTotals`, with the four counts also under the names this field had before it: an app that
  * reads `usage.prompt` keeps compiling and reads the same number as `usage.promptTokens`.
  */
 export interface LoopUsage extends TurnUsage, UsageTotals {
@@ -206,9 +207,9 @@ export interface LoopUsage extends TurnUsage, UsageTotals {
 }
 
 /**
- * Whether a turn's usage says the endpoint reported its cache.
+ * Whether a reply's usage says the model server reported its cache.
  *
- * @param usage - One turn's report.
+ * @param usage - One reply's report.
  * @returns True where it carries `uncached`, which is present only where a cache count was.
  */
 export const reportsCache = (usage: TurnUsage): boolean => usage.uncached !== undefined;
@@ -299,7 +300,7 @@ type CacheUsage = OpenAI.CompletionUsage & { prompt_cache_hit_tokens?: number | 
 /** A chunk as llama.cpp sends its last one, with `timings` beside `usage`. */
 type TimedChunk = OpenAI.ChatCompletionChunk & { timings?: Timings };
 
-/** One streamed turn, put back together into the shape a loop and a transcript work with. */
+/** One streamed reply, put back together into the shape a loop and a transcript work with. */
 export interface Turn {
   content: string;
   /**
@@ -311,8 +312,8 @@ export interface Turn {
   toolCalls: ToolCall[];
   usage: TurnUsage;
   /**
-   * Why the model stopped, in the endpoint's own words — `stop`, `length`, `tool_calls`, or `""`
-   * where it never said.
+   * Why the model stopped, in the model server's own words — `stop`, `length`, `tool_calls`, or
+   * `""` where it never said.
    *
    * @remarks
    * Reported because `length` is otherwise invisible. A turn cut off at the token ceiling comes
@@ -348,8 +349,8 @@ export interface Turn {
    *
    * @remarks
    * Written back beside `reasoning` as `reasoningReplay` says, because OpenRouter asks for the
-   * blocks unmodified and in order, and a provider behind it that signs or encrypts its reasoning
-   * loses it between steps without them.
+   * blocks unmodified and in order, and a provider behind it that signs or encrypts its scratchpad
+   * loses it between turns without them.
    */
   reasoningDetails?: ReasoningDetail[];
 }
@@ -396,7 +397,7 @@ function appendReasoningDetail(details: ReasoningDetail[], block: ReasoningDetai
   for (const [key, value] of Object.entries(block)) {
     if (key === textKey) {
       last[key] = `${typeof last[key] === 'string' ? last[key] : ''}${typeof value === 'string' ? value : ''}`;
-    } else if (last[key] === undefined || last[key] === null) {
+    } else if (isAbsent(last[key])) {
       last[key] = value;
     }
   }
@@ -417,14 +418,14 @@ export const reasoningDetailsEntry = (details?: readonly ReasoningDetail[]) =>
  *
  * @param reasoning - The scratchpad, or `""` for none.
  * @param [field] - The field to write it under, as `Turn.reasoningField` names it.
- * @returns `{ [field]: reasoning }`, or an empty object for no reasoning: never a `null` or an empty
- * string, which llama.cpp throws on and Kimi's template renders as `<think>None</think>`.
+ * @returns `{ [field]: reasoning }`, or an empty object for no scratchpad: never a `null` or an
+ * empty string, which llama.cpp throws on and Kimi's template renders as `<think>None</think>`.
  */
 export const reasoningEntry = (reasoning: string, field: ReasoningField = REASONING_CONTENT) =>
   reasoning ? { [field]: reasoning } : {};
 
 /**
- * Reasoning deltas are not in the OpenAI types and have two spellings in the wild:
+ * Scratchpad deltas are not in the OpenAI types and have two spellings in the wild:
  * `reasoning_content` is llama.cpp, vLLM and DeepSeek, `reasoning` is OpenRouter's.
  */
 type ReasoningDelta = OpenAI.ChatCompletionChunk.Choice.Delta & {
@@ -586,14 +587,14 @@ const NO_SDK_TIMEOUT = 2_147_483_647;
  * @remarks
  * A box rather than a return value because it has to be readable *while* the request is in
  * flight: the rules in `retry.ts` are built on the premise that a stream which has already
- * emitted tokens must never be replayed, and by the time a rejected promise is in hand the turn
- * is over. There is one of these per attempt, shared by everything that has a say in whether
- * the attempt is repeated. See `negotiate`.
+ * emitted tokens must never be replayed, and by the time a rejected promise is in hand the
+ * request is over. There is one of these per attempt, shared by everything that has a say in
+ * whether the attempt is repeated. See `negotiate`.
  *
- * What sets it is a chunk that carried something — text, reasoning, or a piece of a tool call —
+ * What sets it is a chunk that carried something — text, scratchpad, or a piece of a tool call —
  * rather than a chunk arriving. Those read as the same sentence until a server puts an empty
  * chunk between them, and most of them do: a stream usually opens with a content-free
- * `{"role":"assistant"}` that shows nobody anything, and a turn that latched on it could never
+ * `{"role":"assistant"}` that shows nobody anything, and a request that latched on it could never
  * be retried however early it then died.
  */
 export interface Produced {
@@ -601,13 +602,13 @@ export interface Produced {
 }
 
 /**
- * What a turn had said when it ended without coming back: the answer, the scratchpad and the calls,
- * as far as each had arrived.
+ * What a reply had said when it ended without coming back: the answer, the scratchpad and the
+ * calls, as far as each had arrived.
  *
  * @remarks
- * It is not a `Turn`, and not a message an endpoint will take back: it has no usage, no reason it
- * ended, and a call in it may stop mid-JSON. It is what a person watching had been shown, for a
- * host to keep or to show.
+ * It is not a `Turn`, and not a message a model server will take back: it has no usage, no reason
+ * it ended, and a call in it may stop mid-JSON. It is what a person watching had been shown, for
+ * an app to keep or to show.
  */
 export interface PartialTurn {
   /** The answer so far, fences taken out; `""` where it had not begun. */
@@ -626,7 +627,7 @@ export interface PartialTurn {
  *
  * @remarks
  * A box for the reason `Produced` is one: a rejected promise carries no stream state, and the
- * error is often the signal's reason, which is shared by every run under it. Each `streamTurn`
+ * error is often the signal's reason, which is shared by every request under it. Each `streamTurn`
  * sets `read` as it starts, so after a retry or a downgrade it reads the latest attempt and
  * nothing of the one before.
  */
@@ -636,7 +637,7 @@ export interface InFlight {
 }
 
 /**
- * A partial turn from what a stream had put together, or nothing where it had put nothing.
+ * A partial reply from what a stream had put together, or nothing where it had put nothing.
  *
  * @param content - The answer so far.
  * @param reasoning - The scratchpad so far.
@@ -685,7 +686,7 @@ export interface StreamTurnOptions {
   produced?: Produced;
   /**
    * Given a `read` of what this call has said so far, as the call starts. Read it once the call has
-   * thrown; a turn that came back has it all, and the box is not cleared.
+   * thrown; a reply that came back has it all, and the box is not cleared.
    */
   inFlight?: InFlight;
   /**
@@ -730,30 +731,29 @@ export interface StreamTurnOptions {
    * @defaultValue `mintCallId`, nine random characters from `[A-Za-z0-9]`
    *
    * @remarks
-   * Unique within the turn. `runAgentLoop` also keeps each id unique across the transcript; a host
-   * calling this itself does that with `distinctCallIds`.
+   * Unique within the turn. `runAgentLoop` also keeps each id unique across the transcript; an
+   * app calling this itself does that with `distinctCallIds`.
    */
   mintCallId?: CallIdMinter;
 }
 
 /**
- * Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a
- * message.
+ * Streams one reply, reporting tokens as they arrive and assembling them back into a message.
  *
- * @param client - The pooled client for this endpoint.
+ * @param client - The pooled client for this model server.
  * @param body - The request, which must set `stream: true`.
  * @param [options] - Cancellation, the idle watchdog, and the token callbacks.
- * @returns The assembled turn, once the stream has ended. Rejects with `EndpointSilent` where the
- * endpoint was silent past its allowance, and with whatever the abort raised where `signal`
- * stopped it — an aborted stream never comes back as a turn.
+ * @returns The assembled reply, once the stream has ended. Rejects with `EndpointSilent` where the
+ * model server was silent past its allowance, and with whatever the abort raised where `signal`
+ * stopped it — an aborted stream never comes back as a reply.
  *
  * @remarks
  * Streaming buys no speed — nothing waits on the reply but the loop itself. It is what makes a
  * run watchable: a run that stalls, loops, or reaches for the wrong tool says so while it is
  * happening instead of only in the row it leaves behind.
  *
- * Two token callbacks rather than an event input, because a turn does not know which step of
- * which run it is: `step` is the caller's flow concept, and wrapping these into an `emit` is one
+ * Two token callbacks rather than an event input, because a request does not know which exchange
+ * of which run it is: `step` is the caller's flow concept, and wrapping these into an `emit` is one
  * line at the call site.
  */
 export async function streamTurn(
@@ -776,7 +776,7 @@ export async function streamTurn(
 ): Promise<Turn> {
   // Silence, not duration: the timer is rearmed on every chunk, so a model that is still
   // talking is never cut off however long it takes, and one that has stopped talking does not
-  // hang the run until someone notices. A request that never answers at all is the same case
+  // hang the exchange until someone notices. A request that never answers at all is the same case
   // with no chunks in it, which is why the first arming happens before the request is sent.
   const watchdog = new AbortController();
   const linked = signal ? AbortSignal.any([signal, watchdog.signal]) : watchdog.signal;
@@ -804,10 +804,10 @@ export async function streamTurn(
     const started = Date.now();
     return await collect(started);
   } catch (error) {
-    // The caller's own stop has to stay distinguishable from ours: one is a run that was called
-    // off, the other is an endpoint that stopped answering and may be worth retrying. Getting
-    // this backwards records a stopped run as an endpoint fault, which nobody notices until
-    // they read the row and disbelieve it.
+    // The caller's own stop has to stay distinguishable from ours: one is an exchange that was
+    // called off, the other is a model server that stopped answering and may be worth retrying.
+    // Getting this backwards records a stopped exchange as a model server fault, which nobody
+    // notices until they read the row and disbelieve it.
     if (watchdog.signal.aborted && !signal?.aborted) {
       const waited = talking ? idleMs : first;
       const before = talking || first === idleMs ? '' : ' before its first token';
@@ -828,13 +828,16 @@ export async function streamTurn(
       ...(watched ? { timeout: NO_SDK_TIMEOUT } : {}),
       ...(headers ? { headers } : {}),
     });
-    // The field's reasoning here, the fenced kind in the splitter, which can still move text
-    // already read as answer into reasoning when a closing tag turns up with no opening one.
-    const reasoning: string[] = [];
+    // Both kinds of scratchpad in the order they arrived: the field's as it comes, the fenced
+    // kind as the splitter settles it, including answer it moves to the scratchpad on a lone close.
+    let reasoning = '';
+    let fenced = 0;
     let reasoningField: ReasoningField | undefined;
     const details: ReasoningDetail[] = [];
     const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
     const report = (parts: Split[]) => {
+      reasoning += splitter.reasoning.slice(fenced);
+      fenced = splitter.reasoning.length;
       for (const part of parts) {
         (part.kind === SPLIT_REASONING ? onThinking : onOutput)?.(part.text);
       }
@@ -845,7 +848,7 @@ export async function streamTurn(
     if (inFlight) {
       // Lazy, so a stream nobody stops pays nothing for it. Text held back as a possible tag is
       // left out: it is a few characters that may yet be a marker.
-      inFlight.read = () => partialTurn(splitter.output, reasoning.join('') + splitter.reasoning, calls, mintCallId);
+      inFlight.read = () => partialTurn(splitter.output, reasoning, calls, mintCallId);
     }
     const usage = noUsage();
     // The usage block's own cache count wins over llama.cpp's, which is the same number in the
@@ -855,7 +858,7 @@ export async function streamTurn(
     let finishReason = '';
 
     for await (const chunk of stream) {
-      // Rearmed on every chunk, latched below on only some: a priming chunk is the endpoint
+      // Rearmed on every chunk, latched below on only some: a priming chunk is the model server
       // being alive, which is all the watchdog is asking about. Which allowance it rearms with
       // moves from the first chunk's to the idle one when a chunk carries something.
       rearm(false);
@@ -888,9 +891,9 @@ export async function streamTurn(
       const blocks = Array.isArray(delta.reasoning_details) ? delta.reasoning_details.filter(isRecord) : [];
       // Latched on what the chunk carried, not on its having arrived. Most OpenAI-compatible
       // servers open a stream with a content-free `{"role":"assistant"}` before the first
-      // token; latching on that made an endpoint that primes and then wedges unrepeatable,
+      // token; latching on that made a model server that primes and then wedges unrepeatable,
       // which is exactly the case the watchdog raises `EndpointSilent` for. Tool-call
-      // fragments count even though no callback reports them: a partial call is state the turn
+      // fragments count even though no callback reports them: a partial call is state the reply
       // has accumulated, and losing a retry is the safer half of that trade. Set before the
       // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
       const carried = Boolean(thinking || delta.content || delta.tool_calls?.length || blocks.length);
@@ -902,7 +905,7 @@ export async function streamTurn(
         produced.any = true;
       }
       if (thinking) {
-        reasoning.push(thinking);
+        reasoning += thinking;
         onThinking?.(thinking);
       }
       for (const block of blocks) {
@@ -929,7 +932,8 @@ export async function streamTurn(
         const carries = part as Partial<Record<CallExtraKey, unknown>>;
         for (const key of CALL_EXTRA_KEYS) {
           const value = carries[key];
-          if (value !== undefined && value !== null && call.extras[key] === undefined) {
+          const isFirstToCarry = isAbsent(value) === false && call.extras[key] === undefined;
+          if (isFirstToCarry) {
             call.extras[key] = value;
           }
         }
@@ -945,14 +949,14 @@ export async function streamTurn(
       }
     }
 
-    // An aborted stream ends its iteration rather than throwing, so without this a turn cut off
-    // halfway — by the watchdog or by someone stopping the run — comes back looking like a
+    // An aborted stream ends its iteration rather than throwing, so without this a reply cut off
+    // halfway — by the watchdog or by someone stopping the exchange — comes back looking like a
     // complete one, and a truncated answer is recorded as the output. Nothing about the API
     // says you have to know this.
     linked.throwIfAborted();
-    // What was held back as a possible tag. A reply that ended inside a fence stays reasoning:
-    // cut off at the ceiling mid-scratchpad, it has no answer, and promoting the deliberation to
-    // one is how a truncated turn gets recorded as output.
+    // What was held back as a possible tag. A reply that ended inside a fence stays scratchpad:
+    // cut off at the ceiling mid-scratchpad, it has no answer, and promoting the scratchpad to
+    // one is how a truncated reply gets recorded as output.
     report(splitter.finish());
 
     const cached = cacheReport ?? cacheTimings;
@@ -968,7 +972,7 @@ export async function streamTurn(
       toolCalls: assembledCalls(calls, mintCallId),
       usage,
       finishReason,
-      reasoning: reasoning.join('') + splitter.reasoning,
+      reasoning,
       ...(reasoningField ? { reasoningField } : {}),
       ...(details.length ? { reasoningDetails: details } : {}),
     };

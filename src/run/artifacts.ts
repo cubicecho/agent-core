@@ -1,26 +1,21 @@
 import type OpenAI from 'openai';
-import {
-  ArtifactAction,
-  ArtifactSource,
-  type ResourceLink,
-  type RunArtifact,
-  type ToolCallRequest,
-} from '../wire/tool-calls.ts';
 import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
+import type { ResourceLink } from './dispatch.ts';
+import { ArtifactAction, ArtifactSource, type RunArtifact, type ToolCallRequest } from './dispatch.ts';
 
 /**
- * What a run left behind, from the two sources that take a guess: the model saying so, and a call
- * that reads as a write. kanban-server and telos each grew these rules, and this is them in one
- * place; a call's `links`, which take no guessing, are kept by the same ledger.
+ * What an exchange left behind, from the two sources that take a guess: the model saying so, and a
+ * call that reads as a write. kanban-server and telos each grew these rules, and this is them in
+ * one place; a call's `links`, which take no guessing, are kept by the same ledger.
  *
- * A declaration is believed only where some call in the run was given or answered with that
+ * A declaration is believed only where some call in the exchange was given or answered with that
  * location. Without that, a model with no file tools "saves" its answer to a file it never wrote.
  */
 
 /** The name of the tool the loop declares and answers itself when `artifacts.declare` is on. */
 export const RECORD_ARTIFACT = 'record_artifact';
 
-/** The definition of `record_artifact`, as the loop declares it beside the host's own tools. */
+/** The definition of `record_artifact`, as the loop declares it beside the app's own tools. */
 export const RECORD_ARTIFACT_TOOL: OpenAI.ChatCompletionFunctionTool = {
   type: FUNCTION_TOOL,
   function: {
@@ -49,7 +44,7 @@ export const RECORD_ARTIFACT_TOOL: OpenAI.ChatCompletionFunctionTool = {
 };
 
 /**
- * Which of the guessing sources a run collects, beside the links every run keeps.
+ * Which of the guessing sources an exchange collects, beside the links every exchange keeps.
  *
  * @remarks
  * Both are off by default: `linked` is the source to rely on, and these are for servers that
@@ -57,22 +52,24 @@ export const RECORD_ARTIFACT_TOOL: OpenAI.ChatCompletionFunctionTool = {
  */
 export interface ArtifactOptions {
   /**
-   * Declares `record_artifact` on every step and answers it in the loop, never through `dispatch`.
-   * The host's own tool of that name, if it has one, is not dispatched while this is on.
+   * Declares `record_artifact` on every turn and answers it in the loop, never through `dispatch`.
+   * The app's own tool of that name, if it has one, is not dispatched while this is on.
    *
    * @defaultValue `false`
    */
   declare?: boolean;
   /**
    * Reads every successful call for the shape of a write. A predicate reads only the calls it
-   * passes, which is how a host keeps its own tools' writes — a note on its board — off the list.
+   * passes, which is how an app keeps its own tools' writes — a note on its board — off the list.
    *
    * @defaultValue `false`
    */
   detect?: boolean | ((call: ToolCallRequest) => boolean);
 }
 
-/** What one declaration or detection said of a location, before it is merged into the run's. */
+/**
+ * What one declaration or detection said of a location, before it is merged into the exchange's.
+ */
 export interface ArtifactDraft {
   /** The path or URI, trimmed. */
   location: string;
@@ -249,7 +246,7 @@ export function mediaTypeFor(location: string): string | null {
 /**
  * How an artifact came to be known, reading an absent `source` as the link it always was.
  *
- * @param artifact - One of a run's artifacts.
+ * @param artifact - One of an exchange's artifacts.
  * @returns Its source, `linked` where it carries none.
  */
 export const artifactSource = (artifact: Pick<RunArtifact, 'source'>) => artifact.source ?? ArtifactSource.Linked;
@@ -285,16 +282,17 @@ function linkOf(draft: ArtifactDraft): ResourceLink {
 }
 
 /**
- * What tells one call from another across a run: an id is distinct only within its step.
+ * What tells one call from another across an exchange: its turn and its id, since a remote agent's
+ * ids are kept as sent and may repeat in a later turn.
  *
  * @param from - The call.
- * @returns Its step and id as one string.
+ * @returns Its turn and id as one string.
  */
 const callKey = ({ callId, step }: ArtifactFrom) => `${step}\0${callId}`;
 
 /**
- * A run's artifacts, one per location, and what its calls touched for a declaration to be checked
- * against.
+ * An exchange's artifacts, one per location, and what its calls touched for a declaration to be
+ * checked against.
  *
  * @remarks
  * The merge rules are kanban-server's. A later write moves `action` and `sizeBytes` on and leaves
@@ -373,9 +371,13 @@ export class RunArtifacts {
       if (typeof value === 'string') {
         this.#witnessed.push({ text: bare(value), from });
       } else if (Array.isArray(value)) {
-        value.forEach(strings);
+        for (const item of value) {
+          strings(item);
+        }
       } else if (value && typeof value === 'object') {
-        Object.values(value).forEach(strings);
+        for (const held of Object.values(value)) {
+          strings(held);
+        }
       }
     };
     strings(args);
@@ -386,8 +388,8 @@ export class RunArtifacts {
   }
 
   /**
-   * The latest call in the run that was given or answered with `location`, which is telos's rule
-   * for believing a declaration.
+   * The latest call in the exchange that was given or answered with `location`, which is telos's
+   * rule for believing a declaration.
    *
    * @param location - The path or URI a declaration names.
    * @returns That call, or `undefined` where none was. A blank location was touched by none.

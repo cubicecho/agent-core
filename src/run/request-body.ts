@@ -8,8 +8,8 @@ import {
   type ModelCapabilities,
 } from '../endpoint/capabilities.ts';
 import { relaxTools, sanitizeTools } from '../endpoint/schema-compat.ts';
-import { textOf } from '../hooks/hooks.ts';
 import { orderTools, type ToolOrder } from '../tools/tool-loading.ts';
+import { textOf } from '../wire/text.ts';
 import { PARALLEL_TOOL_CALLS, Role } from '../wire/wire.ts';
 import { dropReasoning, oneCallPerMessage } from './run-calls.ts';
 
@@ -27,11 +27,12 @@ const SYSTEM_JOIN = '\n\n';
  *
  * @remarks
  * The Qwen3.5 and later templates and Devstral's raise on any `system` message that is not the
- * first, and so does Mistral's v0.3, so a host that keeps its own system message in the transcript
- * beside the loop's `system` option, or a transcript stored with a fold's summary as a `system`
- * message the way earlier versions wrote it, would otherwise fail on every request. The merge is the
- * same text on every step, so the prefix stays stable. A `system` message further down the
- * transcript is the host's and is sent where it is: moving it would change what it is said after.
+ * first, and so does Mistral's v0.3, so an app that keeps its own system message in the transcript
+ * beside the loop's `system` option, or a transcript stored with a compaction's summary as a
+ * `system` message the way earlier versions wrote it, would otherwise fail on every request. The
+ * merge is the same text on every turn, so the prefix stays stable. A `system` message further
+ * down the transcript is the app's and is sent where it is: moving it would change what it is
+ * said after.
  */
 export function singleSystem(messages: OpenAI.ChatCompletionMessageParam[]): OpenAI.ChatCompletionMessageParam[] {
   const end = messages.findIndex((message) => message.role !== Role.System);
@@ -50,7 +51,7 @@ export function singleSystem(messages: OpenAI.ChatCompletionMessageParam[]): Ope
 /**
  * Whether a model is sent and written one tool call per assistant message.
  *
- * @param config - The run's, read for `singleCallMessages`.
+ * @param config - The exchange's, read for `singleCallMessages`.
  * @param refused - What the model has refused. Absent is a model that has refused nothing.
  * @returns `true` where the config asks for it or the model's template refused a message with
  * several.
@@ -59,20 +60,20 @@ export const singleCalls = (config: Pick<ModelParams, 'singleCallMessages'>, ref
   config.singleCallMessages === true || refused?.multiCallMessages === false;
 
 /**
- * The one place a streamed request's body is decided from a config and what the endpoint and
+ * The one place a streamed request's body is decided from a config and what the model server and
  * the model have refused.
  *
  * @param config - What to ask for. `maxTokens` absent, zero or less sends no ceiling, and a remote
  * agent's absent `temperature` none; `reasoningEffort` absent or `"off"` sends no effort, and one the
  * model has refused by value is stepped up to the cheapest it takes by `effortFor`.
- * @param supports - What the endpoint has refused, as `negotiate` hands it to `send`.
+ * @param supports - What the model server has refused, as `negotiate` hands it to `send`.
  * @param refused - What the model has refused, as `negotiate` hands it over. Absent is a model
  * that has refused nothing.
  * @param messages - The request's messages, system prompt included, sent as they are — less
  * their scratchpads for a model that refused them, and one call to a message (`oneCallPerMessage`)
  * for one that takes no more.
  * @param [tools] - The tool definitions. Ordered by name, sanitised here — a lookup for a definition
- * seen before — and relaxed where the endpoint needs it. Empty sends no `tools` field at all.
+ * seen before — and relaxed where the model server needs it. Empty sends no `tools` field at all.
  * @param [order] - How to order them before sending. `true` is by name, which keeps the cache
  * when the caller's array is assembled differently from one request to the next. See
  * `orderTools`.

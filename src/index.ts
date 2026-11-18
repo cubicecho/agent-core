@@ -3,8 +3,8 @@
  *
  * What is here is everything that does not know what the agent is *for*: making a tool schema
  * a strict server will accept, getting tool definitions in front of a model without paying for
- * all of them, reading one streamed turn back into a message, answering an endpoint that
- * refuses one of those, one-shot calls that support a run, the host's side of lifecycle hooks,
+ * all of them, reading one streamed reply back into a message, answering a model server that
+ * refuses one of those, one-shot calls that support an exchange, the app's side of lifecycle hooks,
  * the event bus a watcher reads, a pooled client, and the rules about retrying. What is not here is the work — orchestration,
  * prompts, and whatever the run is about — because that is the caller's, and it is the part
  * that differs between one server and the next.
@@ -48,6 +48,7 @@ export {
 export {
   type AgentConfig,
   type Endpoint,
+  type EndpointIdentity,
   type ModelParams,
   normalizeBaseUrl,
   ReasoningReplay,
@@ -69,7 +70,9 @@ export {
   modelCapabilitiesFor,
   type NegotiateOptions,
   negotiate,
+  type OnNotice,
   resetCapabilities,
+  resetHints,
 } from './endpoint/capabilities.ts';
 export {
   type ClientPoolOptions,
@@ -127,8 +130,6 @@ export {
   resetHooks,
   turnIndex,
   turnMessages,
-  UNTRUSTED_PREFACE,
-  untrusted,
   withContext,
 } from './hooks/hooks.ts';
 export {
@@ -138,7 +139,6 @@ export {
   type AgentLoopResult,
   PRESELECT_APPEND,
   PRESELECT_EXCLUSIVE,
-  PRESELECTED_NOTICE,
   runAgentLoop,
   type StepWindow,
   type WrittenMessage,
@@ -153,6 +153,20 @@ export {
   RECORD_ARTIFACT,
   RECORD_ARTIFACT_TOOL,
 } from './run/artifacts.ts';
+export {
+  ArtifactAction,
+  ArtifactSource,
+  type EndedBy,
+  type ResourceLink,
+  type RunArtifact,
+  type ServerLogEntry,
+  ServerLogLevel,
+  type ToolAnswer,
+  type ToolCallOutcome,
+  type ToolCallReport,
+  type ToolCallRequest,
+  type ToolCallResult,
+} from './run/dispatch.ts';
 export {
   configureEvents,
   type EventBusOptions,
@@ -174,6 +188,13 @@ export {
   type TurnReport,
   watch,
 } from './run/events.ts';
+export {
+  AgentLoopError,
+  type AgentLoopFailure,
+  AgentLoopOverflow,
+  failedRun,
+  ToolIterationLimit,
+} from './run/failure.ts';
 export {
   IDEMPOTENCY_HEADER,
   PROGRESS_FIELD,
@@ -247,6 +268,7 @@ export {
   type ToolsSpec,
 } from './spec/spec.ts';
 export type { CatalogServer } from './tools/catalog.ts';
+export { PRESELECTED_NOTICE } from './tools/discovery.ts';
 export {
   SERVER_INSTRUCTION_TOKENS,
   type ServerInstructionsOptions,
@@ -298,7 +320,6 @@ export {
   clean,
   listLines,
   parseJson,
-  resetHints,
   type SideTask,
   type SideTaskInput,
   type SideTaskOptions,
@@ -315,14 +336,7 @@ export {
   freshCallId,
   mintCallId,
 } from './wire/call-ids.ts';
-export {
-  AgentLoopError,
-  type AgentLoopFailure,
-  AgentLoopOverflow,
-  errorMessage,
-  failedRun,
-  ToolIterationLimit,
-} from './wire/errors.ts';
+export { errorMessage } from './wire/errors.ts';
 export {
   backoffMs,
   ContextOverflow,
@@ -348,6 +362,7 @@ export {
   type TurnUsage,
   type UsageTotals,
 } from './wire/stream.ts';
+export { UNTRUSTED_PREFACE, untrusted } from './wire/text.ts';
 export {
   ALL_FENCES,
   DEFAULT_FENCES,
@@ -375,22 +390,10 @@ export {
 export {
   ARGUMENTS_MALFORMED,
   ARGUMENTS_TRUNCATED,
-  ArtifactAction,
-  ArtifactSource,
-  type EndedBy,
   parseToolArguments,
-  type ResourceLink,
-  type RunArtifact,
   recoverToolCalls,
-  type ServerLogEntry,
-  ServerLogLevel,
-  type ToolAnswer,
   ToolArgumentsError,
   type ToolCall,
-  type ToolCallOutcome,
-  type ToolCallReport,
-  type ToolCallRequest,
-  type ToolCallResult,
 } from './wire/tool-calls.ts';
 export {
   CALL_EXTRA_KEYS,

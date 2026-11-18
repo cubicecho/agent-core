@@ -5,8 +5,10 @@ import {
   ContextOverflow,
   EndpointSilent,
   isAbort,
+  isModelLoading,
   isOverflow,
   isTransient,
+  refusesRequest,
   sleep,
 } from '../../src/wire/retry.ts';
 import { apiError } from '../helpers.ts';
@@ -24,6 +26,45 @@ describe('isTransient', () => {
     expect(isTransient(new Error('something else'))).toBe(false);
     // Its own class precisely so nothing retries it.
     expect(isTransient(new ContextOverflow('too big'))).toBe(false);
+  });
+});
+
+describe('refusesRequest', () => {
+  it('reads a 400 or a 422 as the request refused as written', () => {
+    expect(refusesRequest(apiError(400))).toBe(true);
+    expect(refusesRequest(apiError(422))).toBe(true);
+  });
+
+  it('reads no other status, and nothing lost or cancelled, as a refusal', () => {
+    for (const status of [401, 404, 429, 500, 503]) {
+      expect(refusesRequest(apiError(status))).toBe(false);
+    }
+    // Both are SDK errors with no status: neither says anything about the fields.
+    expect(refusesRequest(new OpenAI.APIConnectionError({ message: 'ECONNREFUSED' }))).toBe(false);
+    expect(refusesRequest(new OpenAI.APIUserAbortError())).toBe(false);
+    expect(refusesRequest(new Error('400 rejected'))).toBe(false);
+  });
+});
+
+describe('isModelLoading', () => {
+  /** A 503 as llama.cpp sends it, the body unwrapped as the SDK hands it to the constructor. */
+  const unavailable = (body: Record<string, unknown>, status = 503) =>
+    new OpenAI.APIError(status, body, undefined, undefined);
+
+  it("reads llama.cpp's 503 of type unavailable_error as the model loading, whatever it says", () => {
+    expect(isModelLoading(unavailable({ message: 'Loading model', type: 'unavailable_error' }))).toBe(true);
+    expect(isModelLoading(unavailable({ message: 'busy', type: 'unavailable_error' }))).toBe(true);
+  });
+
+  it('reads a 503 that says the model is loading as that, with no type', () => {
+    expect(isModelLoading(apiError(503, 'Loading model'))).toBe(true);
+    expect(isModelLoading(apiError(503, 'the model is loading, try again'))).toBe(true);
+  });
+
+  it('reads a plain 503, another status or what is not an SDK error as something else', () => {
+    expect(isModelLoading(apiError(503, 'Service Unavailable'))).toBe(false);
+    expect(isModelLoading(unavailable({ message: 'Loading model', type: 'unavailable_error' }, 500))).toBe(false);
+    expect(isModelLoading(new Error('503 Loading model'))).toBe(false);
   });
 });
 

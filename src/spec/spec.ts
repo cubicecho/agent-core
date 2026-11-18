@@ -5,7 +5,7 @@ import {
   ReasoningReplay,
   ToolDiscovery,
 } from '../core/config.ts';
-import { isRecord } from '../core/guards.ts';
+import { isAbsent, isRecord } from '../core/guards.ts';
 import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 
 /**
@@ -18,11 +18,11 @@ import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
  * real ceiling of zero* in the third. This is the shape they can all write and all read, argued
  * out in `docs/agent-spec.md` before any of it was code.
  *
- * Nothing else in `src/` imports this module, and this module imports nothing that needs Node:
- * types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
+ * Nothing outside `src/spec/` imports this module, and this module imports nothing that needs
+ * Node: types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
  * loop takes the parts it reads, not a config object — and it is what lets the document travel
- * between hosts without the loop growing an opinion about where an agent comes from. It is also
- * why this is importable in a browser, where `client.ts` and `hooks.ts` are not: a host validating
+ * between apps without the loop growing an opinion about where an agent comes from. It is also
+ * why this is importable in a browser, where `client.ts` and `hooks.ts` are not: an app validating
  * a pasted document in a form needs no `node:crypto`.
  */
 
@@ -37,7 +37,7 @@ export const AGENT_SPEC_VERSION = 1;
  * validator.
  *
  * @remarks
- * `tasks` is an open record on purpose — a host may run tasks this package has never heard of,
+ * `tasks` is an open record on purpose — an app may run tasks this package has never heard of,
  * and an unknown key is carried through untouched rather than warned about.
  */
 export const AGENT_TASKS = ['compaction', 'toolSelect', 'title', 'followups'] as const;
@@ -59,7 +59,7 @@ export interface AgentSpec {
   /** A URL for an editor's autocompletion. Never fetched, never read, never validated against. */
   $schema?: string;
 
-  /** A stable handle within a host: `reviewer`, `local-qwen`. Absent in a layer of pure defaults. */
+  /** A stable handle within an app: `reviewer`, `local-qwen`. Absent in a layer of pure defaults. */
   id?: string;
   /** What a person calls it. Absent falls back to `id`. */
   name?: string;
@@ -78,9 +78,9 @@ export interface AgentSpec {
   /** Definitions carried so an agent travels whole. Executable by proxy; see `parseSpec`. */
   bundle?: SpecBundle;
 
-  /** Host payloads keyed by reverse domain. Carries no semantics and is never validated. */
+  /** App payloads keyed by reverse domain. Carries no semantics and is never validated. */
   extensions?: Record<string, unknown>;
-  /** Extension keys a host must understand, or it refuses to run this agent. */
+  /** Extension keys an app must understand, or it refuses to run this agent. */
   requires?: string[];
 
   /** Keys from a later 1.x, kept so an edit-and-export cycle does not erase them. */
@@ -110,7 +110,7 @@ export interface ModelSpec {
   reasoningEffort?: string;
   /** Which assistant messages replay the model's scratchpad. Absent is `all`. */
   reasoningReplay?: ReasoningReplay;
-  /** What the operator says this model reads, in tokens. Zero asks the endpoint. */
+  /** What the operator says this model reads, in tokens. Zero asks the model server. */
   contextLength?: number;
   /**
    * Request fields the interface cannot spell. The `RESERVED_BODY_FIELDS` are dropped, and so are
@@ -141,12 +141,12 @@ export interface ToolsSpec {
    * How tool definitions reach the model: all of them on every request, a name-only catalogue
    * the model loads from, or that catalogue behind a fixed `load_tools` and `call_tool`.
    */
-  discovery?: 'eager' | 'ondemand' | 'proxy';
+  discovery?: ToolDiscovery;
   /** The hard stop on a tool loop. At least one. */
   maxIterations?: number;
   /**
    * The MCP servers this agent may reach, by effective slug (`row.slug ?? row.id`).
-   * Absent is every server the host offers, `[]` is none, and a list is exactly those.
+   * Absent is every server the app offers, `[]` is none, and a list is exactly those.
    * Three different answers, and a loader must never collapse one into another.
    */
   servers?: string[];
@@ -164,7 +164,7 @@ export interface RetrySpec {
 export interface TaskSpec {
   /** The model for this task. Empty turns it off, which is how a layer declines one below it. */
   model?: string;
-  /** Where that model lives, when it is not on the agent's endpoint. */
+  /** Where that model lives, when it is not on the agent's model server. */
   endpoint?: EndpointSpec;
   /** The reply's ceiling. Absent is the side task's own default, not the agent's `maxTokens`. */
   maxTokens?: number;
@@ -183,11 +183,11 @@ export interface TaskSpec {
   extraBody?: Record<string, unknown>;
 }
 
-/** A tool call bound to a lifecycle event, run by the host rather than the model. */
+/** A tool call bound to a lifecycle event, run by the app rather than the model. */
 export interface AgentHook {
   /** Unique within the agent. Merging happens on it. */
   id: string;
-  /** One of `SPEC_EVENTS`. An event this host never fires is a warning, not an error. */
+  /** One of `SPEC_EVENTS`. An event this app never fires is a warning, not an error. */
   on: HookEvent;
   /** The server whose tool this is, by effective slug. */
   server: string;
@@ -229,7 +229,7 @@ export interface SpecBundle {
 }
 
 /**
- * One side task, resolved: a model, and the endpoint it is reached through.
+ * One side task, resolved: a model, and the model server it is reached through.
  *
  * @remarks
  * The settings are present only where a layer stated them, and nothing is filled in from
@@ -238,7 +238,7 @@ export interface SpecBundle {
  */
 export interface ResolvedTask {
   model: string;
-  /** This task's endpoint, which is the agent's unless a layer named another. */
+  /** This task's model server, which is the agent's unless a layer named another. */
   endpoint: Endpoint;
   maxTokens?: number;
   temperature?: number;
@@ -249,7 +249,7 @@ export interface ResolvedTask {
 
 /**
  * What layered documents resolve to: the flat shape the loop already takes, plus the parts of an
- * agent that are the host's to act on.
+ * agent that are the app's to act on.
  *
  * @remarks
  * `extends AgentConfig` is the whole point — `getClient(resolved)` and
@@ -259,16 +259,21 @@ export interface ResolvedAgent extends AgentConfig {
   id: string;
   name: string;
   description: string;
-  /** The tri-state preserved: absent is every server the host offers, empty is none. */
+  /** The tri-state preserved: absent is every server the app offers, empty is none. */
   servers?: readonly string[];
   /**
-   * The merged prompt parts, in order. `systemPrompt` is the join of their texts, so a part that
-   * is only a `ref` contributes nothing to it — the host resolves the reference and re-resolves,
-   * or reads it from here and does what it likes.
+   * The merged prompt parts, in order, without the ones a layer deleted with an empty text.
+   * `systemPrompt` is the join of their texts, so a part that is only a `ref` contributes nothing
+   * to it — the app resolves the reference and re-resolves, or reads it from here and does what
+   * it likes.
    */
   prompt: readonly PromptPart[];
   /** Only the tasks a layer configured and none declined. `toolSelect` also flattens to `toolSelectModel`. */
   tasks: Readonly<Record<string, ResolvedTask>>;
+  /**
+   * Merged by id. An `inject` or a `veto` the merged hook's event cannot honour is dropped, as
+   * `parseSpec` drops it from one layer, but silently: resolving reports nothing.
+   */
   hooks: readonly AgentHook[];
   /** Bundled server definitions, merged by effective slug. Empty unless a bundle was parsed. */
   mcpServers: readonly SpecServer[];
@@ -283,8 +288,9 @@ export interface ResolvedAgent extends AgentConfig {
  * @remarks
  * Not sentinels, and not invented: `toolDiscovery`, `maxRetries` and `contextLength` are the
  * "absent everywhere" column of the document's own table, and `temperature` and `maxToolIterations`
- * are what all three consumers store as their defaults today. A field left out here is left out of
- * the resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no opinion".
+ * are what all three consumers store as their defaults today. `maxTokens: 0` sends no ceiling,
+ * leaving the reply's length to the model server. A field left out here is left out of the
+ * resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no opinion".
  */
 export const RESOLVED_DEFAULTS = {
   temperature: 0.7,
@@ -310,29 +316,21 @@ export interface ParseSpecOptions {
   /**
    * Parse `bundle` rather than dropping it. Opt-in, because a bundled server carries a command
    * line and an environment map: loading one is equivalent to running a program, exactly as
-   * dangerous as pasting somebody's `.mcp.json`, and a host has to make that decision rather than
+   * dangerous as pasting somebody's `.mcp.json`, and an app has to make that decision rather than
    * inherit it from a default.
    *
    * @defaultValue `false`
    */
   bundle?: boolean;
   /**
-   * The events this host actually fires. A hook bound elsewhere warns.
+   * The events this app actually fires. A hook bound elsewhere warns.
    *
    * @defaultValue `SPEC_EVENTS`, which is all of them
    */
   events?: readonly string[];
-  /** The `extensions` keys this host understands. A `requires` entry outside it refuses the load. */
+  /** The `extensions` keys this app understands. A `requires` entry outside it refuses the load. */
   understands?: readonly string[];
 }
-
-/**
- * Absent and null are the same thing: a nullable column round-trips through JSON as `null`.
- *
- * @param value - Whatever a document held under a key.
- * @returns `true` for `undefined` and `null` only — `0`, `""`, `false` and `[]` are values.
- */
-const absent = (value: unknown) => value === undefined || value === null;
 
 /** A `${VAR}`-shaped string, which is kept as the literal it is rather than expanded. */
 const VARIABLE = /\$\{[^}]*\}/;
@@ -386,7 +384,7 @@ class Report {
    * which is why the formats that do it need a credential denylist bolted on afterwards.
    */
   string(path: string, value: unknown): string | undefined {
-    if (absent(value)) {
+    if (isAbsent(value)) {
       return undefined;
     }
     if (typeof value !== 'string') {
@@ -409,7 +407,7 @@ class Report {
    * number or lies outside the bounds — dropped with a warning, never clamped.
    */
   number(path: string, value: unknown, least: number, most = Infinity): number | undefined {
-    if (absent(value)) {
+    if (isAbsent(value)) {
       return undefined;
     }
     if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -427,6 +425,28 @@ class Report {
   }
 
   /**
+   * A field that must be one member of a closed set, or nothing.
+   *
+   * @typeParam T - The set's members.
+   * @param path - Where the field is, for the warning.
+   * @param value - What the document held there.
+   * @param members - Every member, in the order the warning lists them.
+   * @returns The member as written. `undefined` where it is absent, and where it is not a member —
+   * dropped with a warning that lists them all.
+   */
+  oneOf<T extends string>(path: string, value: unknown, members: readonly T[]): T | undefined {
+    if (isAbsent(value)) {
+      return undefined;
+    }
+    const member = members.find((known) => known === value);
+    if (member === undefined) {
+      const quoted = members.map((known) => `"${known}"`);
+      return void this.drop(path, `must be ${quoted.slice(0, -1).join(', ')} or ${quoted.at(-1)}`);
+    }
+    return member;
+  }
+
+  /**
    * A boolean field, or nothing.
    *
    * @param path - Where the field is, for the warning.
@@ -435,7 +455,7 @@ class Report {
    * `true` or `false` — dropped with a warning, never coerced.
    */
   boolean(path: string, value: unknown): boolean | undefined {
-    if (absent(value)) {
+    if (isAbsent(value)) {
       return undefined;
     }
     if (typeof value !== 'boolean') {
@@ -486,7 +506,7 @@ const said = (value: object) => Object.keys(value).length > 0;
  * An `apiKey` or an `api_key` is dropped with a warning: a document carries no credentials.
  */
 function parseEndpoint(report: Report, path: string, value: unknown): EndpointSpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -497,7 +517,7 @@ function parseEndpoint(report: Report, path: string, value: unknown): EndpointSp
     requestTimeoutSeconds: report.number(`${path}.requestTimeoutSeconds`, value.requestTimeoutSeconds, 0),
     firstTokenSeconds: report.number(`${path}.firstTokenSeconds`, value.firstTokenSeconds, 0),
   });
-  if (!absent(value.apiKey) || !absent(value.api_key)) {
+  if (!isAbsent(value.apiKey) || !isAbsent(value.api_key)) {
     report.drop(`${path}.apiKey`, 'is not part of this format — a document carries no credentials');
   }
   return said(endpoint) ? endpoint : undefined;
@@ -530,24 +550,13 @@ const parseSampling = (report: Report, path: string, value: Record<string, unkno
  * section is absent or is not an object.
  */
 function parseModel(report: Report, value: unknown): ModelSpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
     return void report.drop('model', 'must be an object');
   }
-  let reasoningReplay: ReasoningReplay | undefined;
-  if (!absent(value.reasoningReplay)) {
-    if (
-      value.reasoningReplay === ReasoningReplay.All ||
-      value.reasoningReplay === ReasoningReplay.ToolLoop ||
-      value.reasoningReplay === ReasoningReplay.None
-    ) {
-      reasoningReplay = value.reasoningReplay;
-    } else {
-      report.drop('model.reasoningReplay', 'must be "all", "tool-loop" or "none"');
-    }
-  }
+  const reasoningReplay = report.oneOf('model.reasoningReplay', value.reasoningReplay, Object.values(ReasoningReplay));
   return kept({
     model: report.string('model.model', value.model),
     ...parseSampling(report, 'model', value),
@@ -573,6 +582,25 @@ const SPELLED_BODY_FIELDS: Readonly<Record<string, keyof ModelSpec & keyof TaskS
 });
 
 /**
+ * An `extraBody` less the fields something else sets: the `RESERVED_BODY_FIELDS` and the
+ * `SPELLED_BODY_FIELDS`.
+ *
+ * @param extraBody - Read, not written to.
+ * @returns A new object holding every other key.
+ *
+ * @remarks
+ * `parseExtraBody` drops the same fields from one document and warns. This holds the rule for a
+ * layer that never went through it: one built in code, or by `defineSpecColumns().toLayer`.
+ */
+function unownedFields(extraBody: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(extraBody).filter(
+      ([key]) => RESERVED_BODY_FIELDS.includes(key) === false && Object.hasOwn(SPELLED_BODY_FIELDS, key) === false,
+    ),
+  );
+}
+
+/**
  * Reads an `extraBody`, the agent's model's or a side task's.
  *
  * @param report - Where what is dropped is written.
@@ -583,7 +611,7 @@ const SPELLED_BODY_FIELDS: Readonly<Record<string, keyof ModelSpec & keyof TaskS
  * survives as an empty one.
  */
 function parseExtraBody(report: Report, path: string, value: unknown): Record<string, unknown> | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -633,7 +661,7 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
     }
     const text = report.string(`${path}.text`, held.text);
     let ref: PromptPart['ref'];
-    if (!absent(held.ref)) {
+    if (!isAbsent(held.ref)) {
       const raw = held.ref;
       const type = isRecord(raw) ? raw.type : undefined;
       const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
@@ -667,26 +695,15 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
  * still a list.
  */
 function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
     return void report.drop('tools', 'must be an object');
   }
-  let discovery: ToolsSpec['discovery'];
-  if (!absent(value.discovery)) {
-    if (
-      value.discovery === ToolDiscovery.Eager ||
-      value.discovery === ToolDiscovery.OnDemand ||
-      value.discovery === ToolDiscovery.Proxy
-    ) {
-      discovery = value.discovery;
-    } else {
-      report.drop('tools.discovery', 'must be "eager", "ondemand" or "proxy"');
-    }
-  }
+  const discovery = report.oneOf('tools.discovery', value.discovery, Object.values(ToolDiscovery));
   let servers: string[] | undefined;
-  if (!absent(value.servers)) {
+  if (!isAbsent(value.servers)) {
     if (!Array.isArray(value.servers)) {
       report.drop('tools.servers', 'must be an array of slugs');
     } else {
@@ -719,7 +736,7 @@ function parseTools(report: Report, value: unknown): ToolsSpec | undefined {
  * or held nothing usable.
  */
 function parseRetry(report: Report, value: unknown): RetrySpec | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
@@ -745,14 +762,14 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
   const tasks: Record<string, TaskSpec> = {};
   for (const [key, held] of Object.entries(value)) {
     const path = `tasks.${key}`;
-    if (absent(held)) {
+    if (isAbsent(held)) {
       continue;
     }
     if (!isRecord(held)) {
       report.drop(path, 'must be an object');
       continue;
     }
-    // An unknown key is not warned about: a host may run side tasks this package has never
+    // An unknown key is not warned about: an app may run side tasks this package has never
     // heard of, and `AGENT_TASKS` is documentation rather than a validator.
     tasks[key] = kept({
       model: report.string(`${path}.model`, held.model),
@@ -765,11 +782,37 @@ function parseTasks(report: Report, value: Record<string, unknown>): Record<stri
 }
 
 /**
+ * A hook's `inject` and `veto`, less the ones its event cannot honour.
+ *
+ * @param hook - The event, and the flags as stated.
+ * @returns Each flag as stated, or `undefined` where it is `true` on an event that cannot honour
+ * it, and why under `dropped`, by flag. `dropped` is empty where both stand.
+ *
+ * @remarks
+ * Only `INJECT_EVENTS` run before a model reply a hook's result could reach, and only
+ * `beforeCompact` announces something a hook can decline.
+ */
+function honouredFlags({ on, inject, veto }: Pick<AgentHook, 'on' | 'inject' | 'veto'>) {
+  const dropped: { inject?: string; veto?: string } = {};
+  if (inject && !INJECT_EVENTS.has(on)) {
+    dropped.inject = `"${on}" runs after the model has already answered`;
+  }
+  if (veto && on !== HookEvent.BeforeCompact) {
+    dropped.veto = `"${on}" announces nothing a hook can decline`;
+  }
+  return {
+    inject: dropped.inject ? undefined : inject,
+    veto: dropped.veto ? undefined : veto,
+    dropped,
+  };
+}
+
+/**
  * Reads the `hooks` array, hook by hook.
  *
  * @param report - Where what is dropped or noted is written.
  * @param value - The array, already known to be one.
- * @param events - The events this host fires. A hook bound to any other of `SPEC_EVENTS` is kept
+ * @param events - The events this app fires. A hook bound to any other of `SPEC_EVENTS` is kept
  * and noted.
  * @returns The hooks that survived, in the document's order. Empty where none did.
  *
@@ -799,20 +842,18 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
       report.drop(`${path}.on`, `"${on}" is not an event`);
       continue;
     }
-    // A host that never compacts refuses to save a `beforeCompact` hook today, which makes an
+    // An app that never compacts refuses to save a `beforeCompact` hook today, which makes an
     // otherwise good agent unimportable. Kept and noted instead.
     if (!events.includes(on)) {
       report.note(`${path}.on`, `"${on}" is never fired by this host`);
     }
-    let inject = report.boolean(`${path}.inject`, held.inject);
-    if (inject && !INJECT_EVENTS.has(event)) {
-      report.drop(`${path}.inject`, `"${on}" runs after the model has already answered`);
-      inject = undefined;
-    }
-    let veto = report.boolean(`${path}.veto`, held.veto);
-    if (veto && event !== HookEvent.BeforeCompact) {
-      report.drop(`${path}.veto`, `"${on}" announces nothing a hook can decline`);
-      veto = undefined;
+    const { dropped, inject, veto } = honouredFlags({
+      on: event,
+      inject: report.boolean(`${path}.inject`, held.inject),
+      veto: report.boolean(`${path}.veto`, held.veto),
+    });
+    for (const [flag, reason] of Object.entries(dropped)) {
+      report.drop(`${path}.${flag}`, reason);
     }
     hooks.push(
       kept({
@@ -820,7 +861,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
         on: event,
         server,
         tool,
-        args: absent(held.args) ? undefined : held.args,
+        args: isAbsent(held.args) ? undefined : held.args,
         inject,
         veto,
         maxTokens: report.number(`${path}.maxTokens`, held.maxTokens, 0),
@@ -833,7 +874,7 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
 }
 
 /**
- * Reads the `bundle` section, which `parseSpec` hands over only once a host has opted in.
+ * Reads the `bundle` section, which `parseSpec` hands over only once an app has opted in.
  *
  * @param report - Where what is dropped is written.
  * @param value - What the document held under `bundle`.
@@ -846,13 +887,13 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
  * repeats the effective slug of one before it. Nothing else about it is read.
  */
 function parseBundle(report: Report, value: unknown): SpecBundle | undefined {
-  if (absent(value)) {
+  if (isAbsent(value)) {
     return undefined;
   }
   if (!isRecord(value)) {
     return void report.drop('bundle', 'must be an object');
   }
-  if (absent(value.mcpServers)) {
+  if (isAbsent(value.mcpServers)) {
     return undefined;
   }
   if (!Array.isArray(value.mcpServers)) {
@@ -907,21 +948,21 @@ const KNOWN = new Set([
  * Reads a document, dropping what it cannot use and refusing only what it cannot identify.
  *
  * @param document - Anything at all — this is the front door, and it is given parsed JSON from a
- * form, a file or another host.
- * @param [options] - Whether to parse a bundle, which events this host fires, and which extension
+ * form, a file or another app.
+ * @param [options] - Whether to parse a bundle, which events this app fires, and which extension
  * keys it understands.
  * @returns The document that survived — a new object, never the one handed in — or `spec: null`
  * where `errors` holds anything. `warnings` is filled either way.
  *
  * @remarks
  * Every problem is reported at once, in the `path: what is wrong` shape `validateHooks` already
- * uses, because a host showing an operator one error at a time makes them fix a document one
+ * uses, because an app showing an operator one error at a time makes them fix a document one
  * round trip at a time.
  *
- * There are exactly four hard errors, all of them about the document rather than a value: it is
- * not an object; the `spec` token is missing or of another major; a `requires` entry this host
- * does not understand; a container of the wrong kind. Everything else drops the offending field
- * and warns — the lesson a consumer learned the hard way when one stored out-of-range value
+ * The hard errors are all about the document rather than a value: it is not an object; the
+ * `spec` token is missing or of another major; a container of the wrong kind; a `requires` entry
+ * that is not a string, or that this app does not understand. Everything else drops the offending
+ * field and warns — the lesson a consumer learned the hard way when one stored out-of-range value
  * stopped its server booting. Out-of-range values are dropped rather than clamped, because a
  * clamp invents a number the author did not write while dropping falls back to one somebody did.
  *
@@ -952,18 +993,18 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
 
   // Containers are checked before their contents: "prompt must be an array" is a different
   // mistake from "this prompt part has no id", and only the first is worth refusing over.
-  if (!absent(document.prompt) && !Array.isArray(document.prompt)) {
+  if (!isAbsent(document.prompt) && !Array.isArray(document.prompt)) {
     report.fail('prompt', 'must be an array');
   }
-  if (!absent(document.tasks) && !isRecord(document.tasks)) {
+  if (!isAbsent(document.tasks) && !isRecord(document.tasks)) {
     report.fail('tasks', 'must be an object');
   }
-  if (!absent(document.hooks) && !Array.isArray(document.hooks)) {
+  if (!isAbsent(document.hooks) && !Array.isArray(document.hooks)) {
     report.fail('hooks', 'must be an array');
   }
 
   const requires: string[] = [];
-  if (!absent(document.requires)) {
+  if (!isAbsent(document.requires)) {
     if (!Array.isArray(document.requires)) {
       report.fail('requires', 'must be an array');
     } else {
@@ -982,18 +1023,18 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
   }
 
   let extensions: Record<string, unknown> | undefined;
-  if (!absent(document.extensions)) {
+  if (!isAbsent(document.extensions)) {
     if (!isRecord(document.extensions)) {
       report.drop('extensions', 'must be an object');
     }
-    // Never validated beyond being an object. It is the escape hatch, and the one place a host
+    // Never validated beyond being an object. It is the escape hatch, and the one place an app
     // can put what this package has no name for without being told about it.
     else {
       extensions = document.extensions;
     }
   }
 
-  if (!absent(document.bundle) && !options.bundle) {
+  if (!isAbsent(document.bundle) && !options.bundle) {
     report.drop('bundle', 'carries a command line, so it is only read with { bundle: true }');
   }
 
@@ -1013,7 +1054,7 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
       hooks: Array.isArray(document.hooks) ? parseHooks(report, document.hooks, events) : undefined,
       bundle: options.bundle ? parseBundle(report, document.bundle) : undefined,
       extensions,
-      requires: absent(document.requires) ? undefined : requires,
+      requires: isAbsent(document.requires) ? undefined : requires,
     }),
   };
 
@@ -1021,8 +1062,8 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
     if (KNOWN.has(key)) {
       continue;
     }
-    // Kept, not erased: a host stores what it was given and resolves on read, so a key from a
-    // later 1.x survives an edit-and-export cycle instead of dying at the first host to open it.
+    // Kept, not erased: an app stores what it was given and resolves on read, so a key from a
+    // later 1.x survives an edit-and-export cycle instead of dying at the first app to open it.
     report.note(key, 'is not a key this version names, and was carried through unread');
     spec[key] = held;
   }
@@ -1068,7 +1109,7 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
  *
  * @param layers - The documents, weakest first. None is written to.
  * @returns `model`, holding the last stated value of every field but `extraBody`, and `extraBody`
- * apart from it — empty where no layer had one.
+ * apart from it, less the fields something else sets — empty where nothing is left.
  */
 function mergeModel(layers: readonly AgentSpec[]) {
   const model: ModelSpec = {};
@@ -1085,7 +1126,7 @@ function mergeModel(layers: readonly AgentSpec[]) {
       }
     }
   }
-  return { model, extraBody };
+  return { model, extraBody: unownedFields(extraBody) };
 }
 
 /**
@@ -1094,20 +1135,27 @@ function mergeModel(layers: readonly AgentSpec[]) {
  *
  * @param items - Every layer's items in one list, weakest first. None is written to.
  * @param idOf - What an item merges on. `""` is an id like any other.
+ * @param [deletes] - Whether an item deletes its id rather than merging into it.
  * @returns A new array of new objects, each the shallow merge of the items that shared its id.
  *
  * @remarks
- * An item `idOf` gives no id for is left out.
+ * An item `idOf` gives no id for is left out. A deleted id is left out too, with nothing below the
+ * deletion kept: an item above it starts afresh, in the place the id first had.
  */
-function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => string | undefined) {
-  const merged = new Map<string, T>();
+function mergeById<T extends object>(
+  items: readonly T[],
+  idOf: (item: T) => string | undefined,
+  deletes: (item: T) => boolean = () => false,
+) {
+  // A deleted id keeps its key, holding nothing, so an item above it takes the same place.
+  const merged = new Map<string, T | undefined>();
   for (const item of items) {
     const id = idOf(item);
     if (id !== undefined) {
-      merged.set(id, { ...merged.get(id), ...item });
+      merged.set(id, deletes(item) ? undefined : { ...merged.get(id), ...item });
     }
   }
-  return [...merged.values()];
+  return [...merged.values()].filter((item) => item !== undefined);
 }
 
 /**
@@ -1117,7 +1165,8 @@ function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => str
  * @param layers - The documents, weakest first. None is written to.
  * @param endpoint - The agent's merged endpoint. Read, not written to.
  * @returns The tasks whose merged `model` is not empty, keyed as the documents keyed them — one a
- * layer declined with `model: ""` is not among them. A task's `extraBody` merges by key.
+ * layer declined with `model: ""` is not among them. A task's `extraBody` merges by key, less the
+ * fields something else sets.
  */
 function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
   const merged = new Map<string, TaskSpec>();
@@ -1135,17 +1184,18 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
   const tasks: Record<string, ResolvedTask> = {};
   for (const [key, task] of merged) {
     // `model: ""` is how a layer declines a task a layer below it configured, so the entry goes
-    // rather than coming back with an empty model for the host to interpret.
+    // rather than coming back with an empty model for the app to interpret.
     if (!task.model) {
       continue;
     }
+    const extraBody = task.extraBody && unownedFields(task.extraBody);
     tasks[key] = kept({
       model: task.model,
       endpoint: asEndpoint(mergeLayers([endpoint, task.endpoint])),
       maxTokens: task.maxTokens,
       temperature: task.temperature,
       reasoningEffort: task.reasoningEffort,
-      extraBody: task.extraBody && said(task.extraBody) ? task.extraBody : undefined,
+      extraBody: extraBody && said(extraBody) ? extraBody : undefined,
     });
   }
   return tasks;
@@ -1154,7 +1204,8 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
 /**
  * Layers documents into the flat object the loop takes, weakest first.
  *
- * @param layers - The documents, weakest first: settings, then the agent, then a task, then a step.
+ * @param layers - The documents, weakest first: settings, then the agent, then a task, then
+ * a stage.
  * @returns The resolved agent, built new. Always whole: an empty list gives empty strings and
  * `RESOLVED_DEFAULTS` rather than an error, and `apiKey` is `""` whatever the layers said.
  *
@@ -1169,10 +1220,10 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * unions, so a layer above cannot quietly drop a requirement below it.
  *
  * No layer is ever fetched. There is no `extends` field and no URL resolution; which documents
- * layer is the host's call, the same answer `resolveApiKey` gives about keys. `apiKey` comes back
- * empty for the same reason: a document naming somebody else's endpoint must not be able to make
- * this host send its own provider key there. A host that wants inheritance applies `resolveApiKey`
- * afterwards.
+ * layer is the app's call, the same answer `resolveApiKey` gives about keys. `apiKey` comes back
+ * empty for the same reason: a document naming somebody else's model server must not be able to
+ * make this app send its own provider key there. An app that wants inheritance applies
+ * `resolveApiKey` afterwards.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
@@ -1193,11 +1244,17 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const prompt = mergeById(
     layers.flatMap((layer) => layer.prompt ?? []),
     (part) => part.id,
+    (part) => part.text === '',
   );
+  // Each layer's flags were checked against that layer's event, and the merge may have moved the
+  // hook to another one, so they are checked again. Nothing is reported: resolving has no warnings.
   const hooks = mergeById(
     layers.flatMap((layer) => layer.hooks ?? []),
     (hook) => hook.id,
-  );
+  ).map((hook) => {
+    const { dropped, ...flags } = honouredFlags(hook);
+    return kept({ ...hook, ...flags });
+  });
   const servers = mergeById(
     layers.flatMap((layer) => layer.bundle?.mcpServers ?? []),
     (server) => (server.slug ?? server.id) || undefined,
@@ -1215,9 +1272,9 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     }
   }
 
-  const id = layers.findLast((layer) => layer.id)?.id ?? '';
-  const name = layers.findLast((layer) => layer.name)?.name;
-  const description = layers.findLast((layer) => layer.description)?.description;
+  const id = layers.findLast((layer) => !isAbsent(layer.id))?.id ?? '';
+  const name = layers.findLast((layer) => !isAbsent(layer.name))?.name;
+  const description = layers.findLast((layer) => !isAbsent(layer.description))?.description;
 
   return {
     id,
@@ -1269,7 +1326,7 @@ export interface ExportSpecOptions {
 }
 
 /**
- * A document fit to leave the host: the same agent, with the secrets of its bundled servers gone.
+ * A document fit to leave the app: the same agent, with the secrets of its bundled servers gone.
  *
  * @param spec - A document, ordinarily one `parseSpec` returned.
  * @param [options] - Whether to keep the secrets.
@@ -1279,7 +1336,7 @@ export interface ExportSpecOptions {
  * @remarks
  * The property worth keeping is that **a redacted spec is still a valid spec** — it parses, it
  * resolves, and what comes back is the same agent pointed at the same servers, needing only the
- * credentials the importing host supplies itself. So a bundled server loses its `env` and its
+ * credentials the importing app supplies itself. So a bundled server loses its `env` and its
  * `headers` and nothing else, and nothing outside `bundle` is touched: those two are the only
  * fields the format gives a credential. A server can still carry one where the format gives it no
  * field — an `--api-key` among its `args`, a token in its `url` — and that is kept, because
@@ -1453,7 +1510,7 @@ function serverSecrets(server: SpecServer, path: string): SecretHint[] {
     }
   }
   for (const [key, value] of Object.entries(server)) {
-    const empty = absent(value) || value === '' || (typeof value === 'string' && writtenOut(value) === false);
+    const empty = isAbsent(value) || value === '' || (typeof value === 'string' && writtenOut(value) === false);
     if (SERVER_KEYS_READ.has(key) === false && SECRET_NAME.test(key) && empty === false) {
       hint(key, SecretSign.Field);
     }
@@ -1470,7 +1527,7 @@ function serverSecrets(server: SpecServer, path: string): SecretHint[] {
  * none holding the value. Empty for a document with no bundle.
  *
  * @remarks
- * A host calls this before it offers an export as safe to share, and warns with what comes back.
+ * An app calls this before it offers an export as safe to share, and warns with what comes back.
  * It reads a server's `url`, its `command` and `args`, and the names of its other keys, and is a
  * guess both ways: a credential in a positional argument with no telling prefix is missed, and a
  * flag called `--keyboard` is named. A `${VAR}` is a reference and is never named.

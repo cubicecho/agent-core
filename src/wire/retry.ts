@@ -5,13 +5,13 @@ import { HttpStatus } from './wire.ts';
 /**
  * Everything about a request failing that is not about what the request said.
  *
- * A run makes a request per tool iteration against an endpoint that may be a laptop's llama.cpp
+ * An exchange makes a request per turn against a model server that may be a laptop's llama.cpp
  * or a hosted API, and the two fail in different ways for different reasons. This is the part
  * of the loop with nothing to do with the model's answer: whether the request was lost, whether
  * it was too big to have been sent at all, and how long to wait before sending it again.
  */
 
-/** The endpoint stopped answering mid-request. Its own class so the retry can recognise it. */
+/** The model server stopped answering mid-request. Its own class so the retry can recognise it. */
 export class EndpointSilent extends Error {
   override readonly name = 'EndpointSilent';
 }
@@ -22,9 +22,9 @@ export class EndpointSilent extends Error {
  *
  * @remarks
  * `runTurn` raises it from either side of the round trip — its own pre-flight guard, or the
- * endpoint's refusal read back through `isOverflow` — so a caller has one thing to catch whether
- * or not it gave a `contextLimit`. The second carries the endpoint's own message, and the error
- * it was built from as `cause`.
+ * model server's refusal read back through `isOverflow` — so a caller has one thing to catch
+ * whether or not it gave a `contextLimit`. The second carries the model server's own message, and
+ * the error it was built from as `cause`.
  */
 export class ContextOverflow extends Error {
   override readonly name = 'ContextOverflow';
@@ -57,7 +57,7 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
 /**
  * Whether a refusal means the request was too big, rather than merely refused.
  *
- * @param detail - The endpoint's own message.
+ * @param detail - The model server's own message.
  * @returns `true` for an overflow: one of the over-long wordings, beside `token` or `context`.
  * `false` for anything that reads as a rate limit, whatever else it says.
  *
@@ -69,20 +69,21 @@ export const isOverflow = (detail: string) =>
   !RATE_LIMITED.test(detail) && OVERFLOW.some((pattern) => pattern.test(detail)) && /token|context/i.test(detail);
 
 /**
- * The smallest window worth believing in, and the floor under `runTurn`'s guard.
+ * The smallest context window worth believing in, and the floor under `runTurn`'s guard.
  *
  * @remarks
  * `runTurn`'s `contextLimit` reads it as a sanity check on a number it was handed: below this,
  * the limit is taken for a placeholder — an unset column, a listing that said nothing — rather
- * than a window worth refusing a run over. That is the whole of what reads it; `contextLimitFor`
- * asks the endpoint whatever the number, and `client.ts` does not import this file.
+ * than a context window worth refusing an exchange over. That is the whole of what reads it;
+ * `contextLimitFor` asks the model server whatever the number, and `client.ts` does not import
+ * this file.
  *
- * A model in a window smaller than this exists, and the reason not to refuse a run over one is
- * that the number far more often came from a caller threading a placeholder through than from
- * such a model. A request that really does overrun a tiny window is left to the endpoint's own
- * complaint, which `isOverflow` reads properly either way — so what the floor costs is a round
- * trip on the runs it declines to guard, and what it saves is refusing the ones it would have
- * guarded wrongly.
+ * A model with a context window smaller than this exists, and the reason not to refuse an
+ * exchange over one is that the number far more often came from a caller threading a placeholder
+ * through than from such a model. A request that really does overrun a tiny context window is
+ * left to the model server's own complaint, which `isOverflow` reads properly either way — so
+ * what the floor costs is a round trip on the exchanges it declines to guard, and what it saves is
+ * refusing the ones it would have guarded wrongly.
  */
 export const SMALLEST_LIKELY_WINDOW = 8192;
 
@@ -103,7 +104,7 @@ const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([
  * @remarks
  * The question is whether the request was *refused or lost*, rather than answered with a
  * complaint about its contents: a connection that never landed, a server too busy or too broken
- * to answer, an endpoint that went quiet. A 400 for a malformed tool schema would fail exactly
+ * to answer, a model server that went quiet. A 400 for a malformed tool schema would fail exactly
  * the same way on every attempt, and the two capability cases below are negotiated rather than
  * retried blindly.
  */
@@ -122,7 +123,7 @@ export function isTransient(error: unknown): boolean {
 }
 
 /**
- * Whether a failure is the endpoint refusing the request as written, rather than losing it.
+ * Whether a failure is the model server refusing the request as written, rather than losing it.
  *
  * @param error - The rejection, as caught. What is not an SDK error refuses nothing.
  * @returns `true` for an SDK error whose status is 400 or 422, and for nothing else.

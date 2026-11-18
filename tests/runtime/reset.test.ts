@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
-import { endpoint, reply } from '../helpers.ts';
+import { type Create, endpoint, reply } from '../helpers.ts';
 
 const list = vi.fn();
-const create = vi.fn();
+const create = vi.fn<Create>();
 /**
  * The SDK's transport, replaced. Its statics come along because two modules under test
  * classify failures with `instanceof OpenAI.APIError`, and a fake class has no such thing.
@@ -26,6 +26,7 @@ const { configureHooks, HOOK_PREFACE } = await import('../../src/hooks/hooks.ts'
 const { ask } = await import('../../src/turn/side-task.ts');
 const { resetAll } = await import('../../src/runtime/reset.ts');
 const { calibrate, charsPerTokenFor } = await import('../../src/endpoint/calibration.ts');
+const { slotAllocator } = await import('../../src/endpoint/slots.ts');
 
 /** Whether the no-thinking hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
@@ -89,6 +90,13 @@ describe('resetAll', () => {
     expect(history('run-a')).toHaveLength(1);
     resetAll();
     expect(history('run-a')).toEqual([]);
+  });
+
+  it('forgets which session holds which slot', () => {
+    slotAllocator(endpoint, 'm', 1).acquire('a');
+    expect(slotAllocator(endpoint, 'm', 1).acquire('b')).toBeUndefined();
+    resetAll();
+    expect(slotAllocator(endpoint, 'm', 1).acquire('b')).toBe(0);
   });
 
   it("puts the client pool's bounds back", () => {

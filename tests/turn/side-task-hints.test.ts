@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiError, reply } from '../helpers.ts';
+import { apiError, type Create, reply } from '../helpers.ts';
 import { NO_EFFORT, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from '../refusals.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /**
  * The SDK-touching half of the client module, replaced. Partial rather than whole: the rest of
  * it is pure — `endpointKey` is what every cache in this package agrees an endpoint is — and a
@@ -13,7 +13,8 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { ask, resetHints } = await import('../../src/turn/side-task.ts');
+const { ask } = await import('../../src/turn/side-task.ts');
+const { resetHints } = await import('../../src/index.ts');
 const { modelCapabilitiesFor, capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 
 const endpoint = (baseUrl: string) => ({ baseUrl, apiKey: '', requestTimeoutSeconds: 60 });
@@ -29,7 +30,7 @@ const NO_EFFORT_NONE = apiError(
 );
 
 /** What the nth call actually put in the body. */
-const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
+const body = (nth: number) => create.mock.calls[nth][0];
 
 describe('no-thinking hints', () => {
   // The latch outlives a test as surely as the mock does. Without this the suite only passed
@@ -99,21 +100,33 @@ describe('no-thinking hints', () => {
     expect(modelCapabilitiesFor(supports, 'm').reasoningEffort).toBe(true);
   });
 
-  it('latches the effort when it is all that is left to drop', async () => {
-    // Both refused in wordings `negotiate` does not know: the first call blames the kwargs, the
-    // next is left with only the effort, and after that neither goes out.
+  it('leaves latching the effort to negotiate when it is all that is left to drop', async () => {
+    // Both refused in wordings `negotiate` does not know: the first call blames the kwargs, and
+    // the next is retried without the effort but latches nothing, since only `rejectsEffort`
+    // reading the refusal latches an effort.
     create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
     await call(endpoint('http://odd/v1'));
     create.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce(reply);
     await call(endpoint('http://odd/v1'));
     expect(body(2).reasoning_effort).toBe('none');
     expect(body(3)).not.toHaveProperty('reasoning_effort');
+    expect(modelCapabilitiesFor(capabilitiesFor('http://odd/v1'), 'm').reasoningEffort).toBe(true);
 
     create.mockResolvedValue(reply);
     await call(endpoint('http://odd/v1'));
     expect(create).toHaveBeenCalledTimes(5);
-    expect(body(4)).not.toHaveProperty('reasoning_effort');
+    expect(body(4).reasoning_effort).toBe('none');
     expect(sentHints(4)).toBe(false);
+  });
+
+  it('leaves latching a chosen effort to negotiate as well', async () => {
+    create.mockRejectedValueOnce(apiError(400)).mockResolvedValue(reply);
+    await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', { reasoningEffort: 'high' });
+    expect(body(1)).not.toHaveProperty('reasoning_effort');
+    expect(modelCapabilitiesFor(capabilitiesFor('http://plain/v1'), 'm').reasoningEffort).toBe(true);
+
+    await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', { reasoningEffort: 'high' });
+    expect(body(2).reasoning_effort).toBe('high');
   });
 
   it('keeps offering them after a failure that says nothing about the request', async () => {
@@ -239,7 +252,7 @@ describe('what the model refuses', () => {
     await expect(call(endpoint('http://vllm/v1'), 'qwen')).resolves.toBe('ok');
     expect(create).toHaveBeenCalledTimes(2);
     expect(body(1)).not.toHaveProperty('reasoning_effort');
-    expect(body(1).chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body(1)).toHaveProperty('chat_template_kwargs', { enable_thinking: false });
   });
 
   it('asks for the cheapest effort the model offers when it will not take none', async () => {
@@ -293,7 +306,7 @@ describe('what the model refuses', () => {
     }
     for (const nth of [0, 1, 2]) {
       expect(body(nth).reasoning_effort).toBe('none');
-      expect(body(nth).chat_template_kwargs).toEqual({ enable_thinking: false });
+      expect(body(nth)).toHaveProperty('chat_template_kwargs', { enable_thinking: false });
     }
   });
 

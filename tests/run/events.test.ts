@@ -346,6 +346,31 @@ describe('cleanup', () => {
     expect(emit('slow', { kind: RunEventKind.Output, text: 'after' }).seq).toBe(2);
   });
 
+  it('keeps a run waiting on handed-back calls past the unended clock, and its sequence with it', () => {
+    vi.useFakeTimers();
+    emit('handed', { kind: RunEventKind.ToolCall, id: 'c1', name: 'ask_person' });
+    emit('handed', { kind: RunEventKind.Wait, text: '1 call' });
+
+    // Nobody watching while a person takes an afternoon to answer.
+    vi.advanceTimersByTime(4 * 60 * 60_000);
+
+    expect(history('handed')).toHaveLength(2);
+    expect(emit('handed', { kind: RunEventKind.Output, text: 'resumed' }).seq).toBe(3);
+  });
+
+  it('forgets a waiting run once its own clock runs out, and an unended one on the unended clock again', () => {
+    vi.useFakeTimers();
+    configureEvents({ retainWaitingMs: 10 * 60_000 });
+    emit('handed', { kind: RunEventKind.Wait, text: '1 call' });
+    emit('resumed', { kind: RunEventKind.Wait, text: '1 call' });
+    emit('resumed', { kind: RunEventKind.Output, text: 'going on' });
+
+    vi.advanceTimersByTime(11 * 60_000);
+    expect(history('handed')).toEqual([]);
+    // Its last event is not a wait, so it is a live run that has gone quiet, on the longer clock.
+    expect(history('resumed')).toHaveLength(2);
+  });
+
   it('completes a watcher it is ending the run under', async () => {
     const seen: string[] = [];
     let finished = false;
@@ -424,6 +449,7 @@ describe('configureEvents', () => {
       trimSlack: 256,
       retainMs: 60_000,
       retainUnendedMs: 30 * 60_000,
+      retainWaitingMs: 24 * 60 * 60_000,
     });
   });
 });
@@ -662,6 +688,17 @@ describe('runMetrics', () => {
     expect(metrics.loadCalls).toBe(1);
     expect(metrics).not.toHaveProperty('toolsLoaded');
     expect(metrics).not.toHaveProperty('largestPromptShare');
+  });
+
+  it('times each tool result against its own call, and adds nothing for a call with no result', () => {
+    const call = (id: string, at: number) => stamp({ kind: RunEventKind.ToolCall, id, name: 'fetch' }, 'r', 0, at);
+    const result = (id: string, at: number) =>
+      stamp({ kind: RunEventKind.ToolResult, id, name: 'fetch', ok: true }, 'r', 0, at);
+    // A call handed back gets no result on the bus; the next call of the same tool is answered.
+    const handedBack = [call('h', 0), stamp({ kind: RunEventKind.Wait }, 'r', 0, 1), call('k', 60_000)];
+    expect(runMetrics([...handedBack, result('k', 60_010)]).toolMs).toBe(10);
+    // A result for a call this log does not hold is timed against nothing.
+    expect(runMetrics([call('a', 0), result('z', 5), result('a', 50)]).toolMs).toBe(50);
   });
 
   it("reads the outcome off the last turn and the run's end", () => {

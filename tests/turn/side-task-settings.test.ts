@@ -4,9 +4,19 @@ import { ToolDiscovery } from '../../src/core/config.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { answer, apiError, type Message, outcome, says, summarised, templateRefusal, tool } from '../helpers.ts';
+import {
+  answer,
+  apiError,
+  type Create,
+  type Message,
+  outcome,
+  says,
+  summarised,
+  templateRefusal,
+  tool,
+} from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Every endpoint a client was asked for, in order, so a test can say where a request went. */
 const reached: { baseUrl: string; apiKey: string }[] = [];
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -18,13 +28,15 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   },
 }));
 
-const { PRESELECTED_NOTICE, runAgentLoop } = await import('../../src/run/agent-loop.ts');
-const { failedRun } = await import('../../src/wire/errors.ts');
+const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
+const { PRESELECTED_NOTICE } = await import('../../src/tools/discovery.ts');
+const { failedRun } = await import('../../src/run/failure.ts');
 const { preselect } = await import('../../src/tools/preselect.ts');
 const { capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { NO_KEY } = await import('../../src/endpoint/client.ts');
 const { SUMMARY_LEAD, summariser } = await import('../../src/context/compaction.ts');
-const { ask, askJson, resetHints, taskCall } = await import('../../src/turn/side-task.ts');
+const { ask, askJson, taskCall } = await import('../../src/turn/side-task.ts');
+const { resetHints } = await import('../../src/index.ts');
 const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../../src/spec/spec.ts');
 
 type AgentSpec = import('../../src/spec/spec.ts').AgentSpec;
@@ -46,7 +58,7 @@ const calls = (name: string) => ({
   },
 });
 /** What the nth request put in its body. */
-const body = (nth: number) => create.mock.calls[nth][0] as Record<string, unknown>;
+const body = (nth: number) => create.mock.calls[nth][0];
 
 /** An agent whose own sampling is nothing a side task should pick up. */
 const agent = (tasks: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
@@ -188,7 +200,7 @@ describe("a side task's own settings", () => {
     for (const nth of [0, 1, 2]) {
       // No effort was chosen for the task, so it is told not to think, whatever the agent does.
       expect(body(nth).reasoning_effort).toBe('none');
-      expect(body(nth).chat_template_kwargs).toEqual({ enable_thinking: false });
+      expect(body(nth)).toHaveProperty('chat_template_kwargs', { enable_thinking: false });
     }
   });
 
@@ -276,7 +288,7 @@ describe("a side task's extraBody", () => {
     expect(body(1)).not.toHaveProperty('top_k');
     expect(body(1)).toMatchObject({ top_p: 0.8, presence_penalty: 1.5 });
     // The no-thinking hints were not what was refused, so they still go out.
-    expect(body(1).chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body(1)).toHaveProperty('chat_template_kwargs', { enable_thinking: false });
     expect(notices).toEqual(['gpt does not take top_k; retrying without it']);
 
     // Latched for the model: the next call leaves it out from the start.
@@ -614,7 +626,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       hooks: { run, context: { session: { id: 's' } }, offset: 40 },
       onEvent: (event) => events.push(event),
     });
-    const sent = body(1).messages as Message[];
+    const sent = body(1).messages;
     expect(sent.slice(0, 3)).toEqual([...summarised('read a to d'), question]);
     expect(sent[3].role).toBe(Role.Assistant);
     expect(events).toContainEqual({ kind: RunEventKind.Notice, text: 'compacted 8 messages into a summary' });
@@ -645,7 +657,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       dispatch: async () => 'done',
       compact: true,
     });
-    const sent = body(1).messages as Message[];
+    const sent = body(1).messages;
     expect(sent.filter((message) => message.role === Role.System)).toEqual([
       { role: Role.System, content: 'be brief' },
     ]);
@@ -669,8 +681,8 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       compact: true,
     });
     // The summariser continued the older notes rather than being shown them as conversation.
-    expect((body(0).messages as Message[]).at(-1)?.content).toMatch(/^Notes so far:\nolder notes/);
-    const sent = body(1).messages as Message[];
+    expect(body(0).messages.at(-1)?.content).toMatch(/^Notes so far:\nolder notes/);
+    const sent = body(1).messages;
     expect(sent.slice(0, 3)).toEqual([
       { role: Role.System, content: 'be brief\n\nthe house rules' },
       ...summarised('what was said'),
@@ -703,7 +715,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeTurn, HookEvent.AfterTurn] },
     });
     await result.afterTurn;
-    expect((body(1).messages as Message[]).slice(0, 2)).toEqual(summarised('what was said'));
+    expect(body(1).messages.slice(0, 2)).toEqual(summarised('what was said'));
     expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([
       HookEvent.BeforeTurn,
       HookEvent.AfterTurn,
@@ -720,7 +732,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     });
     // No falling back to the main model for the summary.
     expect(create).toHaveBeenCalledTimes(1);
-    expect((body(0).messages as Message[]).length).toBe(3);
+    expect(body(0).messages.length).toBe(3);
   });
 
   it('plans a later step from the prompt the last one reported', async () => {
@@ -744,7 +756,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     });
     expect(create).toHaveBeenCalledTimes(3);
     expect(body(1)).toMatchObject({ model: 'tiny', temperature: 0.3 });
-    expect((body(2).messages as Message[]).slice(0, 2)).toEqual(summarised('what was said'));
+    expect(body(2).messages.slice(0, 2)).toEqual(summarised('what was said'));
   });
 
   it('leaves the transcript whole when the summary fails, and says so', async () => {
@@ -758,7 +770,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       onEvent: (event) => events.push(event),
     });
     expect(result.turn.content).toBe('hello');
-    expect((body(1).messages as Message[]).length).toBe(3);
+    expect(body(1).messages.length).toBe(3);
     expect(events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text)).toEqual([
       expect.stringContaining('boom'),
     ]);

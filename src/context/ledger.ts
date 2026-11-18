@@ -5,16 +5,17 @@ import { messageChars, messageTokens, type TokenEstimateOptions } from '../wire/
 import { Role } from '../wire/wire.ts';
 
 /**
- * What stretches of a transcript cost, read off the prompt counts the server already reported.
+ * What stretches of a transcript cost, read off the prompt counts the model server
+ * already reported.
  *
  * A calibrated divisor fixes the average and nothing else: a transcript is tool results, JSON
  * arguments, code and prose, each at its own ratio, plus whatever the chat template adds per
  * message. But a request that only appended to the one before it differs from it by exactly the
  * cost of what was appended, so two reported prompts and a subtraction say what no estimate can —
- * the template's tokens and a tool result's real density included, and reasoning counted only
+ * the template's tokens and a tool result's real density included, and the scratchpad counted only
  * where it is replayed.
  *
- * Everything here is a pure function over a plain array, so a host with its own loop keeps a ledger
+ * Everything here is a pure function over a plain array, so an app with its own loop keeps a ledger
  * the same way `runAgentLoop` does, and stores it however it stores the transcript.
  */
 
@@ -24,18 +25,20 @@ type Message = OpenAI.ChatCompletionMessageParam;
  * One request's reported prompt, and how far into the transcript that request reached.
  *
  * @remarks
- * Three numbers and nothing else, so it serialises as it is: a host that stores a row per message
+ * Three numbers and nothing else, so it serialises as it is: an app that stores a row per message
  * keeps `prompt` and `epoch` in two columns on the row `through` names, and one that stores a
  * session keeps the array beside it.
  */
 export interface LedgerEntry {
   /**
-   * The index, in the host's transcript, of the last message the request carried. A system prompt
-   * the host keeps outside the transcript is not counted, and −1 is a request that carried none of
+   * The index, in the app's transcript, of the last message the request carried. A system prompt
+   * the app keeps outside the transcript is not counted, and −1 is a request that carried none of
    * the transcript at all.
    */
   through: number;
-  /** The prompt tokens the endpoint reported for that request, everything ahead of it included. */
+  /**
+   * The prompt tokens the model server reported for that request, everything ahead of it included.
+   */
   prompt: number;
   /**
    * Which unbroken run of appending the request belongs to. Two entries with the same epoch shared
@@ -58,9 +61,11 @@ export interface RequestShape {
 
 /** What `recordRequest` needs to know of one request. */
 export interface LedgerRequest extends RequestShape {
-  /** The prompt tokens the endpoint reported. Zero or less is no report, and records nothing. */
+  /**
+   * The prompt tokens the model server reported. Zero or less is no report, and records nothing.
+   */
   prompt: number;
-  /** The index, in the host's transcript, of the last message the request carried. */
+  /** The index, in the app's transcript, of the last message the request carried. */
   through: number;
 }
 
@@ -164,6 +169,54 @@ export function breakReason(previous: RequestShape, next: RequestShape): NonNull
   return CacheBreakReason.NoneKnown;
 }
 
+/** What the loop remembers of one request, to explain the next one's cache. */
+export interface SentRequest extends RequestShape {
+  /** The prompt the first request of the turn reported, before any continuation was joined. */
+  prompt: number;
+  /** The completion across the whole turn, continuations included. */
+  completion: number;
+}
+
+/**
+ * The share of the previous prompt a cache that kept its prefix reports as hit. Short of it by
+ * more than this is a break, not the few tokens a template re-renders at the join.
+ */
+const CACHE_KEPT = 0.9;
+
+/**
+ * What one turn's cache should have been and whether it was, against the request before it.
+ *
+ * @param previous - The request before this one, with what it reported. Absent, or with no prompt
+ * reported, diagnoses nothing.
+ * @param next - The request this turn sent, read only to say why a broken cache broke.
+ * @param usage - The turn's own report. Not written to. One with no `uncached` did not report its
+ * cache, and is told what to expect without being judged.
+ * @returns The fields to lay over the turn's usage: `cacheExpected`, the previous prompt plus its
+ * completion; `cacheBroken` where the cache was reported; and `cacheBreakReason` where it broke.
+ * Empty where nothing is diagnosed.
+ *
+ * @remarks
+ * Nothing before the second request, or where the previous prompt was not reported.
+ */
+export function cacheDiagnosis(
+  previous: SentRequest | undefined,
+  next: RequestShape,
+  usage: TurnUsage,
+): Partial<TurnUsage> {
+  if (!previous || !(previous.prompt > 0)) {
+    return {};
+  }
+  const found: Partial<TurnUsage> = { cacheExpected: previous.prompt + previous.completion };
+  if (usage.uncached === undefined) {
+    return found;
+  }
+  found.cacheBroken = usage.cached < previous.prompt * CACHE_KEPT;
+  if (found.cacheBroken) {
+    found.cacheBreakReason = breakReason(previous, next);
+  }
+  return found;
+}
+
 /**
  * The ledger with one more request on it, in the epoch the request before it says it belongs to.
  *
@@ -178,10 +231,10 @@ export function breakReason(previous: RequestShape, next: RequestShape): NonNull
  * @remarks
  * The epoch carries on only where the new request declared the same tools in the same order and
  * sent every earlier message unchanged — the case in which the two prompts subtract. Anything else
- * starts a new one: a fold, a prune, a system prompt that moved, and a tool array that grew, whose
- * schema would otherwise be counted as the cost of the messages beside it. A request that reported
- * no prompt records nothing, and neither does one that reaches no further than the last entry in
- * the same epoch, so a retry or a continuation leaves the first reading standing.
+ * starts a new one: a compaction, a prune, a system prompt that moved, and a tool array that grew,
+ * whose schema would otherwise be counted as the cost of the messages beside it. A request that
+ * reported no prompt records nothing, and neither does one that reaches no further than the last
+ * entry in the same epoch, so a retry or a continuation leaves the first reading standing.
  */
 export function recordRequest(
   ledger: TokenLedger,
@@ -216,8 +269,8 @@ export function recordRequest(
  * A difference inside an epoch stays true after the epoch ends, since the prefix the two requests
  * shared cancels whatever became of it. So the entries that fall in the part of the transcript
  * still at its head keep their place, the ones in the part still at its tail move with it, and
- * only the ones in between — the messages a fold removed or a prune stubbed — are dropped. The
- * tail's entries move to a later epoch as well, so no difference is read across the rewrite.
+ * only the ones in between — the messages a compaction removed or a prune stubbed — are dropped.
+ * The tail's entries move to a later epoch as well, so no difference is read across the rewrite.
  */
 export function rebaseLedger(ledger: TokenLedger, before: readonly Message[], after: readonly Message[]): TokenLedger {
   if (before === after) {
@@ -305,8 +358,8 @@ const fallback = ({ charsPerToken, estimate }: LedgerEstimateOptions) =>
   estimate ?? ((message: Message) => messageTokens(message, { charsPerToken }));
 
 /**
- * What the messages from `from` up to, not including, `to` cost the window, measured where the
- * ledger can say and estimated where it cannot.
+ * What the messages from `from` up to, not including, `to` cost the context window, measured where
+ * the ledger can say and estimated where it cannot.
  *
  * @param ledger - The ledger kept for `messages`.
  * @param from - The first message counted. Below zero counts from the start.
@@ -317,7 +370,7 @@ const fallback = ({ charsPerToken, estimate }: LedgerEstimateOptions) =>
  *
  * @remarks
  * Between two boundaries recorded in one epoch it is a subtraction and exact. A boundary falls
- * after a question and after each step's tool results, never after an assistant message, so a
+ * after a question and after each turn's tool results, never after an assistant message, so a
  * stretch that starts or ends inside a group is given that group's measured total divided by
  * character share — the way `contextTokens` divides a reported prompt — and messages no pair of
  * entries covers fall back to the estimate: the ones before the first entry, the group either side

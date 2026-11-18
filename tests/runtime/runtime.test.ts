@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
-import { endpoint, reply, says } from '../helpers.ts';
+import { type Create, endpoint, reply, says } from '../helpers.ts';
 
 const list = vi.fn();
-const create = vi.fn();
+const create = vi.fn<Create>();
 /**
  * The SDK's transport, replaced. Its statics come along because two modules under test
  * classify failures with `instanceof OpenAI.APIError`, and a fake class has no such thing.

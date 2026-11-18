@@ -20,6 +20,14 @@ export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
+ * Whether a value is absent: `undefined` or `null`, which a JSON round trip makes of a missing value.
+ *
+ * @param value - Anything, usually a field of a parsed document or a server's answer.
+ * @returns True for `undefined` and `null` only: `0`, `""`, `false` and `[]` are values.
+ */
+export const isAbsent = (value: unknown): value is null | undefined => value === undefined || value === null;
+
+/**
  * Whether a value is a number above zero, which is what a limit has to be to be one.
  *
  * @param value - Anything, usually a setting that may be absent, zero or mistyped.
@@ -74,8 +82,8 @@ export const counted = (count: number, noun: string) => `${count} ${noun}${count
  *
  * @remarks
  * Rather than `localeCompare`, whose answer depends on the host's locale. An order the package
- * relies on — the tool array a prompt cache matches, a tie between two ranked tools, a listing a
- * host may key on — has to come out the same wherever it runs.
+ * relies on — the tool array a prompt cache matches, a tie between two ranked tools, a listing an
+ * app may key on — has to come out the same wherever it runs.
  */
 export function byCodeUnit(a: string, b: string): number {
   if (a < b) {

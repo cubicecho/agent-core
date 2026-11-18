@@ -5,9 +5,9 @@ import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookRunner } from '../../src/hooks/hooks.ts';
 import { RunEventKind, RunOutcome } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { type Body, chunks, config, type Message, pairsByPosition, says, tool } from '../helpers.ts';
+import { type Create, chunks, config, type Message, pairsByPosition, says, tool } from '../helpers.ts';
 
-const create = vi.fn();
+const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/endpoint/client.ts')>()),
@@ -19,9 +19,9 @@ const { oneCallPerMessage } = await import('../../src/run/run-calls.ts');
 const { runMetrics, stamp } = await import('../../src/run/events.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
-const { failedRun } = await import('../../src/wire/errors.ts');
+const { failedRun } = await import('../../src/run/failure.ts');
 
-type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
+type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A turn that asks for these calls, ids `c0` on, reporting `prompt` tokens where given. */
@@ -49,7 +49,7 @@ const calls = (list: [name: string, args: string][], prompt?: number) =>
 const question: Message[] = [{ role: Role.User, content: 'hi' }];
 const tools = [tool('s__read'), tool('s__write')];
 const hostTools = [tool('ask_person')];
-const bodies = () => create.mock.calls.map(([body]) => body as Body);
+const bodies = () => create.mock.calls.map(([body]) => body);
 /** The ids of an assistant message's calls, in the order the transcript holds them. */
 const callIds = (message: Message | undefined) =>
   message?.role === Role.Assistant ? (message.tool_calls ?? []).map((call) => call.id) : [];

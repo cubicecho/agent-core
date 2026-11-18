@@ -2,8 +2,9 @@ import OpenAI from 'openai';
 import { vi } from 'vitest';
 import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
-import { type HookOutcome, textOf } from '../src/hooks/hooks.ts';
+import type { HookOutcome } from '../src/hooks/hooks.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
+import { textOf } from '../src/wire/text.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire/wire.ts';
 
 /**
@@ -21,6 +22,14 @@ export type Body = OpenAI.ChatCompletionCreateParamsStreaming;
 export const MINTED_ID = /^[A-Za-z0-9]{9}$/;
 export type Chunk = OpenAI.ChatCompletionChunk;
 export type Message = OpenAI.ChatCompletionMessageParam;
+
+/**
+ * The SDK's `chat.completions.create` as the code calls it, which every fake of it is typed as.
+ *
+ * The body is either kind, since a side task asks without streaming. What the fake answers is left
+ * to the test: the SDK promises a whole stream or completion, which no test builds.
+ */
+export type Create = (body: OpenAI.ChatCompletionCreateParams, options?: OpenAI.RequestOptions) => unknown;
 
 /**
  * A client whose only working part is `chat.completions.create`.

@@ -193,7 +193,10 @@ for (const { path, module, names } of reexports(index)) {
   const docs = new Map();
   for (const block of blocks) {
     const name = declaredName(block.next);
-    if (name) {
+    // The first doc wins: a vocabulary's const object comes before its union type, and the
+    // object's doc says what the words are where the type's only says it is one of them.
+    const isFirst = name !== null && docs.has(name) === false;
+    if (isFirst) {
       docs.set(name, summarize(block.body));
     }
   }

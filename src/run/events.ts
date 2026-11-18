@@ -5,14 +5,14 @@ import { assignSettings, scoped } from '../core/scope.ts';
 import { LOAD_TOOLS } from '../tools/tool-loading.ts';
 import type { TurnUsage } from '../wire/stream.ts';
 import { CacheBreakReason } from '../wire/stream.ts';
-import { type ResourceLink, ServerLogLevel } from '../wire/tool-calls.ts';
 import { FinishReason } from '../wire/wire.ts';
+import { type ResourceLink, ServerLogLevel } from './dispatch.ts';
 
 /**
  * What a run is doing, while it is doing it.
  *
  * A run row only exists as a before and an after: it is written when the agent starts and
- * updated when it stops, and everything in between — the thinking, the tool the model reached
+ * updated when it stops, and everything in between — the scratchpad, the tool the model reached
  * for, the argument it got wrong — is gone by the time anyone can read it. This is that middle,
  * kept in memory and handed to whoever is watching.
  *
@@ -56,10 +56,23 @@ export interface EventBusOptions {
    * reaped out from under itself.
    */
   retainUnendedMs?: number;
+  /**
+   * The same for a run whose last event is `wait`: one that handed calls back and stopped until
+   * they are answered, under the same id and the same numbering.
+   *
+   * @remarks
+   * A wait is a planned silence as long as the person answering takes, and the client watching it
+   * has usually gone by the time the run resumes. Reaping it on `retainUnendedMs` restarted `seq`,
+   * so a client reconnecting across the wait discarded the resumed run's events, `done` included.
+   */
+  retainWaitingMs?: number;
 }
 
 /** How many minutes an unended run's events are kept, absent a `retainUnendedMs`. */
 const RETAIN_UNENDED_MINUTES = 30;
+
+/** How many minutes a waiting run's events are kept, absent a `retainWaitingMs`: a day. */
+const RETAIN_WAITING_MINUTES = 24 * 60;
 
 /** The numbers a run of the shape this bus was written for wants. */
 const DEFAULTS: Required<EventBusOptions> = {
@@ -67,6 +80,7 @@ const DEFAULTS: Required<EventBusOptions> = {
   trimSlack: 256,
   retainMs: MS_PER_MINUTE,
   retainUnendedMs: RETAIN_UNENDED_MINUTES * MS_PER_MINUTE,
+  retainWaitingMs: RETAIN_WAITING_MINUTES * MS_PER_MINUTE,
 };
 
 /**
@@ -111,13 +125,15 @@ export function configureEvents(options: EventBusOptions = {}): Required<EventBu
 
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export const RunEventKind = {
-  /** A step of a caller's own flow began. `name` is the step, `text` its kind. */
+  /**
+   * One of the app's own exchanges began, such as a task's stage. `name` names it, `text` its kind.
+   */
   Step: 'step',
-  /** A decision step chose an arm. `text` is the arm it took. */
+  /** A deciding exchange chose an arm. `text` is the arm it took. */
   Decision: 'decision',
-  /** A new turn of the agent loop began, inside whichever step is running. */
+  /** A new turn of the agent loop began, inside whichever exchange is running. */
   Turn: 'turn',
-  /** Reasoning tokens, as they arrive. */
+  /** Scratchpad tokens, as they arrive. */
   Thinking: 'thinking',
   /** Reply tokens, as they arrive. */
   Output: 'output',
@@ -127,14 +143,17 @@ export const RunEventKind = {
   ToolResult: 'tool-result',
   /** Something the runner did that is not the model's doing — a preselection, a retry. */
   Notice: 'notice',
-  /** Input the host's `takeInput` handed over mid-run, now in the transcript. `text` is what it says. */
+  /**
+   * Input the app's `takeInput` handed over mid-exchange, now in the transcript. `text` is what
+   * it says.
+   */
   Input: 'input',
   /**
-   * A tool call's answer linked to something the run had not produced before — or, where the run
-   * collects them, a write was detected or a declaration believed at a new location. `id` is the
-   * call's the artifact is put down to, `name` its tool, `text` the link's title or else its uri,
-   * and `link` the link itself. Once per location per run: a later call that links or writes it
-   * again only adds to its count, and a declaration over it only fills it in.
+   * A tool call's answer linked to something the exchange had not produced before — or, where the
+   * exchange collects them, a write was detected or a declaration believed at a new location. `id`
+   * is the call's the artifact is put down to, `name` its tool, `text` the link's title or else its
+   * uri, and `link` the link itself. Once per location per exchange: a later call that links or
+   * writes it again only adds to its count, and a declaration over it only fills it in.
    */
   Artifact: 'artifact',
   /**
@@ -145,21 +164,23 @@ export const RunEventKind = {
    */
   ServerLog: 'server-log',
   /**
-   * What the run has cost so far, at the end of every turn, and what that one turn did. Sent
-   * whether or not the endpoint reported tokens, since the timings and the cache comparison are
+   * What the exchange has cost so far, at the end of every turn, and what that one turn did. Sent
+   * whether or not the model server reported tokens, since the timings and the cache comparison are
    * measured either way.
    */
   Usage: 'usage',
   /**
-   * The run stopped to wait for the host to answer calls it handed back: the step's `tool-call`
+   * The exchange stopped to wait for the app to answer calls it handed back: the turn's `tool-call`
    * events with no `tool-result`, as `AgentLoopResult.pending` lists them. `text` says how many.
    * Not an end: the run goes on, under the same id, once they are answered, and `watch` keeps
    * following it until `done`.
    */
   Wait: 'wait',
   /**
-   * The run ended. Always last, and always sent. A run a tool call ended carries that call: `id`
-   * the call's, `name` the tool, and `text` the reason, as `AgentLoopResult.ended` has them.
+   * The run ended, as the app announces it: `runAgentLoop` never sends it, and `endRun` sends one
+   * only to a run still watched. Last where it is sent. Where a tool call ended the exchange, it
+   * carries that call: `id` the call's, `name` the tool, and `text` the reason, as
+   * `AgentLoopResult.ended` has them.
    */
   Done: 'done',
 } as const;
@@ -168,20 +189,20 @@ export const RunEventKind = {
 export type RunEventKind = (typeof RunEventKind)[keyof typeof RunEventKind];
 
 /**
- * What a run has spent, counted from the start of the run rather than for the turn that
+ * What an exchange has spent, counted from the start of the exchange rather than for the turn that
  * carried it: a client draws the latest one it has seen and needs no arithmetic of its own,
  * and one lost to the backlog cap costs nothing because the next supersedes it.
  *
  * @remarks
  * The counts are `UsageTotals`, the spelling `AgentLoopResult.usage` shares, with the cache's two
- * fields optional so a host emitting usage of its own need not know them.
+ * fields optional so an app emitting usage of its own need not know them.
  */
 export interface RunUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
   /**
-   * How much of `promptTokens` the endpoint served from its prompt cache. Optional so a caller
+   * How much of `promptTokens` the model server served from its prompt cache. Optional so a caller
    * emitting usage before this field existed still compiles; absent reads the same as zero.
    */
   cachedTokens?: number;
@@ -198,24 +219,24 @@ export interface RunUsage {
    */
   turn?: TurnReport;
   /**
-   * The run's token ledger as of this turn, whole rather than the entry it added — a host whose
-   * run then fails still holds the latest one, and a rewrite in `beforeStep` moves earlier entries.
-   * Absent from a caller emitting usage of its own.
+   * The exchange's token ledger as of this turn, whole rather than the entry it added — an app
+   * whose exchange then fails still holds the latest one, and a rewrite in `beforeStep` moves
+   * earlier entries. Absent from a caller emitting usage of its own.
    */
   ledger?: TokenLedger;
 }
 
 /** One turn's usage and measurements as a `usage` event carries them. */
 export interface TurnReport extends TurnUsage {
-  /** Why the model stopped, as `Turn.finishReason` says it; `length` is a turn cut short. */
+  /** Why the model stopped, as `Turn.finishReason` says it; `length` is a reply cut short. */
   finishReason: string;
   /**
-   * The window the turn was served, where the loop was told one, for `largestPromptShare`.
+   * The context window the turn was served, where the loop was told one, for `largestPromptShare`.
    *
    * @remarks
-   * On the turn rather than only in `runMetrics`' options, because a run of several loops can put
-   * them on models with different windows, and one window for the whole run misstates how close
-   * any of them came.
+   * On the turn rather than only in `runMetrics`' options, because a run of several exchanges can
+   * put them on models with different context windows, and one context window for the whole run
+   * misstates how close any of them came.
    */
   contextLength?: number;
 }
@@ -224,8 +245,8 @@ export interface TurnReport extends TurnUsage {
  * What `load_tools` calls resolved to: new tools, ones already loaded, and names in no catalogue.
  *
  * @remarks
- * Carried on each `load_tools` result as `loads`, so `runMetrics` over every loop's events adds
- * them up without the loops' results beside it.
+ * Carried on each `load_tools` result as `loads`, so `runMetrics` over every exchange's events adds
+ * them up without the exchanges' results beside it.
  */
 export interface LoadCounts {
   /** Tools loaded that were not loaded already. */
@@ -261,18 +282,20 @@ export interface RunEvent {
   kind: RunEventKind;
   /** The delta, the arguments, the result, or the reason — whatever the kind carries. */
   text: string;
-  /** Tool name on the tool kinds, and on a `done` the tool that ended the run; otherwise empty. */
+  /**
+   * Tool name on the tool kinds, and on a `done` the tool that ended the exchange; otherwise empty.
+   */
   name: string;
   /**
    * The call's id on the tool kinds, which pairs a `tool-result` with its `tool-call` when one
-   * tool is called twice in a step. The one field `emit` does not fill in: it is there only where
+   * tool is called twice in a turn. The one field `emit` does not fill in: it is there only where
    * the emitter gave one, and optional so an event built before it existed still compiles.
    */
   id?: string;
   /**
-   * The caller's own flow step this happened inside, so a watcher can group a run the way the
-   * work is written. Empty for events that belong to the run rather than to any one step, and
-   * empty throughout for a caller with no steps at all.
+   * The app's own exchange this happened inside, such as a task's stage, so a watcher can group a
+   * run the way the work is written. Empty for events that belong to the run rather than to any one
+   * exchange, and empty throughout for an app that sends no `step` events.
    */
   step: string;
   /** Outcome on `tool-result` and `done`, otherwise null. */
@@ -318,7 +341,7 @@ export type RunEventInput = Pick<RunEvent, 'kind'> & Partial<Omit<RunEvent, 'kin
  * @remarks
  * The one place the defaults are written, so an event the bus stamps, one the loop keeps for its
  * own metrics and the notice a slow watcher is sent cannot come to disagree about what an unset
- * field reads as. A host that numbers and stores a run's events itself, rather than on `emit`'s
+ * field reads as. An app that numbers and stores a run's events itself, rather than on `emit`'s
  * in-memory bus, makes each one with this, so its events keep that shape as `RunEvent` grows.
  */
 export const stamp = (input: RunEventInput, runId: string, seq: number, at: number): RunEvent => ({
@@ -333,14 +356,46 @@ export const stamp = (input: RunEventInput, runId: string, seq: number, at: numb
   seq,
 });
 
+/** Where a stream's run stands, as its events so far say, which sets how long the sweep keeps it. */
+const StreamPhase = {
+  /** Still writing, or gone quiet with no `done`. */
+  Live: 'live',
+  /** Its last event is `wait`: stopped until the calls it handed back are answered. */
+  Waiting: 'waiting',
+  /** `done` has been seen. Nothing after it changes that. */
+  Ended: 'ended',
+} as const;
+
+/** Any one of the phases in `StreamPhase`. */
+type StreamPhase = (typeof StreamPhase)[keyof typeof StreamPhase];
+
+/** The setting that says how long an unwatched stream in each phase outlives its last event. */
+const RETENTION_BY_PHASE = {
+  [StreamPhase.Live]: 'retainUnendedMs',
+  [StreamPhase.Waiting]: 'retainWaitingMs',
+  [StreamPhase.Ended]: 'retainMs',
+} as const satisfies Record<StreamPhase, keyof EventBusOptions>;
+
+/**
+ * The phase an event puts a run in that has not ended, for the kinds that move it off `live`.
+ *
+ * @remarks
+ * A map rather than an object, so a kind a JavaScript caller made up, `constructor` say, is not
+ * looked up on the prototype.
+ */
+const PHASE_BY_KIND: ReadonlyMap<string, StreamPhase> = new Map([
+  [RunEventKind.Wait, StreamPhase.Waiting],
+  [RunEventKind.Done, StreamPhase.Ended],
+]);
+
 interface Stream {
   events: RunEvent[];
   listeners: Set<(event: RunEvent) => void>;
   seq: number;
   /** When this stream last saw an event, for the sweep below. */
   touched: number;
-  /** Whether `done` has been seen, so a watcher leaving knows the run is over. */
-  ended: boolean;
+  /** Where the run stands, so the sweep knows how long to keep it and a watcher leaving knows it is over. */
+  phase: StreamPhase;
 }
 
 /**
@@ -356,7 +411,7 @@ const streamFor = ({ streams }: Bus, runId: string): Stream =>
     listeners: new Set(),
     seq: 0,
     touched: Date.now(),
-    ended: false,
+    phase: StreamPhase.Live,
   }));
 
 /**
@@ -383,7 +438,8 @@ function sweep(held: Bus) {
     if (stream.listeners.size) {
       continue;
     }
-    if (stream.touched <= now - (stream.ended ? limits.retainMs : limits.retainUnendedMs)) {
+    const isExpired = stream.touched <= now - limits[RETENTION_BY_PHASE[stream.phase]];
+    if (isExpired) {
       streams.delete(runId);
     }
   }
@@ -449,10 +505,11 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   if (stream.events.length > limits.maxEvents + limits.trimSlack) {
     stream.events.splice(0, stream.events.length - limits.maxEvents);
   }
-  // Kept for a moment so a watcher that arrives just after the end still sees how it went,
-  // then dropped: a finished run's record is the row, not this.
-  if (event.kind === RunEventKind.Done) {
-    stream.ended = true;
+  // A finished run is kept for a moment so a watcher that arrives just after the end still sees
+  // how it went, then dropped: its record is the row, not this. A waiting one is kept far longer.
+  const isOver = stream.phase === StreamPhase.Ended;
+  if (isOver === false) {
+    stream.phase = PHASE_BY_KIND.get(event.kind) ?? StreamPhase.Live;
   }
   scheduleSweep(held);
 
@@ -495,8 +552,8 @@ export function watch(runId: string, signal?: AbortSignal): AsyncGenerator<RunEv
  *
  * @param runId - The run the watcher is following.
  * @param gap - How many events were dropped, for the text.
- * @param next - The event the notice goes ahead of, which gives it its step, its time and — less
- * one — its seq.
+ * @param next - The event the notice goes ahead of, which gives it its exchange, its time and —
+ * less one — its seq.
  * @returns A `notice` event made for that one watcher: it is in no backlog.
  *
  * @remarks
@@ -615,7 +672,7 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // the last watcher of the old stream has no business deleting the new one.
     const stillFiled = streams.get(runId) === stream;
     const unwatched = stream.listeners.size === 0;
-    const nothingMoreToSay = stream.ended || stream.events.length === 0;
+    const nothingMoreToSay = stream.phase === StreamPhase.Ended || stream.events.length === 0;
     if (stillFiled && unwatched && nothingMoreToSay) {
       streams.delete(runId);
     }
@@ -665,8 +722,8 @@ export const resetEvents = () => {
  * reader that takes a run in snapshots.
  *
  * @param events - Events in `seq` order, from `history` or collected from `watch`. Not written to.
- * @returns One event per block, every one a copy. A run of `thinking` or of `output` within one
- * step is a single block with the texts joined; anything else is a block to itself.
+ * @returns One event per block, every one a copy. A stretch of `thinking` or of `output` within
+ * one exchange is a single block with the texts joined; anything else is a block to itself.
  *
  * @remarks
  * Consecutive tokens of one kind are one thing being said, not hundreds of things. A client that
@@ -745,8 +802,8 @@ export interface RunMetrics {
   serverErrors: number;
   /**
    * Tools `load_tools` loaded that were not loaded already, summed from each result's `loads`.
-   * Absent where no result carried any; `runAgentLoop` fills all three with zero in a run on
-   * demand that loaded nothing.
+   * Absent where no result carried any; `runAgentLoop` fills all three with zero in an on-demand
+   * exchange that loaded nothing.
    */
   toolsLoaded?: number;
   /** Tools the model asked `load_tools` for that it already had, summed the same way. */
@@ -780,7 +837,8 @@ export interface RunMetrics {
   predictedMs?: number;
   /**
    * Time from each tool call to its result, summed per call — so calls run in parallel can add up
-   * to more than the wall time they took.
+   * to more than the wall time they took. A call with no result here, such as one handed back,
+   * adds nothing.
    */
   toolMs?: number;
   /** The longest any one turn took, retries and continuations in. */
@@ -794,8 +852,9 @@ export interface RunMetrics {
   /** The biggest prompt any turn reported. */
   largestPrompt?: number;
   /**
-   * The highest share of its window any turn's prompt took, for how close the run came: each
-   * turn over its own `contextLength`, or over the one `runMetrics` was told where it has none.
+   * The highest share of its context window any turn's prompt took, for how close the run came:
+   * each turn over its own `contextLength`, or over the one `runMetrics` was told where it
+   * has none.
    */
   largestPromptShare?: number;
   /** How it ended, read off `done` and the last turn, or `waiting` after a `wait` nothing followed. */
@@ -813,31 +872,31 @@ const SEVERITY: readonly string[] = Object.values(ServerLogLevel);
 /** Where `warning` sits in `SEVERITY`: a level past it is an error. */
 const WARNING = SEVERITY.indexOf(ServerLogLevel.Warning);
 
-/** How a run ended, as `runMetrics` reads it. */
+/** How an exchange ended, as its result says or as `runMetrics` reads it off a run's events. */
 export const RunOutcome = {
-  /** The run did not fail, and its last turn was neither cut off nor withheld. */
+  /** The exchange did not fail, and its last turn was neither cut off nor withheld. */
   Answered: 'answered',
-  /** The run did not fail, and its last turn is an answer the reply ceiling cut off. */
+  /** The exchange did not fail, and its last turn is an answer the reply ceiling cut off. */
   Truncated: 'truncated',
   /**
-   * The run did not fail, and the provider's content filter withheld its last turn
+   * The exchange did not fail, and the provider's content filter withheld its last turn
    * (`finish_reason: "content_filter"`): what the answer says, if anything, is not the model's
    * whole reply.
    */
   Filtered: 'filtered',
   /**
-   * The run did not fail, and a tool call ended it: `AgentLoopResult.ended` says which, and so
+   * The exchange did not fail, and a tool call ended it: `AgentLoopResult.ended` says which, and so
    * does a `done` that names the tool.
    */
   Ended: 'ended',
   /**
-   * The run is not over: it handed calls back and waits for the host to answer them, as a `wait`
+   * The exchange stopped: it handed calls back and waits for the app to answer them, as a `wait`
    * event with no `turn` or `done` after it says, and `AgentLoopResult.pending` lists them.
    */
   Waiting: 'waiting',
   /**
    * `done` said the run was not ok. Whether that was an error, a stop or the tool budget is in
-   * the host's own `done` text and not here.
+   * the app's own `done` text and not here.
    */
   Failed: 'failed',
 } as const;
@@ -852,8 +911,8 @@ export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
  * ended by it; anything else is read off the turn.
  * @param last - The last turn a `usage` event reported, if any did.
  * @returns `failed` for a `done` that was not ok, `ended` for one that names the tool that ended
- * the run, `truncated` where the last turn ran into the reply ceiling, `filtered` where a content
- * filter withheld it, and `answered` otherwise.
+ * the exchange, `truncated` where the last turn ran into the reply ceiling, `filtered` where a
+ * content filter withheld it, and `answered` otherwise.
  */
 function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOutcome {
   if (ok === false) {
@@ -868,26 +927,32 @@ function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOut
 }
 
 /**
- * How a run that ends on a turn ends, read off that turn's finish reason.
+ * The outcome of an exchange whose last turn finished for a reason other than an answer.
+ *
+ * @remarks
+ * A map rather than an object, because the key is whatever the server sent and an object would
+ * look `constructor` up on its prototype.
+ */
+const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, RunOutcome> = new Map([
+  [FinishReason.Length, RunOutcome.Truncated],
+  [FinishReason.ContentFilter, RunOutcome.Filtered],
+]);
+
+/**
+ * How an exchange that ends on a turn ends, read off that turn's finish reason.
  *
  * @param finishReason - The last turn's `finish_reason`, as the server sent it.
  * @returns `truncated` for `length`, `filtered` for `content_filter`, and `answered` otherwise.
  */
 export function endingOf(finishReason: string | undefined): RunOutcome {
-  if (finishReason === FinishReason.Length) {
-    return RunOutcome.Truncated;
-  }
-  if (finishReason === FinishReason.ContentFilter) {
-    return RunOutcome.Filtered;
-  }
-  return RunOutcome.Answered;
+  return OUTCOME_BY_FINISH.get(finishReason) ?? RunOutcome.Answered;
 }
 
 /** What `runMetrics` takes besides the events. */
 export interface RunMetricsOptions {
   /**
-   * The window the run was served, for `largestPromptShare` over the turns that do not carry
-   * their own. Absent or zero leaves those out.
+   * The context window the run was served, for `largestPromptShare` over the turns that do not
+   * carry their own. Absent or zero leaves those out.
    */
   contextLength?: number;
 }
@@ -897,7 +962,7 @@ export interface RunMetricsOptions {
  *
  * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
  * that has lost its oldest events to the cap sums what it still has.
- * @param [options] - The served window, for how full the run came to it.
+ * @param [options] - The served context window, for how full the run came to it.
  * @returns A summary of the caller's own. The counts are zero for an empty list, and `outcome` is
  * absent for a run that has not reported `done`.
  *
@@ -905,10 +970,10 @@ export interface RunMetricsOptions {
  * A sibling of `fold` rather than part of it. `fold` hands back events, and a client renders
  * what it returns as blocks; a summary is another shape, and folding one in would give every
  * consumer of `fold` a block it does not know how to draw. Derived from the `usage` reports' own
- * `turn` rather than the running totals, so a run with several loops in it — a question per loop —
- * adds up the same as one with a single loop. That holds for everything here: what `load_tools`
- * resolved to rides on its results, and each turn carries the window it was served, so the events
- * of every loop of a run, concatenated, are a complete account of it.
+ * `turn` rather than the running totals, so a run with several exchanges in it — a question per
+ * exchange — adds up the same as one with a single exchange. That holds for everything here: what
+ * `load_tools` resolved to rides on its results, and each turn carries the context window it was
+ * served, so the events of every exchange of a run, concatenated, are a complete account of it.
  */
 export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOptions = {}): RunMetrics {
   const metrics: RunMetrics = {
@@ -938,7 +1003,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   let reportedPrompt = 0;
   let reportedCached = 0;
   let firstTokens = 0;
-  // Calls waiting for their results, by tool name, oldest first.
+  // Calls waiting for their results, by call id, oldest first. An event built without an id is
+  // paired by its tool's name, which is all it carries.
   const pending = new Map<string, number[]>();
   let last: TurnReport | undefined;
   // Whether the run's latest stretch stopped on a `wait`; the next turn is the run going on.
@@ -955,7 +1021,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       if (event.name === LOAD_TOOLS) {
         metrics.loadCalls++;
       }
-      getOrCreate(pending, event.name, () => []).push(event.at);
+      getOrCreate(pending, event.id ?? event.name, () => []).push(event.at);
     } else if (event.kind === RunEventKind.ToolResult) {
       metrics.toolCalls++;
       if (event.ok === false) {
@@ -966,7 +1032,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
         add('redundantLoads', event.loads.redundantLoads);
         add('unknownToolNames', event.loads.unknownToolNames);
       }
-      const called = pending.get(event.name)?.shift();
+      const called = pending.get(event.id ?? event.name)?.shift();
       if (called !== undefined) {
         add('toolMs', event.at - called);
       }

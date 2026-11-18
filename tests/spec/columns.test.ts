@@ -123,6 +123,18 @@ describe('defineSpecColumns', () => {
     expect(table.toLayer({ model: ' qwen ', maxTokens: 0 }).model).toEqual({ model: 'qwen', maxTokens: 0 });
   });
 
+  it('cannot override a stated temperature through an extraBody column', () => {
+    const table = defineSpecColumns<{ temperature: number; extraBody: Record<string, unknown> }>({
+      temperature: { path: 'model.temperature', inherit: -1 },
+      extraBody: { path: 'model.extraBody' },
+    });
+    // toLayer writes the row as it is, and resolving is what holds the rule.
+    const layer = table.toLayer({ temperature: 0, extraBody: { temperature: 0.9, top_k: 40 } });
+    const resolved = resolveAgentSpec([layer]);
+    expect(resolved.temperature).toBe(0);
+    expect(resolved.extraBody).toEqual({ top_k: 40 });
+  });
+
   it("writes task-server's profile layer as its hand-written projection does", () => {
     const EXTENSION = 'com.cubicecho.task-server';
     const text = (value: string) => value.trim() || undefined;
@@ -237,9 +249,19 @@ describe('defineSpecColumns', () => {
       expect(table.dropped(spec).map((drop) => drop.path)).toEqual([
         'tasks.compaction.temperature',
         'tasks.followups',
-        `extensions.${EXTENSION}.colour`,
-        'extensions.org.other',
+        `extensions["${EXTENSION}"].colour`,
+        'extensions["org.other"]',
       ]);
+    });
+
+    it('quotes a key holding a dot, so two different fields never read as one path', () => {
+      // A bare `com` is a valid extension key too, and `com.acme` beneath it is not `com.acme` the key.
+      const table = defineSpecColumns<{ theme: string }>({ theme: { path: ['extensions', 'com', 'theme'] } });
+      const spec: AgentSpec = {
+        spec: AGENT_SPEC,
+        extensions: { 'com.acme': { plan: 'pro' }, com: { theme: 'dark', acme: 'other' } },
+      };
+      expect(table.dropped(spec).map((drop) => drop.path)).toEqual(['extensions["com.acme"]', 'extensions.com.acme']);
     });
 
     it('takes a prompt part by its id, and reports the others and any reference', () => {

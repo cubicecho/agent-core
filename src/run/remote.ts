@@ -6,16 +6,16 @@ import { type RunEvent, type RunEventInput, RunEventKind } from './events.ts';
 
 /**
  * Running against a remote agent: a model that runs a whole agent loop of its own behind the chat
- * completions API, and hands the host's tools back to it with `finish_reason: "tool_calls"`.
+ * completions API, and hands the app's tools back to it with `finish_reason: "tool_calls"`.
  *
- * Its steps happen on the server, so what they say comes back as the server's own run events,
- * carried beside the chunks under a field of their own, `PROGRESS_FIELD` unless the host names
+ * Its turns happen on the server, so what they say comes back as the server's own run events,
+ * carried beside the chunks under a field of their own, `PROGRESS_FIELD` unless the app names
  * another. The encoder is for that server and the decoder for `runAgentLoop`, so the wire shape
  * lives with `RunEvent` and the two ends cannot drift.
  */
 
 /**
- * The body field a remote agent's progress travels under where the host names no other:
+ * The body field a remote agent's progress travels under where the app names no other:
  * `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on
  * an answer that is not streamed.
  *
@@ -34,10 +34,10 @@ export const IDEMPOTENCY_HEADER = 'Idempotency-Key' as const;
 /** What a streamed chunk calls itself. */
 const CHUNK_OBJECT = 'chat.completion.chunk' as const;
 
-/** What a notice about the options a remote agent's run sets aside opens with, ahead of their names. */
+/** What a notice about the options an exchange with a remote agent sets aside opens with, ahead of their names. */
 export const REMOTE_AGENT_NOTICE = 'left to the remote agent, which runs its own: ' as const;
 
-/** The kinds of event a remote agent's progress says of its steps, which the loop then does not say too. */
+/** The kinds of event a remote agent's progress says of its turns, which the loop then does not say too. */
 const SERVER_OWNED: ReadonlySet<string> = new Set([
   RunEventKind.Turn,
   RunEventKind.Thinking,
@@ -164,12 +164,12 @@ export function progressEvents(completion: unknown, field: string = PROGRESS_FIE
 }
 
 /**
- * A remote agent's `extraBody`, with its progress asked for under what the host wrote.
+ * A remote agent's `extraBody`, with its progress asked for under what the app wrote.
  *
- * @param extraBody - The host's. Not written to.
+ * @param extraBody - The app's. Not written to.
  * @param field - The field progress is asked for under.
- * @returns A new body whose `field` object says `progress: true` unless the host's own says
- * otherwise, the host's other router fields kept.
+ * @returns A new body whose `field` object says `progress: true` unless the app's own says
+ * otherwise, the app's other router fields kept.
  */
 function askingProgress(extraBody: Record<string, unknown>, field: string): Record<string, unknown> {
   const own = extraBody[field];
@@ -177,7 +177,7 @@ function askingProgress(extraBody: Record<string, unknown>, field: string): Reco
 }
 
 /** How `remoteRun` reads and asks for the server's progress. */
-export interface RemoteRunOptions {
+interface RemoteRunOptions {
   /**
    * The field the server's progress travels under.
    *
@@ -192,9 +192,9 @@ export interface RemoteRunOptions {
   newKey?: () => string;
 }
 
-/** What a run on a remote agent adds to each step of `runAgentLoop`. */
-export interface RemoteRun {
-  /** The config's `extraBody` with progress asked for, unless the host turned it off. */
+/** What an exchange with a remote agent adds to each turn of `runAgentLoop`. */
+interface RemoteRun {
+  /** The config's `extraBody` with progress asked for, unless the app turned it off. */
   extraBody: Record<string, unknown>;
   /** The loop's own events: those the server's progress already says are left out. */
   emit: (input: RunEventInput) => void;
@@ -207,19 +207,19 @@ export interface RemoteRun {
 }
 
 /**
- * The parts of a run that differ against a remote agent: progress asked for and forwarded, the
- * loop's own step events left to the server, and a key per turn.
+ * The parts of an exchange that differ against a remote agent: progress asked for and forwarded,
+ * the loop's own turn events left to the server, and a key per turn.
  *
  * @param extraBody - The config's `extraBody`. Not written to.
- * @param told - Hears every event the run emits, the server's and the loop's.
+ * @param told - Hears every event the exchange emits, the server's and the loop's.
  * @param [options] - The progress field, and where keys come from.
- * @returns The run's remote half.
+ * @returns The exchange's remote half.
  *
  * @remarks
- * With progress on, the server says each step's `turn`, `thinking`, `output`, `tool-call`,
- * `tool-result` and `usage`, its handed-back calls included, so the loop says none of those itself.
- * The server's `done` is not forwarded: the loop's run goes on past a remote stretch, and its end is
- * the host's to say. With progress off, the loop's own events are all there is, and all are said.
+ * With progress on, the server says the `turn`, `thinking`, `output`, `tool-call`, `tool-result`
+ * and `usage` of each of its turns, its handed-back calls included, so the loop says none of those
+ * itself. The server's `done` is not forwarded: the run goes on past a remote stretch, and its end
+ * is the app's to say. With progress off, the loop's own events are all there is, and all are said.
  */
 export function remoteRun(
   extraBody: Record<string, unknown> | undefined,
@@ -256,7 +256,7 @@ export function remoteRun(
 /**
  * A remote run's id, to spread into what the loop hands back.
  *
- * @param [remote] - The run's remote half. Absent on a model that is not a remote agent.
+ * @param [remote] - The exchange's remote half. Absent on a model that is not a remote agent.
  * @returns `{ remoteRunId }` once an event has named the run, and otherwise nothing.
  */
 export function remoteRunOf(remote?: RemoteRun): { remoteRunId?: string } {
@@ -265,18 +265,18 @@ export function remoteRunOf(remote?: RemoteRun): { remoteRunId?: string } {
 }
 
 /**
- * A run's options with what a remote agent does for itself set aside, where the config says it is one.
+ * An exchange's options with what a remote agent does for itself set aside, where the config says it is one.
  *
  * @param options - What `runAgentLoop` was given. Not written to.
  * @returns `options` itself without `config.remoteAgent`, and otherwise a copy that loads tools
  * eagerly and does not compact, prune, preselect, continue, recover calls from text or size requests
- * against `contextLength`. One notice names whichever of those the host had asked for.
+ * against `contextLength`. One notice names whichever of those the app had asked for.
  *
  * @remarks
- * Ignored rather than refused: the flag comes from the model entry and the options from the host's
- * code, written once for every model, so a refusal would have every host branch on the flag. Each
- * is the server's to do, and on the client would break the run: a fold or prune rewrites the
- * transcript the server resumes by, `load_tools` hides the host's tools, and a preselection or a
+ * Ignored rather than refused: the flag comes from the model entry and the options from the app's
+ * code, written once for every model, so a refusal would have every app branch on the flag. Each
+ * is the server's to do, and on the client would break the exchange: a compaction or prune rewrites
+ * the transcript the server resumes by, `load_tools` hides the app's tools, and a preselection or a
  * continuation is one more remote run.
  */
 export function asRemoteAgent(options: AgentLoopOptions): AgentLoopOptions {

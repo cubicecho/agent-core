@@ -1,9 +1,8 @@
-import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EndpointSilent } from '../../src/wire/retry.ts';
 import { type InFlight, reportsCache, streamTurn } from '../../src/wire/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
-import { type Chunk, chunk, chunks, clientOf, MINTED_ID, text } from '../helpers.ts';
+import { type Body, type Chunk, chunk, chunks, clientOf, MINTED_ID, text } from '../helpers.ts';
 
 /**
  * A stream that yields what it has and then stops answering, the way an endpoint that dies
@@ -23,11 +22,11 @@ const stalls = (signal: AbortSignal, ...list: Chunk[]) => ({
   },
 });
 
-const body = {
+const body: Body = {
   model: 'm',
   messages: [],
   stream: true,
-} as OpenAI.ChatCompletionCreateParamsStreaming;
+};
 
 afterEach(() => vi.useRealTimers());
 
@@ -77,6 +76,24 @@ describe('streamTurn', () => {
     expect(turn.reasoning).toBe('hmm');
     expect(thinking.join('')).toBe('hmm');
     expect(output.join('')).toBe('answer');
+  });
+
+  it('keeps the scratchpad in arrival order when it comes both fenced and as a field', async () => {
+    const thinking: string[] = [];
+    const turn = await streamTurn(
+      clientOf(() =>
+        chunks(
+          text('<think>fenced first</think>'),
+          chunk({ choices: [{ delta: { reasoning_content: ' field second' } }] }),
+          text('<think> fenced third</think>answer'),
+        ),
+      ),
+      body,
+      { onThinking: (delta) => thinking.push(delta) },
+    );
+    expect(turn.reasoning).toBe(thinking.join(''));
+    expect(turn.reasoning).toBe('fenced first field second fenced third');
+    expect(turn.content).toBe('answer');
   });
 
   it('keeps a scratchpad cut off at the ceiling out of the answer', async () => {
@@ -720,6 +737,27 @@ describe('streamTurn', () => {
     stop.abort();
     await expect(turn).rejects.toThrow();
     expect(inFlight.read?.()).toEqual({ content: 'half an ans', reasoning: 'hmmaside' });
+  });
+
+  it('reads the scratchpad in its inFlight box in arrival order', async () => {
+    const stop = new AbortController();
+    const inFlight: InFlight = {};
+    const turn = streamTurn(
+      clientOf((_, { signal }) =>
+        stalls(
+          signal,
+          text('<think>aside</think>'),
+          chunk({ choices: [{ delta: { reasoning_content: 'hmm' } }] }),
+          text('half'),
+        ),
+      ),
+      body,
+      { signal: stop.signal, inFlight },
+    );
+    await vi.waitFor(() => expect(inFlight.read?.()?.content).toBe('half'));
+    stop.abort();
+    await expect(turn).rejects.toThrow();
+    expect(inFlight.read?.()).toEqual({ content: 'half', reasoning: 'asidehmm' });
   });
 
   it('does not return a turn that was cut off as though it were finished', async () => {

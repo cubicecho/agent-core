@@ -1,4 +1,4 @@
-import { isRecord } from '../core/guards.ts';
+import { isAbsent, isRecord } from '../core/guards.ts';
 import {
   AGENT_SPEC,
   type AgentSpec,
@@ -10,10 +10,10 @@ import {
 } from './spec.ts';
 
 /**
- * A host's stored agent, read as a spec layer and written back: one table of columns, and the
+ * An app's stored agent, read as a spec layer and written back: one table of columns, and the
  * marker each column stores for "inherit".
  *
- * Every host with profiles had written this projection by hand, three times with three markers —
+ * Every app with profiles had written this projection by hand, three times with three markers —
  * `""` and `-1` and the word `inherit` in one, `null` in the next, none at all in the third — and
  * the import half of it once more, with a list of what a row could not keep. The merge was already
  * `resolveAgentSpec`; what each repeated was which column feeds which field, and how a column at
@@ -47,12 +47,12 @@ export type SpecPath =
   | `tasks.${string}.${Exclude<keyof TaskSpec, 'endpoint'>}`;
 
 /**
- * A path into a host's own extension, as segments, because its key is a reverse domain and has
+ * A path into an app's own extension, as segments, because its key is a reverse domain and has
  * dots of its own.
  */
 export type ExtensionPath = readonly ['extensions', string, ...string[]];
 
-/** The top-level keys of a spec, for naming a whole section a host reads by hand. */
+/** The top-level keys of a spec, for naming a whole section an app reads by hand. */
 export type SpecSection =
   | '$schema'
   | 'id'
@@ -81,7 +81,7 @@ export interface SpecColumn<Value> {
   /**
    * What the column stores for "say nothing here": a value at it is a field the layer leaves out,
    * and a field the layer leaves out reads back as it. Compared with `===`. Left out, the column
-   * has no marker — every value it holds is said, which is a host's bottom layer — and an absent
+   * has no marker — every value it holds is said, which is an app's bottom layer — and an absent
    * field leaves the column out of what `fromLayer` returns.
    *
    * @remarks
@@ -115,7 +115,7 @@ export type SpecColumns<Row> = { [Column in keyof Row]?: SpecColumn<Row[Column]>
 /** What `defineSpecColumns` takes besides the columns. */
 export interface SpecColumnsOptions {
   /**
-   * What the host reads by hand, so `dropped` does not report it: a section (`bundle`), a path
+   * What the app reads by hand, so `dropped` does not report it: a section (`bundle`), a path
    * (`tools.servers`, where a list of slugs becomes a list of row ids) or an extension. `spec` is
    * never reported, and needs no entry here.
    */
@@ -124,7 +124,10 @@ export interface SpecColumnsOptions {
 
 /** One thing a document says that a row will not keep. */
 export interface SpecDrop<Row> {
-  /** Where it is, in `parseSpec`'s spelling: `model.extraBody`, `prompt[1]`, `hooks[0]`. */
+  /**
+   * Where it is, in `parseSpec`'s spelling: `model.extraBody`, `prompt[1]`, `hooks[0]`. A key
+   * holding a dot is quoted, as in `extensions["com.acme"]`.
+   */
   path: string;
   /** What the document held there. */
   value: unknown;
@@ -183,7 +186,7 @@ interface Entry<Row> {
 /**
  * The sections `dropped` always walks into, so a field the format names is reported at its own
  * path. Anything deeper — one task, one extension — is walked into only where a column is mapped
- * beneath it, and is otherwise reported whole: a side task this host does not run is one loss.
+ * beneath it, and is otherwise reported whole: a side task this app does not run is one loss.
  */
 const STRUCTURAL = ['endpoint', 'model', 'tools', 'retry', 'tasks', 'extensions'];
 
@@ -195,14 +198,6 @@ const HOOKS = 'hooks';
 
 /** The key every layer declares itself under, which belongs to no column. */
 const TOKEN = 'spec';
-
-/**
- * Absent and null are the same thing, as they are to `parseSpec`.
- *
- * @param value - A column's or a field's value.
- * @returns `true` for `undefined` and `null` only.
- */
-const absent = (value: unknown): value is null | undefined => value === undefined || value === null;
 
 /**
  * A path as segments.
@@ -220,6 +215,26 @@ function segmentsOf(path: SpecPath | ExtensionPath | SpecSection | `tasks.${stri
     return [PROMPT, path.slice(prefix.length)];
   }
   return path.split('.');
+}
+
+/**
+ * A path as text, in `parseSpec`'s spelling, with a segment holding a dot quoted so it reads as one.
+ *
+ * @param path - The segments.
+ * @returns `extensions["com.acme"].plan` for the key `com.acme`, and `extensions.com.acme` for
+ * the key `acme` beneath the key `com`.
+ */
+function pathText(path: readonly string[]): string {
+  let text = '';
+  for (const segment of path) {
+    const holdsDot = segment.includes('.');
+    if (holdsDot) {
+      text += `[${JSON.stringify(segment)}]`;
+    } else {
+      text += text === '' ? segment : `.${segment}`;
+    }
+  }
+  return text;
 }
 
 /**
@@ -277,9 +292,10 @@ function write(layer: Record<string, unknown>, segments: readonly string[], valu
   }
   let section = layer;
   for (const segment of segments.slice(0, -1)) {
-    const next = section[segment];
-    section[segment] = isRecord(next) ? next : {};
-    section = section[segment] as Record<string, unknown>;
+    const held = section[segment];
+    const next = isRecord(held) ? held : {};
+    section[segment] = next;
+    section = next;
   }
   section[segments[segments.length - 1]] = value;
 }
@@ -310,7 +326,7 @@ function checkTable<Row>(entries: readonly Entry<Row>[]) {
  *
  * @typeParam Row - The stored row: a settings row, a profile, an override layer.
  * @param columns - Each mapped column, keyed by its name on the row.
- * @param [options] - What the host reads by hand, outside the table.
+ * @param [options] - What the app reads by hand, outside the table.
  * @returns `toLayer`, `fromLayer` and `dropped` over that one table.
  * @throws When two columns write the same field, or one writes a section another writes inside.
  *
@@ -361,17 +377,17 @@ export function defineSpecColumns<Row>(
       const layer: Record<string, unknown> = { spec: AGENT_SPEC };
       for (const { column, segments, hasMarker, definition } of entries) {
         const value = row[column];
-        const inherits = absent(value) || (hasMarker && value === definition.inherit);
+        const inherits = isAbsent(value) || (hasMarker && value === definition.inherit);
         if (inherits) {
           continue;
         }
         const said = definition.toSpec ? definition.toSpec(value as Exclude<Row[keyof Row], null | undefined>) : value;
-        if (absent(said) === false) {
+        if (isAbsent(said) === false) {
           write(layer, segments, said);
         }
       }
       // Built as a plain object because the paths are data; each field is the column's value, of
-      // its path's type when the host's `toSpec` says so, and `parseSpec` is the check on that.
+      // its path's type when the app's `toSpec` says so, and `parseSpec` is the check on that.
       return layer as AgentSpec;
     },
 
@@ -379,7 +395,7 @@ export function defineSpecColumns<Row>(
       const row: Partial<Row> = {};
       for (const entry of entries) {
         const value = read(layer, entry.segments);
-        const kept = absent(value) ? undefined : stored(entry, value);
+        const kept = isAbsent(value) ? undefined : stored(entry, value);
         if (kept !== undefined) {
           row[entry.column] = kept;
         } else if (entry.hasMarker) {
@@ -427,7 +443,7 @@ export function defineSpecColumns<Row>(
             drops.push({ path: `${PROMPT}[${index}]`, value: part });
             continue;
           }
-          if (absent(part.text) === false) {
+          if (isAbsent(part.text) === false) {
             offer(entry, `${PROMPT}[${index}].text`, part.text);
           }
           if (part.ref) {
@@ -443,12 +459,12 @@ export function defineSpecColumns<Row>(
        * @param path - Where it is, as segments.
        */
       const walk = (value: unknown, path: readonly string[]) => {
-        if (absent(value) || isHandled(path)) {
+        if (isAbsent(value) || isHandled(path)) {
           return;
         }
         const entry = columnAt(path);
         if (entry) {
-          offer(entry, path.join('.'), value);
+          offer(entry, pathText(path), value);
           return;
         }
         if (path.length === 1 && path[0] === PROMPT && Array.isArray(value)) {
@@ -470,7 +486,7 @@ export function defineSpecColumns<Row>(
           }
           return;
         }
-        drops.push({ path: path.join('.'), value });
+        drops.push({ path: pathText(path), value });
       };
 
       walk(spec, []);

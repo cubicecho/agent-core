@@ -19,11 +19,11 @@ export interface Endpoint {
   /** Empty is normal — a local server ignores it. See `getClient` for what is sent instead. */
   apiKey: string;
   /**
-   * How long an endpoint may go quiet. Zero, less, or absent means no limit — what a local model
+   * How long a model server may go quiet. Zero, less, or absent means no limit — what a local model
    * answering slowly needs.
    *
    * @remarks
-   * Not the whole request, which may take as long as the model keeps talking. On a streamed turn
+   * Not the whole request, which may take as long as the model keeps talking. On a streamed reply
    * it is the silence allowed between chunks, the idle watchdog; the wait for the first chunk is
    * `firstTokenSeconds`. On a call that does not stream, a side task or a model listing, it is
    * the SDK's timer, which runs until the response headers arrive.
@@ -35,7 +35,7 @@ export interface Endpoint {
    */
   requestTimeoutSeconds?: number;
   /**
-   * How long a streamed turn may wait for its first chunk. Zero or less is no limit.
+   * How long a streamed reply may wait for its first chunk. Zero or less is no limit.
    *
    * @defaultValue Five times `requestTimeoutSeconds`
    *
@@ -49,21 +49,22 @@ export interface Endpoint {
    */
   firstTokenSeconds?: number;
   /**
-   * Sends this endpoint's requests in place of the global `fetch`. Runtime only: never in a document.
+   * Sends this model server's requests in place of the global `fetch`. Runtime only: never in
+   * a document.
    *
    * @remarks
-   * Every request made to the endpoint goes through it: the SDK client's, the listing, the native
-   * routes and `probeEndpoint`. A side task on the same endpoint inherits it through `taskCall`, and
-   * one on another endpoint is given it by the host, as a key is.
+   * Every request made to the model server goes through it: the SDK client's, the listing, the
+   * native routes and `probeEndpoint`. A side task on the same model server inherits it through
+   * `taskCall`, and one on another model server is given it by the app, as a key is.
    */
   fetch?: typeof globalThis.fetch;
 }
 
 /**
- * What makes an endpoint the one it is: where it lives and whose key reaches it.
+ * What makes a model server the one it is: where it lives and whose key reaches it.
  *
  * @remarks
- * The narrow half of `Endpoint`, for everything that only has to tell two endpoints apart — the
+ * The narrow half of `Endpoint`, for everything that only has to tell two model servers apart — the
  * client pool, the capability latches, a side task borrowing the agent's key. The timeouts and
  * `fetch` are not in it: a different patience is not a different server, and this is what is
  * digested and written down, which a function cannot be.
@@ -71,7 +72,7 @@ export interface Endpoint {
 export interface EndpointIdentity {
   /**
    * The base URL as given. Compared as `baseUrlKey` has it, so a trailing slash, a host's case and
-   * a default port are the same endpoint, and a path's case and a `/v1` are not.
+   * a default port are the same model server, and a path's case and a `/v1` are not.
    */
   baseUrl: string;
   /** Absent and empty mean the same: no key, which `endpointKey` reads as `NO_KEY`. */
@@ -86,12 +87,12 @@ export interface EndpointIdentity {
  * lower case, a default port dropped — or `null` for anything that is not such a URL.
  *
  * @remarks
- * One rule for every host, because "a stored key only goes to its own endpoint" is decided by
- * comparing two of these, and four hosts writing four rules had begun to disagree about it. A key
+ * One rule for every app, because "a stored key only goes to its own model server" is decided by
+ * comparing two of these, and four apps writing four rules had begun to disagree about it. A key
  * in the URL is a credential nobody meant to store; a query or a fragment is one more thing two
- * copies of the same endpoint could differ in, and the SDK appends its paths after it.
+ * copies of the same model server could differ in, and the SDK appends its paths after it.
  *
- * A host that stores a base URL stores this, and a form that refuses one refuses on `null`, so what
+ * An app that stores a base URL stores this, and a form that refuses one refuses on `null`, so what
  * is saved is already in the form every comparison here reads.
  */
 export function normalizeBaseUrl(raw: string): string | null {
@@ -118,9 +119,9 @@ export function normalizeBaseUrl(raw: string): string | null {
  * whitespace and trailing slashes, which is the rule every comparison here used before.
  *
  * @remarks
- * A URL the normaliser refuses is still somebody's endpoint — an old settings row, a key written
- * into the URL — and it still has to equal itself, so it falls back to the older, looser rule
- * rather than to "unequal to everything".
+ * A URL the normaliser refuses is still somebody's model server — an old settings row, a key
+ * written into the URL — and it still has to equal itself, so it falls back to the older, looser
+ * rule rather than to "unequal to everything".
  */
 export const baseUrlKey = (raw: string): string => normalizeBaseUrl(raw) ?? raw.trim().replace(/\/+$/, '');
 
@@ -151,7 +152,7 @@ export interface ModelParams {
    * @defaultValue `ReasoningReplay.All`
    *
    * @remarks
-   * Read by `runAgentLoop` as it writes each turn into the transcript. See `ReasoningReplay` for
+   * Read by `runAgentLoop` as it writes each reply into the transcript. See `ReasoningReplay` for
    * which model wants which.
    */
   reasoningReplay?: ReasoningReplay;
@@ -178,15 +179,16 @@ export interface ModelParams {
    * What a model card asks for and nothing here names: `top_k`, `min_p`, `repeat_penalty` —
    * what actually stops a small model looping — and a server's own fields, such as llama.cpp's
    * `id_slot`, which pins a session to one slot of a `--parallel` server so its KV cache is
-   * still warm on the next turn — `runAgentLoop`'s `session` picks one itself. A local server ignores a field it does not know; OpenAI refuses
-   * one by name, and `negotiate` drops that name for the model and sends the request again.
+   * still warm on the next turn, though `runAgentLoop`'s `session` picks a slot itself. A local
+   * server ignores a field it does not know; OpenAI refuses one by name, and `negotiate` drops that
+   * name for the model and sends the request again.
    * `model`, `messages`, `stream` and `tools` are the loop's and are not overridden from here.
    * Ollama's `options` object is not read on its `/v1` route, so sampling there has to go in as
    * top-level fields like any other.
    */
   extraBody?: Record<string, unknown>;
   /**
-   * Whether the model is a remote agent. Here it is not: the loop runs every step against it.
+   * Whether the model is a remote agent. Here it is not: the loop runs every turn against it.
    * `RemoteAgentParams` is the other kind.
    */
   remoteAgent?: false;
@@ -194,19 +196,19 @@ export interface ModelParams {
 
 /**
  * What to ask a remote agent for: a model that runs a whole agent loop of its own, behind the same
- * chat completions API, and hands the host's own tools back to it.
+ * chat completions API, and hands the app's own tools back to it.
  *
  * @remarks
- * The host sets `remoteAgent` from the model entry. `temperature` and `maxTokens` are optional here,
- * and absent sends none, so an agent tuned with its own sampling is not overridden by a host's
+ * The app sets `remoteAgent` from the model entry. `temperature` and `maxTokens` are optional here,
+ * and absent sends none, so an agent tuned with its own sampling is not overridden by an app's
  * default; `extraBody` is sent as given. See `runAgentLoop` for what else the flag changes.
  */
 export interface RemoteAgentParams extends Omit<ModelParams, 'maxTokens' | 'temperature' | 'remoteAgent'> {
   /** The model runs its own loop server-side. */
   remoteAgent: true;
-  /** The reply's ceiling, where the host chose one for this call. Absent or zero or less sends none. */
+  /** The reply's ceiling, where the app chose one for this call. Absent or zero or less sends none. */
   maxTokens?: number;
-  /** What to sample at, where the host chose it for this call. Absent sends none. */
+  /** What to sample at, where the app chose it for this call. Absent sends none. */
   temperature?: number;
   /**
    * The body field the server's progress travels under, both ways: asked for as
@@ -218,7 +220,8 @@ export interface RemoteAgentParams extends Omit<ModelParams, 'maxTokens' | 'temp
 }
 
 /**
- * Which assistant messages a run writes the model's scratchpad onto, under the field it arrived in.
+ * Which assistant messages an exchange writes the model's scratchpad onto, under the field it
+ * arrived in.
  *
  * @remarks
  * Sending it and leaving the template to drop what its model does not want is the default, because
@@ -233,9 +236,10 @@ export const ReasoningReplay = {
    */
   All: 'all',
   /**
-   * On each message that ends in tool calls, while the run is in its tool loop. The final answer
-   * carries none, and once it is written the run's `messages` drop it from the loop's messages
-   * too. gpt-oss harmony's rule written client-side, for a server that renders whatever it is sent.
+   * On each message that ends in tool calls, while the exchange is in its tool loop. The final
+   * answer carries none, and once it is written the exchange's `messages` drop it from the loop's
+   * messages too. gpt-oss harmony's rule written client-side, for a server that renders whatever it
+   * is sent.
    */
   ToolLoop: 'tool-loop',
   /** On none of them: the scratchpad stays on the `Turn` and never reaches the transcript. */
@@ -267,7 +271,7 @@ export interface ToolPolicy {
   toolDiscovery: ToolDiscovery;
   /**
    * The model that does the preselection pass. Empty means don't preselect, to `preselect` itself;
-   * `runAgentLoop`, asked to preselect, reads empty as the run's own `model`.
+   * `runAgentLoop`, asked to preselect, reads empty as the exchange's own `model`.
    */
   toolSelectModel: string;
   /** Hard stop on runaway tool loops. */
@@ -291,11 +295,12 @@ export interface RetryPolicy {
  * @remarks
  * Provided for callers that want one name for the lot. No function in this package asks for it:
  * they take the parts, so a caller missing `contextLength` can still use all of them bar the
- * window guard. `ResolvedAgent` extends it, which is how a resolved spec satisfies every one.
+ * context window guard. `ResolvedAgent` extends it, which is how a resolved spec satisfies
+ * every one.
  */
 export interface AgentConfig extends Endpoint, ModelParams, ToolPolicy, RetryPolicy {
   /** The agent's own standing instruction, if it has one. */
   systemPrompt: string;
-  /** What the operator says this model reads, in tokens. Zero means ask the endpoint. */
+  /** What the operator says this model reads, in tokens. Zero means ask the model server. */
   contextLength: number;
 }

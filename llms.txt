@@ -2,7 +2,7 @@
 
 > The endpoint-agnostic half of an OpenAI-compatible agent loop: tool-schema compatibility, on-demand tool loading, one-shot side tasks, run events, and a pooled client.
 
-What is here is everything that does not know what the agent is *for*: making a tool schema a strict server will accept, getting tool definitions in front of a model without paying for all of them, reading one streamed turn back into a message, answering an endpoint that refuses one of those, one-shot calls that support a run, the host's side of lifecycle hooks, the event bus a watcher reads, a pooled client, and the rules about retrying. What is not here is the work — orchestration, prompts, and whatever the run is about — because that is the caller's, and it is the part that differs between one server and the next.
+What is here is everything that does not know what the agent is *for*: making a tool schema a strict server will accept, getting tool definitions in front of a model without paying for all of them, reading one streamed reply back into a message, answering a model server that refuses one of those, one-shot calls that support an exchange, the app's side of lifecycle hooks, the event bus a watcher reads, a pooled client, and the rules about retrying. What is not here is the work — orchestration, prompts, and whatever the run is about — because that is the caller's, and it is the part that differs between one server and the next.
 
 Requires Node >=22, with `openai` >=6 as a peer dependency. ESM only.
 Full prose, worked examples and the reasoning behind each seam are in README.md; this file is the index.
@@ -11,26 +11,26 @@ Full prose, worked examples and the reasoning behind each seam are in README.md;
 
 ### compaction
 
-Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded into a summary the model writes itself.
+Keeping a long exchange inside its context window: stale tool results cleared, and the oldest stretch compacted into a summary the model writes itself.
 
-- `applyCompaction` — The transcript as the server should see it: the folded head replaced by its summary.
-- `COMPACT_AT` — The fraction of the window in use before a summary is worth its own round trip.
+- `applyCompaction` — The transcript as the model server should see it: the compacted head replaced by its summary.
+- `COMPACT_AT` — The fraction of the context window in use before a summary is worth its own round trip.
 - `CompactionOptions` (type) — What `planCompaction` takes.
 - `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
-- `CompactionRecord` (type) — One fold, as a host that keeps its transcript append-only stores it.
+- `CompactionRecord` (type) — One compaction, as an app that keeps its transcript append-only stores it.
 - `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
 - `compactTranscript` — The transcript with the plan's stretch replaced by its summary, as `applyCompaction` writes it.
-- `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
-- `PRUNE_SHARE` — The share of the window a prune has to win back on its own before it is worth the prompt cache it costs.
+- `KEEP_RATIO` — The fraction of the context window the kept tail may fill, leaving room for the exchange to grow again.
+- `PRUNE_SHARE` — The share of the context window a prune has to win back on its own before it is worth the prompt cache it costs.
 - `PruneOptions` (type) — What `pruneToolResults` takes.
 - `PrunePlan` (type) — Where `planPrune` puts the boundary, and what moving it there clears.
-- `PrunePlanOptions` (type) — What `planPrune` takes beside the transcript and the window.
-- `planCompaction` — Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
+- `PrunePlanOptions` (type) — What `planPrune` takes beside the transcript and the context window.
+- `planCompaction` — Where to compact a transcript that has grown into its context window, or `undefined` when it should not be.
 - `planPrune` — Where to move the prune boundary, or `undefined` when it should stay where it is.
-- `pruneNotice` — What a host says when a plan is applied, so every host says it the same way.
+- `pruneNotice` — What an app says when a plan is applied, so every app says it the same way.
 - `pruneThrough` — The transcript with every tool result before `through` replaced by a stub.
 - `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
-- `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted everything after it.
+- `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a compaction has shifted everything after it.
 - `runCompaction` — The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
 - `SUMMARY_ACK` — The assistant's reply to a summary, which closes the pair `applyCompaction` writes.
 - `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from the conversation.
@@ -39,7 +39,7 @@ Keeping a long run inside its window: stale tool results cleared, and the oldest
 
 ### ledger
 
-What stretches of a transcript cost, read off the prompt counts the server already reported.
+What stretches of a transcript cost, read off the prompt counts the model server already reported.
 
 - `estimateFrom` — A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers the message, the calibrated estimate where it does not.
 - `LedgerEntry` (type) — One request's reported prompt, and how far into the transcript that request reached.
@@ -48,7 +48,7 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 - `rebaseLedger` — The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left standing.
 - `recordRequest` — The ledger with one more request on it, in the epoch the request before it says it belongs to.
 - `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
-- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
+- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the context window, measured where the ledger can say and estimated where it cannot.
 
 ### config
 
@@ -56,17 +56,18 @@ What this package needs to know about a caller's configuration.
 
 - `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
 - `Endpoint` (type) — Where to send a request and how long to wait.
+- `EndpointIdentity` (type) — What makes a model server the one it is: where it lives and whose key reaches it.
 - `ModelParams` (type) — What to ask the model for.
 - `normalizeBaseUrl` — A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
-- `ReasoningReplay` — Any one of the policies in `ReasoningReplay`.
-- `RemoteAgentParams` (type) — What to ask a remote agent for: a model that runs a whole agent loop of its own, behind the same chat completions API, and hands the host's own tools back to it.
+- `ReasoningReplay` — Which assistant messages an exchange writes the model's scratchpad onto, under the field it arrived in.
+- `RemoteAgentParams` (type) — What to ask a remote agent for: a model that runs a whole agent loop of its own, behind the same chat completions API, and hands the app's own tools back to it.
 - `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
-- `ToolDiscovery` — Any one of the modes in `ToolDiscovery`.
+- `ToolDiscovery` — How tool definitions reach the model.
 - `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
 
 ### calibration
 
-How many characters a token is worth on one model, learned from what its endpoint reports.
+How many characters a token is worth on one model, learned from what its model server reports.
 
 - `calibrate` — Takes one reading from a request that was answered, so the next one to this model is sized by it.
 - `charsPerTokenFor` — The characters per token to size a request to this model with, four until a turn has reported one.
@@ -74,43 +75,45 @@ How many characters a token is worth on one model, learned from what its endpoin
 
 ### capabilities
 
-What an endpoint turned out not to support, and answering it when it says so.
+What a model server turned out not to support, and answering it when it says so.
 
-- `Capabilities` (type) — What one endpoint turned out not to support.
-- `capabilitiesFor` — What this endpoint is known not to support.
+- `Capabilities` (type) — What one model server turned out not to support.
+- `capabilitiesFor` — What this model server is known not to support.
 - `EFFORT_LADDER` — The efforts this package can place, cheapest first.
 - `EFFORT_NONE` — The lowest effort the wire has a word for, which is what a side task asks for.
 - `EFFORT_OFF` — The setting that asks for no `reasoning_effort` field at all.
 - `effortFor` — What to actually put in `reasoning_effort` for a model that has refused the value asked for.
-- `expireCapabilities` — Forgets every endpoint whose entry is older than this, so the next request finds out again.
-- `ModelCapabilities` (type) — What one model on that endpoint turned out not to support.
-- `modelCapabilitiesFor` — What this model on this endpoint is known not to support.
+- `expireCapabilities` — Forgets every model server whose entry is older than this, so the next request finds out again.
+- `ModelCapabilities` (type) — What one model on that model server turned out not to support.
+- `modelCapabilitiesFor` — What this model on this model server is known not to support.
 - `NegotiateOptions` (type) — What `negotiate` takes besides the request.
-- `negotiate` — Sends a request, re-sending it each time the answer is this endpoint refusing something the request can do without.
-- `resetCapabilities` — Forgets what one endpoint refused, or every endpoint's when told none.
+- `negotiate` — Sends a request, re-sending it each time the answer is this model server refusing something the request can do without.
+- `OnNotice` (type) — Hears one line of operator text: what was given up on, what is being waited out, what was chosen.
+- `resetCapabilities` — Forgets what one model server refused, or every model server's when told none.
+- `resetHints` — Forgets which models refused the no-thinking hints, and nothing else they refused.
 
 ### client
 
 - `ClientPoolOptions` (type) — What the client pool is held to across a process.
-- `configureClients` — Changes what the client pool is held to, for a process whose endpoints are not shaped like the deployments these defaults were chosen for.
+- `configureClients` — Changes what the client pool is held to, for a process whose model servers are not shaped like the deployments these defaults were chosen for.
 - `contextLimitFor` — How much a model will read, in tokens.
-- `EndpointProbeError` — `probeEndpoint` could not list an endpoint's models; `kind` says why.
+- `EndpointProbeError` — `probeEndpoint` could not list a model server's models; `kind` says why.
 - `endpointId` — `endpointKey` hashed, for the remembered facts that can leave the process.
-- `endpointKey` — What counts as one endpoint, everywhere in this package that has to remember something about one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
-- `firstTokenMs` — The wait for a streamed turn's first chunk, in the SDK's spelling: `undefined` is no limit.
-- `getClient` — The client for an endpoint, built once and kept.
-- `LookupOptions` (type) — What a lookup takes besides the endpoint: `listModels`, `servedWindow` and `contextLimitFor`.
-- `listModels` — Asks an endpoint what it serves, and remembers the answer.
-- `ModelInfo` (type) — A model an endpoint offers, and what it says the model will read.
+- `endpointKey` — What counts as one model server, everywhere in this package that has to remember something about one — the model listings directly, and `capabilities`, the no-thinking hints among them, through its digest `endpointId`.
+- `firstTokenMs` — The wait for a streamed reply's first chunk, in the SDK's spelling: `undefined` is no limit.
+- `getClient` — The client for a model server, built once and kept.
+- `LookupOptions` (type) — What a lookup takes besides the server: `listModels`, `servedWindow` and `contextLimitFor`.
+- `listModels` — Asks a model server what it serves, and remembers the answer.
+- `ModelInfo` (type) — A model a server lists, and what it says the model will read.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
-- `ProbeFailure` — Why `probeEndpoint` could not list an endpoint's models, in words a form can branch on.
-- `ProbeOptions` (type) — What `probeEndpoint` takes besides the endpoint.
-- `probeEndpoint` — Asks an endpoint nobody has saved yet which models it serves, for a form a person is typing it into.
-- `resetClients` — Forgets every cached client and listing, and puts `configureClients` back to the defaults.
-- `resolveApiKey` — The key to send, where an endpoint may inherit one from the settings it overrides.
+- `ProbeFailure` — Why `probeEndpoint` could not list a model server's models, in words a form can branch on.
+- `ProbeOptions` (type) — What `probeEndpoint` takes besides the model server.
+- `probeEndpoint` — Asks a model server nobody has saved yet which models it serves, for a form a person is typing it into.
+- `resetClients` — Forgets every cached client, model listing and answer from a server's own routes, and puts `configureClients` back to the defaults.
+- `resolveApiKey` — The key to send, where a model server may inherit one from the settings it overrides.
 - `servedSlots` — How many slots a llama.cpp server runs a model in, for pinning a session to one of them.
-- `servedWindow` — The window a local server's own API says it is serving a model in, for the servers whose listing does not say.
-- `timeoutMs` — An endpoint's request timeout in the SDK's spelling: milliseconds, and `undefined` for no limit.
+- `servedWindow` — The context window a local server's own API says it is serving a model in, for the servers whose listing does not say.
+- `timeoutMs` — A model server's request timeout in the SDK's spelling: milliseconds, `undefined` for no limit.
 
 ### schema-compat
 
@@ -124,35 +127,35 @@ JSON Schema compatibility for llama.cpp-backed servers.
 
 ### slots
 
-Which slot of a multi-slot llama.cpp server each session is on, so concurrent runs stop evicting each other's prompt cache.
+Which slot of a multi-slot llama.cpp server each session is on, so concurrent exchanges stop evicting each other's prompt cache.
 
 - `CACHE_PROMPT_FIELD` — The request field that asks llama.cpp to reuse the slot's cached prefix.
-- `resetSlots` — Forgets every endpoint's slots, held ones included.
+- `resetSlots` — Forgets every model server's slots, held ones included.
 - `SESSION_HEADER` — The header llm-router's sticky affinity reads first, which keeps a session on one provider.
 - `SLOT_FIELD` — The request field that names a llama.cpp slot.
-- `SlotAllocator` (type) — Hands one endpoint's slots to sessions.
-- `slotAllocator` — The slot allocator for one endpoint and model, sized to what its `/props` said.
+- `SlotAllocator` (type) — Hands one model server's slots to sessions.
+- `slotAllocator` — The slot allocator for one model on one model server, sized to what its `/props` said.
 
 ### hook-events
 
 The points in a session a hook can be bound to, apart from everything that runs one.
 
 - `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
-- `HookEvent` — Any one of the events in `HookEvent`.
+- `HookEvent` — The points in a session a hook can be bound to, in the order a session meets them.
 - `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
 
 ### hooks
 
-Lifecycle hooks, from the host's side: what a session looks like to them, where their context lands in a request, and what is said about each one.
+Lifecycle hooks, from the app's side: what a session looks like to them, where their context lands in a request, and what is said about each one.
 
 - `assembleContext` — Builds the context a set of outcomes adds and the notes that go with it.
-- `configureHooks` — Changes what hooks are held to, for a process whose windows are not the size these defaults were chosen for, or whose host wants its own name above the context.
-- `consult` — Runs an event's hooks and waits for their say, for a host that will hold off when one of them vetoes.
+- `configureHooks` — Changes what hooks are held to, for a process whose context windows are not the size these defaults were chosen for, or whose app wants its own name above the context.
+- `consult` — Runs an event's hooks and waits for their say, for an app that will hold off when one of them vetoes.
 - `Gathered` (type) — The context a set of outcomes adds to a request, and a note for each hook worth mentioning.
 - `gather` — Runs the hooks ahead of a request and builds what they add to it.
 - `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens.
 - `HOOK_PREFACE` — Said once, above the blocks, so the model reads them as background rather than instructions.
-- `HookContext` (type) — What a host knows at an event.
+- `HookContext` (type) — What an app knows at an event.
 - `HookMessage` (type) — One message of a session as a hook is handed it.
 - `HookNote` (type) — One hook's line for whoever is watching: the context it added, or why it added none.
 - `HookOptions` (type) — What hooks are held to across a process.
@@ -160,11 +163,9 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `HookRunner` (type) — Runs one event's hooks.
 - `notify` — Runs the hooks for an event that reads what happened and adds nothing to a request.
 - `resetHooks` — Test seam: puts `configureHooks` back to the defaults, so one test's budget or preface is not the next's.
-- `turnIndex` — Which turn of a session begins at a point, from 0: the user messages ahead of it.
+- `turnIndex` — Which exchange of a session begins at a point, from 0: the user messages ahead of it.
 - `turnMessages` — A stretch of a transcript as a hook reads it: what the user and the assistant said, and nothing else.
-- `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
-- `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
-- `withContext` — The request, with the hooks' context added to this turn's question.
+- `withContext` — The request, with the hooks' context added to this exchange's question.
 
 ### agent-loop
 
@@ -172,27 +173,43 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 
 - `AgentLoopHooks` (type) — The hooks a loop runs around one question.
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
-- `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
+- `AgentLoopRequest` (type) — One turn's request as `onRequest` is handed it: what the model is about to read.
 - `AgentLoopResult` (type) — What a finished loop hands back.
-- `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
-- `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
-- `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
-- `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none or a call's answer ends the run.
-- `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
+- `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first turn like any other.
+- `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first turn the shortlist alone.
+- `runAgentLoop` — Runs a question to its answer: one `runTurn` per turn, the tools it asks for between them, until a reply asks for none or a call's answer ends the exchange.
+- `StepWindow` (type) — How full the context window is as a turn is about to be sent, as `beforeStep` is told it.
 - `WrittenMessage` (type) — What `onMessage` is handed beside an assistant message the model wrote: that message as the model produced it.
 
 ### artifacts
 
-What a run left behind, from the two sources that take a guess: the model saying so, and a call that reads as a write.
+What an exchange left behind, from the two sources that take a guess: the model saying so, and a call that reads as a write.
 
-- `ArtifactDraft` (type) — What one declaration or detection said of a location, before it is merged into the run's.
-- `ArtifactOptions` (type) — Which of the guessing sources a run collects, beside the links every run keeps.
+- `ArtifactDraft` (type) — What one declaration or detection said of a location, before it is merged into the exchange's.
+- `ArtifactOptions` (type) — Which of the guessing sources an exchange collects, beside the links every exchange keeps.
 - `artifactSource` — How an artifact came to be known, reading an absent `source` as the link it always was.
 - `declaredArtifact` — What the model said through `record_artifact`.
 - `detectArtifact` — What a successful call wrote, if its name and arguments look like a write.
 - `mediaTypeFor` — A media type guessed off a location's extension.
 - `RECORD_ARTIFACT` — The name of the tool the loop declares and answers itself when `artifacts.declare` is on.
-- `RECORD_ARTIFACT_TOOL` — The definition of `record_artifact`, as the loop declares it beside the host's own tools.
+- `RECORD_ARTIFACT_TOOL` — The definition of `record_artifact`, as the loop declares it beside the app's own tools.
+
+### dispatch
+
+What the loop and a dispatcher say to each other: the call it is handed, the answer it gives, what the exchange makes of that answer, and what a call produced.
+
+- `ArtifactAction` — What the exchange's last write did to an artifact's location, as a detection read it.
+- `ArtifactSource` — How the loop came to know of an artifact, most trusted first.
+- `EndedBy` (type) — The call that ended an exchange through its answer's `end`, as `AgentLoopResult.ended` says it.
+- `ResourceLink` (type) — A handle to something a tool call made or found — a document it wrote, a file it saved.
+- `RunArtifact` (type) — One thing an exchange's tool calls produced: the first link to a uri, and where it came from.
+- `ServerLogEntry` (type) — One log message a tool's server sent while the call was running, as `ToolCallReport.log` is handed it.
+- `ServerLogLevel` — The levels a server's log message is sent at, quietest first: MCP's, which are syslog's.
+- `ToolAnswer` (type) — A dispatcher's answer when it has more to say than the text: what the model reads, and what the call produced for the app.
+- `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
+- `ToolCallReport` (type) — What a dispatcher may tell the loop about the call it is making, besides its answer.
+- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
+- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
 ### events
 
@@ -207,38 +224,48 @@ What a run is doing, while it is doing it.
 - `LoadCounts` (type) — What `load_tools` calls resolved to: new tools, ones already loaded, and names in no catalogue.
 - `RunEvent` (type) — One thing that happened in a run, as a watcher receives it.
 - `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
-- `RunEventKind` — Any one of the kinds in `RunEventKind`.
+- `RunEventKind` — Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it.
 - `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
 - `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
-- `RunOutcome` — Any one of the outcomes in `RunOutcome`.
-- `RunUsage` (type) — What a run has spent, counted from the start of the run rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
+- `RunOutcome` — How an exchange ended, as its result says or as `runMetrics` reads it off a run's events.
+- `RunUsage` (type) — What an exchange has spent, counted from the start of the exchange rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
 - `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
 - `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
 - `stamp` — A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
 - `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
 - `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
 
+### failure
+
+What a failed exchange leaves behind: the exchange as it stood, carried on what `runAgentLoop` throws and read back off it.
+
+- `AgentLoopError` — What `runAgentLoop` throws, carrying the exchange as it stood and what was caught as `cause`.
+- `AgentLoopFailure` (type) — An exchange as it stood when `runAgentLoop` gave up on it.
+- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the exchange as it stood.
+- `failedRun` — The exchange a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
+- `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
+
 ### remote
 
-Running against a remote agent: a model that runs a whole agent loop of its own behind the chat completions API, and hands the host's tools back to it with `finish_reason: "tool_calls"`.
+Running against a remote agent: a model that runs a whole agent loop of its own behind the chat completions API, and hands the app's tools back to it with `finish_reason: "tool_calls"`.
 
 - `IDEMPOTENCY_HEADER` — The header that makes a resent request the same request: one key per turn, kept across its retries.
-- `PROGRESS_FIELD` — The body field a remote agent's progress travels under where the host names no other: `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
+- `PROGRESS_FIELD` — The body field a remote agent's progress travels under where the app names no other: `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
 - `ProgressChunk` (type) — A streamed chunk that carries one of a remote run's events: no choices, and the event beside them.
 - `progressChunk` — A run event as a progress chunk, for a server streaming a remote agent's run.
 - `progressEvent` — The run event a streamed chunk carries, where it carries one.
 - `progressEvents` — The run id and events an answer that is not streamed carries, where it carries them.
-- `REMOTE_AGENT_NOTICE` — What a notice about the options a remote agent's run sets aside opens with, ahead of their names.
+- `REMOTE_AGENT_NOTICE` — What a notice about the options an exchange with a remote agent sets aside opens with, ahead of their names.
 - `RunProgress` (type) — What an answer that is not streamed carries beside `choices`: the run, and what it said.
 - `withProgress` — An answer that is not streamed, with a remote run's events beside its `choices`.
 
 ### request-body
 
-- `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
+- `buildBody` — The one place a streamed request's body is decided from a config and what the model server and the model have refused.
 
 ### run-calls
 
-The tools between two turns: a step's calls read, run and written into the transcript.
+The tools of one turn: its calls read, run and written into the transcript.
 
 - `dropReasoning` — The transcript with `reasoning_content`, `reasoning` and `reasoning_details` taken off its assistant messages from an index on.
 - `formatToolError` — What the model reads for a dispatch that threw: the error's message, opening with `Error: `.
@@ -254,35 +281,35 @@ The tools between two turns: a step's calls read, run and written into the trans
 
 ### runtime
 
-- `createRuntime` — A runtime of its own: separate clients, listings, capability latches, hints, event bus and hook settings from the process's and from every other runtime's.
+- `createRuntime` — A runtime of its own: separate clients, listings, capability latches, hints, measured characters per token, event bus, hook settings and slots from the process's and every other runtime's.
 - `defaultRuntime` — The runtime the top-level functions use when no other is running.
 - `Runtime` (type) — One set of the package's caches, with the functions that use them as methods.
 - `RuntimeOptions` (type) — What a runtime starts out configured with.
 
 ### snapshot
 
-What endpoints and models refused, carried across a restart.
+What model servers and models refused, carried across a restart.
 
 - `CAPABILITY_SNAPSHOT_VERSION` — The version `importCapabilities` accepts.
 - `CapabilitySnapshot` (type) — Every latched refusal in the process, JSON-safe.
-- `EndpointSnapshot` (type) — What one endpoint refused, and under it what each of its models did.
+- `EndpointSnapshot` (type) — What one model server refused, and under it what each of its models did.
 - `exportCapabilities` — Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
 - `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
-- `ModelSnapshot` (type) — What one model on an endpoint refused.
+- `ModelSnapshot` (type) — What one model on a model server refused.
 
 ### columns
 
-A host's stored agent, read as a spec layer and written back: one table of columns, and the marker each column stores for "inherit".
+An app's stored agent, read as a spec layer and written back: one table of columns, and the marker each column stores for "inherit".
 
 - `defineSpecColumns` — A column table from a stored row to a spec layer and back, with each column's "inherit" marker a parameter.
-- `ExtensionPath` (type) — A path into a host's own extension, as segments, because its key is a reverse domain and has dots of its own.
+- `ExtensionPath` (type) — A path into an app's own extension, as segments, because its key is a reverse domain and has dots of its own.
 - `SpecColumn` (type) — One column: where its value lives in a spec, what it stores for "inherit", and how its value crosses when the column and the field do not hold the same thing.
 - `SpecColumnMapping` (type) — A row's column table, both ways.
 - `SpecColumns` (type) — A row's columns, each mapped to a field: keyed by column, so a name the row does not have is an excess property and a marker of the wrong type does not typecheck.
 - `SpecColumnsOptions` (type) — What `defineSpecColumns` takes besides the columns.
 - `SpecDrop` (type) — One thing a document says that a row will not keep.
 - `SpecPath` (type) — Where in a spec a column lives, as a dotted path.
-- `SpecSection` (type) — The top-level keys of a spec, for naming a whole section a host reads by hand.
+- `SpecSection` (type) — The top-level keys of a spec, for naming a whole section an app reads by hand.
 
 ### spec
 
@@ -291,11 +318,11 @@ A JSON document that defines an agent, and the rules for reading one.
 - `AGENT_SPEC` — The token a document declares itself with.
 - `AGENT_SPEC_VERSION` — The major version `AGENT_SPEC` pins.
 - `AGENT_TASKS` — The side tasks this package has code for: documentation and a sensible UI order, not a validator.
-- `AgentHook` (type) — A tool call bound to a lifecycle event, run by the host rather than the model.
+- `AgentHook` (type) — A tool call bound to a lifecycle event, run by the app rather than the model.
 - `AgentSpec` (type) — One agent, as a document.
 - `EndpointSpec` (type) — Where a model is reached, and how long to wait for it.
 - `ExportSpecOptions` (type) — What `exportSpec` takes besides the document.
-- `exportSpec` — A document fit to leave the host: the same agent, with the secrets of its bundled servers gone.
+- `exportSpec` — A document fit to leave the app: the same agent, with the secrets of its bundled servers gone.
 - `findSpecSecrets` — Where a document's bundled servers may still carry a credential after `exportSpec`.
 - `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
 - `ParsedSpec` (type) — What `parseSpec` hands back.
@@ -305,12 +332,12 @@ A JSON document that defines an agent, and the rules for reading one.
 - `REF_FILE` — The `ref.type` of a prompt part whose text is in a file.
 - `REF_URL` — The `ref.type` of a prompt part whose text is behind a URL.
 - `RESOLVED_DEFAULTS` — What a field falls back to when no layer said anything at all.
-- `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the host's to act on.
-- `ResolvedTask` (type) — One side task, resolved: a model, and the endpoint it is reached through.
+- `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the app's to act on.
+- `ResolvedTask` (type) — One side task, resolved: a model, and the model server it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
 - `resolveAgentSpec` — Layers documents into the flat object the loop takes, weakest first.
 - `SecretHint` (type) — One place `findSpecSecrets` thinks a credential may be, and never the credential.
-- `SecretSign` — Any one of the reasons in `SecretSign`.
+- `SecretSign` — Why `findSpecSecrets` named a place.
 - `SPEC_EVENTS` — Every event a hook may be bound to: `HOOK_EVENTS`, under the name a document's reader knows.
 - `SpecBundle` (type) — What an agent carries so it can travel whole: the definitions of the servers it names.
 - `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
@@ -323,6 +350,12 @@ The contract between whatever holds the tools and the loop that offers them to a
 
 - `CatalogServer` (type) — One server's tools, without their JSON schemas — the cheap half of a tool definition.
 
+### discovery
+
+How an exchange finds its tools: every definition each time, loaded from the catalogue when asked for, or loaded and called through two fixed tools; and the shortlist it opens with.
+
+- `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
+
 ### instructions
 
 - `SERVER_INSTRUCTION_TOKENS` — The most of one server's instructions the block carries by default, in estimated tokens.
@@ -331,13 +364,13 @@ The contract between whatever holds the tools and the loop that offers them to a
 
 ### preselect
 
-Choosing a run's tools before it starts, from the request and the catalogue's names.
+Choosing an exchange's tools before it starts, from the request and the catalogue's names.
 
 - `KeywordPreselection` (type) — What `preselectByKeywords` found.
 - `KeywordPreselectOptions` (type) — What `preselectByKeywords` takes besides the catalogue and the request.
 - `PRESELECT_SCHEMA` — The shape a preselector's answer is held to where the server takes a schema: `{ tools: [...] }`.
 - `PRESELECT_SYSTEM` — The preselection system prompt at the default cap, for a caller that never changes it.
-- `preselect` — The tools a request is likely to need, picked by a small model before the run starts, or none.
+- `preselect` — The tools a request is likely to need, picked by a small model before the exchange starts, or none.
 - `preselectByKeywords` — The tools a request's own words point at, ranked, and whether they point clearly enough.
 - `preselectInput` — The user message for a preselection call: the catalogue, then the request.
 - `preselection` — Resolves a preselection against the catalogue: unknown names dropped, count capped.
@@ -346,21 +379,21 @@ Choosing a run's tools before it starts, from the request and the catalogue's na
 
 ### tool-loading
 
-- `CALL_TOOL` — The one tool a proxied run reaches every catalogued tool through.
-- `carryOver` — The tools to start the next turn with: last turn's where they were, then what this turn used.
+- `CALL_TOOL` — The one tool a proxied exchange reaches every catalogued tool through.
+- `carryOver` — The tools to start the next exchange with: the last one's where they were, then what this one used.
 - `catalogList` — The catalogue as a plain grouped listing of names, loaded ones marked if asked.
 - `catalogPrompt` — The catalogue block appended to the system prompt.
 - `expandNames` — Resolves requested names against the catalogue, expanding trailing `*` wildcards.
 - `holdsDefinitions` — Whether a tool result is a proxied load carrying definitions, which is the only copy of them the model has.
 - `inCatalog` — Whether the catalogue holds a tool by this name.
 - `LOAD_TOOLS` — On-demand tool loading.
-- `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every iteration.
+- `LOAD_TOOLS_DEFINITION` — One object for the life of the process — the agent loop asks for it on every turn.
 - `loadedTools` — A tool array with newly loaded definitions appended, in the order they were loaded.
 - `loadResult` — What `load_tools` reports back: the descriptions, now that they are worth their tokens.
 - `orderTools` — The tool array in a stable order, so the same set of tools renders the same way twice.
-- `PROXY_TOOLS` — The whole tool array of a proxied run, `load_tools` then `call_tool`, frozen because it is shared.
+- `PROXY_TOOLS` — The whole tool array of a proxied exchange, `load_tools` then `call_tool`, frozen because it is shared.
 - `proxiedCall` — The tool a `call_tool` names and the arguments to run it with, or a throw the model can read.
-- `proxyCatalogPrompt` — The catalogue block for a proxied run's system prompt, worded for `call_tool` rather than for a tool list.
+- `proxyCatalogPrompt` — The catalogue block for a proxied exchange's system prompt, worded for `call_tool` rather than for a tool list.
 - `proxyLoadResult` — What a proxied `load_tools` answers: each new tool's whole definition as a line of JSON, since the result is the only place the model will ever see it.
 - `requestedNames` — `load_tools` arguments, defensively — a model may send a bare string or a nested object.
 - `shownCall` — A tool call as a watcher should see it: a `call_tool` as the tool it ran, anything else as it is.
@@ -375,28 +408,27 @@ Picking up an answer the token ceiling cut off, instead of keeping half of it.
 
 ### run-turn
 
-One turn, given as many attempts as the caller allows.
+One request, given as many attempts as the caller allows.
 
-- `RunTurnOptions` (type) — A retry is not the same event as a downgrade, but a watcher wants to be told about both.
-- `runTurn` — One turn seen through to an answer: negotiated with the endpoint, retried where the failure is transient, and waited for where the model is still loading.
+- `RunTurnOptions` (type) — What `runTurn` takes besides the client, the capabilities and the request.
+- `runTurn` — One request seen through to an answer: negotiated with the model server, retried where the failure is transient, and waited for where the model is still loading.
 
 ### side-task
 
-One-shot calls that support a run without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
+One-shot calls that support an exchange without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
 
 - `AskJsonOptions` (type) — What `askJson` takes besides a side task's options.
-- `ask` — Runs a side task and returns the reply text, thinking stripped.
+- `ask` — Runs a side task and returns the reply text, scratchpad stripped.
 - `askJson` — A side task whose answer is JSON matching a schema, parsed.
 - `askReply` — Runs a side task as `ask` does, and says why the reply ended as well as what it said.
 - `clean` — Strips the quoting and list punctuation models decorate short answers with.
 - `listLines` — A list-shaped reply, one item per line, cleaned of the bullets and quotes models decorate them with.
 - `parseJson` — The first array or object in a model's reply, parsed, whatever prose or fence surrounds it.
-- `resetHints` — Test seam, alongside `resetClients` and `resetAll`: forget which models refused the hints.
 - `SideTask` (type) — One side task's own settings, as a resolved agent spec carries them under `tasks.<key>`.
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
 - `SideTaskReply` (type) — A side task's reply, with why the model stopped writing it.
-- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
+- `taskCall` — A side task's settings as the call that honours them: its model server, its model, and the options `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
 - `tryAsk` — Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
 
 ### call-ids
@@ -413,12 +445,7 @@ The ids of tool calls the loop makes up itself, and keeping every id in a transc
 
 ### errors
 
-- `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
-- `AgentLoopFailure` (type) — A run as it stood when `runAgentLoop` gave up on it.
-- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the run as it stood.
 - `errorMessage` — What went wrong, as a string.
-- `failedRun` — The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
-- `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
 
 ### retry
 
@@ -426,30 +453,37 @@ Everything about a request failing that is not about what the request said.
 
 - `backoffMs` — How long to wait before a retry: exponential, with jitter so several tasks failing at once do not return in lockstep.
 - `ContextOverflow` — The request was bigger than the model will read.
-- `EndpointSilent` — The endpoint stopped answering mid-request.
+- `EndpointSilent` — The model server stopped answering mid-request.
 - `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
-- `SMALLEST_LIKELY_WINDOW` — The smallest window worth believing in, and the floor under `runTurn`'s guard.
+- `SMALLEST_LIKELY_WINDOW` — The smallest context window worth believing in, and the floor under `runTurn`'s guard.
 
 ### stream
 
-Reading one streamed turn back into a message.
+Reading one streamed reply back into a message.
 
-- `CacheBreakReason` — Any one of the reasons in `CacheBreakReason`.
+- `CacheBreakReason` — What the loop changed that would explain a prompt cache that did not hold.
 - `InFlight` (type) — Where the request in flight can be read from, after it has thrown.
-- `LoopUsage` (type) — What a loop spent, as `AgentLoopResult.usage` and a failed run's `usage` carry it.
-- `PartialTurn` (type) — What a turn had said when it ended without coming back: the answer, the scratchpad and the calls, as far as each had arrived.
+- `LoopUsage` (type) — What a loop spent, as `AgentLoopResult.usage` and a failed exchange's `usage` carry it.
+- `PartialTurn` (type) — What a reply had said when it ended without coming back: the answer, the scratchpad and the calls, as far as each had arrived.
 - `Produced` (type) — Whether the model has said anything a second attempt would say twice.
 - `ReasoningDetail` (type) — One of OpenRouter's reasoning blocks: `reasoning.summary` with a `summary`, `reasoning.text` with a `text` and maybe a `signature`, or `reasoning.encrypted` with `data`.
 - `reasoningDetailsEntry` — OpenRouter's reasoning blocks as the field to spread onto an assistant message.
 - `reasoningEntry` — A scratchpad as the field to spread onto an assistant message.
-- `reportsCache` — Whether a turn's usage says the endpoint reported its cache.
+- `reportsCache` — Whether a reply's usage says the model server reported its cache.
 - `StreamTurnOptions` (type) — What `streamTurn` takes besides the request body.
-- `streamTurn` — Runs one turn as a stream, reporting tokens as they arrive and assembling them back into a message.
-- `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.
+- `streamTurn` — Streams one reply, reporting tokens as they arrive and assembling them back into a message.
+- `Turn` (type) — One streamed reply, put back together into the shape a loop and a transcript work with.
 - `TurnUsage` (type) — What a turn cost, and how it went.
 - `UsageTotals` (type) — A run's token totals, in the spelling every run-level usage shares.
+
+### text
+
+Text helpers over the message vocabulary: reading a message's text, and fencing text nobody trusted.
+
+- `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
+- `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 
 ### thinking
 
@@ -458,7 +492,7 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `ALL_FENCES` — Every fence known, including the two plain-word ones some fine-tunes and prompt-instructed models use.
 - `DEFAULT_FENCES` — The fences nobody writes by accident, and so the ones `streamTurn` reads by default.
 - `Fence` (type) — One way a model marks off its scratchpad inside `content`.
-- `FenceSplitter` — A state machine over a stream of `content` that routes fenced text to reasoning.
+- `FenceSplitter` — A state machine over a stream of `content` that routes fenced text to the scratchpad.
 - `FenceSplitterOptions` (type) — What `FenceSplitter` takes besides its fences.
 - `SPLIT_OUTPUT` — What a `Split` is called when it was not.
 - `SPLIT_REASONING` — What a `Split` is called when it was inside a fence.
@@ -472,11 +506,11 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 - `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
 - `compact` — A token count as a message shows it: 1234 → "1.2k".
 - `contextChars` — What each part of a request is worth in characters, by the same walk `requestTokens` divides.
-- `contextTokens` — What each part of a request costs the window, in tokens, adding up to the whole.
+- `contextTokens` — What each part of a request costs the context window, in tokens, adding up to the whole.
 - `estimateTokens` — Rough token count.
 - `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
 - `requestChars` — How many characters a request is worth: the walk `requestTokens` divides, without the division.
-- `requestTokens` — What this request will cost the window, in tokens, near enough.
+- `requestTokens` — What this request will cost the context window, in tokens, near enough.
 - `TokenEstimateOptions` (type) — What the two token estimates below take besides what they measure.
 
 ### tool-calls
@@ -485,22 +519,10 @@ Reading what a model meant by a tool call when it did not write one cleanly.
 
 - `ARGUMENTS_MALFORMED` — The `ToolArgumentsError` kind for a call the model wrote wrongly.
 - `ARGUMENTS_TRUNCATED` — The `ToolArgumentsError` kind for a call cut off at the reply ceiling.
-- `ArtifactAction` — Any one of the actions in `ArtifactAction`.
-- `ArtifactSource` — Any one of the sources in `ArtifactSource`.
-- `EndedBy` (type) — The call that ended a run through its answer's `end`, as `AgentLoopResult.ended` says it.
 - `parseToolArguments` — A tool call's arguments as the object the tool is handed.
-- `ResourceLink` (type) — A handle to something a tool call made or found — a document it wrote, a file it saved.
-- `RunArtifact` (type) — One thing a run's tool calls produced: the first link to a uri, and where it came from.
 - `recoverToolCalls` — Tool calls a model wrote into its reply as text, taken out of it and made into calls.
-- `ServerLogEntry` (type) — One log message a tool's server sent while the call was running, as `ToolCallReport.log` is handed it.
-- `ServerLogLevel` — Any one of the levels in `ServerLogLevel`.
-- `ToolAnswer` (type) — A dispatcher's answer when it has more to say than the text: what the model reads, and what the call produced for the host.
 - `ToolArgumentsError` — Tool arguments that could not be read as an object, with why.
 - `ToolCall` (type) — A tool call as the loop handles it, recovered or streamed.
-- `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
-- `ToolCallReport` (type) — What a dispatcher may tell the run about the call it is making, besides its answer.
-- `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
-- `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
 ### wire
 
@@ -508,14 +530,14 @@ The words the chat-completions wire is written in, each under a name.
 
 - `CALL_EXTRA_KEYS` — The keys of a streamed tool call, besides `index`, `id`, `type` and `function`, that are kept on the call and sent back as they came.
 - `CallExtraKey` (type) — Any one of `CALL_EXTRA_KEYS`.
-- `FinishReason` — Any one of the reasons in `FinishReason`.
+- `FinishReason` — Why a model stopped writing.
 - `FUNCTION_TOOL` — The one `type` a tool definition or a tool call has on this wire.
 - `JSON_SCHEMA_FORMAT` — The `response_format` type that carries a schema the reply has to fit.
 - `PARALLEL_TOOL_CALLS` — The request field that asks for at most one tool call per reply.
-- `PartType` — Any one of the part types in `PartType`.
+- `PartType` — What a part of a message's content is.
 - `REASONING` — The other spelling of that field: what Ollama's `/v1` sends and the only one it reads back, and OpenRouter's own.
 - `REASONING_CONTENT` — The assistant message field a model's scratchpad is replayed in where it did not arrive as `reasoning`.
-- `REASONING_DETAILS` — OpenRouter's field for reasoning as blocks: summaries, raw text with a signature, or encrypted data.
+- `REASONING_DETAILS` — OpenRouter's field for the scratchpad as blocks: summaries, raw text with a signature, or encrypted data.
 - `ReasoningField` (type) — Either field a scratchpad travels in.
-- `Role` — Any one of the roles in `Role`.
-- `SchemaType` — Any one of the types in `SchemaType`.
+- `Role` — Who a message is from.
+- `SchemaType` — The types JSON Schema has, as the `type` keyword spells them.

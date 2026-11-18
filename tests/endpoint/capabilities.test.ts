@@ -7,6 +7,7 @@ import {
   type ModelCapabilities,
   modelCapabilitiesFor,
   negotiate,
+  OPTIMISTIC_MODEL,
   resetCapabilities,
 } from '../../src/endpoint/capabilities.ts';
 import type { Produced } from '../../src/wire/stream.ts';
@@ -365,17 +366,8 @@ describe('modelCapabilitiesFor', () => {
   it('starts optimistic and hands back the same memory each time', () => {
     const supports = capabilitiesFor('https://api.openai.com/v1');
     const model = modelCapabilitiesFor(supports, 'gpt-5');
-    expect(model).toEqual({
-      reasoningEffort: true,
-      legacyTokenLimit: true,
-      chosenTemperature: true,
-      refusedFields: new Set(),
-      structuredOutput: true,
-      refusedEfforts: new Set(),
-      assistantPrefill: true,
-      reasoningContent: true,
-      multiCallMessages: true,
-    });
+    expect(model).toEqual({ ...OPTIMISTIC_MODEL, refusedFields: new Set(), refusedEfforts: new Set() });
+    expect(Object.values(OPTIMISTIC_MODEL).every((flag) => flag === true)).toBe(true);
     model.reasoningEffort = false;
     expect(modelCapabilitiesFor(supports, 'gpt-5').reasoningEffort).toBe(false);
   });
@@ -627,13 +619,10 @@ describe('negotiate, for a model', () => {
         { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: true },
         { reasoningEffort: true, legacyTokenLimit: false, chosenTemperature: false },
       ].map((flags) => ({
+        ...OPTIMISTIC_MODEL,
         ...flags,
         refusedFields: new Set(),
-        structuredOutput: true,
         refusedEfforts: new Set(),
-        assistantPrefill: true,
-        reasoningContent: true,
-        multiCallMessages: true,
       })),
     );
   });

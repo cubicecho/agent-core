@@ -7,7 +7,7 @@ import type { CatalogServer } from './catalog.ts';
 import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
 
 /**
- * Choosing a run's tools before it starts, from the request and the catalogue's names.
+ * Choosing an exchange's tools before it starts, from the request and the catalogue's names.
  *
  * On-demand loading spends the first round trip on the model reading the catalogue and asking for
  * what it wants. A shortlist made beforehand saves that trip, and there are two ways to make one:
@@ -33,12 +33,12 @@ const PRESELECT_PROMPT_CHARS = 2000;
  * @returns The prompt, with the cap written into it.
  *
  * @remarks
- * On-demand loading otherwise costs a round trip every run: the model reads the catalogue,
+ * On-demand loading otherwise costs a round trip every exchange: the model reads the catalogue,
  * calls `load_tools`, and only then can do the work. A small model reading the same catalogue
  * usually names the right tools outright, so the task model finds them already loaded and
- * starts working on its first step.
+ * starts working on its first turn.
  *
- * A wrong guess is cheap — an unused definition is a few hundred tokens for one run — but a
+ * A wrong guess is cheap — an unused definition is a few hundred tokens for one exchange — but a
  * broad guess is not, so the same cap applies here as to a `load_tools` call.
  */
 export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
@@ -245,9 +245,9 @@ export interface KeywordPreselectOptions {
  *
  * @remarks
  * A preselection call costs a round trip to a model that is being asked to do term matching, and
- * on a local box that is seconds before the run has started. For a catalogue of a few dozen tools
- * the words usually decide it: a request that says "commit" and a tool called `git__commit` need
- * no reasoning to connect.
+ * on a local box that is seconds before the exchange has started. For a catalogue of a few dozen
+ * tools the words usually decide it: a request that says "commit" and a tool called `git__commit`
+ * need no reasoning to connect.
  *
  * BM25 rather than counting shared words, because the ranking has to survive the words every tool
  * uses. "list", "get" and "file" are in half the descriptions in a real catalogue, and a plain
@@ -315,7 +315,7 @@ export function preselectByKeywords(
     }
   }
   // Ties break on the name, not on where the tool sat in the catalogue, so reconnecting a
-  // server in a different order does not change what a run opens with.
+  // server in a different order does not change what an exchange opens with.
   ranked.sort((a, b) => b.score - a.score || byCodeUnit(a.name, b.name));
   if (!ranked.length) {
     return empty;
@@ -365,12 +365,13 @@ export interface PreselectOptions {
 }
 
 /**
- * The tools a request is likely to need, picked by a small model before the run starts, or none.
+ * The tools a request is likely to need, picked by a small model before the exchange starts,
+ * or none.
  *
- * @param config - The endpoint the preselector is reached through.
+ * @param config - The model server the preselector is reached through.
  * @param model - The preselector. An empty name picks nothing, silently, which is what
- * `toolSelectModel` means by empty: a host whose settings read `""` as "the run's model" passes
- * `toolSelectModel: settings.toolSelectModel || settings.model`.
+ * `toolSelectModel` means by empty: an app whose settings read `""` as "the exchange's model"
+ * passes `toolSelectModel: settings.toolSelectModel || settings.model`.
  * @param catalog - The servers to choose from.
  * @param prompt - The request being planned for. Only its head is read; see `preselectInput`.
  * @param [options] - Cancellation, notices, the reply ceiling, the temperature, reasoning effort and
@@ -381,13 +382,13 @@ export interface PreselectOptions {
  * @remarks
  * On-demand loading otherwise spends a round trip on reading the catalogue and calling
  * `load_tools`; a small model reading the same catalogue usually names the right tools, and the
- * task model opens with them in hand. A wrong guess costs a few hundred tokens for one run, and
- * a failed one costs nothing — it is reported through `onNotice` and answered with an empty list,
- * since a side task is never worth failing the run. A stop still throws.
+ * task model opens with them in hand. A wrong guess costs a few hundred tokens for one exchange,
+ * and a failed one costs nothing — it is reported through `onNotice` and answered with an empty
+ * list, since a side task is never worth failing the exchange. A stop still throws.
  *
  * With `keywords`, the request's own words are matched against the catalogue first and the model
- * is spent only on what they cannot settle, which on a local box is the difference between a run
- * starting now and starting in a few seconds. The words have to be clear about it; see
+ * is spent only on what they cannot settle, which on a local box is the difference between an
+ * exchange starting now and starting in a few seconds. The words have to be clear about it; see
  * `preselectByKeywords` for what that means.
  */
 export async function preselect(
