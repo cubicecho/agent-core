@@ -1089,6 +1089,11 @@ const ANSWERS: readonly Answer[] = [
  * discovering what the second one starts knowing. It terminates in at most one pass per capability,
  * since each pass either latches one off for good or rethrows.
  *
+ * A refusal is recognised by its text, not by its HTTP status as `refusesRequest` reads one:
+ * servers send an unsupported field back under all sorts of statuses, not only 400 and 422, and a
+ * status test would throw refusals an answer could have dropped. Each answer matches a wording
+ * specific to its own refusal, so the text is enough on its own.
+ *
  * One loop over both levels, because a refusal arrives the same way whichever it is about and
  * one request can meet both. An OpenAI reasoning model has two waiting on its own — the ceiling
  * is spelled the other way, and then the temperature is not ours to pick — so a loop that
