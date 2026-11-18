@@ -47,7 +47,7 @@ import {
   withContext,
 } from '../hooks/hooks.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
-import { discovery } from '../tools/discovery.ts';
+import { discoverTools } from '../tools/discovery.ts';
 import { type ServerInstructionsOptions, serverInstructionsPrompt } from '../tools/instructions.ts';
 import type { KeywordPreselectOptions } from '../tools/preselect.ts';
 import {
@@ -1464,7 +1464,7 @@ async function runSteps(
       })
     : Promise.resolve({ context: '', notes: [] });
   gathering.catch(() => undefined);
-  const { proxied, onDemand, loaded, preselected } = await discovery(options, notice);
+  const { proxied, onDemand, loaded, preselected } = await discoverTools(options, notice);
   const instructions =
     serverInstructions === false
       ? ''

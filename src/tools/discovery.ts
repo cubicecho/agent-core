@@ -34,7 +34,7 @@ export interface DiscoveryOptions {
   signal?: AbortSignal;
 }
 
-/** How a run finds its tools, and what it starts with in hand. See `discovery`. */
+/** How a run finds its tools, and what it starts with in hand. See `discoverTools`. */
 export interface Discovered {
   /** Proxied: definitions come back as `load_tools` results and run through `call_tool`. */
   proxied: boolean;
@@ -114,7 +114,7 @@ export const PRESELECTED_NOTICE = 'tools picked before the run: ';
  * is empty; `preselected`, the shortlist, empty in eager mode; and `loaded`, a new set of what was
  * carried and then the shortlist — empty when eager or proxied.
  */
-export async function discovery(options: DiscoveryOptions, notice: OnNotice): Promise<Discovered> {
+export async function discoverTools(options: DiscoveryOptions, notice: OnNotice): Promise<Discovered> {
   const { config, catalog = [] } = options;
   // On demand, but with a tool array that never changes: definitions come back as `load_tools`
   // results and run through `call_tool`. `onDemand` is true of both.

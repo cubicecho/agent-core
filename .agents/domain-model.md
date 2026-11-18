@@ -410,7 +410,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   Owner: `CatalogServer` (`src/tools/catalog.ts`).
 - **Tool discovery:** how definitions reach the model: all of them every time (eager), loaded
   from the catalogue when asked for (on-demand), or loaded and called through two fixed tools
-  (proxied). Owner: `ToolDiscovery` (`src/core/config.ts`); chosen for an exchange by `discovery`
+  (proxied). Owner: `ToolDiscovery` (`src/core/config.ts`); chosen for an exchange by `discoverTools`
   (`src/tools/discovery.ts`).
 - **`load_tools`:** the tool the model calls to load definitions by name or wildcard. Owner:
   `LOAD_TOOLS`, `expandNames` (`src/tools/tool-loading.ts`).
