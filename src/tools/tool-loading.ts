@@ -36,6 +36,20 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
+/** What `load_tools` takes, on demand and proxied alike: the names to load. */
+const LOAD_TOOLS_PARAMETERS: OpenAI.FunctionParameters = deepFreeze({
+  type: SchemaType.Object,
+  properties: {
+    names: {
+      type: SchemaType.Array,
+      items: { type: SchemaType.String },
+      description: 'Tool names from the catalogue. Wildcards may end with `*`.',
+    },
+  },
+  required: ['names'],
+  additionalProperties: false,
+});
+
 /**
  * One object for the life of the process — the agent loop asks for it on every iteration.
  *
@@ -53,18 +67,7 @@ export const LOAD_TOOLS_DEFINITION: OpenAI.ChatCompletionTool = deepFreeze({
       'Pass the exact names you need, or a trailing wildcard like `server__group__*` for a ' +
       'whole group. The tools become callable on your next step — load them, then call them. ' +
       'Load only what the task actually needs.',
-    parameters: {
-      type: SchemaType.Object,
-      properties: {
-        names: {
-          type: SchemaType.Array,
-          items: { type: SchemaType.String },
-          description: 'Tool names from the catalogue. Wildcards may end with `*`.',
-        },
-      },
-      required: ['names'],
-      additionalProperties: false,
-    },
+    parameters: LOAD_TOOLS_PARAMETERS,
   },
 });
 
@@ -493,18 +496,7 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
         'arguments it takes. Pass the exact names you need, or a trailing wildcard like ' +
         '`server__group__*` for a whole group. Then run them with `call_tool`. Load only what ' +
         'the task actually needs.',
-      parameters: {
-        type: SchemaType.Object,
-        properties: {
-          names: {
-            type: SchemaType.Array,
-            items: { type: SchemaType.String },
-            description: 'Tool names from the catalogue. Wildcards may end with `*`.',
-          },
-        },
-        required: ['names'],
-        additionalProperties: false,
-      },
+      parameters: LOAD_TOOLS_PARAMETERS,
     },
   },
   {
