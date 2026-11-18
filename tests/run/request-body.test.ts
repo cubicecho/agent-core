@@ -35,6 +35,17 @@ describe('buildBody', () => {
     expect(body.tools).toHaveLength(1);
   });
 
+  it('sends a remote agent no temperature or ceiling it was not given, and the ones it was', () => {
+    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const { model } = config;
+    const bare = buildBody({ model, remoteAgent: true }, supports, undefined, messages);
+    expect(bare).not.toHaveProperty('temperature');
+    expect(bare).not.toHaveProperty('max_tokens');
+    expect(bare).not.toHaveProperty('max_completion_tokens');
+    const chosen = buildBody({ model, remoteAgent: true, temperature: 0, maxTokens: 9 }, supports, undefined, messages);
+    expect(chosen).toMatchObject({ temperature: 0, max_tokens: 9 });
+  });
+
   it('spells the ceiling, drops the temperature and effort the model refused', () => {
     const supports = capabilitiesFor('https://api.openai.com/v1');
     const refused = modelCapabilitiesFor(supports, 'm');

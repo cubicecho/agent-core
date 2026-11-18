@@ -710,6 +710,15 @@ export interface StreamTurnOptions {
   /** The model's answer, as it arrives. */
   onOutput?: (delta: string) => void;
   /**
+   * Each chunk as it arrives, before it is read — for a field beside `choices` the turn does not
+   * keep, such as a remote agent's progress event (`progressEvent`).
+   *
+   * @remarks
+   * A chunk with empty `choices` reaches it too, and does not count as the model saying anything, so
+   * it costs no retry. What it throws ends the turn.
+   */
+  onChunk?: (chunk: OpenAI.ChatCompletionChunk) => void;
+  /**
    * Headers sent with the request, beside the client's own — `SESSION_HEADER`, for a router that
    * keeps a session on one provider. Never refused, so never negotiated.
    */
@@ -760,6 +769,7 @@ export async function streamTurn(
     startInReasoning,
     onThinking,
     onOutput,
+    onChunk,
     headers,
     mintCallId = defaultMinter,
   }: StreamTurnOptions = {},
@@ -849,6 +859,7 @@ export async function streamTurn(
       // being alive, which is all the watchdog is asking about. Which allowance it rearms with
       // moves from the first chunk's to the idle one when a chunk carries something.
       rearm(false);
+      onChunk?.(chunk);
       // Assigned rather than accumulated. `stream_options.include_usage` sends one final chunk
       // and the two agree there, but a server that reports cumulatively per chunk makes a sum
       // of sums out of an accumulator — and a token count wrong by a factor of the chunk count

@@ -59,6 +59,7 @@ What this package needs to know about a caller's configuration.
 - `ModelParams` (type) — What to ask the model for.
 - `normalizeBaseUrl` — A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
 - `ReasoningReplay` — Any one of the policies in `ReasoningReplay`.
+- `RemoteAgentParams` (type) — What to ask a remote agent for: a model that runs a whole agent loop of its own, behind the same chat completions API, and hands the host's own tools back to it.
 - `RetryPolicy` (type) — How many times a lost or refused request is worth sending again.
 - `ToolDiscovery` — Any one of the modes in `ToolDiscovery`.
 - `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
@@ -216,6 +217,20 @@ What a run is doing, while it is doing it.
 - `stamp` — A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
 - `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
 - `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
+
+### remote
+
+Running against a remote agent: a model that runs a whole agent loop of its own behind the chat completions API, and hands the host's tools back to it with `finish_reason: "tool_calls"`.
+
+- `IDEMPOTENCY_HEADER` — The header that makes a resent request the same request: one key per turn, kept across its retries.
+- `PROGRESS_FIELD` — The body field a remote agent's progress travels under: `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
+- `ProgressChunk` (type) — A streamed chunk that carries one of a remote run's events: no choices, and the event beside them.
+- `progressChunk` — A run event as a progress chunk, for a server streaming a remote agent's run.
+- `progressEvent` — The run event a streamed chunk carries, where it carries one.
+- `progressEvents` — The run id and events an answer that is not streamed carries, where it carries them.
+- `REMOTE_AGENT_NOTICE` — What a notice about the options a remote agent's run sets aside opens with, ahead of their names.
+- `RunProgress` (type) — What an answer that is not streamed carries beside `choices`: the run, and what it said.
+- `withProgress` — An answer that is not streamed, with a remote run's events beside its `choices`.
 
 ### request-body
 

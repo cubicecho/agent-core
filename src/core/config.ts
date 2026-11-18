@@ -185,6 +185,29 @@ export interface ModelParams {
    * top-level fields like any other.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * Whether the model is a remote agent. Here it is not: the loop runs every step against it.
+   * `RemoteAgentParams` is the other kind.
+   */
+  remoteAgent?: false;
+}
+
+/**
+ * What to ask a remote agent for: a model that runs a whole agent loop of its own, behind the same
+ * chat completions API, and hands the host's own tools back to it.
+ *
+ * @remarks
+ * The host sets `remoteAgent` from the model entry. `temperature` and `maxTokens` are optional here,
+ * and absent sends none, so an agent tuned with its own sampling is not overridden by a host's
+ * default; `extraBody` is sent as given. See `runAgentLoop` for what else the flag changes.
+ */
+export interface RemoteAgentParams extends Omit<ModelParams, 'maxTokens' | 'temperature' | 'remoteAgent'> {
+  /** The model runs its own loop server-side. */
+  remoteAgent: true;
+  /** The reply's ceiling, where the host chose one for this call. Absent or zero or less sends none. */
+  maxTokens?: number;
+  /** What to sample at, where the host chose it for this call. Absent sends none. */
+  temperature?: number;
 }
 
 /**

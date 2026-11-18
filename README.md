@@ -37,6 +37,7 @@ only, Node >=22.
 | `config` | The structural interfaces every function here asks for, and `normalizeBaseUrl`, the one rule for when two base URLs are one endpoint. |
 | `run-turn` | `runTurn`: one turn with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: the loop above a turn — `runTurn` per step, the tools between, `load_tools` and preselection handled, until the model stops asking. |
+| `remote` | Running against a remote agent, a model that runs its own loop: the progress-chunk codec (`progressChunk`, `withProgress`, `progressEvent`, `progressEvents`) and `IDEMPOTENCY_HEADER`. `runAgentLoop` reads it under `remoteAgent: true`. |
 | `request-body` | `buildBody`: the one place a streamed request's body is decided from a config and what the endpoint and the model have refused. |
 | `run-calls` | The tools between two turns: a step's calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher, and `formatToolError` words a failed call for the model. |
 | `preselect` | Choosing a run's tools before it starts: `preselect` asks a small model, `preselectByKeywords` scores the request's own words against the tool names without one, and `preselectSystem`, `preselectInput` and `preselection` are the prompt and the reading of the reply for a host that makes the call itself. |
@@ -1227,6 +1228,67 @@ compares by: http or https, no credentials, query or fragment, scheme and host i
 default port and no trailing slash. A host storing a base URL should store what it returns, and
 refuse a URL it answers `null` for. A URL it refuses still equals itself, trimmed of whitespace
 and trailing slashes, so a row saved before the rule still finds its own key.
+
+## Running against a remote agent
+
+A remote agent is a model that runs a whole agent loop of its own behind the chat completions API —
+ai-router serves one per agent name — and hands the host's own tools back with
+`finish_reason: "tool_calls"`. `runAgentLoop` runs against one as a plain tool loop, with the host's
+`tools`, `hostTools`, `dispatch` and `onEvent` as they are, once the config says so:
+
+```ts
+// `isAgent` from the model entry: ai-router marks its agents `"ai_router": { "kind": "agent" }`.
+const result = await runAgentLoop({
+  config: {
+    baseUrl, apiKey, model: "helper", maxToolIterations: 20,
+    remoteAgent: true,
+    ...(chosen.temperature === undefined ? {} : { temperature: chosen.temperature }),
+  },
+  messages,
+  hostTools: [askUser],
+  dispatch,
+  onEvent: (event) => emit(runId, event),
+});
+result.remoteRunId; // the server's run, for its `GET /runs/<id>`
+```
+
+`remoteAgent: true` (`RemoteAgentParams`) changes this much:
+
+- **Sampling is the agent's own.** `temperature` and `maxTokens` are optional, and absent sends
+  none, so an agent tuned with its own is not overridden by a host's default; `extraBody` is sent as
+  given. A host that fills these from its settings sends only what was chosen for this call.
+- **The server's work stays on the server.** Compaction, pruning, preselection, on-demand loading
+  (tools go out eagerly, so `load_tools` never hides the host's), continuations, recovering calls
+  from the answer's text and the window guard are all set aside, with one notice
+  (`REMOTE_AGENT_NOTICE`) naming those the host had asked for. They are ignored rather than refused:
+  the flag comes from the model entry and the options from the host's code, so a refusal would have
+  every host branch on it. A session still sends its header, but no llama.cpp slot is probed or
+  pinned.
+- **Progress is asked for**, as `ai_router: { progress: true }` laid under the host's own
+  `extraBody.ai_router` (its `task`, `servers`), and a host's `progress: false` turns it off.
+- **The server says its own steps.** Each progress chunk's event goes to `onEvent` whole, under the
+  server's `runId` and `seq` (`'seq' in event` tells one from the loop's), and the loop then says no
+  `turn`, `thinking`, `output`, `tool-call`, `tool-result` or `usage` of its own: the server already
+  tells a handed-back call's `tool-call`, and its `tool-result` when the answer resumes the run, so
+  neither is shown twice. The loop's own notices, `input`, and the `artifact` and `server-log` of the
+  host's own dispatches are still said. The server's `done` is not forwarded, since the loop's run
+  goes on past it and its end is the host's to say. `emit` files a forwarded event under the host's
+  run and numbering and keeps its `at`; with progress off, the loop says everything itself.
+- **Call ids are kept as the server sent them**, never renamed by `distinctCallIds`, because the
+  next request resumes the server's run by them.
+- **Each turn carries an `Idempotency-Key`** (`IDEMPOTENCY_HEADER`), the same on every retry of a
+  request lost before its first chunk and a new one on the next turn, so a resend is answered with
+  the run the first attempt started. A progress chunk does not count as the model answering, so it
+  costs the turn no retry.
+- **The run id** is the result's `remoteRunId`, and a failure's, read off the events. Without
+  progress there are none; a host that wants `X-Run-Id` reads it in its endpoint's `fetch`.
+
+The wire shape is one codec, here, so a server and the loop cannot drift: `progressChunk(event,
+head)` writes an event as a chunk with empty `choices` and `ai_router: { event }`, which a standard
+client skips as it skips a usage chunk; `withProgress(completion, runId, events)` puts
+`ai_router: { runId, events }` beside the `choices` of an answer that is not streamed; and
+`progressEvent` and `progressEvents` read them back, dropping an event that is malformed or of a
+kind this version does not know. A server numbering its own events makes each with `stamp`.
 
 ## Fields this interface cannot spell
 

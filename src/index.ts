@@ -51,6 +51,7 @@ export {
   type ModelParams,
   normalizeBaseUrl,
   ReasoningReplay,
+  type RemoteAgentParams,
   type RetryPolicy,
   ToolDiscovery,
   type ToolPolicy,
@@ -173,6 +174,17 @@ export {
   type TurnReport,
   watch,
 } from './run/events.ts';
+export {
+  IDEMPOTENCY_HEADER,
+  PROGRESS_FIELD,
+  type ProgressChunk,
+  progressChunk,
+  progressEvent,
+  progressEvents,
+  REMOTE_AGENT_NOTICE,
+  type RunProgress,
+  withProgress,
+} from './run/remote.ts';
 export { buildBody } from './run/request-body.ts';
 export {
   dropReasoning,

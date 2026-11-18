@@ -19,7 +19,7 @@ import {
   sameMessage,
   type TokenLedger,
 } from '../context/ledger.ts';
-import type { Endpoint, ModelParams, RetryPolicy, ToolPolicy } from '../core/config.ts';
+import type { Endpoint, ModelParams, RemoteAgentParams, RetryPolicy, ToolPolicy } from '../core/config.ts';
 import { ReasoningReplay, ToolDiscovery } from '../core/config.ts';
 import { counted } from '../core/guards.ts';
 import { charsPerTokenFor } from '../endpoint/calibration.ts';
@@ -108,6 +108,7 @@ import {
   runMetrics,
   stamp,
 } from './events.ts';
+import { asRemoteAgent, remoteRun, remoteRunOf } from './remote.ts';
 import { buildBody, singleCalls, singleSystem } from './request-body.ts';
 import {
   assistantMessage,
@@ -296,9 +297,12 @@ export interface AgentLoopOptions {
    * `tasks.toolSelect` under `preselect` and `tasks.compaction` under `compact`. `toolSelectModel`
    * is the flattened spelling of the first, for a host that is not on the spec. With neither
    * naming a model, `preselect` asks `model` itself; `compact` never does.
+   *
+   * `remoteAgent: true` (`RemoteAgentParams`) says the model is a remote agent, which runs its own
+   * loop: see `runAgentLoop`.
    */
   config: Endpoint &
-    ModelParams &
+    (ModelParams | RemoteAgentParams) &
     Pick<ToolPolicy, 'maxToolIterations'> &
     Partial<Pick<ToolPolicy, 'toolDiscovery' | 'toolSelectModel'>> &
     Partial<RetryPolicy> & {
@@ -635,8 +639,15 @@ export interface AgentLoopOptions {
    * pinning for itself and is left alone, and a server that refuses the field is latched off it.
    */
   session?: string;
-  /** Told what the run is doing, as the events a watcher reads. */
-  onEvent?: (event: RunEventInput) => void;
+  /**
+   * Told what the run is doing, as the events a watcher reads.
+   *
+   * @remarks
+   * On a `remoteAgent` config, the server's events arrive whole, under its run id and numbering
+   * (`'seq' in event` tells them apart). `emit` files one under the host's run and numbering, and
+   * keeps its `at`.
+   */
+  onEvent?: (event: RunEventInput | RunEvent) => void;
   /**
    * Takes tool calls a model wrote into its reply as text and runs them as calls, with a notice
    * saying so. A server whose tool-call parser does not match the model's template otherwise ends
@@ -819,6 +830,11 @@ export interface AgentLoopResult {
    * whose prompt was not reported has no entry.
    */
   ledger: TokenLedger;
+  /**
+   * The remote agent's own run id, as its progress events named it, for a `remoteAgent` config —
+   * the run a router's `GET /runs/<id>` reads. Absent elsewhere, and where no event arrived.
+   */
+  remoteRunId?: string;
 }
 
 /** What the loop remembers of one request, to explain the next one's cache. */
@@ -929,6 +945,14 @@ interface Standing {
  * `compact` has it fold the transcript, each by the task `config.tasks` carries for it and on
  * that task's own settings — a setting the task leaves out is the side task's default, never the
  * run's `temperature` or `maxTokens`.
+ *
+ * On a `remoteAgent` config the model runs its own loop, and this one is a plain tool loop around
+ * it: every request declares `tools` and `hostTools`, `dispatch` answers the calls the server hands
+ * back, and the next request resumes the server's run by the ids it sent, which are kept as sent.
+ * Only the sampling the config sets is sent, and the server's own work — compaction, pruning,
+ * preselection, on-demand loading, continuations, the window guard — is left to it (`asRemoteAgent`).
+ * Its progress is asked for and its events forwarded to `onEvent` in place of the loop's own for its
+ * steps, and each turn carries one `IDEMPOTENCY_HEADER` across its retries (`remoteRun`).
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   let pin: SessionPin | undefined;
@@ -946,7 +970,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }),
   };
   let result: AgentLoopResult | undefined;
-  const apart = hostToolsApart(withRecordTool(options));
+  const apart = hostToolsApart(withRecordTool(asRemoteAgent(options)));
   try {
     pin = await pinSession(apart);
     result = await runSteps(apart, standing, pin);
@@ -994,7 +1018,8 @@ async function pinSession(options: AgentLoopOptions): Promise<SessionPin | undef
   const headers = { [SESSION_HEADER]: session };
   const unpinned: SessionPin = { fields: {}, headers, slotted: false, release: () => {} };
   const pinsItself = config.extraBody !== undefined && SLOT_FIELD in config.extraBody;
-  if (pinsItself) {
+  // A remote agent's server picks the slots of the models it runs itself.
+  if (pinsItself || config.remoteAgent === true) {
     return unpinned;
   }
   const total = await servedSlots(config, { signal });
@@ -1267,7 +1292,7 @@ const isQuestion = (message: OpenAI.ChatCompletionMessageParam) =>
  */
 function recorder(heard: AgentLoopOptions['onEvent']) {
   const recorded: RunEvent[] = [];
-  const onEvent = (input: RunEventInput) => {
+  const onEvent = (input: RunEventInput | RunEvent) => {
     if (input.kind !== RunEventKind.Thinking && input.kind !== RunEventKind.Output) {
       recorded.push(stamp(input, '', recorded.length + 1, Date.now()));
     }
@@ -1536,13 +1561,16 @@ async function runSteps(
   } = options;
   const dedupable = typeof dedupeToolCalls === 'function' ? dedupeToolCalls : () => dedupeToolCalls;
   const started = Date.now();
-  const { recorded, onEvent } = recorder(options.onEvent);
+  const { recorded, onEvent: told } = recorder(options.onEvent);
+  const remote = config.remoteAgent === true ? remoteRun(config.extraBody, told) : undefined;
+  const onEvent = remote?.emit ?? told;
   const client = getClient(config);
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
   const notice = (text: string) => onEvent({ kind: RunEventKind.Notice, text });
   // The host's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.
-  const extraBody = pin ? { ...pin.fields, ...config.extraBody } : config.extraBody;
+  const ownBody = remote?.extraBody ?? config.extraBody;
+  const extraBody = pin ? { ...pin.fields, ...ownBody } : ownBody;
   const sending = { ...config, extraBody };
   const reasoningReplay = config.reasoningReplay ?? ReasoningReplay.All;
 
@@ -1609,6 +1637,7 @@ async function runSteps(
       used: [...used],
       preselected: [...preselected],
       ledger,
+      ...remoteRunOf(remote),
     };
   };
   const announce = announcer(onMessage);
@@ -1773,7 +1802,8 @@ async function runSteps(
       inFlight,
       // `parallel_tool_calls` too, which `buildBody` adds for a model sent one call at a time.
       droppable: [...Object.keys(extraBody ?? {}), PARALLEL_TOOL_CALLS],
-      ...(pin ? { headers: pin.headers } : {}),
+      ...(pin || remote ? { headers: { ...pin?.headers, ...remote?.turnHeaders() } } : {}),
+      ...(remote ? { onChunk: remote.onChunk } : {}),
       maxRetries,
       loadingTimeoutMs: loadingMs(config),
       contextLimit: config.contextLength ?? 0,
@@ -1846,7 +1876,8 @@ async function runSteps(
     cacheReported ||= reportsCache(turn.usage);
     onEvent(usageEvent(loopUsage(usage, cacheReported), turn, ledger, config.contextLength));
     if (turn.finishReason === FinishReason.Length) {
-      notice(`the model stopped at maxTokens (${config.maxTokens}); this turn is cut short`);
+      const ceiling = config.maxTokens === undefined ? '' : ` (${config.maxTokens})`;
+      notice(`the model stopped at maxTokens${ceiling}; this turn is cut short`);
     } else if (turn.finishReason === FinishReason.ContentFilter) {
       notice("the provider's content filter withheld the reply");
     }
@@ -1854,8 +1885,9 @@ async function runSteps(
     const read = turnCalls(turn, canRecover ? recoverable : undefined, notice, mintCallId);
     const { content, recovered } = read;
     // Once, before the message is stored: every later request replays these ids, and each tool
-    // result answers one of them.
-    const calls = distinctCallIds(read.calls, messages, mintCallId, callIds);
+    // result answers one of them. A remote agent's are kept as sent, since it resumes by them,
+    // whatever `callIds` says.
+    const calls = remote ? read.calls : distinctCallIds(read.calls, messages, mintCallId, callIds);
     const shown: Turn = { ...turn, content, toolCalls: calls };
     onTurn?.(shown, step);
 
@@ -1950,6 +1982,7 @@ async function runSteps(
           outcome,
         },
         ledger,
+        ...remoteRunOf(remote),
       };
     }
   }
