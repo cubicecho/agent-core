@@ -312,6 +312,10 @@ export interface Turn {
    * @remarks
    * Kept because some models want it back on the assistant message: `runAgentLoop` writes it
    * there as `reasoningReplay` says, under `reasoningField`.
+   *
+   * Field and fenced reasoning are joined in the order they arrived, with one exception. Where a
+   * closing fence with no opening one moves earlier answer text into the scratchpad
+   * (`FenceSplitter`), that text lands after any field reasoning that arrived before the close.
    */
   reasoning: string;
   /**
@@ -811,6 +815,7 @@ export async function streamTurn(
     });
     // Both kinds of scratchpad in the order they arrived: the field's as it comes, the fenced
     // kind as the splitter settles it, including answer it moves to the scratchpad on a lone close.
+    // That moved answer is appended when the close arrives, after any field reasoning before it.
     let reasoning = '';
     let fenced = 0;
     let reasoningField: ReasoningField | undefined;

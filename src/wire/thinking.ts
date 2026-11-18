@@ -88,7 +88,9 @@ export interface FenceSplitterOptions {
  *
  * A closing tag with no opening one is the template having opened it in the prompt. When no
  * fence has been seen yet, everything before it becomes scratchpad retroactively in `output` and
- * `reasoning`, though what was already handed out as output cannot be taken back.
+ * `reasoning`, though what was already handed out as output cannot be taken back. Where the
+ * stream also sends reasoning in a field, `Turn.reasoning` holds the moved text after the field's
+ * reasoning that arrived before the close.
  */
 export class FenceSplitter {
   /** The answer so far, with every fence taken out. */
