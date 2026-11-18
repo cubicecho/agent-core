@@ -116,14 +116,15 @@ describe('every scoped store', () => {
     expect(kept).toEqual([]);
   });
 
-  it.each(modules)('in %s is cleared by a reset of its own, which a runtime has as a method', async (module) => {
+  it.each(modules)('in %s is cleared by the resets it exports, which a runtime has as methods', async (module) => {
     const exports: Record<string, unknown> = await import(/* @vite-ignore */ `../../src/${module}`);
     const resets = Object.keys(exports).filter((name) => /^reset[A-Z]/.test(name));
-    expect(resets).toHaveLength(1);
-    const [reset] = resets;
+    expect(resets.length).toBeGreaterThan(0);
     const runtime = createRuntime();
-    const method = new Map<string, unknown>(Object.entries(runtime)).get(reset);
-    expect(method).toBeTypeOf('function');
+    const methods = new Map<string, unknown>(Object.entries(runtime));
+    for (const reset of resets) {
+      expect(methods.get(reset), reset).toBeTypeOf('function');
+    }
 
     const own = declared.filter((entry) => entry.module === module);
     const before = runtime.run(() =>
@@ -133,9 +134,12 @@ describe('every scoped store', () => {
         return copy;
       }),
     );
-    const isMethod = typeof method === 'function';
-    if (isMethod) {
-      method();
+    for (const reset of resets) {
+      const method = methods.get(reset);
+      const isMethod = typeof method === 'function';
+      if (isMethod) {
+        method();
+      }
     }
     const kept = runtime.run(() => own.filter((entry, index) => isFresh(entry, before[index]) === false));
     expect(kept).toHaveLength(0);

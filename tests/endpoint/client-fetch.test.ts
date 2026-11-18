@@ -10,7 +10,7 @@ import {
 } from '../../src/endpoint/client.ts';
 import { resetAll } from '../../src/runtime/reset.ts';
 import { exportCapabilities } from '../../src/runtime/snapshot.ts';
-import { ask, refusedHints } from '../../src/turn/side-task.ts';
+import { ask } from '../../src/turn/side-task.ts';
 import { HttpStatus } from '../../src/wire/wire.ts';
 import { answer, answeredBy, respond } from '../helpers.ts';
 
@@ -162,11 +162,11 @@ describe('an endpoint answered by a function, written down', () => {
     });
     const endpoint = { ...internal, apiKey: 'sk-router', fetch };
     expect(await ask(endpoint, 'm', 'Name this.', 'hi')).toBe('named');
-    expect(refusedHints().size).toBe(1);
 
     const snapshot = exportCapabilities();
     const id = endpointId({ baseUrl: internal.baseUrl, apiKey: 'sk-router' });
     expect(Object.keys(snapshot.endpoints)).toEqual([id]);
+    expect(snapshot.endpoints[id].models.m.thinkingHints).toBe(false);
     // Survives JSON whole, so nothing in it was a function that JSON would have dropped.
     expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
     expect(JSON.stringify(snapshot)).not.toContain('fetch');
