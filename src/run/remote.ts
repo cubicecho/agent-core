@@ -2,7 +2,14 @@ import type OpenAI from 'openai';
 import { ToolDiscovery } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
 import type { AgentLoopOptions } from './agent-loop.ts';
-import { type RunEvent, type RunEventInput, RunEventKind } from './events.ts';
+import {
+  LEGACY_EXCHANGE,
+  type LegacyRunEvent,
+  type RunEvent,
+  type RunEventInput,
+  RunEventKind,
+  renamedEvent,
+} from './events.ts';
 
 /**
  * Running against a remote agent: a model that runs a whole agent loop of its own behind the chat
@@ -68,26 +75,30 @@ export interface RunProgress {
 }
 
 /**
- * Whether a value off the wire is a whole run event, as `stamp` makes one.
+ * Whether a value off the wire is a whole run event, as `stamp` makes one now or made one before
+ * 5.0.0.
  *
  * @param value - Anything, usually just parsed.
  * @returns True of an object with a known `kind`, a `runId`, a whole `seq`, an `at`, and every other
  * always-present field of the right kind. `usage` is checked only for being an object or `null`.
+ * An event with the exchange under `step` rather than `exchange`, and its kind `step` where one
+ * began, is a server's from before 5.0.0.
  */
-function isRunEvent(value: unknown): value is RunEvent {
+function isRunEvent(value: unknown): value is RunEvent | LegacyRunEvent {
   if (!isRecord(value)) {
     return false;
   }
-  const { kind, runId, seq, at, text, name, step, ok, usage, id } = value;
+  const { kind, runId, seq, at, text, name, exchange, step, ok, usage, id } = value;
+  const isKnown = typeof kind === 'string' && KINDS.has(kind);
+  const isCurrent = isKnown && typeof exchange === 'string';
+  const isLegacy = (isKnown || kind === LEGACY_EXCHANGE) && typeof step === 'string';
   return (
-    typeof kind === 'string' &&
-    KINDS.has(kind) &&
+    (isCurrent || isLegacy) &&
     typeof runId === 'string' &&
     Number.isInteger(seq) &&
     typeof at === 'number' &&
     typeof text === 'string' &&
     typeof name === 'string' &&
-    typeof step === 'string' &&
     (ok === null || typeof ok === 'boolean') &&
     (usage === null || isRecord(usage)) &&
     (id === undefined || typeof id === 'string')
@@ -138,13 +149,14 @@ export function withProgress<T extends object, F extends string = typeof PROGRES
  *
  * @param chunk - One chunk of the stream, as parsed.
  * @param [field] - The field the event is under.
- * @returns The event as the server sent it — its `runId`, `seq` and `at` kept — or `undefined` for
- * a chunk with none, and for one whose event is malformed or of a kind this version does not know.
+ * @returns The event as the server sent it — its `runId`, `seq` and `at` kept, and the names of a
+ * server before 5.0.0 read as they are now — or `undefined` for a chunk with none, and for one whose
+ * event is malformed or of a kind this version does not know.
  */
 export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): RunEvent | undefined {
   const carried = isRecord(chunk) ? chunk[field] : undefined;
   const event = isRecord(carried) ? carried.event : undefined;
-  return isRunEvent(event) ? event : undefined;
+  return isRunEvent(event) ? renamedEvent(event) : undefined;
 }
 
 /**
@@ -152,15 +164,16 @@ export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): R
  *
  * @param completion - The `chat.completion` body, as parsed.
  * @param [field] - The field the run is under.
- * @returns The run and its events, less any that are malformed or of an unknown kind; `undefined`
- * where the answer carries no run id or no list of events.
+ * @returns The run and its events, less any that are malformed or of an unknown kind, those of a
+ * server before 5.0.0 under their names now; `undefined` where the answer carries no run id or no
+ * list of events.
  */
 export function progressEvents(completion: unknown, field: string = PROGRESS_FIELD): RunProgress | undefined {
   const carried = isRecord(completion) ? completion[field] : undefined;
   if (!isRecord(carried) || typeof carried.runId !== 'string' || !Array.isArray(carried.events)) {
     return undefined;
   }
-  return { runId: carried.runId, events: carried.events.filter(isRunEvent) };
+  return { runId: carried.runId, events: carried.events.filter(isRunEvent).map(renamedEvent) };
 }
 
 /**

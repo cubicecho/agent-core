@@ -1682,8 +1682,8 @@ blocks for display, and `endRun` drops a finished run's buffer.
 
 An app that numbers and stores a run's events itself — a run that waits on an answer can outlive this
 bus, and the process too, and its `seq` must never start again — makes each event with `stamp`,
-which is what `emit` does too. The empty defaults (`text`, `name` and `step` `""`, `ok` and `usage`
-`null`) go under what the input says, and the run id and sequence over it, so the stored events
+which is what `emit` does too. The empty defaults (`text`, `name` and `exchange` `""`, `ok` and
+`usage` `null`) go under what the input says, and the run id and sequence over it, so the stored events
 keep `RunEvent`'s shape as it grows:
 
 ```ts
@@ -1691,6 +1691,13 @@ import { stamp } from "@cubicecho/agent-core";
 
 const event = stamp(input, runId, ++lastSeq, Date.now()); // an `at` on the input wins
 ```
+
+A run that holds several exchanges, such as a task's stages, says so itself: an `exchange` event as
+each begins (`name` names it), and `exchange` on every event inside it, so a watcher can group the
+run the way the work is written and `fold` never joins text across two of them. `runMetrics` counts
+them as `exchanges`. The loop never sends either. Before 5.0.0 these were the `step` kind and the
+`step` field; `fold`, `runMetrics`, `progressEvent` and `progressEvents` still read events stored
+or relayed that way, under the new names.
 
 The five numbers behind that — the backlog cap, the slack it is trimmed in batches of, and the
 three deadlines the sweep reaps on (a finished run, an unended one, and one waiting on calls it
@@ -2224,7 +2231,7 @@ nothing in them for one tenant to learn about another.
   emits at every optional argument — and a strict validator rejects the tool.
 - `tool-loading` — theirs, plus `min-agent`'s `carryOver`/`MAX_CARRIED`, which bounds the tool
   array across the exchanges of a conversation. Both suites' assertions are kept.
-- `events` — `kanban_server`'s `usage` totals **and** `task_server`'s `step` grouping, including
+- `events` — `kanban_server`'s `usage` totals **and** `task_server`'s exchange grouping, including
   its `fold` fix: two blocks in different stages are not one block.
 - `retry` — `kanban_server`'s, which is the only one of the three with the `ContextOverflow`
   guard. `min-agent` had no retry layer at all.

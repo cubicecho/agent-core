@@ -246,9 +246,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   and `StepWindow` are deprecated aliases of `beforeTurn` and `TurnWindow`.
 - **Exchange events:** what an app emits when one run holds several exchanges, such as a task's
   stages: an exchange began, which exchange each event belongs to, and which arm a deciding
-  exchange chose. Owner: `RunEventKind.Step`, `RunEvent.step`, `RunMetrics.steps` and
-  `RunEventKind.Decision`; the loop never sends them, and the code names stay until their `A`
-  item.
+  exchange chose. Owner: `RunEventKind.Exchange`, `RunEvent.exchange`, `RunMetrics.exchanges` and
+  `RunEventKind.Decision`; the loop never sends them. Events stored or relayed before 5.0.0 say
+  `step` for the first two, which `renamedEvent` reads under the new names.
 
 ### Reaching a server
 
