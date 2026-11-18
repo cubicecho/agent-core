@@ -1,5 +1,5 @@
 import type { TokenLedger } from '../context/ledger.ts';
-import { MS_PER_MINUTE } from '../core/consts.ts';
+import { EVENT_BUS_DEFAULTS, type EventBusSettings } from '../core/defaults.ts';
 import { getOrCreate } from '../core/guards.ts';
 import { ABORT_EVENT } from '../core/platform.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
@@ -21,61 +21,11 @@ import { type ResourceLink, ServerLogLevel } from './dispatch.ts';
  * outcome is in the database. Nothing here survives a restart, and nothing here is the record.
  */
 
-/** What the bus keeps and for how long. Every field optional; see `configureEvents`. */
-export interface EventBusOptions {
-  /** How many events one run keeps for a watcher that joins late. A chatty run loses its oldest. */
-  maxEvents?: number;
-  /**
-   * How far past the cap the backlog is allowed to run before it is trimmed.
-   *
-   * @remarks
-   * Dropping the oldest event on every push means shifting a thousand-element array tens of
-   * thousands of times over a reasoning run — the one thing in here that would ever show up in a
-   * profile. Trimming in batches makes it a few dozen splices instead, at the cost of the backlog
-   * sometimes being a little longer than the cap, which nothing depends on. The one field here
-   * that is an implementation detail rather than a policy: raising it trades memory for fewer
-   * splices, and there is no reason to lower it.
-   */
-  trimSlack?: number;
-  /** How long a finished run stays readable, for a watcher that arrives just after the end. */
-  retainMs?: number;
-  /**
-   * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
-   *
-   * @remarks
-   * `touched` only moves on `emit`, so a live run inside one slow tool call looks abandoned, and the
-   * next `emit` after a reap restarts `seq` at zero, which a reconnecting client discards as events it
-   * has seen. Anything shorter than the longest a tool call may take reaps a live run out from under
-   * itself. The sweep still reaps these, as the backstop for a run killed or forgotten before `done`;
-   * `endRun` is for a caller that knows.
-   */
-  retainUnendedMs?: number;
-  /**
-   * The same for a run whose last event is `wait`: one that handed calls back and stopped until
-   * they are answered, under the same id and the same numbering.
-   *
-   * @remarks
-   * A wait is a planned silence as long as the person answering takes, and the client watching it
-   * has usually gone by the time the run resumes. Reaping it on `retainUnendedMs` restarted `seq`,
-   * so a client reconnecting across the wait discarded the resumed run's events, `done` included.
-   */
-  retainWaitingMs?: number;
-}
-
-/** How many minutes an unended run's events are kept, absent a `retainUnendedMs`. */
-const RETAIN_UNENDED_MINUTES = 30;
-
-/** How many minutes a waiting run's events are kept, absent a `retainWaitingMs`: a day. */
-const RETAIN_WAITING_MINUTES = 24 * 60;
-
-/** The numbers a run of the shape this bus was written for wants. */
-const DEFAULTS: Required<EventBusOptions> = {
-  maxEvents: 1000,
-  trimSlack: 256,
-  retainMs: MS_PER_MINUTE,
-  retainUnendedMs: RETAIN_UNENDED_MINUTES * MS_PER_MINUTE,
-  retainWaitingMs: RETAIN_WAITING_MINUTES * MS_PER_MINUTE,
-};
+/**
+ * What the bus may be told to change, across a process: any of `EventBusSettings`, the rest left as
+ * they are. See `configureEvents`.
+ */
+export type EventBusOptions = Partial<EventBusSettings>;
 
 /**
  * One runtime's bus, held as a single object so a watcher and the sweep timer keep hold of the
@@ -84,13 +34,13 @@ const DEFAULTS: Required<EventBusOptions> = {
  */
 interface Bus {
   /** What is in force now. Read where it is used, so a change applies from the next event. */
-  limits: Required<EventBusOptions>;
+  limits: EventBusSettings;
   streams: Map<string, Stream>;
   /** The pending sweep, see `sweep`. */
   sweeping: ReturnType<typeof setTimeout> | null;
 }
 
-const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sweeping: null }));
+const bus = scoped((): Bus => ({ limits: { ...EVENT_BUS_DEFAULTS }, streams: new Map(), sweeping: null }));
 
 /**
  * Changes what the bus keeps, for a process whose runs are not shaped like the ones these
@@ -113,7 +63,7 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * a cap that has just come down, because the trim happens on push; the backlog settles to the
  * new number as the run goes on.
  */
-export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
+export function configureEvents(options: EventBusOptions = {}): EventBusSettings {
   return assignSettings(bus().limits, options);
 }
 
@@ -383,7 +333,7 @@ const RETENTION_BY_PHASE = {
   [StreamPhase.Live]: 'retainUnendedMs',
   [StreamPhase.Waiting]: 'retainWaitingMs',
   [StreamPhase.Ended]: 'retainMs',
-} as const satisfies Record<StreamPhase, keyof EventBusOptions>;
+} as const satisfies Record<StreamPhase, keyof EventBusSettings>;
 
 /**
  * The phase an event puts a run in that has not ended, for the kinds that move it off `live`.
@@ -712,7 +662,7 @@ export const resetEvents = () => {
   }
   held.sweeping = null;
   // In place, so a watcher still open reads the defaults too and not the caps it began under.
-  Object.assign(held.limits, DEFAULTS);
+  Object.assign(held.limits, EVENT_BUS_DEFAULTS);
 };
 
 /**

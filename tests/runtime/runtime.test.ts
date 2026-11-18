@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CLIENT_POOL_DEFAULTS, EVENT_BUS_DEFAULTS, HOOK_DEFAULTS } from '../../src/core/defaults.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { type Create, endpoint, reply, says } from '../helpers.ts';
@@ -110,12 +111,12 @@ describe('createRuntime', () => {
       hooks: { contextTokens: 50 },
     });
     // Not inherited from the default runtime: the part left out is the package's default.
-    expect(runtime.configureClients()).toEqual({ maxClients: 7, listingMissMs: 30_000, lookupTimeoutMs: 10_000 });
-    expect(runtime.configureEvents().maxEvents).toBe(1000);
+    expect(runtime.configureClients()).toEqual({ ...CLIENT_POOL_DEFAULTS, maxClients: 7 });
+    expect(runtime.configureEvents().maxEvents).toBe(EVENT_BUS_DEFAULTS.maxEvents);
     expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_PREFACE });
     // And nothing it was given reached the process.
     expect(configureClients().maxClients).toBe(2);
-    expect(configureHooks()).toEqual({ contextTokens: 2000, preface: "the process's" });
+    expect(configureHooks()).toEqual({ contextTokens: HOOK_DEFAULTS.contextTokens, preface: "the process's" });
   });
 
   it('reads its own settings where a function takes its default from them', () => {
@@ -145,7 +146,7 @@ describe('createRuntime', () => {
     runtime.resetAll();
     expect(runtime.getClient(endpoint)).not.toBe(mine);
     expect(runtime.history('run')).toEqual([]);
-    expect(runtime.configureClients().maxClients).toBe(32);
+    expect(runtime.configureClients().maxClients).toBe(CLIENT_POOL_DEFAULTS.maxClients);
     expect(getClient(endpoint)).toBe(again);
     expect(history('run')).toHaveLength(1);
   });

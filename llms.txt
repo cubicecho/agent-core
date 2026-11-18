@@ -94,7 +94,7 @@ What a model server turned out not to support, and answering it when it says so.
 
 ### client
 
-- `ClientPoolOptions` (type) — What the client pool is held to across a process.
+- `ClientPoolOptions` (type) — What the client pool may be told to change, across a process: any of `ClientPoolSettings`, the rest left as they are.
 - `configureClients` — Changes what the client pool is held to, for a process whose model servers are not shaped like the deployments these defaults were chosen for.
 - `contextLimitFor` — How much a model will read, in tokens.
 - `EndpointProbeError` — `probeEndpoint` could not list a model server's models; `kind` says why.
@@ -153,12 +153,12 @@ Lifecycle hooks, from the app's side: what a session looks like to them, where t
 - `consult` — Runs an event's hooks and waits for their say, for an app that will hold off when one of them vetoes.
 - `Gathered` (type) — The context a set of outcomes adds to a request, and a note for each hook worth mentioning.
 - `gather` — Runs the hooks ahead of a request and builds what they add to it.
-- `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens.
-- `HOOK_PREFACE` — Said once, above the blocks, so the model reads them as background rather than instructions.
+- `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens: `HOOK_DEFAULTS.contextTokens`.
+- `HOOK_PREFACE` — Said once, above the blocks, so the model reads them as background rather than instructions: `HOOK_DEFAULTS.preface`.
 - `HookContext` (type) — What an app knows at an event.
 - `HookMessage` (type) — One message of a session as a hook is handed it.
 - `HookNote` (type) — One hook's line for whoever is watching: the context it added, or why it added none.
-- `HookOptions` (type) — What hooks are held to across a process.
+- `HookOptions` (type) — What hooks may be told to change, across a process: any of `HookSettings`, the rest left as they are.
 - `HookOutcome` (type) — What one hook did.
 - `HookRunner` (type) — Runs one event's hooks.
 - `notify` — Runs the hooks for an event that reads what happened and adds nothing to a request.
@@ -216,7 +216,7 @@ What the loop and a dispatcher say to each other: the call it is handed, the ans
 What a run is doing, while it is doing it.
 
 - `configureEvents` — Changes what the bus keeps, for a process whose runs are not shaped like the ones these defaults were chosen for.
-- `EventBusOptions` (type) — What the bus keeps and for how long.
+- `EventBusOptions` (type) — What the bus may be told to change, across a process: any of `EventBusSettings`, the rest left as they are.
 - `ExchangeOutcome` — How an exchange ended, as its result says or as `runMetrics` reads it off a run's events.
 - `emit` — Records one event and hands it to everyone watching that run.
 - `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.

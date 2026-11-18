@@ -7,7 +7,7 @@ import {
   type RetryPolicy,
 } from '../core/config.ts';
 import { MS_PER_SECOND } from '../core/consts.ts';
-import { MODEL_SERVER_DEFAULTS } from '../core/defaults.ts';
+import { CLIENT_POOL_DEFAULTS, type ClientPoolSettings, MODEL_SERVER_DEFAULTS } from '../core/defaults.ts';
 import { digestOf } from '../core/digest.ts';
 import { byCodeUnit, getOrCreate, isPositive } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
@@ -148,60 +148,13 @@ const sender = (config: Pick<Endpoint, 'fetch'>): Fetch => config.fetch ?? globa
 const clients = perFetch(() => new Map<string, OpenAI>());
 
 /**
- * How many model servers' clients are kept at once, until `configureClients` moves it.
- *
- * @remarks
- * This is a backstop rather than a design. The key includes the API key, and every argument in
- * this file for what bounds these caches is "a settings row's worth" — true of the deployments
- * this was written for, and false the moment a consumer mints a key per *user*, where the map
- * grows one client and one connection pool per tenant for the life of the process with
- * `resetClients` as the only release.
- *
- * Thirty-two is far more model servers than a settings table holds, so a deployment-shaped consumer
- * never reaches it, and an evicted client costs its connection pool and nothing else — the next
- * request through that model server builds another. See `getClient` for the constraint stated as a
- * constraint.
+ * What the client pool may be told to change, across a process: any of `ClientPoolSettings`, the
+ * rest left as they are. See `configureClients`.
  */
-const MAX_CLIENTS = 32;
-
-/** How long a model missing from a listing stays unlisted before the server is asked again. */
-const LISTING_MISS_MS = 30_000;
-
-/**
- * How long a context window lookup may take in all, until `configureClients` moves it.
- *
- * @remarks
- * Its own number because `requestTimeoutSeconds` is how long to wait for a model to speak, and a
- * listing that has not answered in ten seconds is not going to.
- */
-const LOOKUP_TIMEOUT_MS = 10_000;
-
-/** What the client pool is held to across a process. Every field optional; see `configureClients`. */
-export interface ClientPoolOptions {
-  /** How many model servers' clients are kept at once. The least recently asked for goes first. */
-  maxClients?: number;
-  /**
-   * How long, in milliseconds, a model missing from a server's listing — or a served context window
-   * or slot count a server's own API gave, or an error other than a missing route from its
-   * `/api/v0/models` — is taken at its word before the model server is asked again.
-   */
-  listingMissMs?: number;
-  /**
-   * How long, in milliseconds, one `contextLimitFor`, `servedWindow` or `listModels` may take over
-   * all of its requests. A model server's own request timeout still applies where it is shorter.
-   */
-  lookupTimeoutMs?: number;
-}
-
-/** The numbers this module was written with. */
-const CLIENT_DEFAULTS: Required<ClientPoolOptions> = {
-  maxClients: MAX_CLIENTS,
-  listingMissMs: LISTING_MISS_MS,
-  lookupTimeoutMs: LOOKUP_TIMEOUT_MS,
-};
+export type ClientPoolOptions = Partial<ClientPoolSettings>;
 
 /** What is in force now. Read where it is used, so a change applies from the next call. */
-const poolLimits = scoped((): Required<ClientPoolOptions> => ({ ...CLIENT_DEFAULTS }));
+const poolLimits = scoped((): ClientPoolSettings => ({ ...CLIENT_POOL_DEFAULTS }));
 
 /**
  * Drops the least recently asked-for clients until the pool fits. Nothing is closed on the way
@@ -242,7 +195,7 @@ const evict = (pool: Map<string, OpenAI>) => {
  * next `getClient`. A shorter `listingMissMs` applies to misses already remembered, since each is
  * a timestamp compared against it when read.
  */
-export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
+export function configureClients(options: ClientPoolOptions = {}): ClientPoolSettings {
   const inForce = assignSettings(poolLimits(), options);
   evict(clients(undefined));
   return inForce;

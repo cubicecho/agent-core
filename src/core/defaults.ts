@@ -8,6 +8,47 @@
  * The facts that could not be otherwise are in `consts.ts`.
  */
 
+/**
+ * The client pool: how many model servers' clients are kept, and how long what they said is
+ * believed. Set for a process by `configureClients`, or a runtime's `clients`.
+ */
+export interface ClientPoolSettings {
+  /**
+   * How many model servers' clients are kept at once. The least recently asked for goes first.
+   *
+   * @remarks
+   * A backstop rather than a design. The key includes the API key, and every argument for what
+   * bounds the client caches is "a settings row's worth" — true of the deployments this was
+   * written for, and false the moment a consumer mints a key per *user*, where the map grows one
+   * client and one connection pool per tenant for the life of the process. Thirty-two is far more
+   * model servers than a settings table holds, so a deployment-shaped consumer never reaches it,
+   * and an evicted client costs its connection pool and nothing else. See `getClient`.
+   */
+  maxClients: number;
+  /**
+   * How long, in milliseconds, a model missing from a server's listing — or a served context window
+   * or slot count a server's own API gave, or an error other than a missing route from its
+   * `/api/v0/models` — is taken at its word before the model server is asked again.
+   */
+  listingMissMs: number;
+  /**
+   * How long, in milliseconds, one `contextLimitFor`, `servedWindow` or `listModels` may take over
+   * all of its requests. A model server's own request timeout still applies where it is shorter.
+   *
+   * @remarks
+   * Its own number because `requestTimeoutSeconds` is how long to wait for a model to speak, and a
+   * listing that has not answered in ten seconds is not going to.
+   */
+  lookupTimeoutMs: number;
+}
+
+/** The bounds the client pool was written with, until `configureClients` moves them. */
+export const CLIENT_POOL_DEFAULTS: Readonly<ClientPoolSettings> = Object.freeze({
+  maxClients: 32,
+  listingMissMs: 30_000,
+  lookupTimeoutMs: 10_000,
+});
+
 /** Waiting on a model server: for its first token, for its listing, and for a model to load. */
 export interface ModelServerSettings {
   /**
@@ -219,6 +260,35 @@ export const TOOL_DISCOVERY_DEFAULTS: Readonly<ToolDiscoverySettings> = Object.f
   maxCarried: 16,
 });
 
+/** Hooks: what the context they inject is held to. Set for a process by `configureHooks`. */
+export interface HookSettings {
+  /**
+   * The most context, in estimated tokens, all of a request's injecting hooks add between them,
+   * when a call does not give its own budget. Each hook is still held to its own `maxTokens` inside
+   * it.
+   *
+   * @remarks
+   * Enough for a handful of recalled memories, and small against any context window worth running
+   * an agent in. The point is that a generous hook cannot crowd out the conversation it was meant
+   * to inform. `gather` and `assembleContext` move it for one request.
+   */
+  contextTokens: number;
+  /**
+   * Said once above the context blocks, so the model reads them as background rather than
+   * instructions, when a call does not give its own. Empty says nothing, and the blocks lead the
+   * question on their own. Names no app; `withContext` sets another for one request.
+   */
+  preface: string;
+}
+
+/** The hook settings this package was written with, until `configureHooks` moves them. */
+export const HOOK_DEFAULTS: Readonly<HookSettings> = Object.freeze({
+  contextTokens: 2000,
+  preface:
+    "The <context> blocks below were added for this message by the host's hooks. They are " +
+    "background the user did not write and may not be relevant. The user's message follows them.",
+});
+
 /** Compaction: the oldest stretch of a transcript folded into a summary the model writes itself. */
 export interface CompactionSettings {
   /**
@@ -288,4 +358,58 @@ export const RETRY_DEFAULTS: Readonly<RetrySettings> = Object.freeze({
   maxBackoffMs: 8000,
   growthPerAttempt: 2,
   jitterFloorShare: 0.5,
+});
+
+/**
+ * The event bus: what it keeps of a run, and for how long. Set for a process by
+ * `configureEvents`, or a runtime's `events`.
+ */
+export interface EventBusSettings {
+  /** How many events one run keeps for a watcher that joins late. A chatty run loses its oldest. */
+  maxEvents: number;
+  /**
+   * How far past the cap the backlog is allowed to run before it is trimmed.
+   *
+   * @remarks
+   * Dropping the oldest event on every push means shifting a thousand-element array tens of
+   * thousands of times over a reasoning run — the one thing in the bus that would ever show up in
+   * a profile. Trimming in batches makes it a few dozen splices instead, at the cost of the backlog
+   * sometimes being a little longer than the cap, which nothing depends on. The one field here
+   * that is an implementation detail rather than a policy: raising it trades memory for fewer
+   * splices, and there is no reason to lower it.
+   */
+  trimSlack: number;
+  /** How long, in milliseconds, a finished run stays readable, for a watcher that arrives just after the end. */
+  retainMs: number;
+  /**
+   * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
+   *
+   * @remarks
+   * `touched` only moves on `emit`, so a live run inside one slow tool call looks abandoned, and the
+   * next `emit` after a reap restarts `seq` at zero, which a reconnecting client discards as events it
+   * has seen. Anything shorter than the longest a tool call may take reaps a live run out from under
+   * itself. The sweep still reaps these, as the backstop for a run killed or forgotten before `done`;
+   * `endRun` is for a caller that knows. Thirty minutes.
+   */
+  retainUnendedMs: number;
+  /**
+   * The same for a run whose last event is `wait`: one that handed calls back and stopped until
+   * they are answered, under the same id and the same numbering.
+   *
+   * @remarks
+   * A wait is a planned silence as long as the person answering takes, and the client watching it
+   * has usually gone by the time the run resumes. Reaping it on `retainUnendedMs` restarted `seq`,
+   * so a client reconnecting across the wait discarded the resumed run's events, `done` included.
+   * A day.
+   */
+  retainWaitingMs: number;
+}
+
+/** The numbers a run of the shape the bus was written for wants, until `configureEvents` moves them. */
+export const EVENT_BUS_DEFAULTS: Readonly<EventBusSettings> = Object.freeze({
+  maxEvents: 1000,
+  trimSlack: 256,
+  retainMs: 60_000,
+  retainUnendedMs: 1_800_000,
+  retainWaitingMs: 86_400_000,
 });

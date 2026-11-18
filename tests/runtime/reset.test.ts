@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CLIENT_POOL_DEFAULTS, HOOK_DEFAULTS } from '../../src/core/defaults.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { type Create, endpoint, reply } from '../helpers.ts';
@@ -22,7 +23,7 @@ const OpenAI = (await import('openai')).default;
 const { configureClients, getClient } = await import('../../src/endpoint/client.ts');
 const { capabilitiesFor } = await import('../../src/endpoint/capabilities.ts');
 const { emit, history } = await import('../../src/run/events.ts');
-const { configureHooks, HOOK_PREFACE } = await import('../../src/hooks/hooks.ts');
+const { configureHooks } = await import('../../src/hooks/hooks.ts');
 const { ask } = await import('../../src/turn/side-task.ts');
 const { resetAll } = await import('../../src/runtime/reset.ts');
 const { calibrate, charsPerTokenFor } = await import('../../src/endpoint/calibration.ts');
@@ -109,12 +110,12 @@ describe('resetAll', () => {
   it("puts the client pool's bounds back", () => {
     configureClients({ maxClients: 1, listingMissMs: 1, lookupTimeoutMs: 1 });
     resetAll();
-    expect(configureClients()).toEqual({ maxClients: 32, listingMissMs: 30_000, lookupTimeoutMs: 10_000 });
+    expect(configureClients()).toEqual(CLIENT_POOL_DEFAULTS);
   });
 
   it("puts the hooks' budget and preface back", () => {
     configureHooks({ contextTokens: 10, preface: '' });
     resetAll();
-    expect(configureHooks()).toEqual({ contextTokens: 2000, preface: HOOK_PREFACE });
+    expect(configureHooks()).toEqual(HOOK_DEFAULTS);
   });
 });

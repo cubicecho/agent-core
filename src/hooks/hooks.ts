@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { HOOK_DEFAULTS, type HookSettings } from '../core/defaults.ts';
 import { digestOf } from '../core/digest.ts';
 import { isPositive } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
@@ -133,50 +134,30 @@ export interface Gathered {
 }
 
 /**
- * The most context all of a request's hooks add between them by default, in estimated tokens.
- *
- * @remarks
- * Enough for a handful of recalled memories, and small against any context window worth running an
- * agent in. The point is that a generous hook cannot crowd out the conversation it was meant to
- * inform. `configureHooks` moves it for a process, and `gather` and `assembleContext` for
- * one request.
+ * The most context all of a request's hooks add between them by default, in estimated tokens:
+ * `HOOK_DEFAULTS.contextTokens`. `configureHooks` moves it for a process, and `gather` and
+ * `assembleContext` for one request.
  */
-export const HOOK_CONTEXT_TOKENS = 2000;
+export const HOOK_CONTEXT_TOKENS = HOOK_DEFAULTS.contextTokens;
 
 /**
- * Said once, above the blocks, so the model reads them as background rather than instructions.
- * Names no app; `configureHooks` sets another for a process that wants to, and `withContext`
- * for one request.
+ * Said once, above the blocks, so the model reads them as background rather than instructions:
+ * `HOOK_DEFAULTS.preface`. `configureHooks` sets another for a process, and `withContext` for one
+ * request.
  */
-export const HOOK_PREFACE =
-  "The <context> blocks below were added for this message by the host's hooks. They are " +
-  "background the user did not write and may not be relevant. The user's message follows them.";
+export const HOOK_PREFACE = HOOK_DEFAULTS.preface;
 
-/** What hooks are held to across a process. Every field optional; see `configureHooks`. */
-export interface HookOptions {
-  /**
-   * The budget every injecting hook shares, when a call does not give its own. Each hook is still
-   * held to its own `maxTokens` inside it.
-   */
-  contextTokens?: number;
-  /**
-   * Said above the context blocks, when a call does not give its own. Empty says nothing, and the
-   * blocks lead the question on their own.
-   */
-  preface?: string;
-}
-
-/** The settings this module was written with. */
-const HOOK_DEFAULTS: Required<HookOptions> = {
-  contextTokens: HOOK_CONTEXT_TOKENS,
-  preface: HOOK_PREFACE,
-};
+/**
+ * What hooks may be told to change, across a process: any of `HookSettings`, the rest left as they
+ * are. See `configureHooks`.
+ */
+export type HookOptions = Partial<HookSettings>;
 
 /** What is in force now. Read where it is used, so a change applies from the next request. */
-const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }));
+const hookSettings = scoped((): HookSettings => ({ ...HOOK_DEFAULTS }));
 
 /**
- * The check each hook setting's value must pass, one for every member of `HookOptions`.
+ * The check each hook setting's value must pass, one for every member of `HookSettings`.
  *
  * @remarks
  * A map rather than an object, because the key is whatever a caller's config held and an object
@@ -186,7 +167,7 @@ const USABLE_BY_SETTING: ReadonlyMap<string, (value: unknown) => boolean> = new 
   Object.entries({
     contextTokens: isPositive,
     preface: (value: unknown) => typeof value === 'string',
-  } satisfies Record<keyof HookOptions, (value: unknown) => boolean>),
+  } satisfies Record<keyof HookSettings, (value: unknown) => boolean>),
 );
 
 /**
@@ -217,7 +198,7 @@ const usableHookSetting = (value: unknown, name: string) => USABLE_BY_SETTING.ge
  * `gather` instead, and a `preface` passed to `withContext` or `runAgentLoop`'s hooks wins over
  * this one the same way.
  */
-export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
+export function configureHooks(options: HookOptions = {}): HookSettings {
   return assignSettings(hookSettings(), options, usableHookSetting);
 }
 

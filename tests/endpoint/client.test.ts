@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MS_PER_SECOND } from '../../src/core/consts.ts';
-import { MODEL_SERVER_DEFAULTS } from '../../src/core/defaults.ts';
+import { CLIENT_POOL_DEFAULTS, MODEL_SERVER_DEFAULTS } from '../../src/core/defaults.ts';
 import { HttpStatus } from '../../src/wire/wire.ts';
 import { endpoint } from '../helpers.ts';
 
@@ -41,15 +41,8 @@ const routes = (answers: Record<string, unknown>) =>
       : new Response('not found', { status: HttpStatus.NotFound });
   });
 
-/**
- * `MAX_CLIENTS` in `src/client.ts`, the default `configureClients` starts from. Written out rather
- * than read back from the module, so a test cannot pass when the default moves.
- */
-const MAX_CLIENTS = 32;
-/** `LISTING_MISS_MS`, likewise. A miss expires *at* it, not after it. */
-const LISTING_MISS_MS = 30_000;
-/** `LOOKUP_TIMEOUT_MS`, likewise. */
-const LOOKUP_TIMEOUT_MS = 10_000;
+/** The bounds `configureClients` starts from. A miss expires *at* `listingMissMs`, not after it. */
+const { maxClients, listingMissMs, lookupTimeoutMs } = CLIENT_POOL_DEFAULTS;
 
 describe('contextLimitFor', () => {
   beforeEach(() => {
@@ -83,12 +76,12 @@ describe('contextLimitFor', () => {
   it('never asks the native routes of a server whose listing states the window', async () => {
     // gufo: `/props` is a llama-server stub with no `default_generation_settings`, there is no
     // `/api/v0/models`, and the listing carries the served window. Asked natively first, that was
-    // two dead requests a lookup, again every `LISTING_MISS_MS`, for the life of the process.
+    // two dead requests a lookup, again every `listingMissMs`, for the life of the process.
     list.mockResolvedValue(listing({ id: 'qwen', context_length: 32768 }));
     const fetch = routes({ '/props': { model: 'qwen', template: '', model_info: {} } });
     vi.stubGlobal('fetch', fetch);
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(32768);
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(32768);
     expect(fetch).not.toHaveBeenCalled();
     expect(list).toHaveBeenCalledTimes(1);
@@ -120,7 +113,7 @@ describe('contextLimitFor', () => {
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(16384);
     vi.stubGlobal('fetch', serving(8192));
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(16384);
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(8192);
   });
 
@@ -148,7 +141,7 @@ describe('contextLimitFor', () => {
     });
     vi.stubGlobal('fetch', routes(loaded()));
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     vi.stubGlobal('fetch', routes(loaded(32768)));
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(32768);
   });
@@ -173,7 +166,7 @@ describe('contextLimitFor', () => {
     list.mockResolvedValue(listing({ id: 'qwen' }, { id: 'llama' }));
     await contextLimitFor({ ...endpoint, model: 'qwen' });
     await contextLimitFor({ ...endpoint, model: 'llama' });
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await contextLimitFor({ ...endpoint, model: 'qwen' });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
@@ -186,7 +179,7 @@ describe('contextLimitFor', () => {
     list.mockResolvedValue(listing({ id: 'qwen' }, { id: 'llama' }));
     await contextLimitFor({ ...endpoint, model: 'qwen' });
     await contextLimitFor({ ...endpoint, model: 'llama' });
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await contextLimitFor({ ...endpoint, model: 'qwen' });
     expect(asked(fetch)).toEqual([
       'http://local/props?model=qwen',
@@ -198,7 +191,7 @@ describe('contextLimitFor', () => {
 
   it('leaves /api/v0/models alone for a while after any other error, then asks again', async () => {
     // A 500 is not a missing route, and may pass. The route is not asked on behalf of the next
-    // model either, but only for `LISTING_MISS_MS`.
+    // model either, but only for `listingMissMs`.
     let status = 500;
     const fetch = vi.fn(async (url: string) =>
       new URL(url).pathname === '/api/v0/models'
@@ -217,7 +210,7 @@ describe('contextLimitFor', () => {
       'http://local/props?model=llama',
     ]);
     status = 200;
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(32768);
   });
 
@@ -234,12 +227,12 @@ describe('contextLimitFor', () => {
 
   it('stops asking a server that answers every route with a web page', async () => {
     // llm-router: `/props` and `/api/v0/models` both get the router's `index.html`, with a 200.
-    // Read as a route with nothing to say, it was asked again every `LISTING_MISS_MS`.
+    // Read as a route with nothing to say, it was asked again every `listingMissMs`.
     const fetch = vi.fn(async () => new Response('<!doctype html><title>router</title>', { status: HttpStatus.Ok }));
     vi.stubGlobal('fetch', fetch);
     list.mockResolvedValue(listing({ id: 'qwen' }));
     await expect(contextLimitFor({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await contextLimitFor({ ...endpoint, model: 'qwen' });
     await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
     expect(asked(fetch)).toEqual(['http://local/props?model=qwen', 'http://local/api/v0/models']);
@@ -267,9 +260,9 @@ describe('contextLimitFor', () => {
     list.mockResolvedValueOnce(listing({ id: 'qwen', context_length: 32768 }));
     await expect(contextLimitFor({ ...endpoint, model: 'llama' })).resolves.toBe(0);
 
-    // Not immediately, though: the miss stands for `LISTING_MISS_MS` so a model that is never
+    // Not immediately, though: the miss stands for `listingMissMs` so a model that is never
     // coming costs one listing a half-minute rather than one a call.
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     list.mockResolvedValueOnce(listing({ id: 'qwen', context_length: 32768 }, { id: 'llama', context_length: 8192 }));
     await expect(contextLimitFor({ ...endpoint, model: 'llama' })).resolves.toBe(8192);
     expect(list).toHaveBeenCalledTimes(2);
@@ -282,7 +275,7 @@ describe('contextLimitFor', () => {
     list.mockResolvedValue(listing({ id: 'qwen', context_length: 32768 }));
     await expect(contextLimitFor({ ...endpoint, model: 'llama' })).resolves.toBe(0);
     await expect(contextLimitFor({ ...endpoint, model: 'llama' })).resolves.toBe(0);
-    vi.advanceTimersByTime(LISTING_MISS_MS - 1);
+    vi.advanceTimersByTime(listingMissMs - 1);
     await expect(contextLimitFor({ ...endpoint, model: 'llama' })).resolves.toBe(0);
     expect(list).toHaveBeenCalledTimes(1);
   });
@@ -377,7 +370,7 @@ describe('contextLimitFor', () => {
     silence();
     const started = performance.now();
     await expect(contextLimitFor({ ...endpoint, model: 'qwen', requestTimeoutSeconds: 0.02 })).resolves.toBe(0);
-    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS);
+    expect(performance.now() - started).toBeLessThan(lookupTimeoutMs);
   });
 
   it('does not remember a lookup that ran out of time as a server without a window', async () => {
@@ -467,7 +460,7 @@ describe('servedSlots', () => {
     const fetch = routes({});
     vi.stubGlobal('fetch', fetch);
     await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -491,7 +484,7 @@ describe('servedSlots', () => {
     await servedSlots({ ...endpoint, model: 'qwen' });
     vi.stubGlobal('fetch', routes({ '/props': { total_slots: 2 } }));
     await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(4);
-    vi.advanceTimersByTime(LISTING_MISS_MS);
+    vi.advanceTimersByTime(listingMissMs);
     await expect(servedSlots({ ...endpoint, model: 'qwen' })).resolves.toBe(2);
   });
 
@@ -566,7 +559,7 @@ describe('getClient', () => {
 
   it('keeps a full pool', () => {
     const first = getClient(box(0));
-    for (let n = 1; n < MAX_CLIENTS; n++) {
+    for (let n = 1; n < maxClients; n++) {
       getClient(box(n));
     }
     expect(getClient(box(0))).toBe(first);
@@ -577,7 +570,7 @@ describe('getClient', () => {
     // deployment: unbounded, that is one client and one connection pool per tenant, held for the
     // life of the process. Evicted costs a pool and nothing else — the next call builds another.
     const first = getClient(box(0));
-    for (let n = 1; n <= MAX_CLIENTS; n++) {
+    for (let n = 1; n <= maxClients; n++) {
       getClient(box(n));
     }
     expect(getClient(box(0))).not.toBe(first);
@@ -586,13 +579,13 @@ describe('getClient', () => {
   it('counts a client asked for again as the youngest', () => {
     const first = getClient(box(0));
     const second = getClient(box(1));
-    for (let n = 2; n < MAX_CLIENTS; n++) {
+    for (let n = 2; n < maxClients; n++) {
       getClient(box(n));
     }
     // The oldest, asked for again — so what the next arrival evicts is the one behind it. Without
     // the re-insertion this is the endpoint a busy consumer uses most and rebuilds most often.
     getClient(box(0));
-    getClient(box(MAX_CLIENTS));
+    getClient(box(maxClients));
     expect(getClient(box(0))).toBe(first);
     expect(getClient(box(1))).not.toBe(second);
   });
@@ -615,11 +608,10 @@ describe('configureClients', () => {
   const box = (n: number) => ({ ...endpoint, baseUrl: `http://box-${n}/v1` });
 
   /** What `configureClients` starts from and `resetClients` goes back to. */
-  const DEFAULTS = { maxClients: MAX_CLIENTS, listingMissMs: LISTING_MISS_MS, lookupTimeoutMs: LOOKUP_TIMEOUT_MS };
 
   it('starts from the defaults and says what is in force', () => {
-    expect(configureClients()).toEqual(DEFAULTS);
-    expect(configureClients({ maxClients: 64 })).toEqual({ ...DEFAULTS, maxClients: 64 });
+    expect(configureClients()).toEqual(CLIENT_POOL_DEFAULTS);
+    expect(configureClients({ maxClients: 64 })).toEqual({ ...CLIENT_POOL_DEFAULTS, maxClients: 64 });
   });
 
   it('ignores anything that is not a number above zero', () => {
@@ -631,9 +623,9 @@ describe('configureClients', () => {
   });
 
   it('keeps more clients once raised', () => {
-    configureClients({ maxClients: MAX_CLIENTS * 2 });
+    configureClients({ maxClients: maxClients * 2 });
     const first = getClient(box(0));
-    for (let n = 1; n < MAX_CLIENTS * 2; n++) {
+    for (let n = 1; n < maxClients * 2; n++) {
       getClient(box(n));
     }
     expect(getClient(box(0))).toBe(first);
@@ -677,7 +669,7 @@ describe('configureClients', () => {
   it('goes back to the defaults on resetClients', () => {
     configureClients({ maxClients: 1, listingMissMs: 1, lookupTimeoutMs: 1 });
     resetClients();
-    expect(configureClients()).toEqual(DEFAULTS);
+    expect(configureClients()).toEqual(CLIENT_POOL_DEFAULTS);
   });
 });
 

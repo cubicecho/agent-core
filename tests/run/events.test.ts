@@ -1,6 +1,8 @@
 import { setFlagsFromString } from 'node:v8';
 import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MS_PER_MINUTE } from '../../src/core/consts.ts';
+import { EVENT_BUS_DEFAULTS } from '../../src/core/defaults.ts';
 import {
   configureEvents,
   ExchangeOutcome,
@@ -64,18 +66,20 @@ describe('emit', () => {
   });
 
   it('trims the backlog in batches, back to the cap', () => {
-    // 1000 kept, 256 of slack: the 1257th push is the one that trims.
-    for (let i = 0; i < 1256; i++) {
+    // `maxEvents` kept and `trimSlack` of slack: the push past both is the one that trims.
+    const { maxEvents, trimSlack } = EVENT_BUS_DEFAULTS;
+    const pushed = maxEvents + trimSlack + 1;
+    for (let i = 1; i < pushed; i++) {
       emit('chatty', { kind: RunEventKind.Output, text: 'x' });
     }
-    expect(history('chatty')).toHaveLength(1256);
+    expect(history('chatty')).toHaveLength(pushed - 1);
 
     emit('chatty', { kind: RunEventKind.Output, text: 'x' });
     const kept = history('chatty');
-    expect(kept).toHaveLength(1000);
+    expect(kept).toHaveLength(maxEvents);
     // The oldest went, and the sequence numbers do not restart.
-    expect(kept[0].seq).toBe(258);
-    expect(kept[kept.length - 1].seq).toBe(1257);
+    expect(kept[0].seq).toBe(pushed - maxEvents + 1);
+    expect(kept[kept.length - 1].seq).toBe(pushed);
   });
 });
 
@@ -253,13 +257,13 @@ describe('watch, cancelled', () => {
 
     // A listener holds the stream past every deadline: the sweep skips any stream one is on, so
     // this is the leak the sweep exists to prevent, arriving by the one route it cannot see.
-    vi.advanceTimersByTime(31 * 60_000);
+    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainUnendedMs + MS_PER_MINUTE);
     expect(history('abandoned')).toHaveLength(1);
 
     const parked = watcher.next();
     stop.abort();
     await parked;
-    vi.advanceTimersByTime(31 * 60_000);
+    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainUnendedMs + MS_PER_MINUTE);
     expect(history('abandoned')).toEqual([]);
   });
 
@@ -329,7 +333,7 @@ describe('cleanup', () => {
 
     // On the unfinished run's much longer clock: a minute of quiet is a slow tool call, not a
     // death, and the run below depends on the difference.
-    vi.advanceTimersByTime(31 * 60_000);
+    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainUnendedMs + MS_PER_MINUTE);
     expect(history('abandoned')).toEqual([]);
   });
 
@@ -447,19 +451,13 @@ describe('configureEvents', () => {
     // A half-built config — a `0` standing in for "no opinion", a parsed env var that came back
     // `NaN` — must not turn the backlog off. Nothing here has a meaningful zero.
     expect(configureEvents({ maxEvents: 0, retainMs: -1, trimSlack: Number.NaN })).toEqual(configureEvents());
-    expect(configureEvents().maxEvents).toBe(1000);
+    expect(configureEvents().maxEvents).toBe(EVENT_BUS_DEFAULTS.maxEvents);
   });
 
   it("is undone by a reset, so one test's cap is not the next one's", () => {
     configureEvents({ maxEvents: 4, retainMs: 5_000 });
     resetEvents();
-    expect(configureEvents()).toEqual({
-      maxEvents: 1000,
-      trimSlack: 256,
-      retainMs: 60_000,
-      retainUnendedMs: 30 * 60_000,
-      retainWaitingMs: 24 * 60 * 60_000,
-    });
+    expect(configureEvents()).toEqual(EVENT_BUS_DEFAULTS);
   });
 });
 
