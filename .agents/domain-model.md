@@ -372,7 +372,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 ### Tool calls
 
 - **Tool call:** one tool the model asked for, under its id, name and arguments. Owner:
-  `ToolCall`, `ToolCallRequest` (`src/wire/tool-calls.ts`).
+  `ToolCall` (`src/wire/tool-calls.ts`), `ToolCallRequest` (`src/run/dispatch.ts`).
 - **Call id:** the id pairing a call with its result: the server's where it is unused in the
   transcript, or always a fresh one under `callIds: 'minted'`. Owner: `distinctCallIds`,
   `CallIds`, `mintCallId` (`src/wire/call-ids.ts`); `callId` on `EndedBy` and `RunArtifact`.
@@ -381,7 +381,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Dispatcher:** the app's function that runs one call and returns what the model reads.
   Owner: `AgentLoopOptions.dispatch`, `ToolDispatch`.
 - **Tool answer:** a dispatcher's reply when it has more than text: links, and whether it ends
-  the exchange. Owner: `ToolAnswer`.
+  the exchange. Owner: `ToolAnswer` (`src/run/dispatch.ts`).
 - **Tool result:** one call's answer as the transcript, the app and watchers get it. Owner:
   `ToolCallResult`, `ToolCallOutcome`; `formatToolError` words a failure, `(no output)` an empty one.
 - **App tools (host tools):** tools the app answers itself, declared on every turn in every
@@ -475,8 +475,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Metrics:** a run's totals, timings, cache findings and outcome, read off its events. Owner:
   `RunMetrics`, `runMetrics`; an exchange's own are on `AgentLoopResult.metrics`.
 - **Artifact:** something an exchange's calls produced, one per location: linked by a tool's
-  answer, declared by the model, or detected from a write. Owner: `RunArtifact`, `RunArtifacts`
-  (`src/run/artifacts.ts`), `record_artifact`.
+  answer, declared by the model, or detected from a write. Owner: `RunArtifact`
+  (`src/run/dispatch.ts`), `RunArtifacts` (`src/run/artifacts.ts`), `record_artifact`.
 - **Server log:** a log line a tool's server sent during a call. Owner: `ServerLogEntry`,
   `ToolCallReport`.
 

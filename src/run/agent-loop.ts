@@ -81,17 +81,10 @@ import {
 } from '../wire/stream.ts';
 import { textOf } from '../wire/text.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
-import {
-  type EndedBy,
-  type RunArtifact,
-  recoverToolCalls,
-  type ToolCall,
-  type ToolCallOutcome,
-  type ToolCallRequest,
-  type ToolCallResult,
-} from '../wire/tool-calls.ts';
+import { recoverToolCalls, type ToolCall } from '../wire/tool-calls.ts';
 import { FinishReason, PARALLEL_TOOL_CALLS, PartType, Role } from '../wire/wire.ts';
 import { type ArtifactOptions, RECORD_ARTIFACT_TOOL, RunArtifacts } from './artifacts.ts';
+import type { EndedBy, RunArtifact, ToolCallOutcome, ToolCallRequest, ToolCallResult } from './dispatch.ts';
 import {
   endingOf,
   type RunEvent,

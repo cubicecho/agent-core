@@ -33,7 +33,7 @@ const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts'
 const { dropReasoning } = await import('../../src/run/run-calls.ts');
 
 type Turn = import('../../src/wire/stream.ts').Turn;
-type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
+type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
 type WrittenMessage = import('../../src/run/agent-loop.ts').WrittenMessage;
 

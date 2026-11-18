@@ -21,7 +21,7 @@ const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts')
 const { LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
 const { failedRun } = await import('../../src/run/failure.ts');
 
-type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
+type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A turn that asks for these calls, ids `c0` on, reporting `prompt` tokens where given. */

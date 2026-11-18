@@ -15,7 +15,7 @@ const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
 
-type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
+type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 
 /** A turn that asks for these calls. */
 const calls = (...list: [name: string, args: string][]) =>

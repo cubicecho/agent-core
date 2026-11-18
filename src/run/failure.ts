@@ -2,7 +2,7 @@ import type OpenAI from 'openai';
 import type { TokenLedger } from '../context/ledger.ts';
 import { ContextOverflow } from '../wire/retry.ts';
 import type { LoopUsage, PartialTurn } from '../wire/stream.ts';
-import type { RunArtifact, ToolCallOutcome } from '../wire/tool-calls.ts';
+import type { RunArtifact, ToolCallOutcome } from './dispatch.ts';
 
 /**
  * A run as it stood when `runAgentLoop` gave up on it.

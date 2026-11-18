@@ -17,8 +17,8 @@ const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts')
 const { CALL_TOOL } = await import('../../src/tools/tool-loading.ts');
 const { RECORD_ARTIFACT } = await import('../../src/run/artifacts.ts');
 
-type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
-type ToolCallResult = import('../../src/wire/tool-calls.ts').ToolCallResult;
+type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
+type ToolCallResult = import('../../src/run/dispatch.ts').ToolCallResult;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A turn that asks for these calls. */

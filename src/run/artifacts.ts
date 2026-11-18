@@ -1,12 +1,7 @@
 import type OpenAI from 'openai';
-import {
-  ArtifactAction,
-  ArtifactSource,
-  type ResourceLink,
-  type RunArtifact,
-  type ToolCallRequest,
-} from '../wire/tool-calls.ts';
+import type { ResourceLink } from '../wire/tool-calls.ts';
 import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
+import { ArtifactAction, ArtifactSource, type RunArtifact, type ToolCallRequest } from './dispatch.ts';
 
 /**
  * What a run left behind, from the two sources that take a guess: the model saying so, and a call

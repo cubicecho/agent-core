@@ -152,6 +152,18 @@ export {
   RECORD_ARTIFACT_TOOL,
 } from './run/artifacts.ts';
 export {
+  ArtifactAction,
+  ArtifactSource,
+  type EndedBy,
+  type RunArtifact,
+  type ServerLogEntry,
+  type ToolAnswer,
+  type ToolCallOutcome,
+  type ToolCallReport,
+  type ToolCallRequest,
+  type ToolCallResult,
+} from './run/dispatch.ts';
+export {
   configureEvents,
   type EventBusOptions,
   emit,
@@ -374,22 +386,12 @@ export {
 export {
   ARGUMENTS_MALFORMED,
   ARGUMENTS_TRUNCATED,
-  ArtifactAction,
-  ArtifactSource,
-  type EndedBy,
   parseToolArguments,
   type ResourceLink,
-  type RunArtifact,
   recoverToolCalls,
-  type ServerLogEntry,
   ServerLogLevel,
-  type ToolAnswer,
   ToolArgumentsError,
   type ToolCall,
-  type ToolCallOutcome,
-  type ToolCallReport,
-  type ToolCallRequest,
-  type ToolCallResult,
 } from './wire/tool-calls.ts';
 export {
   CALL_EXTRA_KEYS,

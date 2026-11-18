@@ -28,10 +28,10 @@ const { failedRun } = await import('../../src/run/failure.ts');
 
 type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
-type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
-type ToolCallReport = import('../../src/wire/tool-calls.ts').ToolCallReport;
+type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
+type ToolCallReport = import('../../src/run/dispatch.ts').ToolCallReport;
 type AgentLoopRequest = import('../../src/run/agent-loop.ts').AgentLoopRequest;
-type ToolCallResult = import('../../src/wire/tool-calls.ts').ToolCallResult;
+type ToolCallResult = import('../../src/run/dispatch.ts').ToolCallResult;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 type RunUsage = import('../../src/run/events.ts').RunUsage;
 
