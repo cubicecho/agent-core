@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TOOL_DISCOVERY_DEFAULTS } from '../../src/core/defaults.ts';
 import type { CatalogServer } from '../../src/tools/catalog.ts';
 import {
   CALL_TOOL,
@@ -10,8 +11,6 @@ import {
   LOAD_TOOLS,
   loadedTools,
   loadResult,
-  MAX_CARRIED,
-  MAX_PER_LOAD,
   orderTools,
   PROXY_TOOLS,
   proxiedCall,
@@ -22,6 +21,8 @@ import {
 } from '../../src/tools/tool-loading.ts';
 import { FUNCTION_TOOL, SchemaType } from '../../src/wire/wire.ts';
 import { catalog, catalogTool } from '../helpers.ts';
+
+const { maxPerLoad, maxCarried } = TOOL_DISCOVERY_DEFAULTS;
 
 describe('expandNames and loadResult', () => {
   it('matches exact names and unambiguous bare ones', () => {
@@ -52,15 +53,15 @@ describe('expandNames and loadResult', () => {
       {
         id: '1',
         label: 'Gmail',
-        tools: Array.from({ length: MAX_PER_LOAD + 1 }, (_, i) => catalogTool(`gmail__tool_${i}`)),
+        tools: Array.from({ length: maxPerLoad + 1 }, (_, i) => catalogTool(`gmail__tool_${i}`)),
       },
     ];
     const resolved = expandNames(['gmail__*'], many);
     expect(resolved.matched).toEqual([]);
-    expect(resolved.overBroad[0].hits).toHaveLength(MAX_PER_LOAD + 1);
+    expect(resolved.overBroad[0].hits).toHaveLength(maxPerLoad + 1);
 
     const report = loadResult(resolved, many);
-    expect(report).toMatch(new RegExp(`more than the ${MAX_PER_LOAD}`));
+    expect(report).toMatch(new RegExp(`more than the ${maxPerLoad}`));
     expect(report).toContain('gmail__tool_0');
   });
 
@@ -89,9 +90,9 @@ describe('expandNames and loadResult', () => {
   });
 
   it('say which names could not be placed', () => {
-    expect(
-      loadResult({ matched: [], unknown: ['nope'], overBroad: [], deferred: [], maxPerLoad: MAX_PER_LOAD }, catalog),
-    ).toContain('Not in the catalogue: nope');
+    expect(loadResult({ matched: [], unknown: ['nope'], overBroad: [], deferred: [], maxPerLoad }, catalog)).toContain(
+      'Not in the catalogue: nope',
+    );
   });
 
   it('answer an over-broad wildcard with the names it would have loaded', () => {
@@ -99,16 +100,16 @@ describe('expandNames and loadResult', () => {
       {
         id: '3',
         label: 'Mail',
-        tools: Array.from({ length: MAX_PER_LOAD + 5 }, (_, i) => catalogTool(`mail__tool_${i}`)),
+        tools: Array.from({ length: maxPerLoad + 5 }, (_, i) => catalogTool(`mail__tool_${i}`)),
       },
     ];
     const text = loadResult(expandNames(['mail__*'], wide), wide);
-    expect(text).toContain(`more than the ${MAX_PER_LOAD} one call may load`);
+    expect(text).toContain(`more than the ${maxPerLoad} one call may load`);
     expect(text).toContain('mail__tool_3');
   });
 
   it('hold the load cap to what one call may load, not what one name may match', () => {
-    const dozen = (prefix: string) => Array.from({ length: MAX_PER_LOAD }, (_, i) => catalogTool(`${prefix}__t${i}`));
+    const dozen = (prefix: string) => Array.from({ length: maxPerLoad }, (_, i) => catalogTool(`${prefix}__t${i}`));
     const wide: CatalogServer[] = [
       { id: '1', label: 'A', tools: dozen('a') },
       { id: '2', label: 'B', tools: dozen('b') },
@@ -116,7 +117,7 @@ describe('expandNames and loadResult', () => {
     ];
 
     const resolved = expandNames(['a__*', 'b__*', 'c__*'], wide);
-    expect(resolved.matched).toHaveLength(MAX_PER_LOAD);
+    expect(resolved.matched).toHaveLength(maxPerLoad);
     // A dozen apiece is exactly what one call may hold, so neither is too broad to ask for —
     // they just cannot have this call. The budget is still what stops them.
     expect(resolved.deferred).toEqual(['b__*', 'c__*']);
@@ -129,14 +130,14 @@ describe('expandNames and loadResult', () => {
       {
         id: '4',
         label: 'Many',
-        tools: Array.from({ length: MAX_PER_LOAD + 1 }, (_, i) => catalogTool(`many__t${i}`)),
+        tools: Array.from({ length: maxPerLoad + 1 }, (_, i) => catalogTool(`many__t${i}`)),
       },
     ];
     const asked = wide[0].tools.map((t) => t.name);
     const resolved = expandNames(asked, wide);
 
-    expect(resolved.matched).toHaveLength(MAX_PER_LOAD);
-    expect(resolved.deferred).toEqual([`many__t${MAX_PER_LOAD}`]);
+    expect(resolved.matched).toHaveLength(maxPerLoad);
+    expect(resolved.deferred).toEqual([`many__t${maxPerLoad}`]);
     expect(resolved.overBroad).toEqual([]);
 
     // The old message told it this one exact name matched one tool, "more than the twelve one
@@ -144,8 +145,8 @@ describe('expandNames and loadResult', () => {
     // but sending the same call again.
     const text = loadResult(resolved, wide);
     expect(text).not.toContain('Name the ones you need from:');
-    expect(text).toContain(`This call is full at ${MAX_PER_LOAD} tools`);
-    expect(text).toContain(`many__t${MAX_PER_LOAD}`);
+    expect(text).toContain(`This call is full at ${maxPerLoad} tools`);
+    expect(text).toContain(`many__t${maxPerLoad}`);
   });
 
   it('do not spend budget on a name that only repeats an earlier match', () => {
@@ -287,9 +288,9 @@ describe('carryOver', () => {
   });
 
   it('drops the least recently used past the cap', () => {
-    const previous = Array.from({ length: MAX_CARRIED }, (_, i) => `old_${i}`);
+    const previous = Array.from({ length: maxCarried }, (_, i) => `old_${i}`);
     const out = carryOver(previous, new Set(['fresh']));
-    expect(out).toHaveLength(MAX_CARRIED);
+    expect(out).toHaveLength(maxCarried);
     expect(out.at(-1)).toBe('fresh');
     expect(out).not.toContain('old_0');
   });

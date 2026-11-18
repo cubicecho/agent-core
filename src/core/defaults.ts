@@ -191,6 +191,34 @@ export const PRESELECT_DEFAULTS: Readonly<PreselectSettings> = Object.freeze({
   shortestPluralChars: 3,
 });
 
+/** The tools the model is shown: how many it may pull in, keep, and read about. */
+export interface ToolDiscoverySettings {
+  /**
+   * The most a single `load_tools` call may pull in, and the most a preselection may name.
+   *
+   * @remarks
+   * A wildcard like `gmail__*` matches 33 tools, and loading them all puts the model right back in
+   * the position on-demand loading exists to avoid — a tool array too large to choose from.
+   * Over-broad requests are refused with the matching names listed, so the next call can be
+   * precise. Twelve is what a small model chooses well from; a caller running a large one against
+   * a large context window can say otherwise to `expandNames`, `preselection` and
+   * `preselectSystem`.
+   */
+  maxPerLoad: number;
+  /**
+   * The most tools a conversation carries between exchanges. Bounds the tool array no matter how
+   * long the conversation runs; past it, the earliest-declared names this exchange did not use fall
+   * off first. `carryOver` takes a cap of its own as `max`.
+   */
+  maxCarried: number;
+}
+
+/** The caps on-demand tool loading was written with. */
+export const TOOL_DISCOVERY_DEFAULTS: Readonly<ToolDiscoverySettings> = Object.freeze({
+  maxPerLoad: 12,
+  maxCarried: 16,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

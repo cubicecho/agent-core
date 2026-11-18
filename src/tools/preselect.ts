@@ -1,11 +1,11 @@
 import type { Endpoint } from '../core/config.ts';
-import { PRESELECT_DEFAULTS } from '../core/defaults.ts';
+import { PRESELECT_DEFAULTS, TOOL_DISCOVERY_DEFAULTS } from '../core/defaults.ts';
 import { byCodeUnit, counted, isRecord } from '../core/guards.ts';
 import type { OnNotice } from '../endpoint/capabilities.ts';
 import { askJson, tryAsk } from '../turn/side-task.ts';
 import { SchemaType } from '../wire/wire.ts';
 import type { CatalogServer } from './catalog.ts';
-import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
+import { catalogList, expandNames } from './tool-loading.ts';
 
 /**
  * Choosing an exchange's tools before it starts, from the request and the catalogue's names.
@@ -34,7 +34,7 @@ const { bm25K1, bm25B, shortestPluralChars } = PRESELECT_DEFAULTS;
  * A wrong guess is cheap — an unused definition is a few hundred tokens for one exchange — but a
  * broad guess is not, so the same cap applies here as to a `load_tools` call.
  */
-export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
+export const preselectSystem = (maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad) =>
   'You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON ' +
   'object whose "tools" array holds the names the request is likely to need — exact names from ' +
   `the catalogue, at most ${maxPerLoad}, and as few as could do the job. Reply with ` +
@@ -88,7 +88,11 @@ export const preselectInput = (
  * @returns Names as the catalogue spells them, each once, in the order they resolved, and never
  * more than `maxPerLoad`. Empty where nothing resolved.
  */
-export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD): string[] {
+export function preselection(
+  names: unknown,
+  catalog: CatalogServer[],
+  maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad,
+): string[] {
   const list = isRecord(names) ? names.tools : names;
   if (!Array.isArray(list)) {
     return [];
@@ -214,7 +218,7 @@ export function preselectByKeywords(
   catalog: CatalogServer[],
   prompt: string,
   {
-    maxPerLoad = MAX_PER_LOAD,
+    maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad,
     minScore = PRESELECT_DEFAULTS.keywordMinScore,
     dropoff = PRESELECT_DEFAULTS.keywordDropoffShare,
     maxPromptChars = PRESELECT_DEFAULTS.maxPromptChars,
@@ -352,7 +356,7 @@ export async function preselect(
     temperature,
     reasoningEffort,
     extraBody,
-    maxPerLoad = MAX_PER_LOAD,
+    maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad,
     keywords,
   }: PreselectOptions = {},
 ): Promise<string[]> {

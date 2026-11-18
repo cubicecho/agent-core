@@ -1177,7 +1177,7 @@ export async function loadShortlist(
   // Checked against the transcript, so two questions in one history do not share an id.
   const id = freshCallId(callIdsIn(messages), run.mintCallId);
   const args = JSON.stringify({ names });
-  // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and an
+  // Held to its own length rather than `maxPerLoad`: that cap is for a model choosing, and an
   // app that shortlisted more has already chosen.
   const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
   run.onEvent({ kind: RunEventKind.ToolCall, id, name: LOAD_TOOLS, text: preview(args) });

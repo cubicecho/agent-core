@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOOL_DISCOVERY_DEFAULTS } from '../../src/core/defaults.ts';
 import type { CatalogServer } from '../../src/tools/catalog.ts';
-import { MAX_PER_LOAD } from '../../src/tools/tool-loading.ts';
 import { JSON_SCHEMA_FORMAT } from '../../src/wire/wire.ts';
 import { answer, type Create, catalog, config } from '../helpers.ts';
 
@@ -140,7 +140,7 @@ describe('preselectInput and preselectSystem', () => {
 
   it('tell the preselector the cap it will be held to', () => {
     expect(preselectSystem(3)).toContain('at most 3');
-    expect(PRESELECT_SYSTEM).toContain(`at most ${MAX_PER_LOAD}`);
+    expect(PRESELECT_SYSTEM).toContain(`at most ${TOOL_DISCOVERY_DEFAULTS.maxPerLoad}`);
     expect(preselection(['gmail__send_email', 'gmail__read_email'], catalog, 1)).toEqual(['gmail__send_email']);
   });
 
