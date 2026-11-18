@@ -1,3 +1,123 @@
+# [6.0.0](https://github.com/cubicecho/agent-core/compare/v5.0.0...v6.0.0) (2026-11-18)
+
+
+* feat!: drop the hooks' names from before 5.0.0 ([39e87c7](https://github.com/cubicecho/agent-core/commit/39e87c7cd8c40a575734276d0dc0b47417edaa1b))
+* feat!: drop the no-thinking-hints flag kept for old snapshots (R49) ([381b4aa](https://github.com/cubicecho/agent-core/commit/381b4aa7e656bfb547b3c83f77037f88e8bcc3ab))
+* feat!: export the default groups in place of the lone constants ([c5e4428](https://github.com/cubicecho/agent-core/commit/c5e4428b1bee0fedfa9d210f667f78dbdd54be5c))
+* feat!: honour a beforeCompact veto in the loop's own compaction ([1d7a346](https://github.com/cubicecho/agent-core/commit/1d7a34624ec9760b862c9cc64d527eb1d7f5bd87))
+* feat!: name how an exchange ended ExchangeOutcome ([e1bd44d](https://github.com/cubicecho/agent-core/commit/e1bd44d84b60b786c0d6a7cf16d86340f6c514d0))
+* feat!: name the result's hook notes afterExchange ([c440a67](https://github.com/cubicecho/agent-core/commit/c440a67b667fcf930aa4584b27b63bbf0c3cb0c8))
+* feat!: rename the public names that meant two things ([0d3c247](https://github.com/cubicecho/agent-core/commit/0d3c247feb6a854a864c8c8cea5fccaa44a98dd3))
+* feat!: send a side task through runTurn, as a turn is sent ([86264e9](https://github.com/cubicecho/agent-core/commit/86264e94883ec0b74408c66326e1d4f2e119950d))
+* feat!: send an exchange's start and end from the loop ([9e7991d](https://github.com/cubicecho/agent-core/commit/9e7991dca09740d3b60e03843f35a1808fe3c3fe))
+* feat!: stop reading run events stored before 5.0.0 ([18e115c](https://github.com/cubicecho/agent-core/commit/18e115c7be141d3f6912d1df338ba88fc0435489))
+* feat!: write the model's and the app's text in plain words ([eb680a4](https://github.com/cubicecho/agent-core/commit/eb680a4f05193d09f9ff3512607889e567bf4cee))
+* fix!: key every model-server cache on its URL, key and fetch ([82c50b3](https://github.com/cubicecho/agent-core/commit/82c50b3194fa4606f296b61034129f74614fdd13))
+
+
+### Bug Fixes
+
+* **endpoint:** read a refused field in Mistral's and Groq's wordings ([ab8e380](https://github.com/cubicecho/agent-core/commit/ab8e380458fac3d16d6bf5a01ec2cf75102bbfd8))
+* forget a served context window on the slot count's timer ([9beedba](https://github.com/cubicecho/agent-core/commit/9beedba3d2c360c83babc267afe8ed0c546314ac))
+* ignore keys that are not settings in the configure functions ([39d27d1](https://github.com/cubicecho/agent-core/commit/39d27d10f0b2725f080c78a44e1f51427df8b1d1))
+* keep the text of a prompt part that also has a ref ([41aeb32](https://github.com/cubicecho/agent-core/commit/41aeb327b0fce7ed938d96cc3befa4b59dbd4462))
+* keep tool-call recovery out of every scratchpad ([5f47709](https://github.com/cubicecho/agent-core/commit/5f477096e2e33946121ceeb8c10e47cadb62c2b2))
+* let gather survive an onNote that throws ([a49c6f7](https://github.com/cubicecho/agent-core/commit/a49c6f7a7916dd10c10a59d23e77a1ad1fd691d4))
+* name every option a remote agent sets aside in its notice ([f9d9c22](https://github.com/cubicecho/agent-core/commit/f9d9c221335bbc8ebed9d82ac5dcd7b1d7fe37ad))
+* quote a task key that holds a dot in parseSpec's warnings ([0b130bb](https://github.com/cubicecho/agent-core/commit/0b130bb1b2a214bee700757170725437d96d5923))
+
+
+### BREAKING CHANGES
+
+* these exports are removed. Read the member instead:
+- COMPACT_AT -> COMPACTION_DEFAULTS.compactAtShare
+- KEEP_RATIO -> COMPACTION_DEFAULTS.keepShare
+- PRUNE_SHARE -> PRUNE_DEFAULTS.minShare
+- HOOK_CONTEXT_TOKENS -> HOOK_DEFAULTS.contextTokens
+- HOOK_PREFACE -> HOOK_DEFAULTS.preface
+- SMALLEST_LIKELY_WINDOW -> REQUEST_SIZE_DEFAULTS.smallestLikelyWindowTokens
+- SERVER_INSTRUCTION_TOKENS -> TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens
+- RESOLVED_DEFAULTS -> AGENT_DEFAULTS, from the main entry and from
+  @cubicecho/agent-core/spec
+The values are unchanged. AGENT_DEFAULTS is frozen and typed
+Readonly<AgentSettings>, where RESOLVED_DEFAULTS was an as-const
+literal, so its members widen to number and the ToolDiscovery union.
+* ModelCapabilities.thinkingHints is gone, and
+CAPABILITY_SNAPSHOT_VERSION is 2. importCapabilities refuses a version 1
+snapshot (it returns false), so the latches in it are learned again on
+the next requests. Read a model's refusal of the hints as
+refusedFields.has('chat_template_kwargs').
+* renamed, with no aliases:
+- compact (wire/tokens.ts, the token-count formatter) -> formatTokens
+- firstTokenMs(config) (the first-chunk limit) -> firstTokenLimitMs(config);
+  TurnUsage.firstTokenMs, the measured wait, keeps its name
+- timeoutMs(config) (the idle timeout) -> idleTimeoutMs(config)
+- StreamTurnOptions.startInReasoning -> startInScratchpad
+- FenceSplitterOptions.startInside -> startInScratchpad
+* capabilitiesFor takes the model server as one object,
+capabilitiesFor({ baseUrl, apiKey, fetch }), in place of
+capabilitiesFor(baseUrl, apiKey). A whole Endpoint will do. An app that
+sends through its own fetch passes it to exportCapabilities and
+importCapabilities to keep its latches across a restart; without it,
+those latches are no longer in the snapshot.
+* a side task is a streamed request (`stream: true`, and
+`stream_options` where the server takes it), so an `Endpoint.fetch` that
+answers one in process must answer it as a stream. It now retries a lost
+request (a dropped connection, a 429 or 5xx, a silent server) twice by
+default and waits up to two minutes for a loading model, so it can take
+longer before it fails. Its first chunk is waited for for
+`requestTimeoutSeconds`, between chunks too. The latching rules change: a
+refusal that names nothing is no longer retried without the hints and the
+effort, and fails the side task (`tryAsk` makes that no answer and a
+notice); the hints are latched only when a refusal names them, into
+`refusedFields`, and no longer into `ModelCapabilities.thinkingHints`,
+which is only read now, for a snapshot that set it. The notice for a
+refused hint is `negotiate`'s ("m does not take chat_template_kwargs;
+retrying without it"), and a snapshot shows the latch in `refusedFields`.
+* runAgentLoop emits `exchange` first and `exchange-end`
+last. An app that emitted its own `exchange` event around a loop, or set
+`exchange` on its events by hand, passes `exchange: '<name>'` to
+runAgentLoop instead and stops sending them, or each exchange is counted
+twice. RunEventKind gains `ExchangeEnd` ('exchange-end'), and RunEvent
+gains optional `outcome` and `pending`: exhaustive switches over the kind
+add a case. runMetrics' outcome now comes from `exchange-end` events: a
+`done` naming a tool no longer reads as `ended`, a `done` after a turn no
+longer reads as `answered` or `truncated`, and a `wait` alone no longer
+reads as `waiting`; events with no `exchange-end` have no outcome unless a
+`done` was not ok. An app that sent `done` with the ending call for
+runMetrics' sake can drop those fields.
+* AgentLoopResult.afterTurn is renamed afterExchange, with
+no alias. Replace `await result.afterTurn` with
+`await result.afterExchange`; the promise and its notes are unchanged.
+* RunOutcome is renamed ExchangeOutcome, with no alias.
+Replace `RunOutcome` with `ExchangeOutcome` in imports, values and types;
+the string values are unchanged. A switch over the outcome gains a
+`stopped` case.
+* fold and runMetrics no longer rename a `step` event or
+field, and progressEvent and progressEvents reject an event that has no
+`exchange` string. An app that keeps 4.x events renames them as it reads
+them back: `kind: 'step'` becomes `kind: 'exchange'`, and the `step` field
+becomes `exchange`.
+* `HookEvent.BeforeTurn` and `HookEvent.AfterTurn` are
+gone: use `HookEvent.BeforeExchange` and `HookEvent.AfterExchange`.
+`runAgentLoop`'s `beforeStep` option is gone: use `beforeTurn`, which takes
+the same arguments. The `StepWindow` type is gone: use `TurnWindow`.
+parseSpec no longer reads `beforeTurn` or `afterTurn` as a hook's `on`, and
+resolveAgentSpec and exportSpec no longer rename them: a hook bound to one
+is dropped as an unknown event. Stored agent documents and hook rows need
+a one-time rename of `beforeTurn` to `beforeExchange` and `afterTurn` to
+`afterExchange`.
+* with `compact` and hooks that fire `beforeCompact`, the
+loop now waits for those hooks before writing a summary, and a hook whose
+outcome carries `veto` stops the compaction. To keep the old behaviour
+(hooks run beside the summary, no veto read), pass
+`hooks: { ..., honourVeto: false }` to runAgentLoop.
+* the text the model is sent changes. The placeholder
+results and the record_artifact definition are part of the prompt, so a
+transcript or tool list cached under the old wording misses the prompt
+cache once. Apps that match the old notice or placeholder text must
+match the new wording.
+
 # [5.0.0](https://github.com/cubicecho/agent-core/compare/v4.30.0...v5.0.0) (2026-11-18)
 
 
