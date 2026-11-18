@@ -7,7 +7,6 @@ import {
   endRun,
   fold,
   history,
-  type RunEvent,
   RunEventKind,
   RunOutcome,
   resetEvents,
@@ -477,24 +476,6 @@ describe('fold', () => {
     expect(fold(history('r')).map((block) => block.text)).toEqual(['first', 'second']);
   });
 
-  it('reads events stored before 5.0.0 under the names they have now', () => {
-    // An app's store holds what 4.x emitted: `kind: "step"`, and the exchange under `step`.
-    const stored: RunEvent[] = JSON.parse(
-      JSON.stringify([
-        { runId: 'r', seq: 1, at: 1, kind: 'step', text: 'stage', name: 'plan', step: '', ok: null, usage: null },
-        { runId: 'r', seq: 2, at: 2, kind: 'output', text: 'first', name: '', step: 'one', ok: null, usage: null },
-        { runId: 'r', seq: 3, at: 3, kind: 'output', text: 'second', name: '', step: 'two', ok: null, usage: null },
-      ]),
-    );
-    const blocks = fold(stored);
-    expect(blocks.map(({ kind, exchange, text }) => ({ kind, exchange, text }))).toEqual([
-      { kind: RunEventKind.Exchange, exchange: '', text: 'stage' },
-      { kind: RunEventKind.Output, exchange: 'one', text: 'first' },
-      { kind: RunEventKind.Output, exchange: 'two', text: 'second' },
-    ]);
-    expect(blocks.some((block) => 'step' in block)).toBe(false);
-  });
-
   it('does not merge across a different kind', () => {
     emit('r', { kind: RunEventKind.Output, text: 'a' });
     emit('r', { kind: RunEventKind.Thinking, text: 'b' });
@@ -530,17 +511,6 @@ describe('fold', () => {
 });
 
 describe('runMetrics', () => {
-  it('counts the exchanges of a run stored before 5.0.0, whose events say step', () => {
-    const stored: RunEvent[] = JSON.parse(
-      JSON.stringify([
-        { runId: 'r', seq: 1, at: 1, kind: 'step', text: '', name: 'plan', step: '', ok: null, usage: null },
-        { runId: 'r', seq: 2, at: 2, kind: 'step', text: '', name: 'act', step: '', ok: null, usage: null },
-        { runId: 'r', seq: 3, at: 3, kind: 'exchange', text: '', name: 'check', exchange: '', ok: null, usage: null },
-      ]),
-    );
-    expect(runMetrics(stored).exchanges).toBe(3);
-  });
-
   it('counts nothing and measures nothing for a run with no turns', () => {
     const metrics = runMetrics([]);
     expect(metrics).toEqual({

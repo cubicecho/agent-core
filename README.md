@@ -1700,8 +1700,8 @@ A run that holds several exchanges, such as a task's stages, says so itself: an 
 each begins (`name` names it), and `exchange` on every event inside it, so a watcher can group the
 run the way the work is written and `fold` never joins text across two of them. `runMetrics` counts
 them as `exchanges`. The loop never sends either. Before 5.0.0 these were the `step` kind and the
-`step` field; `fold`, `runMetrics`, `progressEvent` and `progressEvents` still read events stored
-or relayed that way, under the new names.
+`step` field, and since 6.0.0 nothing reads events stored or relayed that way: an app that keeps
+them renames them when it reads them back.
 
 The five numbers behind that — the backlog cap, the slack it is trimmed in batches of, and the
 three deadlines the sweep reaps on (a finished run, an unended one, and one waiting on calls it

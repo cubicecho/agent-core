@@ -54,36 +54,8 @@ describe('progressChunk and progressEvent', () => {
     expect(progressEvent({ [PROGRESS_FIELD]: { event: unnumbered } })).toBeUndefined();
     expect(progressEvent({ [PROGRESS_FIELD]: { event: { ...called, kind: 'teleport' } } })).toBeUndefined();
     expect(progressEvent({ [PROGRESS_FIELD]: { event: { ...called, ok: 'yes' } } })).toBeUndefined();
-  });
-});
-
-describe('progressEvent and progressEvents from a server before 5.0.0', () => {
-  /** An exchange beginning, and a call inside it, as a 4.x server wrote them. */
-  const began = { runId: 'r1', seq: 1, at: 40, kind: 'step', text: '', name: 'plan', step: '', ok: null, usage: null };
-  const inside = { ...began, seq: 2, kind: 'tool-call', name: 'ask_user', text: '{}', id: 'Srv1', step: 'plan' };
-
-  it('reads a step event as an exchange, and the step field as the exchange', () => {
-    expect(progressEvent({ [PROGRESS_FIELD]: { event: began } })).toEqual(
-      stamp({ kind: RunEventKind.Exchange, name: 'plan' }, 'r1', 1, 40),
-    );
-    const event = progressEvent({ [PROGRESS_FIELD]: { event: inside } });
-    expect(event).toEqual(
-      stamp({ kind: RunEventKind.ToolCall, name: 'ask_user', text: '{}', id: 'Srv1', exchange: 'plan' }, 'r1', 2, 40),
-    );
-    expect(event).not.toHaveProperty('step');
-  });
-
-  it('reads nothing off an event that names no exchange under either name', () => {
-    const { step: _step, ...unplaced } = inside;
+    const { exchange: _exchange, ...unplaced } = called;
     expect(progressEvent({ [PROGRESS_FIELD]: { event: unplaced } })).toBeUndefined();
-    expect(progressEvent({ [PROGRESS_FIELD]: { event: { ...unplaced, exchange: '', kind: 'step' } } })).toBeUndefined();
-  });
-
-  it('reads them so off an answer that is not streamed', () => {
-    expect(progressEvents({ [PROGRESS_FIELD]: { runId: 'r1', events: [began, inside] } })?.events).toEqual([
-      stamp({ kind: RunEventKind.Exchange, name: 'plan' }, 'r1', 1, 40),
-      stamp({ kind: RunEventKind.ToolCall, name: 'ask_user', text: '{}', id: 'Srv1', exchange: 'plan' }, 'r1', 2, 40),
-    ]);
   });
 });
 

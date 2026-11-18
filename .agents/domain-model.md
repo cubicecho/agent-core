@@ -247,7 +247,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   stages: an exchange began, which exchange each event belongs to, and which arm a deciding
   exchange chose. Owner: `RunEventKind.Exchange`, `RunEvent.exchange`, `RunMetrics.exchanges` and
   `RunEventKind.Decision`; the loop never sends them. Events stored or relayed before 5.0.0 say
-  `step` for the first two, which `renamedEvent` reads under the new names.
+  `step` for the first two, and the package no longer reads them.
 
 ### Reaching a server
 
