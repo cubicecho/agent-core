@@ -187,12 +187,6 @@ export function isModelLoading(error: unknown): boolean {
   );
 }
 
-/** How long to wait between asking a loading server again. */
-export const LOADING_POLL_MS = 3000;
-
-/** How long `runTurn` waits for a model to load unless told otherwise. */
-export const LOADING_TIMEOUT_MS = 120_000;
-
 /**
  * How long to wait before a retry: exponential, with jitter so several tasks failing at once do
  * not return in lockstep.

@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MS_PER_SECOND } from '../../src/core/consts.ts';
+import { MODEL_SERVER_DEFAULTS } from '../../src/core/defaults.ts';
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../../src/endpoint/capabilities.ts';
 import { runTurn } from '../../src/turn/run-turn.ts';
 import { ContextOverflow, EndpointSilent } from '../../src/wire/retry.ts';
@@ -92,11 +94,11 @@ describe('runTurn', () => {
       model: 'qwen',
       onNotice: (n) => notices.push(n),
     });
-    await vi.advanceTimersByTimeAsync(20 * 3000);
+    await vi.advanceTimersByTimeAsync(20 * MODEL_SERVER_DEFAULTS.loadingPollSeconds * MS_PER_SECOND);
     await expect(turn).resolves.toMatchObject({ content: 'up' });
     expect(create).toHaveBeenCalledTimes(21);
     // Once, not per poll.
-    expect(notices).toEqual(['qwen is still loading — waiting up to 120s']);
+    expect(notices).toEqual([`qwen is still loading — waiting up to ${MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds}s`]);
   });
 
   it('gives up on a model that never finishes loading', async () => {

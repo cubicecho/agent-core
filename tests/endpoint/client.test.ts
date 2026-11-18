@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MS_PER_SECOND } from '../../src/core/consts.ts';
+import { MODEL_SERVER_DEFAULTS } from '../../src/core/defaults.ts';
 import { HttpStatus } from '../../src/wire/wire.ts';
 import { endpoint } from '../helpers.ts';
 
@@ -923,8 +925,10 @@ describe('endpointKey and endpointId', () => {
 });
 
 describe('firstTokenLimitMs', () => {
-  it('is five idle windows unless the endpoint names its own', () => {
-    expect(firstTokenLimitMs({ requestTimeoutSeconds: 60 })).toBe(300_000);
+  it('is several idle windows unless the endpoint names its own', () => {
+    expect(firstTokenLimitMs({ requestTimeoutSeconds: 60 })).toBe(
+      60 * MS_PER_SECOND * MODEL_SERVER_DEFAULTS.firstTokenIdleWindows,
+    );
     expect(firstTokenLimitMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 600 })).toBe(600_000);
   });
 

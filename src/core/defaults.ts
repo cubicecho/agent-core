@@ -8,6 +8,33 @@
  * The facts that could not be otherwise are in `consts.ts`.
  */
 
+/** Waiting on a model server: for its first token, for its listing, and for a model to load. */
+export interface ModelServerSettings {
+  /**
+   * How many idle windows (`requestTimeoutSeconds`) a streamed reply's first chunk is given, where
+   * the endpoint names no `firstTokenSeconds` of its own. The first wait is prefill, or a model
+   * loading on demand, and is routinely many times the gap between tokens.
+   */
+  firstTokenIdleWindows: number;
+  /** How many models `probeEndpoint` hands back unless told otherwise: enough for any picker. */
+  probeModelLimit: number;
+  /** How long `runTurn` waits, in seconds, between asking a loading model server again. */
+  loadingPollSeconds: number;
+  /**
+   * How long `runTurn` waits, in seconds, for a model to finish loading, where neither its
+   * `loadingTimeoutMs` nor a `RetryPolicy.loadingTimeoutSeconds` says.
+   */
+  loadingTimeoutSeconds: number;
+}
+
+/** The waits the model server code was written with. */
+export const MODEL_SERVER_DEFAULTS: Readonly<ModelServerSettings> = Object.freeze({
+  firstTokenIdleWindows: 5,
+  probeModelLimit: 500,
+  loadingPollSeconds: 3,
+  loadingTimeoutSeconds: 120,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

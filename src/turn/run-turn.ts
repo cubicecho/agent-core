@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { MS_PER_SECOND } from '../core/consts.ts';
+import { MODEL_SERVER_DEFAULTS } from '../core/defaults.ts';
 import { calibrate, charsPerTokenFor } from '../endpoint/calibration.ts';
 import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from '../endpoint/capabilities.ts';
 import { errorMessage } from '../wire/errors.ts';
@@ -10,8 +11,6 @@ import {
   isModelLoading,
   isOverflow,
   isTransient,
-  LOADING_POLL_MS,
-  LOADING_TIMEOUT_MS,
   SMALLEST_LIKELY_WINDOW,
   sleep,
 } from '../wire/retry.ts';
@@ -81,8 +80,8 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * @defaultValue `120000`
    *
    * @remarks
-   * Polled every three seconds without spending `maxRetries`, and announced once rather than
-   * per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
+   * Polled every `MODEL_SERVER_DEFAULTS.loadingPollSeconds` without spending `maxRetries`, and
+   * announced once rather than per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
    * has to swap in, meets this on its first request every time.
    */
   loadingTimeoutMs?: number;
@@ -182,7 +181,7 @@ export async function runTurn(
     contextLimit = 0,
     model,
     droppable,
-    loadingTimeoutMs = LOADING_TIMEOUT_MS,
+    loadingTimeoutMs = MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds * MS_PER_SECOND,
     ...stream
   }: RunTurnOptions = {},
 ): Promise<Turn> {
@@ -248,7 +247,7 @@ export async function runTurn(
           // Not an attempt: the request was never looked at, and a two-minute load would
           // otherwise have to be bought with a retry budget meant for dropped connections.
           attempt--;
-          await sleep(LOADING_POLL_MS, stream.signal);
+          await sleep(MODEL_SERVER_DEFAULTS.loadingPollSeconds * MS_PER_SECOND, stream.signal);
           continue;
         }
       }

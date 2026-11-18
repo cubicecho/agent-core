@@ -7,6 +7,7 @@ import {
   type RetryPolicy,
 } from '../core/config.ts';
 import { MS_PER_SECOND } from '../core/consts.ts';
+import { MODEL_SERVER_DEFAULTS } from '../core/defaults.ts';
 import { digestOf } from '../core/digest.ts';
 import { byCodeUnit, getOrCreate, isPositive } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
@@ -247,22 +248,19 @@ export function configureClients(options: ClientPoolOptions = {}): Required<Clie
   return inForce;
 }
 
-/** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
-const FIRST_TOKEN_FACTOR = 5;
-
 /**
  * The wait for a streamed reply's first chunk, in the SDK's spelling: `undefined` is no limit.
  *
  * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
  * @returns Milliseconds. `firstTokenSeconds` where it is given, zero or less being no limit;
- * otherwise five request timeouts, and no limit where the request has none.
+ * otherwise `MODEL_SERVER_DEFAULTS.firstTokenIdleWindows` request timeouts, and no limit where the request has none.
  */
 export const firstTokenLimitMs = (
   config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,
 ): number | undefined => {
   if (config.firstTokenSeconds === undefined) {
     const idle = idleTimeoutMs(config);
-    return idle === undefined ? undefined : idle * FIRST_TOKEN_FACTOR;
+    return idle === undefined ? undefined : idle * MODEL_SERVER_DEFAULTS.firstTokenIdleWindows;
   }
   return limitMs(config.firstTokenSeconds);
 };
@@ -856,12 +854,9 @@ export class EndpointProbeError extends Error {
 
 /** What `probeEndpoint` takes besides the model server. */
 export interface ProbeOptions extends LookupOptions {
-  /** How many models come back at most, the first by id. Defaults to `PROBE_MODEL_LIMIT`. */
+  /** How many models come back at most, the first by id. Defaults to `MODEL_SERVER_DEFAULTS.probeModelLimit`. */
   limit?: number;
 }
-
-/** How many models `probeEndpoint` hands back unless told otherwise: enough for any picker. */
-const PROBE_MODEL_LIMIT = 500;
 
 /** The statuses that mean the key, not the server, is what is wrong. */
 const UNAUTHORIZED: ReadonlySet<number> = new Set([HttpStatus.Unauthorized, HttpStatus.Forbidden]);
@@ -895,7 +890,7 @@ const REDIRECT_MAX = 399;
  */
 export async function probeEndpoint(
   endpoint: EndpointIdentity & Pick<Endpoint, 'requestTimeoutSeconds' | 'fetch'>,
-  { signal, limit = PROBE_MODEL_LIMIT }: ProbeOptions = {},
+  { signal, limit = MODEL_SERVER_DEFAULTS.probeModelLimit }: ProbeOptions = {},
 ): Promise<ModelInfo[]> {
   const baseUrl = normalizeBaseUrl(endpoint.baseUrl);
   if (baseUrl === null) {
