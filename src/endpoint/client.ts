@@ -514,6 +514,14 @@ const unserved = perFetch(() => new Set<string>());
 const refusals = perFetch(() => new Map<string, { at: number; gone: boolean }>());
 
 /**
+ * Whether an answer an endpoint gave still stands, which it does for `listingMissMs`.
+ *
+ * @param at - When the answer was given, in ms since the epoch.
+ * @returns `true` inside `listingMissMs` of `at`, and `false` once it has passed.
+ */
+const isAnswerFresh = (at: number) => Date.now() - at < poolLimits().listingMissMs;
+
+/**
  * Whether `/api/v0/models` is to be left alone on this endpoint for now.
  *
  * @param config - Read for `fetch` alone, which picks the copy of `refusals` read.
@@ -523,7 +531,7 @@ const refusals = perFetch(() => new Map<string, { at: number; gone: boolean }>()
  */
 const refused = (config: Pick<Endpoint, 'fetch'>, endpoint: string) => {
   const refusal = refusals(config.fetch).get(endpoint);
-  return refusal !== undefined && (refusal.gone || Date.now() - refusal.at < poolLimits().listingMissMs);
+  return refusal !== undefined && (refusal.gone || isAnswerFresh(refusal.at));
 };
 
 /**
@@ -662,7 +670,7 @@ async function readServed(config: Endpoint & { model: string }, within: AbortSig
   }
   const key = modelKey(endpoint, config.model);
   const known = served(config.fetch).get(key);
-  if (known && (known.window > 0 || Date.now() - known.at < poolLimits().listingMissMs)) {
+  if (known && (known.window > 0 || isAnswerFresh(known.at))) {
     return known.window;
   }
 
@@ -734,7 +742,7 @@ async function readSlots(config: Endpoint & { model: string }, within: AbortSign
   }
   const key = modelKey(endpoint, config.model);
   const known = slotCounts(config.fetch).get(key);
-  if (known && (known.gone || Date.now() - known.at < poolLimits().listingMissMs)) {
+  if (known && (known.gone || isAnswerFresh(known.at))) {
     return known.slots;
   }
   try {
@@ -1021,7 +1029,7 @@ export async function contextLimitFor(
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the endpoint is asked, and a caller sizing a window per turn pays a round
     // trip for each of them; `listingMissMs` is how long that answer is allowed to stand.
-    if (asked === undefined || Date.now() - asked >= poolLimits().listingMissMs) {
+    if (asked === undefined || isAnswerFresh(asked) === false) {
       // A failure is not remembered: an endpoint that was down when the last run started is not
       // an endpoint with no models, and a window nobody could ask about is not a failed run.
       const answered = await readListing(config, within).then(
