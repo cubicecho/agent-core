@@ -1,3 +1,10 @@
+# [4.26.0](https://github.com/cubicecho/agent-core/compare/v4.25.0...v4.26.0) (2026-11-18)
+
+
+### Features
+
+* **endpoint:** an optional fetch, so a host answers an endpoint's requests in process ([2d433c8](https://github.com/cubicecho/agent-core/commit/2d433c880a34761962d5f34d01160ddee8d727a7)), closes [#224](https://github.com/cubicecho/agent-core/issues/224)
+
 # [4.25.0](https://github.com/cubicecho/agent-core/compare/v4.24.0...v4.25.0) (2026-11-11)
 
 
