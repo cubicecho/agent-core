@@ -7,6 +7,7 @@ import {
   EFFORT_NONE,
   effortFor,
   extraFields,
+  latchModel,
   type ModelCapabilities,
   modelCapabilitiesFor,
   negotiate,
@@ -295,7 +296,7 @@ async function complete(
     // hints again. Only the hints are latched here: an effort is `negotiate`'s to latch, on
     // `rejectsEffort` reading the refusal, so one this retry got past is sent again next time.
     if (hints) {
-      modelCapabilitiesFor(supports, model).thinkingHints = false;
+      latchModel(modelCapabilitiesFor(supports, model), 'thinkingHints');
     }
   }
 

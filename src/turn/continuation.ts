@@ -1,5 +1,11 @@
 import type OpenAI from 'openai';
-import { type Capabilities, type ModelCapabilities, modelCapabilitiesFor } from '../endpoint/capabilities.ts';
+import {
+  type Capabilities,
+  latchFields,
+  latchModel,
+  type ModelCapabilities,
+  modelCapabilitiesFor,
+} from '../endpoint/capabilities.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { ContextOverflow, refusesRequest } from '../wire/retry.ts';
 import {
@@ -97,9 +103,7 @@ function refusePrefillFields(refused: ModelCapabilities, detail: string): boolea
   if (!PREFILL_KEYS.some((field) => detail.includes(field)) || prefillFields(refused) !== PREFILL_FIELDS) {
     return false;
   }
-  for (const field of PREFILL_KEYS) {
-    refused.refusedFields.add(field);
-  }
+  latchFields(refused, PREFILL_KEYS);
   return true;
 }
 
@@ -313,7 +317,7 @@ export async function continueTurn(
         continue;
       } else if (refusesRequest(error)) {
         if (refused) {
-          refused.assistantPrefill = false;
+          latchModel(refused, 'assistantPrefill');
         }
         options.onNotice?.(
           `${who} refused a trailing assistant message (${errorMessage(error)}); keeping the cut-off reply`,
@@ -325,7 +329,7 @@ export async function continueTurn(
     }
     if (restarted(answer, next.content)) {
       if (refused) {
-        refused.assistantPrefill = false;
+        latchModel(refused, 'assistantPrefill');
       }
       options.onNotice?.(`${who} answered afresh instead of continuing its reply; keeping the cut-off reply`);
       break;

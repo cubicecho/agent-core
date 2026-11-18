@@ -185,7 +185,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A reply that has produced anything is never sent again | `Produced`, checked in `negotiate` and `runTurn` |
 | The caller's abort is never reported as `EndpointSilent`, and an aborted stream never returns a reply | `streamTurn` |
 | One refusal gets at most one answer, and negotiation ends | `negotiate` over `ANSWERS`, `flagsOf` |
-| Capability flags only latch off while their entry lives | `endpointAnswer`, `modelAnswer` |
+| Capability flags only latch off while their entry lives | `endpointAnswer`, `latchModel`, `latchFields` |
 | An effort is only stepped up the ladder, never down | `nextEffort`, `planEffortStep` |
 | A refused field is latched only if the caller offered it as droppable | `droppedFieldsAnswer` |
 | `extraBody` never sets `model`, `messages`, `stream` or `tools` | `extraFields`, `parseExtraBody` |
@@ -288,7 +288,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   no-thinking hints, and refused fields and efforts. Owner: `ModelCapabilities`,
   `modelCapabilitiesFor`.
 - **Latch (downgrade):** turning a capability off for good after one refusal, so later requests
-  are sent the lesser form at once. Owner: the `Answer`s in `ANSWERS`.
+  are sent the lesser form at once. Owner: `latchModel`, `latchFields`, through which `negotiate`'s
+  `Answer`s in `ANSWERS`, a continuation and a side task latch a model's capabilities.
 - **Negotiation:** sending a request and re-sending it without whatever the server refused, until
   it answers or refuses something nothing can drop. Owner: `negotiate`.
 - **Droppable field:** a request field the caller lets a refusal remove. Owner:

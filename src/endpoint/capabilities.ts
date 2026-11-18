@@ -258,6 +258,33 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
 }
 
 /**
+ * Turns one of a model's flags off for good, the only way a flag is latched.
+ *
+ * @param refused - The model's, as `modelCapabilitiesFor` hands it over. Written to.
+ * @param flag - The flag to latch off. One already off stays off.
+ *
+ * @remarks
+ * `negotiate` latches through it on a refusal it reads, and the callers that read a refusal of
+ * their own do as well: a continuation the model would not take, a side task's hints.
+ */
+export function latchModel(refused: ModelCapabilities, flag: ModelFlag): void {
+  refused[flag] = false;
+}
+
+/**
+ * Latches request fields off for a model, so a body builder leaves them out from the next request.
+ *
+ * @param refused - The model's, as `modelCapabilitiesFor` hands it over. Written to: each field
+ * joins `refusedFields`.
+ * @param fields - The fields refused, by their names in the request body.
+ */
+export function latchFields(refused: ModelCapabilities, fields: Iterable<string>): void {
+  for (const field of fields) {
+    refused.refusedFields.add(field);
+  }
+}
+
+/**
  * Every endpoint's capabilities by `endpointId`, the live objects, for `exportCapabilities`.
  *
  * @returns The map itself rather than a copy, read-only by type alone: what is latched or forgotten
@@ -834,7 +861,7 @@ const parallelCallsAnswer: Answer = ({ detail, named, droppable }) => {
   if (isRefusal === false) {
     return undefined;
   }
-  refusedFields.add(PARALLEL_TOOL_CALLS);
+  latchFields(named.refused, [PARALLEL_TOOL_CALLS]);
   return `${named.name} does not take ${PARALLEL_TOOL_CALLS}; retrying without it`;
 };
 
@@ -941,7 +968,7 @@ const modelAnswer =
     if (!named?.refused[flag] || !matches(detail)) {
       return undefined;
     }
-    named.refused[flag] = false;
+    latchModel(named.refused, flag);
     return notice(named.name);
   };
 
@@ -982,9 +1009,7 @@ const droppedFieldsAnswer: Answer = ({ detail, named, droppable }) => {
   if (!fields.length) {
     return undefined;
   }
-  for (const field of fields) {
-    named.refused.refusedFields.add(field);
-  }
+  latchFields(named.refused, fields);
   return `${named.name} does not take ${fields.join(', ')}; retrying without ${fields.length > 1 ? 'them' : 'it'}`;
 };
 
