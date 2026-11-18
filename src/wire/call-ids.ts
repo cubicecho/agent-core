@@ -131,6 +131,8 @@ export const CallIds = {
   /** A minted id for every call, for a host that matches answers to calls across transcripts. */
   Minted: 'minted',
 } as const;
+
+/** Any one of the policies in `CallIds`. */
 export type CallIds = (typeof CallIds)[keyof typeof CallIds];
 
 /**

@@ -288,8 +288,9 @@ export interface ResolvedAgent extends AgentConfig {
  * @remarks
  * Not sentinels, and not invented: `toolDiscovery`, `maxRetries` and `contextLength` are the
  * "absent everywhere" column of the document's own table, and `temperature` and `maxToolIterations`
- * are what all three consumers store as their defaults today. A field left out here is left out of
- * the resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no opinion".
+ * are what all three consumers store as their defaults today. `maxTokens: 0` sends no ceiling,
+ * leaving the reply's length to the model server. A field left out here is left out of the
+ * resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no opinion".
  */
 export const RESOLVED_DEFAULTS = {
   temperature: 0.7,

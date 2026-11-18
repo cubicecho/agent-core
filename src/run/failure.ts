@@ -5,6 +5,11 @@ import type { LoopUsage, PartialTurn } from '../wire/stream.ts';
 import type { RunArtifact, ToolCallOutcome } from './dispatch.ts';
 
 /**
+ * What a failed exchange leaves behind: the run as it stood, carried on what `runAgentLoop` throws
+ * and read back off it.
+ */
+
+/**
  * A run as it stood when `runAgentLoop` gave up on it.
  *
  * @remarks

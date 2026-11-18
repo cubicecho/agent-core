@@ -185,6 +185,15 @@ export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
 export const MODEL_FLAGS = Object.keys(OPTIMISTIC_MODEL) as ModelFlag[];
 
 /**
+ * Hears one line of operator text: what was given up on, what is being waited out, what was chosen.
+ *
+ * @remarks
+ * One name for it because the same listener is handed down from the loop through a turn to
+ * `negotiate` and across to every side task, and each had spelled the signature out.
+ */
+export type OnNotice = (message: string) => void;
+
+/**
  * What each endpoint cannot do, remembered for the life of the process.
  *
  * @remarks
@@ -203,15 +212,6 @@ export const MODEL_FLAGS = Object.keys(OPTIMISTIC_MODEL) as ModelFlag[];
  * behind it, including the `models` map underneath, which is the level where two keys through
  * one host are most likely to differ at all.
  */
-/**
- * Hears one line of operator text: what was given up on, what is being waited out, what was chosen.
- *
- * @remarks
- * One name for it because the same listener is handed down from the loop through a turn to
- * `negotiate` and across to every side task, and each had spelled the signature out.
- */
-export type OnNotice = (message: string) => void;
-
 const capabilities = scoped(() => new Map<string, Capabilities>());
 
 /**

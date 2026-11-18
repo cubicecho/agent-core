@@ -45,7 +45,7 @@ import { compact, requestTokens } from '../wire/tokens.ts';
  * with. See `calibrate`.
  */
 
-/** A retry is not the same event as a downgrade, but a watcher wants to be told about both. */
+/** What `runTurn` takes besides the client, the capabilities and the request. */
 export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
   /**
    * How many times a lost request is worth sending again. Zero is one attempt, which is the
@@ -55,7 +55,8 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
   maxRetries?: number;
   /**
    * Told what was given up on and what is being waited out, for a watcher who would otherwise
-   * see an unexplained pause. Carries both the capability notices and the retry notices.
+   * see an unexplained pause. Carries both the capability notices and the retry notices: a retry
+   * is not the same event as a downgrade, but a watcher wants to be told about both.
    */
   onNotice?: OnNotice;
   /**
