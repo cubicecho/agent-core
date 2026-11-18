@@ -755,6 +755,30 @@ describe('negotiate, for a field the caller can do without', () => {
     expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
   });
 
+  it("reads a field from a pydantic server's loc and from Groq's wording", async () => {
+    // Mistral and other FastAPI servers name the field in a validation error's location; Groq
+    // says the property is unsupported. Side tasks rely on these since they share this path.
+    const pydantic = apiError(
+      400,
+      '{"detail":[{"type":"extra_forbidden","loc":["body","chat_template_kwargs"],"msg":"Extra inputs are not permitted"}]}',
+    );
+    const groq = apiError(400, "property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?");
+    for (const refusal of [pydantic, groq]) {
+      const supports = vllm();
+      const { send } = modelThatRefuses(refusal);
+      await expect(negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] })).resolves.toBe(
+        'answered',
+      );
+      expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
+    }
+  });
+
+  it('reads no field from a pydantic error that is not about an extra input', async () => {
+    const missing = apiError(400, '{"detail":[{"type":"missing","loc":["body","model"],"msg":"Field required"}]}');
+    const { send } = modelThatRefuses(missing);
+    await expect(negotiate(vllm(), send, { model: 'qwen', droppable: ['model'] })).rejects.toThrow('Field required');
+  });
+
   it('drops every droppable field a refusal lists, in one retry', async () => {
     const supports = vllm();
     const notices: string[] = [];

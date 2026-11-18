@@ -213,10 +213,8 @@ describe('continueTurn', () => {
     const create = vi
       .fn<Create>()
       .mockRejectedValueOnce(
-        apiError(
-          422,
-          '[{"type":"extra_forbidden","loc":["body","add_generation_prompt"],"msg":"Extra inputs are not permitted"}]',
-        ),
+        // A wording no unknown-field reader knows: only the field's name is in it.
+        apiError(422, 'Template option add_generation_prompt cannot be used with this model'),
       )
       .mockReturnValue(replies(' more.'));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {

@@ -11,7 +11,7 @@ import {
   modelCapabilitiesFor,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
-import { getClient, resolveApiKey, sameUrl, idleTimeoutMs } from '../endpoint/client.ts';
+import { getClient, idleTimeoutMs, resolveApiKey, sameUrl } from '../endpoint/client.ts';
 import { relaxSchema, sanitizeSchema } from '../endpoint/schema-compat.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { isAbort } from '../wire/retry.ts';

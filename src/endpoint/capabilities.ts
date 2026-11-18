@@ -815,14 +815,21 @@ const NAMES_TEMPERATURE = /(['"`])temperature\1|\btemperature\s+(?:is|does|must|
  */
 const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(detail) && /only the default/i.test(detail);
 
+/** A pydantic validation error saying a field is not one the model takes, as Mistral sends it. */
+const EXTRA_INPUT = /extra_forbidden|extra inputs are not permitted/i;
+
+/** The field a pydantic validation error locates in the request body: `"loc":["body","min_p"]`. */
+const BODY_LOCATION = /"loc"\s*:\s*\[\s*"body"\s*,\s*"([^"]+)"/g;
+
 /**
- * The fields a refusal names as ones the model server has never heard of, in the two wordings
- * OpenAI has used: `Unrecognized request argument supplied: min_p` (or `arguments`, listing
- * several) and `Unknown parameter: 'min_p'.`
+ * The fields a refusal names as ones the model server has never heard of, in the wordings known:
+ * OpenAI's `Unrecognized request argument supplied: min_p` (or `arguments`, listing several) and
+ * `Unknown parameter: 'min_p'.`, Groq's `property 'min_p' is unsupported`, and a pydantic server's
+ * `"loc":["body","min_p"]` beside `extra_forbidden` or `Extra inputs are not permitted` (Mistral).
  *
  * @param detail - The server's error text.
  * @returns The top-level names, in the refusal's order and not deduplicated; empty where it is in
- * neither wording.
+ * none of those wordings.
  *
  * @remarks
  * A nested name — `'chat_template_kwargs.enable_thinking'` — is answered at its top-level field,
@@ -831,11 +838,16 @@ const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(deta
 function unknownFields(detail: string): string[] {
   const [, listed] = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i) ?? [];
   const [, , quoted] = detail.match(/unknown parameter:\s*(['"`])([^'"`]+)\1/i) ?? [];
+  const [, , property] = detail.match(/property\s+(['"`])([^'"`]+)\1\s+is\s+unsupported/i) ?? [];
   let names: string[] = [];
   if (listed) {
     names = listed.split(',');
   } else if (quoted) {
     names = [quoted];
+  } else if (property) {
+    names = [property];
+  } else if (EXTRA_INPUT.test(detail)) {
+    names = [...detail.matchAll(BODY_LOCATION)].map(([, name]) => name);
   }
   return names
     .map(
