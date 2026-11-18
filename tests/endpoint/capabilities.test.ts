@@ -218,11 +218,14 @@ describe('capabilitiesFor', () => {
 describe('resetHints', () => {
   it('offers the hints again through every fetch', () => {
     const through = { baseUrl: 'http://local/v1', fetch: vi.fn<typeof globalThis.fetch>() };
-    modelCapabilitiesFor(capabilitiesFor(through), 'qwen').thinkingHints = false;
-    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'qwen').thinkingHints = false;
+    const hints = 'chat_template_kwargs';
+    modelCapabilitiesFor(capabilitiesFor(through), 'qwen').refusedFields.add(hints);
+    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'qwen').refusedFields.add(hints);
     resetHints();
-    expect(modelCapabilitiesFor(capabilitiesFor(through), 'qwen').thinkingHints).toBe(true);
-    expect(modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'qwen').thinkingHints).toBe(true);
+    expect(modelCapabilitiesFor(capabilitiesFor(through), 'qwen').refusedFields.has(hints)).toBe(false);
+    expect(modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'qwen').refusedFields.has(hints)).toBe(
+      false,
+    );
   });
 });
 

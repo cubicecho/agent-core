@@ -172,9 +172,10 @@ describe('no-thinking hints', () => {
     ]);
   });
 
-  it('keeps them off a model a saved snapshot says refused them', async () => {
-    // Before 6.0.0 a side task latched the hints as a flag of their own, which a snapshot carries.
-    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://saved/v1' }), 'm').thinkingHints = false;
+  it('keeps them off a model that refused them', async () => {
+    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://saved/v1' }), 'm').refusedFields.add(
+      'chat_template_kwargs',
+    );
     create.mockResolvedValue(reply);
     await call(endpoint('http://saved/v1'));
     expect(sentHints(0)).toBe(false);

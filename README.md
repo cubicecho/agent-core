@@ -375,8 +375,8 @@ const title = await tryAsk("title", () => ask(config, small, "Name this chat.", 
 
 Before 6.0.0 a side task did not stream, retried nothing, and answered a 400 or 422 that
 `negotiate` could not read by sending it once more without the hints and the effort, latching the
-hints if that got through. A snapshot from then may hold `thinkingHints: false` for a model, which
-still keeps the hints off it.
+hints if that got through. Snapshots changed shape with it: 6.0.0 writes version 2, and a version 1
+snapshot from before is not imported, so the latches are learned again.
 
 ## Sizing a request before sending it
 

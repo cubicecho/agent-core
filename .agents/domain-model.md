@@ -376,7 +376,6 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **No-thinking hints:** fields sent so a reasoning model answers a side task directly, dropped
   per model once a refusal names them. Owner: `NO_THINKING`, offered to `negotiate` as droppable;
   the latch is `chat_template_kwargs` in `ModelCapabilities.refusedFields`.
-  `ModelCapabilities.thinkingHints` is only read, for a snapshot from before 6.0.0 that latched it.
 - **Structured answer:** a side task's reply as JSON for a schema. Owner: `askJson`, `parseJson`.
 - **Forgiving side task:** a side task whose failure becomes "no answer" and a notice. Owner:
   `tryAsk`.

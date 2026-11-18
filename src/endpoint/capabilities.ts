@@ -144,16 +144,6 @@ export interface ModelCapabilities {
    * what `ModelParams.singleCallMessages` does from the start.
    */
   multiCallMessages: boolean;
-  /**
-   * Takes the no-thinking hints a side task sends. Read, and no longer latched: a refusal of the
-   * hints now joins `refusedFields` as `chat_template_kwargs`, the way `negotiate` latches any
-   * droppable field.
-   *
-   * @remarks
-   * Kept so a snapshot taken before 6.0.0, in which a side task latched this itself, still keeps
-   * the hints off for the models it says refused them. `importCapabilities` is its only writer.
-   */
-  thinkingHints: boolean;
 }
 
 /** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
@@ -177,7 +167,6 @@ export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
   assistantPrefill: true,
   reasoningContent: true,
   multiCallMessages: true,
-  thinkingHints: true,
 };
 
 /** The names of those flags, for a caller that reads or latches each in turn. */
@@ -361,14 +350,13 @@ export function resetCapabilities(endpoint?: EndpointIdentity & Pick<Endpoint, '
  *
  * @remarks
  * A test seam, as `resetCapabilities` is. Every model the current scope knows is offered the hints
- * again on its next side task, whether it refused them by name or a snapshot said so;
+ * again on its next side task;
  * `resetCapabilities` forgets these with the rest.
  */
 export function resetHints() {
   for (const known of capabilities.copies()) {
     for (const supports of known.values()) {
       for (const refused of supports.models.values()) {
-        refused.thinkingHints = true;
         refused.refusedFields.delete(CHAT_TEMPLATE_KWARGS);
       }
     }

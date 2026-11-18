@@ -54,7 +54,7 @@ describe('capability snapshots', () => {
 
       const written = JSON.stringify(exportCapabilities(), null, 2);
       expect(written).toBe(`{
-  "version": 1,
+  "version": 2,
   "savedAt": "2026-01-02T03:04:05.000Z",
   "endpoints": {
     "${endpointId(config)}": {
@@ -69,7 +69,6 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": true,
           "refusedFields": [
             "chat_template_kwargs",
             "min_p",
@@ -92,7 +91,6 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": true,
           "refusedFields": [
             "chat_template_kwargs"
           ],
@@ -119,7 +117,6 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": true,
           "refusedFields": [
             "chat_template_kwargs"
           ],
@@ -175,7 +172,6 @@ describe('capability snapshots', () => {
             assistantPrefill: true,
             reasoningContent: true,
             multiCallMessages: true,
-            thinkingHints: true,
           },
           small: {
             reasoningEffort: true,
@@ -187,7 +183,6 @@ describe('capability snapshots', () => {
             assistantPrefill: true,
             reasoningContent: true,
             multiCallMessages: true,
-            thinkingHints: true,
           },
         },
       },

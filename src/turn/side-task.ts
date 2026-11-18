@@ -8,7 +8,6 @@ import {
   effortFor,
   extraFields,
   type ModelCapabilities,
-  modelCapabilitiesFor,
   type OnNotice,
 } from '../endpoint/capabilities.ts';
 import { getClient, idleTimeoutMs, resolveApiKey, sameUrl } from '../endpoint/client.ts';
@@ -257,7 +256,8 @@ async function complete(
   const supports = capabilitiesFor(config);
   // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
   // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
-  const isHinted = level === '' && modelCapabilitiesFor(supports, model).thinkingHints;
+  // A refusal of the hints is a refused field, which `extraFields` leaves out of the body.
+  const isHinted = level === '';
   const hints = isHinted ? NO_THINKING : {};
   // After the hints, so a caller's own `chat_template_kwargs` is the one sent.
   const optional = { ...hints, ...extraBody };

@@ -22,7 +22,7 @@ import {
  */
 
 /** The version `importCapabilities` accepts. Raised when what is latched changes shape. */
-export const CAPABILITY_SNAPSHOT_VERSION = 1;
+export const CAPABILITY_SNAPSHOT_VERSION = 2;
 
 /** What one model on a model server refused. `true` is not refused, as on `ModelCapabilities`. */
 export interface ModelSnapshot {
@@ -46,11 +46,6 @@ export interface ModelSnapshot {
    * from before it was latched lacks it, which `importCapabilities` reads as not refused.
    */
   multiCallMessages: boolean;
-  /**
-   * Takes the no-thinking hints `ask` sends. Only a snapshot from before 6.0.0 holds it off: a
-   * refusal of the hints is now one of `refusedFields`.
-   */
-  thinkingHints: boolean;
   /**
    * Efforts refused by value rather than by field, so a restart does not spend a request per rung
    * walking the ladder again. Absent in a snapshot taken before they were latched, which reads as
