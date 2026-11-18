@@ -134,6 +134,63 @@ export const SIDE_TASK_DEFAULTS: Readonly<SideTaskSettings> = Object.freeze({
   maxRetries: 2,
 });
 
+/** Choosing an exchange's tools before it starts, by a small model or by the request's own words. */
+export interface PreselectSettings {
+  /** The preselector's reply ceiling, in tokens: a short JSON list of names. */
+  maxTokens: number;
+  /**
+   * Where a request is cut for the preselector, in characters.
+   *
+   * @remarks
+   * A tool choice is made on what the work is, which is the top of a request rather than all of
+   * it — and the whole of a long one is paid for again in the preselection call.
+   */
+  maxPromptChars: number;
+  /**
+   * The least BM25 score a best match may have and still be acted on without a model.
+   *
+   * @remarks
+   * A score, so it is read against the shape of the corpus rather than as a percentage: a query
+   * term carried by half the catalogue is worth about 0.7, and one carried by a single tool about
+   * 3. One at this floor is therefore "something more distinctive than a word every other tool
+   * uses", which is the weakest evidence worth skipping a round trip on. A catalogue of three or
+   * four tools rarely clears it, which is right: one that small is not worth choosing from.
+   */
+  keywordMinScore: number;
+  /**
+   * How far below the last picked tool the best unpicked one must score, as a share of it, for the
+   * cut to count as clean.
+   *
+   * @remarks
+   * The cap is the only reason a hit is dropped, so a hit just under it scoring nearly as much as
+   * one just above means the ranking chose arbitrarily, which is the case a model is for.
+   */
+  keywordDropoffShare: number;
+  /**
+   * BM25's term saturation, Robertson's usual value.
+   *
+   * @remarks
+   * Not tuned for this corpus, because tuning against a catalogue of forty short documents would be
+   * fitting noise. `keywordDropoffShare` and `keywordMinScore` are the knobs worth turning.
+   */
+  bm25K1: number;
+  /** BM25's length normalisation, Robertson's usual value; see `bm25K1`. */
+  bm25B: number;
+  /** The longest word, in characters, the keyword match leaves its trailing `s` on: `bus` and `was` are not plurals. */
+  shortestPluralChars: number;
+}
+
+/** How `preselect` and `preselectByKeywords` choose, where their caller does not say. */
+export const PRESELECT_DEFAULTS: Readonly<PreselectSettings> = Object.freeze({
+  maxTokens: 256,
+  maxPromptChars: 2000,
+  keywordMinScore: 1,
+  keywordDropoffShare: 0.5,
+  bm25K1: 1.2,
+  bm25B: 0.75,
+  shortestPluralChars: 3,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

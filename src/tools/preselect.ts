@@ -1,4 +1,5 @@
 import type { Endpoint } from '../core/config.ts';
+import { PRESELECT_DEFAULTS } from '../core/defaults.ts';
 import { byCodeUnit, counted, isRecord } from '../core/guards.ts';
 import type { OnNotice } from '../endpoint/capabilities.ts';
 import { askJson, tryAsk } from '../turn/side-task.ts';
@@ -15,15 +16,7 @@ import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
  * names, which costs nothing and is trusted only when the words are clear about it.
  */
 
-/**
- * Where a request is cut for the preselector, in characters.
- *
- * @remarks
- * A tool choice is made on what the work is, which is the top of a request rather than all of
- * it — and the whole of a long one is paid for again in the preselection call. `preselectInput`
- * takes another number for a caller whose requests are not shaped that way.
- */
-const PRESELECT_PROMPT_CHARS = 2000;
+const { bm25K1, bm25B, shortestPluralChars } = PRESELECT_DEFAULTS;
 
 /**
  * The system prompt a preselector is given, holding it to the cap its answer will be held to.
@@ -77,8 +70,11 @@ export const PRESELECT_SYSTEM = preselectSystem();
  * @returns The message text: the listing under a `# Tool catalogue` heading, then the cut request
  * under `# Request`.
  */
-export const preselectInput = (catalog: CatalogServer[], prompt: string, maxPromptChars = PRESELECT_PROMPT_CHARS) =>
-  `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, maxPromptChars)}`;
+export const preselectInput = (
+  catalog: CatalogServer[],
+  prompt: string,
+  maxPromptChars = PRESELECT_DEFAULTS.maxPromptChars,
+) => `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, maxPromptChars)}`;
 
 /**
  * Resolves a preselection against the catalogue: unknown names dropped, count capped.
@@ -101,46 +97,8 @@ export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoa
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
 }
 
-/**
- * Saturation and length normalisation for the BM25 score. Robertson's usual values.
- *
- * @remarks
- * Nothing here is tuned for this corpus, because tuning them against a catalogue of forty short
- * documents would be fitting noise. `dropoff` and `minScore` are the knobs worth turning.
- */
-const BM25_K1 = 1.2;
-const BM25_B = 0.75;
-
 /** What BM25 adds to both counts in its inverse document frequency, so a term every document holds still scores. */
 const IDF_SMOOTHING = 0.5;
-
-/**
- * The least a best match may score and still be acted on without a model.
- *
- * @remarks
- * A BM25 score, so it is read against the shape of the corpus rather than as a percentage: a
- * query term carried by half the catalogue is worth about 0.7, and one carried by a single tool
- * about 3. One at this floor is therefore "something more distinctive than a word every other
- * tool uses", which is the weakest evidence worth skipping a round trip on.
- *
- * A term is distinctive only against other terms, so a catalogue of three or four tools rarely
- * clears it. That is the right answer rather than a gap: a catalogue that small is not costing
- * enough tokens to be worth choosing from in the first place.
- */
-const KEYWORD_MIN_SCORE = 1;
-
-/**
- * How far the best unpicked tool must fall below the last picked one for the cut to count clean.
- *
- * @remarks
- * Half. The cap is the only reason a hit is dropped, so a hit just underneath it scoring nearly
- * as much as one just above means the ranking chose arbitrarily, which is exactly the case a
- * model should be spent on.
- */
-const KEYWORD_DROPOFF = 0.5;
-
-/** The longest word `terms` leaves its trailing `s` on: `bus` and `was` are not plurals. */
-const SHORTEST_PLURAL = 3;
 
 /** What the preselector's reply schema is called on the wire. */
 const PRESELECT_SCHEMA_NAME = 'preselection';
@@ -184,7 +142,7 @@ const terms = (text: string): string[] =>
     .split(/[^a-z0-9]+/)
     .filter((word) => word.length > 1 && !NOISE.has(word))
     .map((word) => {
-      const isPlural = word.length > SHORTEST_PLURAL && word.endsWith('s') && word.endsWith('ss') === false;
+      const isPlural = word.length > shortestPluralChars && word.endsWith('s') && word.endsWith('ss') === false;
       return isPlural ? word.slice(0, -1) : word;
     });
 
@@ -257,9 +215,9 @@ export function preselectByKeywords(
   prompt: string,
   {
     maxPerLoad = MAX_PER_LOAD,
-    minScore = KEYWORD_MIN_SCORE,
-    dropoff = KEYWORD_DROPOFF,
-    maxPromptChars = PRESELECT_PROMPT_CHARS,
+    minScore = PRESELECT_DEFAULTS.keywordMinScore,
+    dropoff = PRESELECT_DEFAULTS.keywordDropoffShare,
+    maxPromptChars = PRESELECT_DEFAULTS.maxPromptChars,
   }: KeywordPreselectOptions = {},
 ): KeywordPreselection {
   const empty: KeywordPreselection = { names: [], confident: false, ranked: [] };
@@ -298,8 +256,8 @@ export function preselectByKeywords(
       }
       const held = documents.get(term) ?? 0;
       const idf = Math.log(1 + (docs.length - held + IDF_SMOOTHING) / (held + IDF_SMOOTHING));
-      const norm = BM25_K1 * (1 - BM25_B + (BM25_B * doc.terms.length) / length);
-      score += (idf * found * (BM25_K1 + 1)) / (found + norm);
+      const norm = bm25K1 * (1 - bm25B + (bm25B * doc.terms.length) / length);
+      score += (idf * found * (bm25K1 + 1)) / (found + norm);
     }
     if (score > 0) {
       ranked.push({ name: doc.name, score });
@@ -390,7 +348,7 @@ export async function preselect(
   {
     signal,
     onNotice,
-    maxTokens = 256,
+    maxTokens = PRESELECT_DEFAULTS.maxTokens,
     temperature,
     reasoningEffort,
     extraBody,
