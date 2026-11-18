@@ -4,7 +4,7 @@ import { isPositive } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
 import { attribute, textOf } from '../wire/text.ts';
-import { CHARS_PER_TOKEN, estimateTokens } from '../wire/tokens.ts';
+import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
 import { PartType, Role } from '../wire/wire.ts';
 import { type HookEvent, INJECT_EVENTS } from './hook-events.ts';
 
@@ -309,7 +309,7 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
       continue;
     }
     if (estimateTokens(text) > cap) {
-      text = `${text.slice(0, cap * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+      text = clipToTokens(text, cap);
     }
     const tokens = estimateTokens(text);
     remaining -= tokens;

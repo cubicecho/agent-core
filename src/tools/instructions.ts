@@ -6,7 +6,7 @@
  * of a model, attributed and fenced, so every host says it the same way.
  */
 import { untrusted } from '../wire/text.ts';
-import { CHARS_PER_TOKEN, estimateTokens } from '../wire/tokens.ts';
+import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
 import type { CatalogServer } from './catalog.ts';
 
 /**
@@ -90,7 +90,7 @@ function section(label: string, text: string, maxTokens: number): string {
   if (isOver === false) {
     return `## ${label}\n\n${untrusted(text, { source: label })}`;
   }
-  const kept = `${text.slice(0, maxTokens * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+  const kept = clipToTokens(text, maxTokens);
   return [
     `## ${label}`,
     '',

@@ -33,6 +33,16 @@ export const CHARS_PER_TOKEN = 4;
  */
 export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
 
+/**
+ * Text cut to fit a token budget, with an ellipsis where the cut is.
+ *
+ * @param text - What to cut. Cut whatever its length, so a caller checks the budget first.
+ * @param maxTokens - The budget, in tokens of `CHARS_PER_TOKEN` characters.
+ * @returns The head of the text, trailing space trimmed, and `…`: no longer than the budget.
+ */
+export const clipToTokens = (text: string, maxTokens: number) =>
+  `${text.slice(0, maxTokens * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+
 /** Where `compact` starts counting in thousands. */
 const THOUSAND = 1000;
 
