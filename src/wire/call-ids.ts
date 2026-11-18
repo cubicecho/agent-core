@@ -124,6 +124,15 @@ export function freshCallId(taken: Set<string>, mint: CallIdMinter = mintCallId)
   throw new Error(`mintCallId gave ${MINT_ATTEMPTS} ids in a row that the transcript already uses`);
 }
 
+/** Whose ids a turn's calls go under: the server's wherever they are free, or always minted ones. */
+export const CallIds = {
+  /** The server's id, as sent, unless it is empty or the transcript already uses it. */
+  Kept: 'kept',
+  /** A minted id for every call, for a host that matches answers to calls across transcripts. */
+  Minted: 'minted',
+} as const;
+export type CallIds = (typeof CallIds)[keyof typeof CallIds];
+
 /**
  * A turn's calls under ids no other call in the transcript has: the server's own kept wherever it
  * is free, and a minted one in place of a missing or repeated one.
@@ -131,6 +140,7 @@ export function freshCallId(taken: Set<string>, mint: CallIdMinter = mintCallId)
  * @param calls - The turn's calls. Not written to.
  * @param messages - The transcript the turn's assistant message is about to join. Not written to.
  * @param [mint] - Where a new id comes from.
+ * @param [ids] - `minted` replaces every id, a free one too.
  * @returns The calls, each the object it was where its id stood and a copy under a new id where
  * it did not.
  *
@@ -141,15 +151,20 @@ export function freshCallId(taken: Set<string>, mint: CallIdMinter = mintCallId)
  * on every turn does. That happens once, before the message is stored, so the assistant message
  * and the result that answers it carry the new id on every request after; the one request whose
  * cache it can cost is the next, and an id answered twice costs more than that.
+ *
+ * Unique within one transcript is not unique across several: two runs of a server that counts
+ * from zero both hold a `call_0`. `minted` is for a host that hands calls out of the run and
+ * matches the answers back by id, as one resuming a waiting run does.
  */
 export function distinctCallIds(
   calls: readonly ToolCall[],
   messages: readonly OpenAI.ChatCompletionMessageParam[],
   mint: CallIdMinter = mintCallId,
+  ids: CallIds = CallIds.Kept,
 ): ToolCall[] {
   const taken = callIdsIn(messages);
   return calls.map((call) => {
-    const isFree = call.id !== '' && taken.has(call.id) === false;
+    const isFree = ids === CallIds.Kept && call.id !== '' && taken.has(call.id) === false;
     if (isFree) {
       taken.add(call.id);
       return call;

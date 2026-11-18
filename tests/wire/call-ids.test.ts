@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { callIdMinter, callIdsIn, distinctCallIds, freshCallId, mintCallId } from '../../src/wire/call-ids.ts';
+import { CallIds, callIdMinter, callIdsIn, distinctCallIds, freshCallId, mintCallId } from '../../src/wire/call-ids.ts';
 import type { ToolCall } from '../../src/wire/tool-calls.ts';
 import { FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import { type Message, MINTED_ID } from '../helpers.ts';
@@ -55,6 +55,16 @@ describe('distinctCallIds', () => {
     expect(new Set([...ids, 'c0', 'orphan']).size).toBe(ids.length + 2);
     // Copies: the turn as the server sent it is left as it was.
     expect(calls.map(({ id }) => id)).toEqual(['', 'c0', 'orphan', 'dup', 'dup']);
+  });
+
+  it('mints every id under `minted`, a free one included, and still keeps them apart', () => {
+    const calls = [call('call_x'), call(''), call('c0')];
+    const mint = callIdMinter(7);
+    const ids = distinctCallIds(calls, history, mint, CallIds.Minted).map(({ id }) => id);
+    const expected = callIdMinter(7);
+    expect(ids).toEqual([expected(), expected(), expected()]);
+    expect(new Set([...ids, 'c0', 'orphan']).size).toBe(ids.length + 2);
+    expect(calls.map(({ id }) => id)).toEqual(['call_x', '', 'c0']);
   });
 
   it('asks again where the minter gives an id already taken', () => {

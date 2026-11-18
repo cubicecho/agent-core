@@ -67,7 +67,7 @@ import {
 import { continueTurn } from '../turn/continuation.ts';
 import { runTurn } from '../turn/run-turn.ts';
 import { type SideTask, taskCall, tryAsk } from '../turn/side-task.ts';
-import { type CallIdMinter, mintCallId as defaultMinter, distinctCallIds } from '../wire/call-ids.ts';
+import { type CallIdMinter, CallIds, mintCallId as defaultMinter, distinctCallIds } from '../wire/call-ids.ts';
 import {
   AgentLoopError,
   type AgentLoopFailure,
@@ -659,6 +659,20 @@ export interface AgentLoopOptions {
    * `callIdMinter(seed)` for ids a test can predict. See `distinctCallIds`.
    */
   mintCallId?: CallIdMinter;
+  /**
+   * Whose ids the model's calls go under: the server's wherever the transcript has not used them,
+   * or `minted`, an id from `mintCallId` for every call.
+   *
+   * @defaultValue `kept`
+   *
+   * @remarks
+   * An id is unique within its own transcript either way. `minted` is for a host that matches
+   * answers to calls across runs — one that hands calls back to an app and resumes whichever run
+   * is waiting on the id that comes back — since many servers count ids from zero on every turn.
+   * The id is given before the assistant message is stored, so the transcript, the `tool-call`
+   * and `tool-result` events, `onToolCall`, `onToolResult` and `toolCalls` all carry it.
+   */
+  callIds?: CallIds;
   /**
    * Each step's request as first built, before it goes out — for measuring what was sent, not for
    * changing it, which is `beforeStep`'s.
@@ -1512,6 +1526,7 @@ async function runSteps(
     formatToolError = defaultToolError,
     recoverToolCalls: recover = true,
     mintCallId = defaultMinter,
+    callIds = CallIds.Kept,
     maxContinuations = 0,
     toolOrder = true,
     dedupeToolCalls = true,
@@ -1840,7 +1855,7 @@ async function runSteps(
     const { content, recovered } = read;
     // Once, before the message is stored: every later request replays these ids, and each tool
     // result answers one of them.
-    const calls = distinctCallIds(read.calls, messages, mintCallId);
+    const calls = distinctCallIds(read.calls, messages, mintCallId, callIds);
     const shown: Turn = { ...turn, content, toolCalls: calls };
     onTurn?.(shown, step);
 

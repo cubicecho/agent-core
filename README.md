@@ -763,6 +763,11 @@ is stored, so the call and its result carry the new id on every later request. `
 the source of ids — `callIdMinter(seed)` gives a repeatable sequence for a test — and
 `distinctCallIds` is the same check for a host with its own loop.
 
+An id unique within one transcript is not unique across several: two runs of a server that counts
+from zero both hold a `call_0`. A host that hands calls out of the run and matches the answers back
+by id passes `callIds: 'minted'`, and every call gets a minted id before its message is stored, so
+the transcript, the events, `onToolResult` and `toolCalls` all carry the one the host hands out.
+
 Every request declares its tools in name order, whichever way the caller assembled the array. A
 chat template renders the tool block ahead of the system prompt, so the tool array is the first
 thing a prompt cache has to match, and an array built from a map, from database rows, or from the
