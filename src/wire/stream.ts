@@ -828,13 +828,16 @@ export async function streamTurn(
       ...(watched ? { timeout: NO_SDK_TIMEOUT } : {}),
       ...(headers ? { headers } : {}),
     });
-    // The field's reasoning here, the fenced kind in the splitter, which can still move text
-    // already read as answer into reasoning when a closing tag turns up with no opening one.
-    const reasoning: string[] = [];
+    // Both kinds of scratchpad in the order they arrived: the field's as it comes, the fenced
+    // kind as the splitter settles it, including answer it moves to reasoning on a lone close.
+    let reasoning = '';
+    let fenced = 0;
     let reasoningField: ReasoningField | undefined;
     const details: ReasoningDetail[] = [];
     const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
     const report = (parts: Split[]) => {
+      reasoning += splitter.reasoning.slice(fenced);
+      fenced = splitter.reasoning.length;
       for (const part of parts) {
         (part.kind === SPLIT_REASONING ? onThinking : onOutput)?.(part.text);
       }
@@ -845,7 +848,7 @@ export async function streamTurn(
     if (inFlight) {
       // Lazy, so a stream nobody stops pays nothing for it. Text held back as a possible tag is
       // left out: it is a few characters that may yet be a marker.
-      inFlight.read = () => partialTurn(splitter.output, reasoning.join('') + splitter.reasoning, calls, mintCallId);
+      inFlight.read = () => partialTurn(splitter.output, reasoning, calls, mintCallId);
     }
     const usage = noUsage();
     // The usage block's own cache count wins over llama.cpp's, which is the same number in the
@@ -902,7 +905,7 @@ export async function streamTurn(
         produced.any = true;
       }
       if (thinking) {
-        reasoning.push(thinking);
+        reasoning += thinking;
         onThinking?.(thinking);
       }
       for (const block of blocks) {
@@ -968,7 +971,7 @@ export async function streamTurn(
       toolCalls: assembledCalls(calls, mintCallId),
       usage,
       finishReason,
-      reasoning: reasoning.join('') + splitter.reasoning,
+      reasoning,
       ...(reasoningField ? { reasoningField } : {}),
       ...(details.length ? { reasoningDetails: details } : {}),
     };
