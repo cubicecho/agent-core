@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
+import { RETRY_DEFAULTS } from '../../src/core/defaults.ts';
 import {
   backoffMs,
   ContextOverflow,
@@ -81,14 +82,15 @@ describe('isAbort', () => {
 
 describe('backoffMs', () => {
   it('grows, stays under the cap, and never waits the same time twice', () => {
+    const { firstBackoffMs, maxBackoffMs, growthPerAttempt, jitterFloorShare } = RETRY_DEFAULTS;
     const waits = [0, 1, 2, 3, 9].map(backoffMs);
     for (const wait of waits) {
-      expect(wait).toBeLessThanOrEqual(8000);
+      expect(wait).toBeLessThanOrEqual(maxBackoffMs);
     }
     // Jittered into the top half of each step, so the steps stay ordered but two tasks failing
     // together do not come back in lockstep.
-    expect(backoffMs(0)).toBeGreaterThanOrEqual(250);
-    expect(backoffMs(3)).toBeGreaterThanOrEqual(2000);
+    expect(backoffMs(0)).toBeGreaterThanOrEqual(firstBackoffMs * jitterFloorShare);
+    expect(backoffMs(3)).toBeGreaterThanOrEqual(firstBackoffMs * growthPerAttempt ** 3 * jitterFloorShare);
   });
 });
 

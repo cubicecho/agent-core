@@ -41,7 +41,7 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 
 | Folder | The concept | Modules |
 | --- | --- | --- |
-| `core` | what every other folder shares, and no concept of its own | `consts` `guards` `platform` `digest` `scope` `config` |
+| `core` | what every other folder shares, and no concept of its own | `consts` `defaults` `guards` `platform` `digest` `scope` `config` |
 | `wire` | what is sent, what comes back, and how it fails | `wire` `text` `stream` `thinking` `tool-calls` `call-ids` `tokens` `retry` `errors` |
 | `endpoint` | one server, and what it turned out to support | `client` `capabilities` `calibration` `schema-compat` `slots` |
 | `turn` | one request, negotiated and retried | `run-turn` `continuation` `side-task` |

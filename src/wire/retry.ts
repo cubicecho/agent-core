@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { RETRY_DEFAULTS } from '../core/defaults.ts';
 import { ABORT_ERROR, ABORT_EVENT } from '../core/platform.ts';
 import { HttpStatus } from './wire.ts';
 
@@ -10,6 +11,8 @@ import { HttpStatus } from './wire.ts';
  * of the loop with nothing to do with the model's answer: whether the request was lost, whether
  * it was too big to have been sent at all, and how long to wait before sending it again.
  */
+
+const { firstBackoffMs, maxBackoffMs, growthPerAttempt, jitterFloorShare } = RETRY_DEFAULTS;
 
 /** The model server stopped answering mid-request. Its own class so the retry can recognise it. */
 export class EndpointSilent extends Error {
@@ -190,24 +193,18 @@ export const LOADING_POLL_MS = 3000;
 /** How long `runTurn` waits for a model to load unless told otherwise. */
 export const LOADING_TIMEOUT_MS = 120_000;
 
-/** The first backoff, before jitter, which each attempt after it doubles. */
-const BACKOFF_BASE_MS = 500;
-
-/** The longest a backoff grows to, before jitter. */
-const BACKOFF_CEILING_MS = 8000;
-
-/** The least of a backoff that jitter leaves: a wait is somewhere between this share of it and all of it. */
-const JITTER_FLOOR = 0.5;
-
 /**
  * How long to wait before a retry: exponential, with jitter so several tasks failing at once do
  * not return in lockstep.
  *
- * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
- * @returns Milliseconds, somewhere between half of that wait and all of it, and not a whole number.
+ * @param attempt - Zero-based. Grows from `RETRY_DEFAULTS.firstBackoffMs` by `growthPerAttempt` an
+ * attempt, to a ceiling of `maxBackoffMs`, before jitter.
+ * @returns Milliseconds, somewhere between `jitterFloorShare` of that wait and all of it, and not a
+ * whole number.
  */
 export const backoffMs = (attempt: number) =>
-  Math.min(BACKOFF_CEILING_MS, 2 ** attempt * BACKOFF_BASE_MS) * (JITTER_FLOOR + Math.random() * (1 - JITTER_FLOOR));
+  Math.min(maxBackoffMs, growthPerAttempt ** attempt * firstBackoffMs) *
+  (jitterFloorShare + Math.random() * (1 - jitterFloorShare));
 
 /**
  * A delay an abort cuts short, rejecting rather than resolving early.
