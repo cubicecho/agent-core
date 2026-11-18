@@ -56,7 +56,7 @@ What this package needs to know about a caller's configuration.
 
 - `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
 - `Endpoint` (type) — Where to send a request and how long to wait.
-- `EndpointIdentity` (type) — What makes a model server the one it is: where it lives and whose key reaches it.
+- `EndpointIdentity` (type) — What makes a model server the one it is, as far as can be written down: where it lives and whose key reaches it.
 - `ModelParams` (type) — What to ask the model for.
 - `normalizeBaseUrl` — A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
 - `ReasoningReplay` — Which assistant messages an exchange writes the model's scratchpad onto, under the field it arrived in.
@@ -99,7 +99,7 @@ What a model server turned out not to support, and answering it when it says so.
 - `contextLimitFor` — How much a model will read, in tokens.
 - `EndpointProbeError` — `probeEndpoint` could not list a model server's models; `kind` says why.
 - `endpointId` — `endpointKey` hashed, for the remembered facts that can leave the process.
-- `endpointKey` — What counts as one model server, everywhere in this package that has to remember something about one — the model listings directly, and `capabilities`, the no-thinking hints among them, through its digest `endpointId`.
+- `endpointKey` — What counts as one model server inside each `perFetch` copy, everywhere in this package that remembers something about one: the clients, the listings and served windows, and, through its digest `endpointId`, the capability latches and calibration.
 - `firstTokenMs` — The wait for a streamed reply's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for a model server, built once and kept.
 - `LookupOptions` (type) — What a lookup takes besides the server: `listModels`, `servedWindow` and `contextLimitFor`.
@@ -293,7 +293,7 @@ What model servers and models refused, carried across a restart.
 - `CAPABILITY_SNAPSHOT_VERSION` — The version `importCapabilities` accepts.
 - `CapabilitySnapshot` (type) — Every latched refusal in the process, JSON-safe.
 - `EndpointSnapshot` (type) — What one model server refused, and under it what each of its models did.
-- `exportCapabilities` — Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
+- `exportCapabilities` — Every refusal this process has latched through one `fetch`, as a JSON-safe blob to store and hand back on boot.
 - `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
 - `ModelSnapshot` (type) — What one model on a model server refused.
 

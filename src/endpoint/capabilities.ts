@@ -1,10 +1,9 @@
-import { type EndpointIdentity, RESERVED_BODY_FIELDS } from '../core/config.ts';
+import { type Endpoint, type EndpointIdentity, RESERVED_BODY_FIELDS } from '../core/config.ts';
 import { getOrCreate, isPositive } from '../core/guards.ts';
-import { scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
 import type { Produced } from '../wire/stream.ts';
 import { CHAT_TEMPLATE_KWARGS, PARALLEL_TOOL_CALLS } from '../wire/wire.ts';
-import { endpointId } from './client.ts';
+import { endpointId, perFetch } from './client.ts';
 import { isGrammarError } from './schema-compat.ts';
 
 /**
@@ -197,7 +196,9 @@ export type OnNotice = (message: string) => void;
  * What each model server cannot do, remembered for the life of the process.
  *
  * @remarks
- * Keyed by `endpointId` — `endpointKey` hashed, so a snapshot holds no key — because these are
+ * Keyed by `endpointId` — `endpointKey` hashed, so a snapshot holds no key — in the copy of the
+ * model server's `fetch` (`perFetch`), as every cache of a model server is: two functions behind one
+ * URL and key may reach two servers, and one's refusal must not degrade the other. These are
  * facts about the server on the other end and not about this one. A llama.cpp box that cannot
  * compile a grammar and a cloud API that can are both reachable from one settings row over its
  * lifetime — an operator retargets it from Ollama this afternoon to OpenAI this evening — and the
@@ -212,25 +213,23 @@ export type OnNotice = (message: string) => void;
  * behind it, including the `models` map underneath, which is the level where two keys through
  * one host are most likely to differ at all.
  */
-const capabilities = scoped(() => new Map<string, Capabilities>());
+const capabilities = perFetch(() => new Map<string, Capabilities>());
 
 /**
  * What this model server is known not to support.
  *
- * @param baseUrl - Where the model server is. The two flags on it are per-server; what is per-model
- * hangs off `models`, which `modelCapabilitiesFor` reads.
- * @param [apiKey] - The rest of the model server's identity. Optional, because it changes nothing
- * for the ordinary case of one key per base URL and a caller with one need not thread it through;
- * absent reads as `NO_KEY`, exactly as it does in `getClient`, so a model server with no key and
- * one that passes `undefined` share an entry rather than holding two.
+ * @param endpoint - The model server: its URL, its key, absent reading as `NO_KEY`, and the
+ * `fetch` it sends through, absent being the global one. A whole `Endpoint` will do.
  * @returns The model server's live entry, made with both flags on and no models the first time it
  * is asked for.
  *
  * @remarks
- * The same object every time, so what `negotiate` latches off stays off.
+ * The same object every time for the same model server, as `getClient` and the listings tell one
+ * apart, so what `negotiate` latches off stays off. The two flags on it are per server; what is
+ * per model hangs off `models`, which `modelCapabilitiesFor` reads.
  */
-export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities {
-  return capabilitiesById(endpointId({ baseUrl, apiKey }));
+export function capabilitiesFor(endpoint: EndpointIdentity & Pick<Endpoint, 'fetch'>): Capabilities {
+  return capabilitiesById(endpointId(endpoint), endpoint.fetch);
 }
 
 /**
@@ -320,20 +319,23 @@ export function latchEfforts(refused: ModelCapabilities, efforts: Iterable<strin
 /**
  * Every model server's capabilities by `endpointId`, the live objects, for `exportCapabilities`.
  *
+ * @param [fetch] - Whose copy to read: the model servers that send through this function, absent
+ * being the global one.
  * @returns The map itself rather than a copy, read-only by type alone: what is latched or forgotten
  * afterwards shows through it.
  */
-export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabilities();
+export const knownCapabilities = (fetch?: Endpoint['fetch']): ReadonlyMap<string, Capabilities> => capabilities(fetch);
 
 /**
  * The capabilities of the model server with this `endpointId`, created optimistic if unseen — the
  * way `importCapabilities` reaches a model server it has only a digest for.
  *
  * @param id - The digest `endpointId` gives. Not checked: any string opens an entry under itself.
+ * @param [fetch] - The function the model server sends through, absent being the global one.
  * @returns The live entry, the same object `capabilitiesFor` hands over for that model server.
  */
-export function capabilitiesById(id: string): Capabilities {
-  return getOrCreate(capabilities(), id, () => ({
+export function capabilitiesById(id: string, fetch?: Endpoint['fetch']): Capabilities {
+  return getOrCreate(capabilities(fetch), id, () => ({
     strictSchemas: true,
     usageInStream: true,
     models: new Map(),
@@ -344,8 +346,9 @@ export function capabilitiesById(id: string): Capabilities {
 /**
  * Forgets what one model server refused, or every model server's when told none.
  *
- * @param [endpoint] - Whose to forget, by the same identity `capabilitiesFor` takes. Absent clears
- * every model server, which is what tests and `resetAll` mean by it.
+ * @param [endpoint] - Whose to forget, by the same identity `capabilitiesFor` takes, its `fetch`
+ * included. Absent clears every model server through every function, which is what tests and
+ * `resetAll` mean by it.
  * @returns Whether there was anything to forget.
  *
  * @remarks
@@ -355,13 +358,13 @@ export function capabilitiesById(id: string): Capabilities {
  * *knows* it changed: a settings row saved, a health check that reads a new build string, an
  * operator pressing a button. See `expireCapabilities` for the case where nobody knows.
  */
-export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
+export function resetCapabilities(endpoint?: EndpointIdentity & Pick<Endpoint, 'fetch'>): boolean {
   if (!endpoint) {
-    const held = capabilities().size > 0;
-    capabilities().clear();
+    const held = capabilities.copies().some((known) => known.size > 0);
+    capabilities.reset();
     return held;
   }
-  return capabilities().delete(endpointId(endpoint));
+  return capabilities(endpoint.fetch).delete(endpointId(endpoint));
 }
 
 /**
@@ -373,10 +376,12 @@ export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
  * `resetCapabilities` forgets these with the rest.
  */
 export function resetHints() {
-  for (const supports of capabilities().values()) {
-    for (const refused of supports.models.values()) {
-      refused.thinkingHints = true;
-      refused.refusedFields.delete(CHAT_TEMPLATE_KWARGS);
+  for (const known of capabilities.copies()) {
+    for (const supports of known.values()) {
+      for (const refused of supports.models.values()) {
+        refused.thinkingHints = true;
+        refused.refusedFields.delete(CHAT_TEMPLATE_KWARGS);
+      }
     }
   }
 }
@@ -386,7 +391,7 @@ export function resetHints() {
  *
  * @param maxAgeMs - How old an entry may be. Zero or less expires everything.
  * @param [now] - The clock, for tests.
- * @returns How many model servers were forgotten.
+ * @returns How many model servers were forgotten, through every `fetch` together.
  *
  * @remarks
  * The other half of the problem `resetCapabilities` solves: a server upgraded behind the same URL
@@ -401,12 +406,14 @@ export function resetHints() {
  */
 export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
   let dropped = 0;
-  for (const [id, known] of capabilities()) {
-    if (now - known.since < maxAgeMs) {
-      continue;
+  for (const known of capabilities.copies()) {
+    for (const [id, supports] of known) {
+      if (now - supports.since < maxAgeMs) {
+        continue;
+      }
+      known.delete(id);
+      dropped++;
     }
-    capabilities().delete(id);
-    dropped++;
   }
   return dropped;
 }

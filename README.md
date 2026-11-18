@@ -72,7 +72,7 @@ import {
 } from "@cubicecho/agent-core";
 
 const declared = sanitizeTools(tools);
-const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+const supports = capabilitiesFor(config);
 
 const turn = await negotiate(supports, (supports, produced) =>
   streamTurn(
@@ -485,7 +485,7 @@ image, or outside one to eight characters a token, is not taken.
 caller sizing its own work can use the same number:
 
 ```ts
-const charsPerToken = charsPerTokenFor(capabilitiesFor(config.baseUrl, config.apiKey), config.model);
+const charsPerToken = charsPerTokenFor(capabilitiesFor(config), config.model);
 const plan = planCompaction(messages, { limit, used, charsPerToken });
 ```
 
@@ -1910,16 +1910,23 @@ const result = await runAgentLoop({ config, messages, dispatch });
 
 It is runtime only. `parseSpec` never reads one, `exportSpec` never writes one, `resolveAgentSpec`
 never produces one, and it is not part of `EndpointIdentity`, `endpointKey` or `endpointId`, so a
-snapshot and a digest are what they were. The app adds it to the resolved endpoint, as it adds the
-key.
+digest is what it was. The app adds it to the resolved endpoint, as it adds the key.
 
-Nothing found through one function answers for another, or for the global `fetch`. Every cache in
-`client.ts`, the client pool and the listings and native-route answers, is held once for the global
-`fetch` and once per function, in a `WeakMap` under the function, so two endpoints with one URL and
-different functions never share a client or a listing, and a function the app drops takes its
-copies with it. An app that makes a function per run makes a client per run too, which is cheap
-when the function is in process. The capability latches, the no-thinking hints among them, stay keyed on the
-URL and the key alone, since they are what a snapshot carries to the next process.
+Nothing found through one function answers for another, or for the global `fetch`. Every cache of a
+model server, the client pool, the listings and native-route answers, the capability latches (the
+no-thinking hints among them) and the calibrated characters per token, is held once for the global
+`fetch` and once per function, in a `WeakMap` under the function. Two endpoints with one URL and
+different functions never share a client, a listing or a refusal, and a function the app drops
+takes its copies with it. An app that makes a function per run makes a client per run too, which is
+cheap when the function is in process, and learns each refusal again per run.
+
+A snapshot cannot hold a function, so `exportCapabilities` and `importCapabilities` take the one to
+read or write the latches for, a whole endpoint being fine, and the global `fetch`'s when given none:
+
+```ts
+importCapabilities(settings.capabilities, config);   // on boot, with this process's `forward`
+settings.capabilities = exportCapabilities(config);  // the latches learned through `forward`
+```
 
 A side task is a streamed request like any other, so a function that answers one in process answers
 it as a stream. It reaches the same function in two ways. `taskCall`, and so the loop's own `preselect` and
@@ -2132,9 +2139,11 @@ capabilities, which include the models that refused a side task's no-thinking hi
 characters per token each model was measured at, is keyed on the model server's capabilities object, so
 it goes with them. All three are
 held once per runtime — once per process, unless you make another, [below](#a-runtime-of-its-own)
-— and keyed on the same notion of a model server — its base URL and its API key — and the clients' key carries the request
-timeout as well, since that changes how a request is sent. The clients and listings are held apart
-per `Endpoint.fetch` as well, [above](#a-model-server-answered-in-process).
+— and keyed on the same notion of a model server: its base URL as `baseUrlKey` writes it, its API
+key, and its `Endpoint.fetch` ([above](#a-model-server-answered-in-process)). The clients' key
+carries the request timeout as well, since that changes how a request is sent. The slots a session
+is pinned to are the one exception: they are one server's physical caches, so they are kept per URL
+and model alone.
 
 **They are keyed per deployment, not per request.** What belongs in them is a model server an
 operator configured: a settings row, an agent definition, an environment variable. Everything
@@ -2195,7 +2204,9 @@ settings.capabilities = exportCapabilities();       // on shutdown, or after a n
 ```
 
 A snapshot names model servers by `endpointId`, a SHA-256 digest of the URL and key, so it can be
-written to a settings row or a file without a credential going with it. Importing merges and only
+written to a settings row or a file without a credential going with it. It holds the latches of the
+model servers that send through the global `fetch`; an app with a function of its own passes it on
+both sides ([A model server answered in process](#a-model-server-answered-in-process)). Importing merges and only
 latches off, the same as a refusal does. A snapshot of another `version` is ignored. How old is too
 old is left to the consumer, who can read `savedAt` first: a server upgraded between boots may
 accept what it used to refuse, and nothing latched ever unlatches on its own.
@@ -2206,7 +2217,7 @@ request until something forgets what it refused, and `resetCapabilities` takes t
 forget:
 
 ```ts
-resetCapabilities({ baseUrl: row.baseUrl, apiKey: row.apiKey });  // this one changed
+resetCapabilities(row);                                           // this one changed, through its fetch
 expireCapabilities(6 * 60 * 60_000);                              // anything half a day old
 ```
 

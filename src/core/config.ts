@@ -62,13 +62,14 @@ export interface Endpoint {
 }
 
 /**
- * What makes a model server the one it is: where it lives and whose key reaches it.
+ * What makes a model server the one it is, as far as can be written down: where it lives and whose
+ * key reaches it.
  *
  * @remarks
- * The narrow half of `Endpoint`, for everything that only has to tell two model servers apart — the
- * client pool, the capability latches, a side task borrowing the agent's key. The timeouts and
- * `fetch` are not in it: a different patience is not a different server, and this is what is
- * digested and written down, which a function cannot be.
+ * The narrow half of `Endpoint` that `endpointKey` and `endpointId` read. Every cache of a model
+ * server keys on it inside the copy of the `fetch` the requests go through, so one model server is
+ * this and that function together. The timeouts are not in it, since a different patience is not
+ * a different server, and `fetch` is not, since a function cannot be digested or written down.
  */
 export interface EndpointIdentity {
   /**

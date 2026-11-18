@@ -554,6 +554,14 @@ describe('getClient', () => {
     expect(getClient(box(1))).not.toBe(getClient(box(2)));
   });
 
+  it('hands every spelling of one URL the one client', () => {
+    const client = getClient(endpoint);
+    for (const baseUrl of ['http://local/v1/', 'HTTP://LOCAL/v1', 'http://local:80/v1', ' http://local/v1 ']) {
+      expect(getClient({ ...endpoint, baseUrl })).toBe(client);
+    }
+    expect(getClient({ ...endpoint, baseUrl: 'http://local/V1' })).not.toBe(client);
+  });
+
   it('keeps a full pool', () => {
     const first = getClient(box(0));
     for (let n = 1; n < MAX_CLIENTS; n++) {

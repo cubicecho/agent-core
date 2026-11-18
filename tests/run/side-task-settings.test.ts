@@ -133,14 +133,10 @@ describe('taskCall', () => {
     const same = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1/', apiKey: '' } }, {}, main);
     expect(same.endpoint).toEqual({ baseUrl: 'http://main/v1', apiKey: 'sk-main' });
     // One entry for the endpoint, so a refusal the main turn learned is known to the side task.
-    expect(capabilitiesFor(same.endpoint.baseUrl, same.endpoint.apiKey)).toBe(
-      capabilitiesFor(main.baseUrl, main.apiKey),
-    );
+    expect(capabilitiesFor(same.endpoint)).toBe(capabilitiesFor(main));
     // Without the agent the endpoint is sent as it stands, and that is a second entry.
     const alone = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1', apiKey: '' } });
-    expect(capabilitiesFor(alone.endpoint.baseUrl, alone.endpoint.apiKey)).not.toBe(
-      capabilitiesFor(main.baseUrl, main.apiKey),
-    );
+    expect(capabilitiesFor(alone.endpoint)).not.toBe(capabilitiesFor(main));
   });
 
   it("never sends the agent's key to another endpoint, and keeps a key the task has", () => {

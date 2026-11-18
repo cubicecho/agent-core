@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe('runTurn', () => {
-  const supports = () => capabilitiesFor('http://local/v1');
+  const supports = () => capabilitiesFor({ baseUrl: 'http://local/v1' });
 
   it('hands back the turn the endpoint answered', async () => {
     const notices: string[] = [];
@@ -289,7 +289,7 @@ describe('runTurn', () => {
 });
 
 describe('contextLimit', () => {
-  const supports = () => capabilitiesFor('http://local/v1');
+  const supports = () => capabilitiesFor({ baseUrl: 'http://local/v1' });
   /** A body whose transcript is comfortably over any limit worth setting. */
   const big = (): Body => ({
     model: 'm',

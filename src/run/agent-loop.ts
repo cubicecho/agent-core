@@ -1560,7 +1560,7 @@ async function runTurns(
     config.remoteAgent === true ? remoteRun(config.extraBody, told, { field: config.progressField }) : undefined;
   const onEvent = remote?.emit ?? told;
   const client = getClient(config);
-  const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+  const supports = capabilitiesFor(config);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
   const notice = (text: string) => onEvent({ kind: RunEventKind.Notice, text });
   // The app's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.

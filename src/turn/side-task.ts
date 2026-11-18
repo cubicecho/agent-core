@@ -254,7 +254,7 @@ async function complete(
   // The model server's own object, not one of this module's: what a model refuses is the same fact
   // whether an exchange or a side task found it out, and the point of latching it is that only one
   // of them has to pay for it.
-  const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+  const supports = capabilitiesFor(config);
   // A chosen effort replaces the template hint rather than riding beside it: `enable_thinking:
   // false` next to `reasoning_effort: "high"` is a request that contradicts itself.
   const isHinted = level === '' && modelCapabilitiesFor(supports, model).thinkingHints;

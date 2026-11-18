@@ -58,14 +58,22 @@ type Fetch = typeof globalThis.fetch;
  * One cache, held once for the global `fetch` and once for each function an app gave a
  * model server.
  */
-interface PerFetch<T extends {}> {
+export interface PerFetch<T extends {}> {
   /**
    * The copy for the model servers that send through `fetch`, absent being the global one, made on
    * first use.
    */
   (fetch: Fetch | undefined): T;
+  /** The current scope's copies: the global one's first, then those of the functions still held. */
+  copies(): T[];
   /** Drops the current scope's copies: the global one's and every function's. */
   reset(): void;
+}
+
+/** One scope's copies for the app's functions, and a weak reference to each so they can be walked. */
+interface HostCopies<T extends {}> {
+  byFetch: WeakMap<Fetch, T>;
+  live: Set<WeakRef<T>>;
 }
 
 /**
@@ -73,20 +81,39 @@ interface PerFetch<T extends {}> {
  *
  * @typeParam T - The cache.
  * @param create - Builds a fresh, empty copy. Called once per function per scope, and again after `reset`.
- * @returns The reader, with a `reset` on it, both acting on the scope current when called.
+ * @returns The reader, with `copies` and `reset` on it, all acting on the scope current when called.
  *
  * @remarks
- * Two model servers with one URL and key and different functions may reach two different servers,
- * so neither a client nor a listing found through one function may answer for another, or for the
- * global `fetch`. A function's copy lives in a `WeakMap` under the function itself rather than
- * under a key minted for it, so it goes when the app drops the function: an app making one per
- * exchange would otherwise leave a listing behind for every exchange it ever made.
+ * This is half of what one model server is: `endpointKey` is the other half, the key inside each
+ * copy. Two model servers with one URL and key and different functions may reach two different
+ * servers, so nothing found through one function may answer for another, or for the global `fetch`.
+ * A function's copy lives in a `WeakMap` under the function itself, and is walked through a
+ * `WeakRef`, so it goes when the app drops the function: an app making one per exchange would
+ * otherwise leave a copy behind for every exchange it ever made.
  */
-function perFetch<T extends {}>(create: () => T): PerFetch<T> {
+export function perFetch<T extends {}>(create: () => T): PerFetch<T> {
   const own = scoped(create);
-  const hosts = scoped(() => new WeakMap<Fetch, T>());
-  const read = (fetch: Fetch | undefined) => (fetch ? getOrCreate(hosts(), fetch, create) : own());
+  const hosts = scoped((): HostCopies<T> => ({ byFetch: new WeakMap(), live: new Set() }));
+  // Drops a copy's reference from the walk once the copy itself has gone with its function.
+  const forget = new FinalizationRegistry<{ live: Set<WeakRef<T>>; ref: WeakRef<T> }>(({ live, ref }) =>
+    live.delete(ref),
+  );
+  const hostCopy = (fetch: Fetch) => {
+    const held = hosts();
+    return getOrCreate(held.byFetch, fetch, () => {
+      const copy = create();
+      const ref = new WeakRef(copy);
+      held.live.add(ref);
+      forget.register(copy, { live: held.live, ref });
+      return copy;
+    });
+  };
+  const read = (fetch: Fetch | undefined) => (fetch ? hostCopy(fetch) : own());
   return Object.assign(read, {
+    copies: () => {
+      const held = [...hosts().live].map((ref) => ref.deref());
+      return [own(), ...held.filter((copy) => copy !== undefined)];
+    },
     reset: () => {
       own.reset();
       hosts.reset();
@@ -252,13 +279,13 @@ export const firstTokenMs = (
  *
  * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`,
  * and a `fetch` is what the client sends through.
- * @returns The pooled client: the same object for the same base URL, key, timeout and `fetch`, until
- * it is evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
+ * @returns The pooled client: the same object for the same model server and timeout, until it is
+ * evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
  *
  * @remarks
- * Pooled on the four fields that change how a request is sent, so agents sharing a server share
- * a connection and agents on different servers never share a client. The `fetch` picks the pool
- * (`perFetch`) rather than joining the key, since a function cannot be stringified.
+ * Pooled on the model server, as `endpointKey` and the `fetch` tell one apart, and on the timeout,
+ * so agents sharing a server share a connection and agents on different servers never share a
+ * client. Four spellings of one URL are one client, sent to the URL as `baseUrlKey` writes it.
  *
  * The pool is per *deployment*, not per request: what belongs in this map is a model server an
  * operator configured, and everything cached in this package is bounded on that reading. A
@@ -270,9 +297,7 @@ export const firstTokenMs = (
 export function getClient(config: Endpoint): OpenAI {
   const apiKey = config.apiKey || NO_KEY;
   const timeout = timeoutMs(config);
-  // Stringified rather than joined on a separator: no character is impossible in a URL or a
-  // key, and two different model servers must never resolve to the same cached client.
-  const key = JSON.stringify([config.baseUrl, apiKey, timeout]);
+  const key = JSON.stringify([endpointKey(config), timeout]);
   const pool = clients(config.fetch);
   const existing = pool.get(key);
   if (existing) {
@@ -283,7 +308,7 @@ export function getClient(config: Endpoint): OpenAI {
     return existing;
   }
   const client = new OpenAI({
-    baseURL: config.baseUrl,
+    baseURL: baseUrlKey(config.baseUrl),
     apiKey,
     timeout,
     maxRetries: 0,
@@ -367,15 +392,12 @@ export interface ModelInfo {
  * round trip.
  *
  * @remarks
- * Keyed by `endpointKey`, because two model servers are two different sets of models and one of
- * them having answered says nothing about the other — and because a key can be the difference
- * between what a router will show one caller and another.
+ * Keyed by `endpointKey` in the copy of the model server's `fetch`, because two model servers are
+ * two different sets of models and one of them having answered says nothing about the other.
  *
  * The timeout is deliberately not in it, which is where this key parts company with the
  * clients'. Which models a server offers has nothing to do with how long we are willing to wait
  * for it, so two settings rows differing only there ask once between them rather than twice.
- * `fetch` is not in it either, but picks the copy it is read from (`perFetch`), as it does for
- * every lookup cache here: two functions may reach two servers behind one URL.
  *
  * It is only ever a cache of something asked for anyway, and a listing that fails leaves
  * whatever was there rather than emptying it.
@@ -409,33 +431,21 @@ const trainedOnly = perFetch(() => new Map<string, Set<string>>());
 const misses = perFetch(() => new Map<string, number>());
 
 /**
- * What counts as one model server, everywhere in this package that has to remember something about
- * one — the model listings directly, and `capabilities`, the no-thinking hints among them, through
- * its digest `endpointId`.
+ * What counts as one model server inside each `perFetch` copy, everywhere in this package that
+ * remembers something about one: the clients, the listings and served windows, and, through its
+ * digest `endpointId`, the capability latches and calibration.
  *
  * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
- * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
- * config, and absent and empty already mean the same thing. The timeout and `fetch` are
- * deliberately not in it; see `listings`.
+ * `Endpoint` requires it: absent and empty already mean the same thing. The `fetch` picks the copy
+ * this is looked up in, and the timeout is not part of the model server.
  * @returns The URL as `baseUrlKey` writes it and the key, as one JSON string, the key in the clear.
  *
  * @remarks
  * The URL and the key together, because the key is part of what is on the other end rather than
- * only how it is paid for: a router is free to send two keys to two different backends, and then
- * what one of them refused is not a fact about the other. Absent reads as `NO_KEY`, so a
- * model server with no key and one that passes `undefined` are one entry rather than two. The URL
- * is normalised for the same reason: `…/v1/` and `…/v1` are one server, and two entries for it
- * would learn every refusal twice.
- *
- * Stringified rather than joined on a separator, for the reason `getClient` gives: no character
- * is impossible in a URL or a key, and two model servers must never collide on one entry. An app
- * keeping its own per-model-server state keys it on this rather than on a copy of it, so the two
- * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
- *
- * The capability latches and the no-thinking hints stay on this alone, by way of `endpointId`,
- * whatever `fetch` a model server sends through: they are what a snapshot carries to the next
- * process, where no function is the same one, and what a model refused is a fact about the model
- * behind the URL.
+ * only how it is paid for: a router is free to send two keys to two different backends. Absent
+ * reads as `NO_KEY`, and the URL is normalised, so `…/v1/` and `…/v1` are one entry rather than
+ * two. Stringified rather than joined on a separator, since no character is impossible in a URL
+ * or a key; `endpointId` is the one to write down.
  */
 export const endpointKey = (config: EndpointIdentity) =>
   JSON.stringify([baseUrlKey(config.baseUrl), config.apiKey || NO_KEY]);

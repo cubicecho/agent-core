@@ -42,7 +42,7 @@ const latchEverything = async () => {
   );
   create.mockRejectedValueOnce(refusal).mockResolvedValue(reply);
   await ask(endpoint, 'qwen', 'system', 'user');
-  capabilitiesFor(endpoint.baseUrl).usageInStream = false;
+  capabilitiesFor(endpoint).usageInStream = false;
   emit('run-a', { kind: RunEventKind.Output, text: 'one' });
   return getClient(endpoint);
 };
@@ -63,9 +63,9 @@ describe('resetAll', () => {
 
   it('forgets what an endpoint was found not to support', async () => {
     await latchEverything();
-    expect(capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(false);
+    expect(capabilitiesFor(endpoint).usageInStream).toBe(false);
     resetAll();
-    expect(capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(true);
+    expect(capabilitiesFor(endpoint).usageInStream).toBe(true);
   });
 
   it('forgets which models refused the no-thinking hints', async () => {
@@ -79,7 +79,7 @@ describe('resetAll', () => {
   });
 
   it("forgets what each model's characters per token were measured at", () => {
-    const supports = capabilitiesFor(endpoint.baseUrl);
+    const supports = capabilitiesFor(endpoint);
     const body = {
       model: 'm',
       stream: true as const,

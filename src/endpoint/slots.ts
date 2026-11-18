@@ -200,7 +200,7 @@ export async function pinSession(
   if (total === 0) {
     return unpinned;
   }
-  const refused = modelCapabilitiesFor(capabilitiesFor(config.baseUrl, config.apiKey), config.model);
+  const refused = modelCapabilitiesFor(capabilitiesFor(config), config.model);
   if (refused.refusedFields.has(SLOT_FIELD)) {
     return { ...unpinned, slotted: true };
   }

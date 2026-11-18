@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe('calibration', () => {
-  const supports = () => capabilitiesFor('http://local/v1');
+  const supports = () => capabilitiesFor({ baseUrl: 'http://local/v1' });
 
   it('sizes at four characters a token until something has been measured', () => {
     expect(charsPerTokenFor(supports(), 'm')).toBe(CHARS_PER_TOKEN);
@@ -51,7 +51,7 @@ describe('calibration', () => {
     calibrate(supports(), body, promptAt(body, 2));
     expect(charsPerTokenFor(supports(), 'm')).toBeCloseTo(2);
     expect(charsPerTokenFor(supports(), 'other')).toBe(CHARS_PER_TOKEN);
-    expect(charsPerTokenFor(capabilitiesFor('http://elsewhere/v1'), 'm')).toBe(CHARS_PER_TOKEN);
+    expect(charsPerTokenFor(capabilitiesFor({ baseUrl: 'http://elsewhere/v1' }), 'm')).toBe(CHARS_PER_TOKEN);
   });
 
   it('counts the tools the request declared', () => {

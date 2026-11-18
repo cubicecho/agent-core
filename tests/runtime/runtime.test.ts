@@ -62,10 +62,10 @@ describe('createRuntime', () => {
   it('keeps what an endpoint refused to itself', () => {
     const one = createRuntime();
     const two = createRuntime();
-    one.capabilitiesFor(endpoint.baseUrl).usageInStream = false;
-    expect(one.capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(false);
-    expect(two.capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(true);
-    expect(capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(true);
+    one.capabilitiesFor(endpoint).usageInStream = false;
+    expect(one.capabilitiesFor(endpoint).usageInStream).toBe(false);
+    expect(two.capabilitiesFor(endpoint).usageInStream).toBe(true);
+    expect(capabilitiesFor(endpoint).usageInStream).toBe(true);
   });
 
   it("latches the no-thinking hints for itself alone, across the retry's awaits", async () => {
@@ -86,7 +86,7 @@ describe('createRuntime', () => {
   it('measures characters per token for itself alone', () => {
     const one = createRuntime();
     // One capabilities object, so it is the readings that are apart and not only the endpoints.
-    const supports = capabilitiesFor(endpoint.baseUrl);
+    const supports = capabilitiesFor(endpoint);
     one.calibrate(supports, body, 1000);
     expect(one.charsPerTokenFor(supports, 'm')).not.toBe(4);
     expect(charsPerTokenFor(supports, 'm')).toBe(4);
@@ -186,7 +186,7 @@ describe("a runtime's context", () => {
     expect(runtime.history('run').length).toBeGreaterThan(0);
     expect(history('run')).toEqual([]);
     // The loop's client came from the runtime's pool, and the process's is still empty.
-    expect(runtime.capabilitiesFor(endpoint.baseUrl)).not.toBe(capabilitiesFor(endpoint.baseUrl));
+    expect(runtime.capabilitiesFor(endpoint)).not.toBe(capabilitiesFor(endpoint));
   });
 
   it('keeps two runtimes apart while their calls interleave', async () => {

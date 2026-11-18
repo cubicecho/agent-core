@@ -30,7 +30,7 @@ const cut = (content = 'The sky is blue because', extra: Partial<Turn> = {}): Tu
   ...extra,
 });
 
-const supports = () => capabilitiesFor('http://local/v1');
+const supports = () => capabilitiesFor({ baseUrl: 'http://local/v1' });
 
 afterEach(() => resetCapabilities());
 

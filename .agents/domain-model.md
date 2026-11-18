@@ -167,7 +167,8 @@ How a long exchange stays small enough for the model to read.
 What the package remembers between exchanges (clients, server refusals, event history).
 
 - Not yet remembered → Remembered (on first use, per runtime) → Forgotten (a reset)
-- Server refusals → Saved snapshot → Remembered again on load (not size estimates or slots)
+- Server refusals learned through one fetch function → Saved snapshot → Remembered again on load,
+  for the function given (not size estimates or slots)
 
 ### An agent document
 
@@ -184,7 +185,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | Invariant | Enforced by |
 |---|---|
 | The SDK never retries a request itself | `getClient` (`maxRetries: 0`) |
-| A client or lookup reached through one fetch function never answers for another | `perFetch` |
+| A client, lookup, capability latch or calibration reached through one fetch function never answers for another | `perFetch` |
+| Every spelling of one URL is one model server, and the SDK is sent the URL as `baseUrlKey` writes it | `endpointKey`, `getClient` |
 | A model server at a different URL never inherits the configured key | `resolveApiKey`, `taskCall` |
 | A stored base URL is http(s) with no credentials, query, fragment or trailing slash | `normalizeBaseUrl` |
 | A reply that has produced anything is never sent again | `Produced`, checked in `negotiate` and `runTurn` |
@@ -265,10 +267,14 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Model server:** one OpenAI-compatible server as configured: where it is, the key that
   reaches it, how long to wait, and optionally a function its requests go through. Owner:
   `Endpoint` in `src/core/config.ts`; the code calls it an endpoint throughout.
-- **Model server identity (endpoint identity):** the URL and key that tell two model servers
-  apart. Owner: `EndpointIdentity`; spelled at runtime as `endpointKey` and its digest `endpointId`.
+- **Model server identity (endpoint identity):** what tells two model servers apart: the cleaned-up
+  URL, the key, and the fetch function the requests go through. Every cache of a model server keys
+  on it (the clients, listings, served windows, capabilities and calibration); slots alone key on
+  the URL and model, since they are one server's physical caches. Owner: `EndpointIdentity` for the
+  half that can be written down, spelled `endpointKey` and its digest `endpointId`; `perFetch` for
+  the fetch function (`src/endpoint/client.ts`).
 - **Fetch function:** a function a model server's requests are sent through instead of the network,
-  so an app can answer them in process; each gets its own clients and caches. Owner:
+  so an app can answer them in process; each gets its own clients, caches and capabilities. Owner:
   `Endpoint.fetch`, `perFetch` (`src/endpoint/client.ts`).
 - **Client:** the pooled SDK client for one model server, made once and reused. Owner: `getClient`;
   settings in `ClientPoolOptions`, `configureClients`.
@@ -314,8 +320,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   model takes, or not at all. Owner: `ceilingAndTemperature`, `ModelParams.maxTokens`.
 - **Notice:** a one-line message saying what was given up, waited out or retried. Owner:
   `OnNotice`, `RunEventKind.Notice`.
-- **Capability snapshot:** the latches as JSON an app stores, so a restart need not learn them
-  again. Owner: `exportCapabilities`, `importCapabilities` (`src/runtime/snapshot.ts`).
+- **Capability snapshot:** the latches learned through one fetch function as JSON an app stores, so
+  a restart need not learn them again; the global fetch's unless the app names its own on both
+  sides, since a function cannot be written down. Owner: `exportCapabilities`, `importCapabilities`
+  (`src/runtime/snapshot.ts`).
 - **Schema sanitising and relaxing:** rewriting a tool's JSON Schema into shapes a strict server
   accepts, and also dropping `pattern` and `format` once a server failed to compile one. Owner:
   `sanitizeTools`, `relaxTools`, `isGrammarError` (`src/endpoint/schema-compat.ts`).
@@ -581,8 +589,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   never made. Owner: `loadShortlist`.
 - **Remote stretch:** the per-exchange part of remote-agent mode: progress asked for and
   forwarded, turn events held back, keys per turn. Owner: `remoteRun`, `SERVER_OWNED`.
-- **Per-fetch cache:** a cache kept once for the global fetch and once per app function. Owner:
-  `perFetch`.
+- **Per-fetch cache:** a cache kept once for the global fetch and once per app function, which can
+  be walked while the function is held. Owner: `perFetch`.
 - **Merge rules:** how layers combine: scalars by last layer, `extraBody` by key, prompt parts and
   hooks by id, tasks field by field, server scope whole. Owner: `mergeLayers`, `mergeModel`,
   `mergeById`, `resolveTasks`.

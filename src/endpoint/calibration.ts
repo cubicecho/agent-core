@@ -32,7 +32,7 @@ const PLAUSIBLE = { least: 1, most: 8 };
 
 /**
  * The latest readings per model, under the model server's own `Capabilities` object — the identity
- * `capabilitiesFor` already gives one server and key — so a model server forgotten by
+ * `capabilitiesFor` already gives one server, key and `fetch` — so a model server forgotten by
  * `resetCapabilities` takes its readings with it. Replaced rather than cleared by `resetCalibration`,
  * since a `WeakMap` has no `clear`.
  */

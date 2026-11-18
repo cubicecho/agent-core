@@ -34,7 +34,7 @@ beforeEach(() => resetCapabilities());
 
 describe('negotiate ∘ streamTurn', () => {
   it('relaxes the schemas and re-sends when the server cannot build a grammar', async () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const asked: boolean[] = [];
     const create = refusesOnce(['hi'], { after: 0 });
     const turn = await negotiate(supports, (supports, produced) => {
@@ -56,7 +56,7 @@ describe('negotiate ∘ streamTurn', () => {
     const seen: string[] = [];
     const create = refusesOnce(['half ', 'an ', 'answer'], { after: 2 });
     await expect(
-      negotiate(capabilitiesFor('http://local/v1'), (_supports, produced) =>
+      negotiate(capabilitiesFor({ baseUrl: 'http://local/v1' }), (_supports, produced) =>
         streamTurn(clientOf(create), body, { produced, onOutput: (d) => seen.push(d) }),
       ),
     ).rejects.toThrow('grammar');
@@ -72,7 +72,7 @@ describe('negotiate ∘ streamTurn', () => {
     const create = refusesOnce(['tokens'], { after: 1 });
     await expect(
       negotiate(
-        capabilitiesFor('http://local/v1'),
+        capabilitiesFor({ baseUrl: 'http://local/v1' }),
         (_supports, given) => {
           expect(given).toBe(produced);
           return streamTurn(clientOf(create), body, { produced: given });
@@ -91,14 +91,14 @@ describe('negotiate ∘ streamTurn', () => {
           signal.addEventListener('abort', () => reject(signal.reason), { once: true });
         }),
     );
-    const turn = negotiate(capabilitiesFor('http://quiet/v1'), (_supports, produced) =>
+    const turn = negotiate(capabilitiesFor({ baseUrl: 'http://quiet/v1' }), (_supports, produced) =>
       streamTurn(clientOf(create), body, { produced, idleMs: 30_000 }),
     );
     const settled = expect(turn).rejects.toThrow('sent nothing for 30s');
     await vi.advanceTimersByTimeAsync(30_000);
     await settled;
     // Not a capability refusal: nothing is latched off on the way past.
-    expect(capabilitiesFor('http://quiet/v1')).toMatchObject({
+    expect(capabilitiesFor({ baseUrl: 'http://quiet/v1' })).toMatchObject({
       strictSchemas: true,
       usageInStream: true,
     });

@@ -69,7 +69,7 @@ describe('no-thinking hints', () => {
     await call(endpoint('http://picky/v1'));
     expect(sentHints(0)).toBe(true);
     expect(sentHints(1)).toBe(false);
-    expect([...modelCapabilitiesFor(capabilitiesFor('http://picky/v1'), 'm').refusedFields]).toEqual([
+    expect([...modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://picky/v1' }), 'm').refusedFields]).toEqual([
       'chat_template_kwargs',
     ]);
 
@@ -111,7 +111,7 @@ describe('no-thinking hints', () => {
     await call(endpoint('http://vllm/v1'));
     expect(sentHints(2)).toBe(false);
     expect(body(2).reasoning_effort).toBe('none');
-    const supports = capabilitiesFor('http://vllm/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://vllm/v1' });
     expect(modelCapabilitiesFor(supports, 'm').reasoningEffort).toBe(true);
   });
 
@@ -174,7 +174,7 @@ describe('no-thinking hints', () => {
 
   it('keeps them off a model a saved snapshot says refused them', async () => {
     // Before 6.0.0 a side task latched the hints as a flag of their own, which a snapshot carries.
-    modelCapabilitiesFor(capabilitiesFor('http://saved/v1'), 'm').thinkingHints = false;
+    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://saved/v1' }), 'm').thinkingHints = false;
     create.mockResolvedValue(reply);
     await call(endpoint('http://saved/v1'));
     expect(sentHints(0)).toBe(false);
@@ -219,7 +219,7 @@ describe('what the model refuses', () => {
     expect(body(1).max_completion_tokens).toBe(512);
     expect(body(1)).not.toHaveProperty('max_tokens');
     // And the run on the same model does not have to find this out for itself.
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     expect(modelCapabilitiesFor(supports, 'o3').legacyTokenLimit).toBe(false);
   });
 
@@ -318,7 +318,7 @@ describe('what the model refuses', () => {
     create.mockRejectedValueOnce(apiError(400));
     const asked = { reasoningEffort: 'high' };
     await expect(ask(endpoint('http://plain/v1'), 'm', 'system', 'user', asked)).rejects.toThrow('rejected');
-    expect(modelCapabilitiesFor(capabilitiesFor('http://plain/v1'), 'm').reasoningEffort).toBe(true);
+    expect(modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://plain/v1' }), 'm').reasoningEffort).toBe(true);
 
     create.mockResolvedValue(reply);
     await ask(endpoint('http://plain/v1'), 'm', 'system', 'user', asked);

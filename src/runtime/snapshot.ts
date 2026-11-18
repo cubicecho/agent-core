@@ -1,3 +1,4 @@
+import type { Endpoint } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
 import {
   capabilitiesById,
@@ -115,21 +116,25 @@ const storedStrings = (stored: unknown): string[] =>
   Array.isArray(stored) ? stored.filter((value) => typeof value === 'string') : [];
 
 /**
- * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
+ * Every refusal this process has latched through one `fetch`, as a JSON-safe blob to store and hand
+ * back on boot.
  *
+ * @param [through] - Read for `fetch` alone: the latches of the model servers that send through
+ * it, absent being the global `fetch`. A whole `Endpoint` will do.
  * @returns A fresh object that shares nothing with the live latches, its lists copied and the two
  * refused ones sorted.
  *
  * @remarks
  * Covers what `negotiate` latches on model servers and models, the no-thinking hints among the
- * refused fields. Only what was actually refused is in it, so a snapshot of a process that
- * met no refusals has no model servers. Model servers are named by digest rather than URL and key,
- * since the blob is meant to be written somewhere and a key must not be written with it. Each
- * carries the `since` it was learned at, so importing it does not make an old latch young again.
+ * refused fields. Only what was actually refused is in it. Model servers are named by digest rather
+ * than URL and key, since a key must not be written with the blob, and each carries the `since` it
+ * was learned at. A function cannot be written down, so the blob does not say which `fetch` it was
+ * taken through: an app whose model servers send through one of its own exports and imports with
+ * the same function on each side, and the latches of any other function are not in it.
  */
-export function exportCapabilities(): CapabilitySnapshot {
+export function exportCapabilities(through: Pick<Endpoint, 'fetch'> = {}): CapabilitySnapshot {
   const endpoints: Record<string, EndpointSnapshot> = {};
-  for (const [id, supports] of knownCapabilities()) {
+  for (const [id, supports] of knownCapabilities(through.fetch)) {
     const models: Record<string, ModelSnapshot> = {};
     for (const [name, refused] of supports.models) {
       const model = optimisticModel();
@@ -164,6 +169,8 @@ export function exportCapabilities(): CapabilitySnapshot {
  *
  * @param snapshot - What `exportCapabilities` returned, as stored. Read defensively: a field of the
  * wrong type is skipped rather than trusted.
+ * @param [through] - Read for `fetch` alone: the function whose model servers the latches are for,
+ * absent being the global `fetch`, as `exportCapabilities` was given it.
  * @returns Whether the snapshot was of this version and applied.
  *
  * @remarks
@@ -171,10 +178,9 @@ export function exportCapabilities(): CapabilitySnapshot {
  * off whatever the snapshot says, and one the snapshot has off is turned off. A snapshot of another
  * version, or anything that is not one, is ignored — a stale shape costs the refused requests it
  * would have saved, which is what a restart cost before. How old is too old is the consumer's call,
- * made on `savedAt` before importing, or afterwards per model server with `expireCapabilities`,
- * since a server behind a URL can be upgraded between boots.
+ * made on `savedAt` before importing, or afterwards with `expireCapabilities`.
  */
-export function importCapabilities(snapshot: unknown): boolean {
+export function importCapabilities(snapshot: unknown, through: Pick<Endpoint, 'fetch'> = {}): boolean {
   if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) {
     return false;
   }
@@ -185,7 +191,7 @@ export function importCapabilities(snapshot: unknown): boolean {
     if (!isRecord(endpoint)) {
       continue;
     }
-    const supports = capabilitiesById(id);
+    const supports = capabilitiesById(id, through.fetch);
     if (endpoint.strictSchemas === false) {
       latchEndpoint(supports, 'strictSchemas');
     }

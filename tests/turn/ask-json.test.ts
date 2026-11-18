@@ -81,7 +81,7 @@ describe('askJson', () => {
     expect(reply).toEqual({ tools: [] });
     expect(body(1)).not.toHaveProperty('response_format');
     expect(notices).toEqual(['m does not take response_format; asking for JSON in words instead']);
-    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const supports = capabilitiesFor(config);
     expect(modelCapabilitiesFor(supports, 'm').structuredOutput).toBe(false);
     expect(modelCapabilitiesFor(supports, 'other').structuredOutput).toBe(true);
 
@@ -93,12 +93,12 @@ describe('askJson', () => {
   it('lets a schema the server found invalid out, rather than latching', async () => {
     create.mockRejectedValue(refusal("Invalid schema for response_format 'answer': bad"));
     await expect(askJson(config, 'm', 's', 'u', schema)).rejects.toThrow('Invalid schema');
-    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const supports = capabilitiesFor(config);
     expect(modelCapabilitiesFor(supports, 'm').structuredOutput).toBe(true);
   });
 
   it('relaxes the schema where the server could not build a grammar', async () => {
-    capabilitiesFor(config.baseUrl, config.apiKey).strictSchemas = false;
+    capabilitiesFor(config).strictSchemas = false;
     create.mockResolvedValue(answer('{"tools": []}'));
     await askJson(config, 'm', 's', 'u', schema);
     expect(JSON.stringify(sentSchema(0))).not.toContain('pattern');

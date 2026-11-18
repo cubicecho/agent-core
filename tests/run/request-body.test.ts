@@ -22,7 +22,7 @@ describe('buildBody', () => {
   const messages: Message[] = [{ role: Role.User, content: 'hi' }];
 
   it('sends what a fresh endpoint and model have not refused', () => {
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     const body = buildBody({ ...config, reasoningEffort: 'low' }, supports, undefined, messages, [tool('a')]);
     expect(body).toMatchObject({
       model: 'm',
@@ -37,7 +37,7 @@ describe('buildBody', () => {
   });
 
   it('sends a remote agent no temperature or ceiling it was not given, and the ones it was', () => {
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     const { model } = config;
     const bare = buildBody({ model, remoteAgent: true }, supports, undefined, messages);
     expect(bare).not.toHaveProperty('temperature');
@@ -48,7 +48,7 @@ describe('buildBody', () => {
   });
 
   it('spells the ceiling, drops the temperature and effort the model refused', () => {
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     const refused = modelCapabilitiesFor(supports, 'm');
     Object.assign(refused, {
       legacyTokenLimit: false,
@@ -64,7 +64,7 @@ describe('buildBody', () => {
   });
 
   it('replays the scratchpad until the model refuses it, and leaves the caller its own messages', () => {
-    const supports = capabilitiesFor('https://api.groq.com/openai/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.groq.com/openai/v1' });
     const reasoned = [
       ...messages,
       { role: Role.Assistant, content: null, reasoning_content: 'look it up', tool_calls: [] } as Message,
@@ -82,7 +82,7 @@ describe('buildBody', () => {
     // The refusal that means the opposite of the one above: the model reasons, it just does not
     // reason at `none`. Sending nothing would run at its own default, which is neither what the
     // config asks for nor anything an operator reading the settings row can see.
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     const refused = modelCapabilitiesFor(supports, 'm');
     refused.refusedEfforts.add('none');
     refused.supportedEfforts = ['minimal', 'low', 'medium', 'high'];
@@ -97,7 +97,7 @@ describe('buildBody', () => {
   it('sends no ceiling at zero and no effort at off', () => {
     const body = buildBody(
       { ...config, maxTokens: 0, reasoningEffort: 'off' },
-      capabilitiesFor('http://local/v1'),
+      capabilitiesFor({ baseUrl: 'http://local/v1' }),
       undefined,
       messages,
     );
@@ -106,7 +106,7 @@ describe('buildBody', () => {
   });
 
   it("merges extraBody last, less the refused fields and the loop's own", () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const refused = modelCapabilitiesFor(supports, 'm');
     refused.refusedFields.add('min_p');
     const body = buildBody(
@@ -136,26 +136,30 @@ describe('buildBody', () => {
     ];
 
     it('sends neither the field nor a split by default', () => {
-      const body = buildBody(config, capabilitiesFor('http://local/v1'), undefined, transcript, [tool('a')]);
+      const body = buildBody(config, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript, [
+        tool('a'),
+      ]);
       expect(body).not.toHaveProperty(PARALLEL_TOOL_CALLS);
       expect(body.messages).toBe(transcript);
     });
 
     it('asks for one call at a time beside tools and replays each call as a pair of its own', () => {
       const single = { ...config, singleCallMessages: true };
-      const body = buildBody(single, capabilitiesFor('http://local/v1'), undefined, transcript, [tool('a')]);
+      const body = buildBody(single, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript, [
+        tool('a'),
+      ]);
       expect(body).toHaveProperty(PARALLEL_TOOL_CALLS, false);
       expect(singleCallRefusal(transcript)).toBeDefined();
       expect(singleCallRefusal(body.messages)).toBeUndefined();
       expect(pairsByPosition(body.messages)).toBe(true);
       // OpenAI refuses the field on a request with no tools.
-      const bare = buildBody(single, capabilitiesFor('http://local/v1'), undefined, transcript);
+      const bare = buildBody(single, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript);
       expect(bare).not.toHaveProperty(PARALLEL_TOOL_CALLS);
       expect(singleCallRefusal(bare.messages)).toBeUndefined();
     });
 
     it('does the same for a model whose template refused, and drops the field once it is refused', () => {
-      const supports = capabilitiesFor('http://local/v1');
+      const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
       const refused = modelCapabilitiesFor(supports, 'm');
       refused.multiCallMessages = false;
       const body = buildBody(config, supports, refused, transcript, [tool('a')]);
@@ -169,13 +173,15 @@ describe('buildBody', () => {
 
     it("lets extraBody's own parallel_tool_calls win", () => {
       const single = { ...config, singleCallMessages: true, extraBody: { [PARALLEL_TOOL_CALLS]: true } };
-      const body = buildBody(single, capabilitiesFor('http://local/v1'), undefined, transcript, [tool('a')]);
+      const body = buildBody(single, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript, [
+        tool('a'),
+      ]);
       expect(body).toHaveProperty(PARALLEL_TOOL_CALLS, true);
     });
   });
 
   it('relaxes schemas where the endpoint could not build a grammar', () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     supports.strictSchemas = false;
     const pattern: OpenAI.ChatCompletionTool = {
       type: FUNCTION_TOOL,
@@ -192,7 +198,7 @@ describe('buildBody', () => {
   const names = (body: Body) => toolNames(body.tools);
 
   it('declares the same set in the same order however the caller built the array', () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const one = buildBody(config, supports, undefined, messages, [tool('b__x'), tool('a__y'), tool('a__x')]);
     const other = buildBody(config, supports, undefined, messages, [tool('a__x'), tool('b__x'), tool('a__y')]);
     expect(names(one)).toEqual(['a__x', 'a__y', 'b__x']);
@@ -200,13 +206,13 @@ describe('buildBody', () => {
   });
 
   it("sends the caller's own order when told to", () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const body = buildBody(config, supports, undefined, messages, [tool('b'), tool('a')], false);
     expect(names(body)).toEqual(['b', 'a']);
   });
 
   it("orders by a comparator of the caller's", () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const body = buildBody(config, supports, undefined, messages, [tool('a'), tool('b'), tool('c')], (a, b) =>
       b.localeCompare(a),
     );

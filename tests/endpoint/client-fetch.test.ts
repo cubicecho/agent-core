@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { calibrate, charsPerTokenFor } from '../../src/endpoint/calibration.ts';
+import { capabilitiesFor, modelCapabilitiesFor } from '../../src/endpoint/capabilities.ts';
 import {
   contextLimitFor,
   endpointId,
@@ -9,7 +11,7 @@ import {
   servedSlots,
 } from '../../src/endpoint/client.ts';
 import { resetAll } from '../../src/runtime/reset.ts';
-import { exportCapabilities } from '../../src/runtime/snapshot.ts';
+import { exportCapabilities, importCapabilities } from '../../src/runtime/snapshot.ts';
 import { ask } from '../../src/turn/side-task.ts';
 import { HttpStatus } from '../../src/wire/wire.ts';
 import { answeredBy, respond, respondInWords } from '../helpers.ts';
@@ -71,6 +73,16 @@ describe('an endpoint answered by a function', () => {
     const [request] = fetch.mock.calls[0] ?? [];
     expect(String(request)).toBe('http://router.internal/v1/chat/completions');
     expect(global).not.toHaveBeenCalled();
+  });
+
+  it('sends to the URL as baseUrlKey writes it, however it was spelt', async () => {
+    const fetch = router(8192);
+    await getClient({ ...internal, baseUrl: ' HTTP://Router.Internal:80/v1/ ', fetch }).chat.completions.create({
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const [request] = fetch.mock.calls[0] ?? [];
+    expect(String(request)).toBe('http://router.internal/v1/chat/completions');
   });
 
   it('lists, sizes the window and counts the slots through it', async () => {
@@ -140,6 +152,24 @@ describe('two functions behind one URL', () => {
     expect(await servedSlots({ ...internal, fetch: full, model: 'm' })).toBe(4);
   });
 
+  it("never latch one function's refusal for another, or for the global one", async () => {
+    const a = { ...internal, fetch: router(8192) };
+    const b = { ...internal, fetch: router(4096) };
+    expect(capabilitiesFor(a)).toBe(capabilitiesFor(a));
+    modelCapabilitiesFor(capabilitiesFor(a), 'm').structuredOutput = false;
+    expect(modelCapabilitiesFor(capabilitiesFor(b), 'm').structuredOutput).toBe(true);
+    expect(modelCapabilitiesFor(capabilitiesFor(internal), 'm').structuredOutput).toBe(true);
+  });
+
+  it("never size one function's requests by another's calibration", () => {
+    const a = { ...internal, fetch: router(8192) };
+    const b = { ...internal, fetch: router(4096) };
+    const body = { model: 'm', stream: true as const, messages: [{ role: 'user' as const, content: 'x'.repeat(200) }] };
+    const ratio = calibrate(capabilitiesFor(a), body, 100);
+    expect(charsPerTokenFor(capabilitiesFor(a), 'm')).toBe(ratio);
+    expect(charsPerTokenFor(capabilitiesFor(b), 'm')).not.toBe(ratio);
+  });
+
   it('are both forgotten by resetClients', async () => {
     const a = router(8192);
     await contextLimitFor({ ...internal, fetch: a, model: 'm' });
@@ -152,8 +182,8 @@ describe('two functions behind one URL', () => {
 });
 
 describe('an endpoint answered by a function, written down', () => {
-  it('is a snapshot entry under its URL and key, with no function in it', async () => {
-    // Refuses the no-thinking hints once, so `ask` latches something worth exporting.
+  /** An endpoint whose function refuses the no-thinking hints once, so `ask` latches something. */
+  const refusingHints = () => {
     const fetch = answeredBy(async (request) => {
       const body = (await request.json()) as Record<string, unknown>;
       return 'chat_template_kwargs' in body
@@ -163,15 +193,38 @@ describe('an endpoint answered by a function, written down', () => {
           )
         : respondInWords('named');
     });
-    const endpoint = { ...internal, apiKey: 'sk-router', fetch };
+    return { ...internal, apiKey: 'sk-router', fetch };
+  };
+
+  it('is a snapshot entry under its URL and key, taken through its function, with no function in it', async () => {
+    const endpoint = refusingHints();
     expect(await ask(endpoint, 'm', 'Name this.', 'hi')).toBe('named');
 
-    const snapshot = exportCapabilities();
+    expect(exportCapabilities().endpoints).toEqual({});
+    const snapshot = exportCapabilities(endpoint);
     const id = endpointId({ baseUrl: internal.baseUrl, apiKey: 'sk-router' });
     expect(Object.keys(snapshot.endpoints)).toEqual([id]);
     expect(snapshot.endpoints[id].models.m.refusedFields).toEqual(['chat_template_kwargs']);
     // Survives JSON whole, so nothing in it was a function that JSON would have dropped.
     expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);
     expect(JSON.stringify(snapshot)).not.toContain('fetch');
+  });
+
+  it('is imported for the function it is given, and for no other', async () => {
+    const endpoint = refusingHints();
+    await ask(endpoint, 'm', 'Name this.', 'hi');
+    const snapshot = JSON.parse(JSON.stringify(exportCapabilities(endpoint)));
+
+    resetAll();
+    // The next process's function: the same server, but not the same object.
+    const next = refusingHints();
+    expect(importCapabilities(snapshot, next)).toBe(true);
+    // The hints are latched as a refused field, and only for the function they were imported for.
+    expect(modelCapabilitiesFor(capabilitiesFor(next), 'm').refusedFields.has('chat_template_kwargs')).toBe(true);
+    expect(
+      modelCapabilitiesFor(capabilitiesFor({ ...next, fetch: undefined }), 'm').refusedFields.has(
+        'chat_template_kwargs',
+      ),
+    ).toBe(false);
   });
 });
