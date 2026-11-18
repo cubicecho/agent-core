@@ -131,7 +131,7 @@ import {
  * The message `onMessage` is handed is what later requests replay — arguments repaired, `{}` for
  * none, recovered calls taken out of the text and made calls — which is right to send and quietly
  * wrong to show as the model's. Absent for a message the loop wrote itself, such as a proxied
- * run's preselected load.
+ * exchange's preselected load.
  */
 export interface WrittenMessage {
   /**
@@ -143,19 +143,21 @@ export interface WrittenMessage {
 }
 
 /**
- * One step's request as `onRequest` is handed it: what the model is about to read.
+ * One turn's request as `onRequest` is handed it: what the model is about to read.
  *
  * @remarks
  * The loop assembles this and nothing else sees it — the system prompt with the catalogue on it,
- * the hooks' context on the question, the tool array ordered and sanitised as it is sent — so a
- * host that wants to say what is filling the window has nothing to measure without it.
+ * the hooks' context on the question, the tool array ordered and sanitised as it is sent — so an
+ * app that wants to say what is filling the context window has nothing to measure without it.
  */
 export interface AgentLoopRequest {
   /** The messages as sent, system prompt first. The request's own array, not a copy. */
   messages: readonly OpenAI.ChatCompletionMessageParam[];
-  /** The tools as sent: ordered, sanitised, relaxed where the endpoint needs it. Empty for none. */
+  /**
+   * The tools as sent: ordered, sanitised, relaxed where the model server needs it. Empty for none.
+   */
   tools: readonly OpenAI.ChatCompletionTool[];
-  /** Which step of the run this is, from zero, as `beforeStep` and `onTurn` count them. */
+  /** Which turn of the exchange this is, from zero, as `beforeStep` and `onTurn` count them. */
   step: number;
 }
 
@@ -164,13 +166,13 @@ export interface AgentLoopRequest {
  *
  * @remarks
  * The loop gathers before its first request, beside its own preselection where it was asked for
- * one, and nothing else runs beside the two. A host with pre-turn work of its own to overlap with
- * the hooks — a compaction — calls `gather` itself, puts the context on with `withContext`, and
- * hands `preselectQuery` the question as it was written. It still passes `hooks`, with `fire`
- * leaving out what it fires itself: `[HookEvent.BeforeCompact, HookEvent.AfterTurn]` has the loop
- * fold for it and tell the answer, with `question`, `turnBase` and `offset` saying what the
- * transcript it handed over does not — the question as typed, and where the host's numbering
- * starts.
+ * one, and nothing else runs beside the two. An app with work of its own before the exchange to
+ * overlap with the hooks — a compaction — calls `gather` itself, puts the context on with
+ * `withContext`, and hands `preselectQuery` the question as it was written. It still passes
+ * `hooks`, with `fire` leaving out what it fires itself:
+ * `[HookEvent.BeforeCompact, HookEvent.AfterTurn]` has the loop compact for it and tell the
+ * answer, with `question`, `turnBase` and `offset` saying what the transcript it handed over does
+ * not — the question as typed, and where the app's numbering starts.
  */
 export interface AgentLoopHooks {
   run: HookRunner;
@@ -181,19 +183,19 @@ export interface AgentLoopHooks {
   context: HookContext;
   /**
    * The events the loop fires, and the only ones: `sessionStart` and `beforeTurn` gathered before
-   * the first request, in the order listed; `beforeCompact` beside each fold `compact` makes; and
-   * `afterTurn` once the run has its answer. `sessionEnd` and `sessionDelete` are the host's, since
-   * the loop has no point that is either, and are ignored here.
+   * the first request, in the order listed; `beforeCompact` beside each compaction `compact` makes;
+   * and `afterTurn` once the exchange has its answer. `sessionEnd` and `sessionDelete` are the
+   * app's, since the loop has no point that is either, and are ignored here.
    *
    * @defaultValue `events`, then `afterTurn` and `beforeCompact` — everything the loop has a point
    * for, as it fired before this existed.
    *
    * @remarks
-   * For a host that fires some of them around the loop rather than inside it: one that tells
-   * `beforeTurn` and `afterTurn` around a whole step of its own, and wants only the fold's
+   * For an app that fires some of them around the loop rather than inside it: one that tells
+   * `beforeTurn` and `afterTurn` around a whole stage of its own, and wants only compaction's
    * `beforeCompact` from the loop, passes `[HookEvent.BeforeCompact]`. With `afterTurn` left out the
    * result's `afterTurn` is resolved and empty, and `notes` and `context` are empty with no
-   * injecting event listed — the host's own `gather` and `notify` hold those instead.
+   * injecting event listed — the app's own `gather` and `notify` hold those instead.
    */
   fire?: readonly HookEvent[];
   /**
@@ -220,8 +222,8 @@ export interface AgentLoopHooks {
   /** Hears each note, from before the request, from `beforeCompact` and from `afterTurn`. */
   onNote?: OnNote;
   /**
-   * What the run's first message is numbered as in the uuids hooks are told — the host's stored
-   * index of `messages[0]`, for a host that numbers messages across steps or runs. Read for
+   * What the exchange's first message is numbered as in the uuids hooks are told — the app's stored
+   * index of `messages[0]`, for an app that numbers messages across exchanges or runs. Read for
    * `beforeCompact`'s `compacting` and `afterTurn`'s `turn`. See `turnMessages`.
    *
    * @defaultValue `0`
@@ -234,58 +236,59 @@ export interface AgentLoopHooks {
    * @defaultValue The question as the transcript holds it.
    *
    * @remarks
-   * For a host that put gathered context on the question before the loop saw it, so a memory
+   * For an app that put gathered context on the question before the loop saw it, so a memory
    * server files what was asked rather than what it recalled. Only the text is replaced: where the
    * question is is still read off the transcript, and its uuid's position with it.
    */
   question?: string;
   /**
-   * The user messages of the host's transcript that `messages` does not hold, added to the
-   * `turn.index` `afterTurn` is told — `turnIndex`'s `offset`. A host that hands the loop a folded
-   * transcript passes those the fold took and did not send again; one that runs each turn from a
-   * transcript of its own passes how many turns came before it.
+   * The user messages of the app's transcript that `messages` does not hold, added to the
+   * `turn.index` `afterTurn` is told — `turnIndex`'s `offset`. An app that hands the loop a
+   * compacted transcript passes those the compaction took and did not send again; one that runs
+   * each exchange from a transcript of its own passes how many exchanges came before it.
    *
    * @defaultValue `0`
    */
   turnBase?: number;
 }
 
-/** How full the window is as a step is about to be sent, as `beforeStep` is told it. */
+/** How full the context window is as a turn is about to be sent, as `beforeStep` is told it. */
 export interface StepWindow {
   /**
-   * The prompt tokens this run's last request reported. Absent before the first step — an earlier
-   * run's figure is the host's to vouch for, since the transcript may have been folded since —
-   * and where that request reported none. It does not count the reply and tool results added
-   * since.
+   * The prompt tokens this exchange's last request reported. Absent before the first turn — an
+   * earlier exchange's figure is the app's to vouch for, since the transcript may have been
+   * compacted since — and where that request reported none. It does not count the reply and tool
+   * results added since.
    */
   used?: number;
   /**
-   * The model's window, `config.contextLength`. Zero where the config names none, and on a
+   * The model's context window, `config.contextLength`. Zero where the config names none, and on a
    * remote agent.
    */
   limit: number;
-  /** The run's ledger so far, indexed into the transcript `beforeStep` is handed beside it. */
+  /** The exchange's ledger so far, indexed into the transcript `beforeStep` is handed beside it. */
   ledger: TokenLedger;
 }
 
-/** The `preselectRouting` that sends the first step the shortlist alone. */
+/** The `preselectRouting` that sends the first turn the shortlist alone. */
 export const PRESELECT_EXCLUSIVE = 'exclusive' as const;
 
-/** The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other. */
+/** The `preselectRouting` that loads the shortlist after what was carried, and sends the first turn like any other. */
 export const PRESELECT_APPEND = 'append' as const;
 
 /** What `runAgentLoop` takes. */
 export interface AgentLoopOptions {
   /**
-   * The endpoint, what to ask the model for, and how long it may keep calling tools.
-   * `toolDiscovery` absent is eager, `maxRetries` absent is none, and `contextLength` is handed
-   * to `runTurn` as `contextLimit`, which sizes each request against the window before sending.
-   * `"proxy"` is on-demand loading behind a tool array that never changes; see `PROXY_TOOLS`.
+   * The model server, what to ask the model for, and how long it may keep calling tools.
+   * `toolDiscovery` absent is eager, `maxRetries` absent is none, and `contextLength` is handed to
+   * `runTurn` as `contextLimit`, which sizes each request against the context window before
+   * sending. `"proxy"` is on-demand loading behind a tool array that never changes; see
+   * `PROXY_TOOLS`.
    *
    * @remarks
    * `tasks` is a resolved agent's, and is read only for the side tasks the loop was asked to run:
    * `tasks.toolSelect` under `preselect` and `tasks.compaction` under `compact`. `toolSelectModel`
-   * is the flattened spelling of the first, for a host that is not on the spec. With neither
+   * is the flattened spelling of the first, for an app that is not on the spec. With neither
    * naming a model, `preselect` asks `model` itself; `compact` never does.
    *
    * `remoteAgent: true` (`RemoteAgentParams`) says the model is a remote agent, which runs its own
@@ -308,24 +311,24 @@ export interface AgentLoopOptions {
   /** The transcript so far, ending in the question. Not written to; see the result's `messages`. */
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
-   * Every tool this run may reach. Eager mode sends all of them; on-demand mode sends the ones
+   * Every tool this exchange may reach. Eager mode sends all of them; on-demand mode sends the ones
    * loaded so far, by name; proxied mode declares none, and answers a load with them instead.
    */
   tools?: OpenAI.ChatCompletionTool[];
   /**
-   * The host's own tools — a question for a person, a resource read — declared on every step in
+   * The app's own tools — a question for a person, a resource read — declared on every turn in
    * every discovery mode and dispatched like any other call, but never catalogued, loaded, or
    * reached through `call_tool`.
    *
    * @remarks
-   * Each sits after the loop's own definitions: after `PROXY_TOOLS` proxied, after `load_tools`
-   * and ahead of anything loaded on demand, after `tools` in eager mode, and after the shortlist
-   * on a preselected first step; `toolOrder` then orders the array as it always does. Proxied and
-   * eager, the array is one set for the whole run, so the cache holds in either order; on demand,
+   * Each sits after the loop's own definitions: after `PROXY_TOOLS` proxied, after `load_tools` and
+   * ahead of anything loaded on demand, after `tools` in eager mode, and after the shortlist on a
+   * preselected first turn; `toolOrder` then orders the array as it always does. Proxied and eager,
+   * the array is one set for the whole exchange, so the cache holds in either order; on demand,
    * `toolOrder: false` keeps them in the prefix every load appends after.
    *
-   * A name of one is taken out of `catalog`, `loaded` and `preselected` before the run starts, is
-   * never counted as a load, and is declared once where `tools` or the loop has it too. A
+   * A name of one is taken out of `catalog`, `loaded` and `preselected` before the exchange starts,
+   * is never counted as a load, and is declared once where `tools` or the loop has it too. A
    * `call_tool` naming one is refused with a pointer to call it directly.
    */
   hostTools?: OpenAI.ChatCompletionTool[];
@@ -336,46 +339,46 @@ export interface AgentLoopOptions {
   catalog?: CatalogServer[];
   /**
    * Puts the catalogue's `instructions` in the system prompt, after `system` and before the
-   * catalogue, as `serverInstructionsPrompt` writes them. Off by default, so no host's prompt
+   * catalogue, as `serverInstructionsPrompt` writes them. Off by default, so no app's prompt
    * changes on upgrade.
    *
    * @defaultValue `false`
    *
    * @remarks
-   * Read from `catalog` in every mode, eager included, so a host that wants them passes one either
+   * Read from `catalog` in every mode, eager included, so an app that wants them passes one either
    * way. The block is built once, from the catalogue rather than from what is loaded, so it is the
-   * same text on every step and covers a server none of whose tools is loaded; the preselected
-   * first step keeps it too, which leaves that step's system prompt a prefix of the next one's.
+   * same text on every turn and covers a server none of whose tools is loaded; the preselected
+   * first turn keeps it too, which leaves that turn's system prompt a prefix of the next one's.
    * `true` cuts each server's text at `SERVER_INSTRUCTION_TOKENS`; an object moves the budget.
    */
   serverInstructions?: boolean | ServerInstructionsOptions;
   /**
-   * How the declared tools are ordered before each request. By name unless told otherwise, so a
-   * run whose tool array was assembled in a different order than last time still meets its cache.
-   * `false` sends them as given. See `orderTools`.
+   * How the declared tools are ordered before each request. By name unless told otherwise, so an
+   * exchange whose tool array was assembled in a different order than last time still meets its
+   * cache. `false` sends them as given. See `orderTools`.
    */
   toolOrder?: ToolOrder;
   /**
-   * What `preselect` picked. The first step is sent these and nothing else — no catalogue, no
+   * What `preselect` picked. The first turn is sent these and nothing else — no catalogue, no
    * `load_tools` — because a model with the menu still in front of it shops: it reloads what it
-   * has or picks a sibling. Everything comes back on the step after. `preselectRouting` trades
-   * that for a first step shaped like the rest.
+   * has or picks a sibling. Everything comes back on the turn after. `preselectRouting` trades
+   * that for a first turn shaped like the rest.
    *
    * @remarks
-   * Proxied, the tool array is fixed and there is no such step. The shortlist is written into the
+   * Proxied, the tool array is fixed and there is no such turn. The shortlist is written into the
    * transcript instead, after the question, as a `load_tools` call the model did not make and the
    * result that call would have had — an assistant message and a tool message, handed back in
    * `messages` like any other, reported as a `tool-call` and a `tool-result` event and told to
    * `onToolCall` and `onToolResult`. Names with no definition in `tools`, or outside the
-   * catalogue, are left out, and none left is no exchange.
+   * catalogue, are left out, and with none left nothing is written.
    */
   preselected?: readonly string[];
   /**
-   * What a preselection does to the first step. `"exclusive"` is the shortlist alone
+   * What a preselection does to the first turn. `"exclusive"` is the shortlist alone
    * as `preselected` describes — and a system prompt and tool array unlike the last request's and
-   * unlike the next step's, so a prompt cache misses the whole transcript on the first step and
+   * unlike the next turn's, so a prompt cache misses the whole transcript on the first turn and
    * again on the second. `"append"` loads the shortlist as a `load_tools` call would have and
-   * sends the first step like any other: the catalogue, `load_tools`, what `loaded` carried, then
+   * sends the first turn like any other: the catalogue, `load_tools`, what `loaded` carried, then
    * the shortlist after it, with a name already carried left where it is. The price is the menu
    * back in front of the model. Which costs more has not been measured, which is why the default
    * has not moved.
@@ -385,35 +388,36 @@ export interface AgentLoopOptions {
    * @remarks
    * Appended is before `toolOrder` has its say: sorted, a preselected tool lands at its name's
    * place and moves every definition after it, so only `toolOrder: false` keeps a carried array
-   * a strict prefix. Either way the first step's system prompt is the second's, and so is its
+   * a strict prefix. Either way the first turn's system prompt is the second's, and so is its
    * tool array until something else is loaded. Nothing to do without a preselection, in eager
-   * mode, or proxied, where no step is routed either way.
+   * mode, or proxied, where no turn is routed either way.
    */
   preselectRouting?: typeof PRESELECT_EXCLUSIVE | typeof PRESELECT_APPEND;
   /**
    * Has the loop make the preselection itself, before its first request, with the preselector
-   * the config names. Opt-in, so that a host that passes a resolved agent and calls `preselect`
+   * the config names. Opt-in, so that an app that passes a resolved agent and calls `preselect`
    * on its own is not sent a second one.
    *
    * @defaultValue `false`
    *
    * @remarks
-   * The preselector is `config.tasks.toolSelect` with everything it states — its endpoint, model,
-   * ceiling, temperature and reasoning effort, keyed as `taskCall` keys a task against `config` —
-   * and otherwise `config.toolSelectModel` on the config's own endpoint at `preselect`'s defaults.
-   * With neither naming a model it is `config.model` itself, on the same terms as
-   * `toolSelectModel`: a host that opted in has asked for a preselection, and an empty name is a
-   * setting nobody filled in rather than a refusal. A host that wants none passes no `preselect`.
+   * The preselector is `config.tasks.toolSelect` with everything it states — its model server,
+   * model, ceiling, temperature and reasoning effort, keyed as `taskCall` keys a task against
+   * `config` — and otherwise `config.toolSelectModel` on the config's own model server at
+   * `preselect`'s defaults. With neither naming a model it is `config.model` itself, on the same
+   * terms as `toolSelectModel`: an app that opted in has asked for a preselection, and an empty
+   * name is a setting nobody filled in rather than a refusal. An app that wants none passes no
+   * `preselect`.
    *
    * What it is asked about is `preselectQuery`, and otherwise the text of the last user message as
-   * the host gave it — the hooks' context is put on the request, never on `messages`, so the
+   * the app gave it — the hooks' context is put on the request, never on `messages`, so the
    * tools are picked on what was asked rather than on what was recalled. Nothing is asked in eager
    * mode, with no question, or when `preselected` is given — an empty one included, which is how
-   * a host says it has already decided.
+   * an app says it has already decided.
    *
    * `true` takes `preselect`'s defaults; an object passes `keywords` and `maxPerLoad` through.
    * Its notices arrive as `notice` events, and a preselection that fails picks nothing rather
-   * than ending the run. What it picked is a notice too, `PRESELECTED_NOTICE` and the names,
+   * than ending the exchange. What it picked is a notice too, `PRESELECTED_NOTICE` and the names,
    * before the first `turn` event, and is the result's `preselected`. It runs beside the hooks'
    * `gather` rather than before it, since neither reads what the other returns, and the first
    * request waits for both.
@@ -424,44 +428,45 @@ export interface AgentLoopOptions {
    * Read only under `preselect`.
    *
    * @remarks
-   * For a host that gathered its hooks itself and sent the question with `withContext` already on
+   * For an app that gathered its hooks itself and sent the question with `withContext` already on
    * it: the loop cannot tell the context from the question, and a preselector shown both picks
    * tools for whatever memory recalled. Blank asks nothing, as a blank question does.
    */
   preselectQuery?: string;
   /**
-   * Has the loop fold the transcript itself before a step, once `planCompaction` says the window
-   * is filling, with the summary written by `config.tasks.compaction` on its own settings. Off by
-   * default, and nothing is folded without that task — there is no falling back to the main model
-   * — or without a `config.contextLength` to plan against.
+   * Has the loop compact the transcript itself before a turn, once `planCompaction` says the
+   * context window is filling, with the summary written by `config.tasks.compaction` on its own
+   * settings. Off by default, and nothing is compacted without that task — there is no falling back
+   * to the main model — or without a `config.contextLength` to plan against.
    *
    * @remarks
    * It runs after `beforeStep`, on what that returned, and is `compactTranscript` and nothing
    * more: the plan is made from the last request's reported prompt, or an estimate before the
-   * first step and after a `beforeStep` rewrite; `hooks`, when given, are told `beforeCompact`
-   * beside the summary; and a fold is said as a `notice` event. A summary that fails is a notice
-   * too and folds nothing. Tool results are not pruned by this — `prune` is.
+   * first turn and after a `beforeStep` rewrite; `hooks`, when given, are told `beforeCompact`
+   * beside the summary; and a compaction is said as a `notice` event. A summary that fails is a
+   * notice too and compacts nothing. Tool results are not pruned by this — `prune` is.
    *
-   * The result's `messages` then open with the summary in place of what was folded, so a host
-   * that keeps its transcript append-only wants `runCompaction` and a stored fold instead. `true`
-   * plans by `planCompaction`'s defaults; an object moves its thresholds.
+   * The result's `messages` then open with the summary in place of what was compacted, so an app
+   * that keeps its transcript append-only wants `runCompaction` and a stored compaction instead.
+   * `true` plans by `planCompaction`'s defaults; an object moves its thresholds.
    */
   compact?: boolean | Pick<CompactionOptions, 'compactAt' | 'keepRatio' | 'target'>;
   /**
-   * Has the loop stub old tool results itself before a step, at a boundary `planPrune` moves, so
+   * Has the loop stub old tool results itself before a turn, at a boundary `planPrune` moves, so
    * the prompt cache is lost once per move rather than once per tool call. Off by default, and
-   * nothing moves without a `config.contextLength` — except alongside a fold.
+   * nothing moves without a `config.contextLength` — except alongside a compaction.
    *
    * @remarks
    * It runs after `beforeStep`, on what that returned, and before `compact`, which then plans from
-   * what is left: a prune that brings the run back under the line spares it the summary's round
-   * trip. Where a fold is made anyway, the boundary is moved again after it with `compacted`, since
-   * the cache is already lost. Each move is said as a `notice` event, with `pruneNotice`'s counts.
+   * what is left: a prune that brings the exchange back under the line spares it the summary's
+   * round trip. Where it compacts anyway, the boundary is moved again after it with `compacted`,
+   * since the cache is already lost. Each move is said as a `notice` event, with
+   * `pruneNotice`'s counts.
    *
-   * The stubs are in the result's `messages`, as a fold is, so a host that keeps its transcript
+   * The stubs are in the result's `messages`, as a summary is, so an app that keeps its transcript
    * whole calls `planPrune` and `pruneThrough` in its own `beforeStep` and stores the boundary
-   * instead. `true` plans by `planPrune`'s defaults — past `COMPACT_AT` of the window, and only for
-   * at least `PRUNE_SHARE` of it; an object moves the gate and what is kept.
+   * instead. `true` plans by `planPrune`'s defaults — past `COMPACT_AT` of the context window, and
+   * only for at least `PRUNE_SHARE` of it; an object moves the gate and what is kept.
    */
   prune?: boolean | Pick<PrunePlanOptions, 'at' | 'minShare' | 'keepLast' | 'maxChars'>;
   /**
@@ -476,7 +481,7 @@ export interface AgentLoopOptions {
    * A `ToolAnswer` in place of the string adds what the call produced: its `text` is the whole of
    * what goes into the transcript, and its `links` become the result's `artifacts`, an `artifact`
    * event the first time each uri is seen, and `links` on what `onToolResult` is handed. Its `end`
-   * ends the run once the step's calls are answered; see `AgentLoopResult.ended`.
+   * ends the exchange once the turn's calls are answered; see `AgentLoopResult.ended`.
    */
   dispatch: ToolDispatch;
   /**
@@ -489,12 +494,12 @@ export interface AgentLoopOptions {
    * Chat completions has no `is_error` field, so the text is the only place a model learns the
    * call failed; `ok: false` reaches the events and `onToolResult` either way. Not asked of the
    * refusals the loop writes itself — arguments it could not read, a `call_tool` outside the
-   * catalogue, a call the run was stopped during — which keep their own words. An empty answer
+   * catalogue, a call the exchange was stopped during — which keep their own words. An empty answer
    * from either path, a successful one included, is written as `(no output)`.
    */
   formatToolError?: (error: unknown) => string;
   /**
-   * Runs a step's calls together rather than one after another, or — given a predicate — runs
+   * Runs a turn's calls together rather than one after another, or — given a predicate — runs
    * together the consecutive calls it passes, and each one it fails alone, in the order asked.
    *
    * @defaultValue `false`
@@ -502,9 +507,9 @@ export interface AgentLoopOptions {
    * @remarks
    * Results go into the transcript in the order the model asked, whichever way they ran. See
    * `dedupeToolCalls`, which applies either way. Under `singleCallMessages`, or once the model has
-   * refused several calls in one message, a step's calls run one at a time whatever this says.
+   * refused several calls in one message, a turn's calls run one at a time whatever this says.
    *
-   * A predicate is how a host runs reads together while its writes keep their order: a call it
+   * A predicate is how an app runs reads together while its writes keep their order: a call it
    * fails is a barrier, waiting for every call before it, and every call after waits for it. Read
    * A, read B, write C, read D, read E runs as `[A ‖ B] → C → [D ‖ E]`, so a read asked for after
    * a write sees what the write did. Calls the loop answers itself — `load_tools`, a call whose
@@ -516,15 +521,15 @@ export interface AgentLoopOptions {
   parallel?: boolean | ((call: ToolCallRequest) => boolean);
   /**
    * Answers an identical repeat of a call — the same name, and the same arguments once read and
-   * written back as JSON — within one step from the first one, rather than dispatching it again.
+   * written back as JSON — within one turn from the first one, rather than dispatching it again.
    *
    * @defaultValue `true`
    *
    * @remarks
    * It holds whether or not the calls run in `parallel`: a model that asks the same
    * question twice in one reply gets one answer, and two that are still in flight share the
-   * request. A call that threw is not an answer and is made again. The scope is the step and not
-   * the run, because between steps other tools have run and the file the model read may be the
+   * request. A call that threw is not an answer and is made again. The scope is the turn and not
+   * the exchange, because between turns other tools have run and the file the model read may be the
    * file it has since written. Whitespace and a repaired argument do not tell two calls apart, but
    * the order of their keys does.
    *
@@ -535,25 +540,25 @@ export interface AgentLoopOptions {
    */
   dedupeToolCalls?: boolean | ((call: ToolCallRequest) => boolean);
   /**
-   * Leaves calls for the host to answer later rather than dispatching them: the step's other calls
-   * run, and the run stops after the step, waiting, with the calls in the result's `pending`.
+   * Leaves calls for the app to answer later rather than dispatching them: the turn's other calls
+   * run, and the exchange stops after the turn, waiting, with the calls in the result's `pending`.
    * `true` hands back every call to one of `hostTools`; a predicate is asked of every call that
    * would reach `dispatch`, by the name and arguments it would be dispatched with.
    *
    * @defaultValue `false`
    *
    * @remarks
-   * For a call only something outside the run can answer — an app's own tool, a person's approval —
-   * where ending the run would lose it. The transcript holds the step's calls with the handed-back
-   * ones last, so tool messages appended in `pending` order answer them in the order of the call.
-   * A handed-back call is never deduplicated nor put to `parallel`, and a call of the same step
-   * that ends the run wins: see `AgentLoopResult.pending`.
+   * For a call only something outside the exchange can answer — an app's own tool, a person's
+   * approval — where ending the exchange would lose it. The transcript holds the turn's calls with
+   * the handed-back ones last, so tool messages appended in `pending` order answer them in the
+   * order of the call. A handed-back call is never deduplicated nor put to `parallel`, and a call
+   * of the same turn that ends the exchange wins: see `AgentLoopResult.pending`.
    */
   handBack?: boolean | ((call: ToolCallRequest) => boolean);
   /**
-   * Collects artifacts from the two sources that take a guess, beside the `links` every run keeps:
-   * `declare` has the model name them through `record_artifact`, and `detect` reads each successful
-   * call for the shape of a write. Both off by default.
+   * Collects artifacts from the two sources that take a guess, beside the `links` every exchange
+   * keeps: `declare` has the model name them through `record_artifact`, and `detect` reads each
+   * successful call for the shape of a write. Both off by default.
    *
    * @remarks
    * For servers that never send a `resource_link`, which is the source to rely on. One artifact per
@@ -562,9 +567,9 @@ export interface AgentLoopOptions {
    *
    * `record_artifact` is declared beside `hostTools`, in every mode, and answered by the loop
    * without `dispatch` seeing it. A declaration is believed only where some successful call in the
-   * run was given or answered with the location, and is otherwise refused for the model to read;
-   * run in a batch, it waits for the batch's other calls. `onToolCall` and `onToolResult` hear it
-   * as they hear `load_tools`, and it counts in `toolCalls` but not in `used`.
+   * exchange was given or answered with the location, and is otherwise refused for the model to
+   * read; run in a batch, it waits for the batch's other calls. `onToolCall` and `onToolResult`
+   * hear it as they hear `load_tools`, and it counts in `toolCalls` but not in `used`.
    */
   artifacts?: ArtifactOptions;
   /**
@@ -573,9 +578,9 @@ export interface AgentLoopOptions {
    * not be read, which arrives with empty `args` and the model's own text in `raw`.
    *
    * @remarks
-   * For a host that shows each call as it is made and fills it in when its result lands, which
-   * `dispatch` alone cannot do for those three. A handed-back call is told at the end of its step;
-   * one handed back in a step another call ended, and one the step never got to, are not told.
+   * For an app that shows each call as it is made and fills it in when its result lands, which
+   * `dispatch` alone cannot do for those three. A handed-back call is told at the end of its turn;
+   * one handed back in a turn another call ended, and one the turn never got to, are not told.
    * Not awaited: a promise it returns is dropped.
    */
   onToolCall?: (call: ToolCallRequest) => void;
@@ -597,17 +602,17 @@ export interface AgentLoopOptions {
    * @remarks
    * Only this question is touched — the last user message of `messages` — and the context is on
    * the request, never in the transcript handed back. An earlier question's context is therefore
-   * the host's to send again: keep the result's `context` and `preface` beside the question, and
+   * the app's to send again: keep the result's `context` and `preface` beside the question, and
    * put them back with `withContext` on every later call. A question sent bare that was first
    * sent with context is a different prompt from that message on, and the server's prefix cache
    * is lost behind it on every turn.
    */
   hooks?: AgentLoopHooks;
   /**
-   * Called before each step with the transcript, and what it returns replaces it — the point to
-   * compact or prune a run that has grown into its window. Returning nothing keeps it. `window`
-   * is what `planCompaction` wants to know, so a host need not track usage itself to compact
-   * mid-run.
+   * Called before each turn with the transcript, and what it returns replaces it — the point to
+   * compact or prune an exchange that has grown into its context window. Returning nothing keeps
+   * it. `window` is what `planCompaction` wants to know, so an app need not track usage itself to
+   * compact mid-exchange.
    */
   beforeStep?: (
     messages: readonly OpenAI.ChatCompletionMessageParam[],
@@ -615,73 +620,75 @@ export interface AgentLoopOptions {
     window: StepWindow,
   ) => OpenAI.ChatCompletionMessageParam[] | undefined | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
   /**
-   * Asked for input that arrived while the run was going — a person steering it — which the run
-   * then goes on with as a user message.
+   * Asked for input that arrived while the exchange was going — a person steering it — which the
+   * exchange then goes on with as a user message.
    *
    * @remarks
-   * Asked at the top of every step, once the last step's calls have all answered, and once more
-   * when the model answers without calls, where input keeps the run going for another step if one
-   * is left. What it returns is appended, told to `onMessage` and as an `input` event, before
-   * `beforeStep` is handed the transcript. Input it still holds when the run returns is the host's.
+   * Asked at the top of every turn, once the last turn's calls have all answered, and once more
+   * when the model answers without calls, where input keeps the exchange going for another turn if
+   * one is left. What it returns is appended, told to `onMessage` and as an `input` event, before
+   * `beforeStep` is handed the transcript. Input it still holds when the exchange returns is
+   * the app's.
    */
   takeInput?: () =>
     | OpenAI.ChatCompletionUserMessageParam
     | undefined
     | Promise<OpenAI.ChatCompletionUserMessageParam | undefined>;
   /**
-   * The ledger an earlier run handed back for this transcript, to be continued. Its indexes have
-   * to be into `messages` as given here — see `rebaseLedger` for a transcript rewritten since.
-   * This run's requests start a new epoch, because the loop cannot see whether the request before
-   * its first one had the same system prompt and tools. Absent starts an empty one.
+   * The ledger an earlier exchange handed back for this transcript, to be continued. Its indexes
+   * have to be into `messages` as given here — see `rebaseLedger` for a transcript rewritten since.
+   * This exchange's requests start a new epoch, because the loop cannot see whether the request
+   * before its first one had the same system prompt and tools. Absent starts an empty one.
    *
    * @remarks
-   * A run resumed after `pending` passes the waiting run's ledger as it came back: the answers
-   * appended to its `messages` sit after every index in it, so it needs no rebase.
+   * An exchange resumed after `pending` passes the waiting exchange's ledger as it came back: the
+   * answers appended to its `messages` sit after every index in it, so it needs no rebase.
    */
   ledger?: TokenLedger;
-  /** Stops the run: the request in flight, and between steps and calls. */
+  /** Stops the exchange: the request in flight, and between turns and calls. */
   signal?: AbortSignal;
   /**
-   * The run's own key — a run id, a conversation id — which keeps its prompt cache warm across
-   * steps and beside other runs. Every request carries it as `SESSION_HEADER`, for a router's
+   * The session's own key — a run id, a conversation id — which keeps its prompt cache warm across
+   * turns and beside other sessions. Every request carries it as `SESSION_HEADER`, for a router's
    * sticky affinity.
    *
    * @remarks
-   * On a llama.cpp server that reports `total_slots`, the run also holds one slot from its first
-   * request to its return or throw, sent as `id_slot` with `cache_prompt: true`, and a notice says
-   * which. The slot is the one this key held last where it is free; with every slot held, or one
-   * held by this key already, the run goes unpinned. An `extraBody` naming `id_slot` is the host
-   * pinning for itself and is left alone, and a server that refuses the field is latched off it.
+   * On a llama.cpp server that reports `total_slots`, the exchange also holds one slot from its
+   * first request to its return or throw, sent as `id_slot` with `cache_prompt: true`, and a notice
+   * says which. The slot is the one this key held last where it is free; with every slot held, or
+   * one held by this key already, the exchange goes unpinned. An `extraBody` naming `id_slot` is
+   * the app pinning for itself and is left alone, and a server that refuses the field is latched
+   * off it.
    */
   session?: string;
   /**
-   * Told what the run is doing, as the events a watcher reads.
+   * Told what the exchange is doing, as the events a watcher reads.
    *
    * @remarks
    * On a `remoteAgent` config, the server's events arrive whole, under its run id and numbering
-   * (`'seq' in event` tells them apart). `emit` files one under the host's run and numbering, and
+   * (`'seq' in event` tells them apart). `emit` files one under the app's run and numbering, and
    * keeps its `at`.
    */
   onEvent?: (event: RunEventInput | RunEvent) => void;
   /**
    * Takes tool calls a model wrote into its reply as text and runs them as calls, with a notice
    * saying so. A server whose tool-call parser does not match the model's template otherwise ends
-   * the run on a reply that is only a call nobody made. Off leaves such a reply as the answer, and
-   * so does a `remoteAgent` config whatever this says. See `recoverToolCalls`.
+   * the exchange on a reply that is only a call nobody made. Off leaves such a reply as the answer,
+   * and so does a `remoteAgent` config whatever this says. See `recoverToolCalls`.
    *
    * @defaultValue `true`
    */
   recoverToolCalls?: boolean;
   /**
-   * Makes up the id of a call nobody gave one: a streamed call the server sent without an id, a call
-   * recovered from text, and a proxied run's preselected load. A server's id is kept as sent unless
-   * the transcript already uses it, and always on a remote agent.
+   * Makes up the id of a call nobody gave one: a streamed call the server sent without an id, a
+   * call recovered from text, and a proxied exchange's preselected load. A server's id is kept as
+   * sent unless the transcript already uses it, and always on a remote agent.
    *
    * @defaultValue `mintCallId`, nine random characters from `[A-Za-z0-9]`
    *
    * @remarks
-   * Whatever it returns is checked against every id in the transcript, the host's history
-   * included, and asked again on a clash, so an id answers for one call across the run. Pass
+   * Whatever it returns is checked against every id in the transcript, the app's history
+   * included, and asked again on a clash, so an id answers for one call across the exchange. Pass
    * `callIdMinter(seed)` for ids a test can predict. See `distinctCallIds`.
    */
   mintCallId?: CallIdMinter;
@@ -692,45 +699,45 @@ export interface AgentLoopOptions {
    * @defaultValue `kept`
    *
    * @remarks
-   * An id is unique within its own transcript either way. `minted` is for a host that matches
-   * answers to calls across runs — one that hands calls back to an app and resumes whichever run
-   * is waiting on the id that comes back — since many servers count ids from zero on every turn.
-   * The id is given before the assistant message is stored, so the transcript, the `tool-call`
-   * and `tool-result` events, `onToolCall`, `onToolResult` and `toolCalls` all carry it.
-   * Ignored on a `remoteAgent` config, whose ids are kept as sent because the server resumes its
-   * run by them.
+   * An id is unique within its own transcript either way. `minted` is for an app that matches
+   * answers to calls across exchanges — one that hands calls back to another app and resumes
+   * whichever exchange is waiting on the id that comes back — since many servers count ids from
+   * zero on every turn. The id is given before the assistant message is stored, so the transcript,
+   * the `tool-call` and `tool-result` events, `onToolCall`, `onToolResult` and `toolCalls` all
+   * carry it. Ignored on a `remoteAgent` config, whose ids are kept as sent because the server
+   * resumes its run by them.
    */
   callIds?: CallIds;
   /**
-   * Each step's request as first built, before it goes out — for measuring what was sent, not for
+   * Each turn's request as first built, before it goes out — for measuring what was sent, not for
    * changing it, which is `beforeStep`'s.
    *
    * @remarks
-   * Called once a step, synchronously, and what it throws ends the run. It is not called again
+   * Called once a turn, synchronously, and what it throws ends the exchange. It is not called again
    * for what `runTurn` sends after that: a retry sends the same request, but a refusal is answered
    * with a lesser body — relaxed schemas, a field dropped — and a continuation with the reply so
    * far on the end, and neither is reported.
    */
   onRequest?: (request: AgentLoopRequest) => void;
-  /** Each turn as it comes back, before its tools run. Recovered calls are in it as calls. */
+  /** Each reply as it comes back, before its tools run. Recovered calls are in it as calls. */
   onTurn?: (turn: Turn, step: number) => void;
   /**
    * Each message as the loop appends it to the transcript, in transcript order, and awaited before
-   * the loop goes on — so a host that stores its transcript has written the assistant message
+   * the loop goes on — so an app that stores its transcript has written the assistant message
    * before its tools run, and every tool result before the next request is sent.
    *
    * @remarks
    * The assistant message is the one replayed on later requests — arguments repaired, recovered
    * calls folded in, the scratchpad on it where `reasoningReplay` says — and comes with its
    * `turn`, as `onTurn` was handed it. Under `tool-loop` the result's `messages` drop that field
-   * once the answer is written, so a host storing these rows drops it too (`dropReasoning`).
+   * once the answer is written, so an app storing these rows drops it too (`dropReasoning`).
    * A tool result comes without one, and so do the two messages
-   * a proxied run writes for its `preselected` shortlist, told as step zero's before any request.
-   * What it returns is ignored: `beforeStep` is the one way to rewrite the transcript. What it
-   * throws ends the run, and it is not called again for that run.
+   * a proxied exchange writes for its `preselected` shortlist, told as turn zero's before any
+   * request. What it returns is ignored: `beforeStep` is the one way to rewrite the transcript.
+   * What it throws ends the exchange, and it is not called again for that exchange.
    *
    * Beside an assistant message the model wrote comes `written`, whose `raw` is the message as the
-   * model produced it, for a host that shows or stores what was said rather than what is replayed.
+   * model produced it, for an app that shows or stores what was said rather than what is replayed.
    * See `WrittenMessage`.
    */
   onMessage?: (
@@ -752,50 +759,51 @@ export interface AgentLoopOptions {
 /** What a finished loop hands back. */
 export interface AgentLoopResult {
   /**
-   * The last turn, as `onTurn` was handed it: the one that asked for no tools, or — where a call
-   * `ended` the run, or calls are `pending` — the one that made those calls.
+   * The last reply, as `onTurn` was handed it: the one that asked for no tools, or — where a call
+   * `ended` the exchange, or calls are `pending` — the one that made those calls.
    *
    * @remarks
    * Ended by a call, its `content` is what the model wrote beside its calls, which is often
-   * nothing, and its `toolCalls` are not empty. The run's answer is then whatever the ending tool
-   * took — the question it asked, the work it handed off — and not this text.
+   * nothing, and its `toolCalls` are not empty. The exchange's answer is then whatever the ending
+   * tool took — the question it asked, the work it handed off — and not this text.
    */
   turn: Turn;
   /**
    * The call whose answer said `end`, where one did: the first in the order the model asked, once
-   * every call of its step was answered. Absent where the run ended on a turn that asked for no
-   * tools.
+   * every call of its turn was answered. Absent where the exchange ended on a reply that asked for
+   * no tools.
    *
    * @remarks
-   * Every other field is as a finished run has it: `messages` close on the step's tool results
-   * with no assistant turn after them, the hooks are told `afterTurn` with `turn.content`, and
+   * Every other field is as a finished exchange has it: `messages` close on the turn's tool results
+   * with no assistant message after them, the hooks are told `afterTurn` with `turn.content`, and
    * `metrics.outcome` is `ended`. No `beforeStep` or `compact` runs after the end, since no request
-   * follows it. A host saying `done` passes the call on it — `id` the call, `name` the tool, `text`
+   * follows it. An app saying `done` passes the call on it — `id` the call, `name` the tool, `text`
    * the reason — which is how `runMetrics` reads the same outcome off the events.
    */
   ended?: EndedBy;
   /**
-   * The calls `handBack` left for the host, in the order asked, where the run stopped to wait for
-   * them: each by id, the name it was shown as, and its arguments. Absent where the run answered
-   * or ended.
+   * The calls `handBack` left for the app, in the order asked, where the exchange stopped to wait
+   * for them: each by id, the name it was shown as, and its arguments. Absent where the exchange
+   * answered or ended.
    *
    * @remarks
-   * `messages` then end in the step's assistant message and the results of the calls the loop ran,
-   * with no result for these; `turn` is the turn that made them, `metrics.outcome` is `waiting`, a
-   * `wait` event was emitted, and the `afterTurn` hooks were not told. To go on, the host calls the
+   * `messages` then end in the turn's assistant message and the results of the calls the loop ran,
+   * with no result for these; `turn` is the reply that made them, `metrics.outcome` is `waiting`, a
+   * `wait` event was emitted, and the `afterTurn` hooks were not told. To go on, the app calls the
    * loop again with `messages` and one tool message per call appended in this order, and with
-   * `ledger` and `loaded` from this result. A call of the same step that ended the run wins: the
-   * calls that would have been handed back are answered as not run, and none is pending.
+   * `ledger` and `loaded` from this result. A call of the same turn that ended the exchange wins:
+   * the calls that would have been handed back are answered as not run, and none is pending.
    */
   pending?: ToolCallRequest[];
   /**
-   * The transcript, with every assistant turn and tool result the run added. No system prompt.
+   * The transcript, with every assistant message and tool result the exchange added. No
+   * system prompt.
    * Under `tool-loop`, no assistant message from the question on carries a scratchpad.
    */
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
-   * Summed over every turn of the run, in the spelling the `usage` events use, with whether any
-   * turn reported a cache count. The four counts are also under their older names.
+   * Summed over every turn of the exchange, in the spelling the `usage` events use, with whether
+   * any turn reported a cache count. The four counts are also under their older names.
    */
   usage: LoopUsage;
   /**
@@ -805,21 +813,21 @@ export interface AgentLoopResult {
    */
   toolCalls: ToolCallOutcome[];
   /**
-   * What the run's calls linked to, one per uri in the order first seen, each with the call and
-   * step that first linked to it and how many calls did. Empty where `dispatch` answered with
+   * What the exchange's calls linked to, one per uri in the order first seen, each with the call
+   * and turn that first linked to it and how many calls did. Empty where `dispatch` answered with
    * strings only and `artifacts` collected nothing else.
    */
   artifacts: RunArtifact[];
   /**
    * What is loaded at the end, for `carryOver`. Empty in eager mode, and in proxied mode: a
-   * definition loaded there is already in the history, and one a compaction folded away has to be
+   * definition loaded there is already in the history, and one a compaction removed has to be
    * loadable again rather than answered "already loaded".
    */
   loaded: string[];
   /** The tools the model actually called, `load_tools` excluded and `call_tool` looked through. */
   used: string[];
   /**
-   * The shortlist the run opened with, as the host's `preselected` gave it or the loop's own
+   * The shortlist the exchange opened with, as the app's `preselected` gave it or the loop's own
    * preselection picked it. Empty in eager mode, and where nothing was picked.
    */
   preselected: string[];
@@ -828,37 +836,37 @@ export interface AgentLoopResult {
   /**
    * The `<context>` blocks the hooks added to this question, as `withContext` takes them. Empty
    * when no hook added any, without `hooks`, and where `fire` lists no injecting event. Not in
-   * `messages`, so a host that wants the next turn's request to begin with this one's stores it
-   * beside the question; see `hooks`.
+   * `messages`, so an app that wants the next exchange's requests to begin with this one's stores
+   * it beside the question; see `hooks`.
    */
   context: string;
   /**
    * What was said above `context`: the hooks' own `preface`, or what `configureHooks` had set when
-   * the run began. Handed back because the second is not the host's to know later — with it,
+   * the exchange began. Handed back because the second is not the app's to know later — with it,
    * `withContext(messages, at, context, preface)` is the question as it was sent, whatever the
    * process's preface has since become. Empty when the preface was turned off; with no `context`
    * nothing was said either way, and `withContext` adds nothing.
    */
   preface: string;
   /**
-   * The `afterTurn` hooks' notes, once they have run — failures only, as `notify` returns them.
-   * The loop does not wait for it, so the answer is never held for a hook; a host that stores the
-   * notes with the turn, or must not exit before the turn is remembered, awaits it. Each note
+   * The `afterTurn` hooks' notes, once they have run — failures only, as `notify` returns them. The
+   * loop does not wait for it, so the answer is never held for a hook; an app that stores the notes
+   * with the exchange, or must not exit before the exchange is remembered, awaits it. Each note
    * reaches `onNote` as well. Already resolved and empty without `hooks`, and where `fire` leaves
-   * `afterTurn` out — a host that tells it itself has the notes from its own `notify`. Never rejects:
-   * a note `onNote` throws on is dropped.
+   * `afterTurn` out — an app that tells it itself has the notes from its own `notify`. Never
+   * rejects: a note `onNote` throws on is dropped.
    */
   afterTurn: Promise<HookNote[]>;
   /**
-   * The run summed and derived: what `runMetrics` makes of the events this loop emitted, with the
-   * `load_tools` counts at zero rather than absent in a run on demand, `wallMs` from the call to
-   * the return, and `outcome`. A host running several loops for one run gets its counts from
-   * `runMetrics` over all their events, without these results beside it.
+   * The exchange summed and derived: what `runMetrics` makes of the events this loop emitted, with
+   * the `load_tools` counts at zero rather than absent in an exchange on demand, `wallMs` from the
+   * call to the return, and `outcome`. An app running several exchanges for one run gets its counts
+   * from `runMetrics` over all their events, without these results beside it.
    */
   metrics: RunMetrics;
   /**
-   * What each step's request reported its prompt as, indexed into `messages` above, for
-   * `tokensBetween` and `estimateFrom`. The entries of a `ledger` passed in come first. A step
+   * What each turn's request reported its prompt as, indexed into `messages` above, for
+   * `tokensBetween` and `estimateFrom`. The entries of a `ledger` passed in come first. A turn
    * whose prompt was not reported has no entry.
    */
   ledger: TokenLedger;
@@ -869,87 +877,90 @@ export interface AgentLoopResult {
   remoteRunId?: string;
 }
 
-/** How `runAgentLoop` reads the run as it stands, from outside the steps that are building it. */
+/**
+ * How `runAgentLoop` reads the exchange as it stands, from outside the turns that are building it.
+ */
 interface Standing {
   read: () => AgentLoopFailure;
 }
 
 /**
- * Runs a question to its answer: one `runTurn` per step, the tools it asks for between them,
- * until a turn asks for none or a call's answer ends the run. Throws when `maxToolIterations` is
+ * Runs a question to its answer: one `runTurn` per turn, the tools it asks for between them, until
+ * a reply asks for none or a call's answer ends the exchange. Throws when `maxToolIterations` is
  * spent, when stopped, and on whatever `runTurn` throws — `ContextOverflow` among them, however it
  * was found out.
  *
  * @param options - The config, transcript, tools and dispatcher, plus the optional hooks, events
  * and cancellation. See `AgentLoopOptions`.
- * @returns The turn that asked for no tools — or made the call that ended the run, with `ended`
- * naming it, or the calls it waits on, in `pending` — and the run around it: the transcript with
- * what the run added, usage, every call, what is loaded and used, the hooks' notes and context,
- * metrics and the ledger. See `AgentLoopResult`.
+ * @returns The reply that asked for no tools — or made the call that ended the exchange, with
+ * `ended` naming it, or the calls it waits on, in `pending` — and the exchange around it: the
+ * transcript with what the exchange added, usage, every call, what is loaded and used, the hooks'
+ * notes and context, metrics and the ledger. See `AgentLoopResult`.
  *
  * @remarks
- * What it throws carries the run as it stood — `messages`, `usage`, `toolCalls`, `loaded`, `used`,
- * `preselected` and `ledger` — because the steps before a failure were real and a host that
+ * What it throws carries the exchange as it stood — `messages`, `usage`, `toolCalls`, `loaded`,
+ * `used`, `preselected` and `ledger` — because the turns before a failure were real and an app that
  * stores its transcript has nothing else to store them from. What the request in flight had said
  * is on it as `partial`, and not in `messages`. A spent budget is a `ToolIterationLimit`, an
  * overflow is an `AgentLoopOverflow`, which is still a `ContextOverflow`, and anything else is an
  * `AgentLoopError` with what was caught as its `cause` and its message as its own; `failedRun`
- * reads the run off any of the three. A failure while a step's tools run leaves the transcript
+ * reads the exchange off any of the three. A failure while a turn's tools run leaves the transcript
  * well-formed: the results that came back are kept, and each call without one is answered with a
  * line saying it was stopped or never run, since a call with no result is refused on replay.
  *
- * A tool that finishes the job — a hand-off, a question for a person — ends the run with a
- * `ToolAnswer` whose `end` is set, rather than by aborting it: the step's calls are all run and
- * answered, no further request is sent, and the loop resolves with `ended`. An end in the last step
+ * A tool that finishes the job — a hand-off, a question for a person — ends the exchange with a
+ * `ToolAnswer` whose `end` is set, rather than by aborting it: the turn's calls are all run and
+ * answered, no further request is sent, and the loop resolves with `ended`. An end in the last turn
  * `maxToolIterations` allows resolves too, since nothing was left undone.
  *
- * A call only the host can answer later — an app's own tool — is left unanswered with `handBack`:
- * the step's other calls run, a `wait` event is emitted, and the loop resolves with the call in
- * `pending`. The run goes on when the host calls the loop again with the answers appended; see
+ * A call only the app can answer later — one of its own tools — is left unanswered with `handBack`:
+ * the turn's other calls run, a `wait` event is emitted, and the loop resolves with the call in
+ * `pending`. The run goes on when the app calls the loop again with the answers appended; see
  * `AgentLoopResult.pending`.
  *
- * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system
- * prompt unchanged from step to step, a load adds to the tool array — which every request sends
- * in the stable order `toolOrder` asks for — and
- * a catalogued tool called without being loaded is loaded and run rather than refused, and a
- * preselection shapes the first step unless `preselectRouting` says to append it. A turn cut off
- * at `maxTokens` is said so as a notice, because it otherwise reads exactly like a finished one — or, given `maxContinuations`, is
- * continued first. Every turn ends in a `usage` event carrying the turn's own report, with the
- * cache compared against the request before it and the request broken down by what filled it; see
- * `TurnUsage` and `runMetrics`.
+ * On-demand loading is handled here, `load_tools` and all: the catalogue rides on the system prompt
+ * unchanged from turn to turn, a load adds to the tool array — which every request sends in the
+ * stable order `toolOrder` asks for — and a catalogued tool called without being loaded is loaded
+ * and run rather than refused, and a preselection shapes the first turn unless `preselectRouting`
+ * says to append it. A reply cut off at `maxTokens` is said so as a notice, because it otherwise
+ * reads exactly like a finished one — or, given `maxContinuations`, is continued first. Every turn
+ * ends in a `usage` event carrying the turn's own report, with the cache compared against the
+ * request before it and the request broken down by what filled it; see `TurnUsage` and
+ * `runMetrics`.
  *
- * Each step's reported prompt goes on a token ledger, in the same epoch as the step before where
+ * Each turn's reported prompt goes on a token ledger, in the same epoch as the turn before where
  * the request only appended to it and in a new one where it did not — a `beforeStep` that rewrote
- * the transcript, a tool array a load grew — so that what the messages between two steps cost can
+ * the transcript, a tool array a load grew — so that what the messages between two turns cost can
  * be read back as a subtraction. The prompt recorded is the first request's, before any
- * continuation, and a step that reported none, or reported a cache count above its prompt, is not
+ * continuation, and a turn that reported none, or reported a cache count above its prompt, is not
  * recorded. The ledger comes back in the result and on every `usage` event; see `tokensBetween`.
  *
- * Proxied discovery is the same catalogue behind a tool array that never moves: every step
- * declares `PROXY_TOOLS` and nothing else, a load answers with the definitions themselves, and a
- * `call_tool` is dispatched, counted and reported as the tool it names. A preselection has no
- * tool array to go into, so it is written into the transcript as a `load_tools` exchange after
- * the question. `call_tool` is honoured on demand too, unless the host has a tool of that name —
- * a session switched out of proxied mode still has it in its history, and the model copies it.
- * The host's own `hostTools` are declared beside whatever the mode sends, in every mode, and are
+ * Proxied discovery is the same catalogue behind a tool array that never moves: every turn declares
+ * `PROXY_TOOLS` and nothing else, a load answers with the definitions themselves, and a `call_tool`
+ * is dispatched, counted and reported as the tool it names. A preselection has no tool array to go
+ * into, so it is written into the transcript as a `load_tools` call and its result after the
+ * question. `call_tool` is honoured on demand too, unless the app has a tool of that name — a
+ * session switched out of proxied mode still has it in its history, and the model copies it. The
+ * app's own `hostTools` are declared beside whatever the mode sends, in every mode, and are
  * never catalogued.
  *
  * Neither side task is run unless asked for. `preselect` has the loop make the preselection and
- * `compact` has it fold the transcript, each by the task `config.tasks` carries for it and on
+ * `compact` has it compact the transcript, each by the task `config.tasks` carries for it and on
  * that task's own settings — a setting the task leaves out is the side task's default, never the
- * run's `temperature` or `maxTokens`.
+ * exchange's `temperature` or `maxTokens`.
  *
  * On a `remoteAgent` config the model runs its own loop, and this one is a plain tool loop around
  * it: every request declares `tools` and `hostTools`, `dispatch` answers the calls the server hands
  * back, and the next request resumes the server's run by the ids it sent, which are kept as sent.
  * Only the sampling the config sets is sent, and the server's own work — compaction, pruning,
- * preselection, on-demand loading, continuations, the window guard — is left to it (`asRemoteAgent`).
- * Its progress is asked for and its events forwarded to `onEvent` in place of the loop's own for its
- * steps, and each turn carries one `IDEMPOTENCY_HEADER` across its retries (`remoteRun`).
+ * preselection, on-demand loading, continuations, the context-window guard — is left to it
+ * (`asRemoteAgent`). Its progress is asked for and its events forwarded to `onEvent` in place of
+ * the loop's own for its turns, and each turn carries one `IDEMPOTENCY_HEADER` across its retries
+ * (`remoteRun`).
  */
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   let pin: SessionPin | undefined;
-  // Until the steps have set themselves up there is only what the caller handed over.
+  // Until the turns have set themselves up there is only what the caller handed over.
   const standing: Standing = {
     read: () => ({
       messages: [...options.messages],
@@ -973,8 +984,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     });
     result = await runSteps(apart, standing, pin);
   } catch (error) {
-    // Wrapped rather than annotated: an abort's reason is one object shared by every run under
-    // the signal, so the run cannot be hung on the error itself. An overflow keeps its class,
+    // Wrapped rather than annotated: an abort's reason is one object shared by every exchange under
+    // the signal, so the exchange cannot be hung on the error itself. An overflow keeps its class,
     // because `instanceof ContextOverflow` is how a caller knows to compact and try again.
     throw error instanceof ContextOverflow
       ? new AgentLoopOverflow(error.message, standing.read(), { cause: error })
@@ -992,7 +1003,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
  * The loop's own summariser, which is the compaction task's or nothing: a summary the main model
  * writes is a second full-price request the operator did not ask for.
  *
- * @param options - The run's options. Read for `compact`, `config.tasks.compaction` and the signal.
+ * @param options - The exchange's options. Read for `compact`, `config.tasks.compaction` and
+ * the signal.
  * @param notice - Hears the task's notices, and a summary that failed.
  * @returns A summariser resolving to the summary, or to an empty string where writing it failed —
  * an aborted request still rejects. `undefined` where `compact` is off or the task names no model.
@@ -1005,18 +1017,18 @@ function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
   }
   const call = taskCall(compactor, { signal, onNotice: notice }, config);
   const write = summariser(call.endpoint, call.model, call.options);
-  // A summary that fails folds nothing, and the step goes out as it was.
+  // A summary that fails compacts nothing, and the turn goes out as it was.
   return async (text: string) => (await tryAsk('compaction', () => write(text), { onNotice: notice, signal })) ?? '';
 }
 
 /**
- * A step's transcript with the loop's prune boundary moved, where a move was due.
+ * A turn's transcript with the loop's prune boundary moved, where a move was due.
  *
- * @param transcript - The step's messages. Not written to.
+ * @param transcript - The turn's messages. Not written to.
  * @param through - The boundary in force, which only ever moves forward.
- * @param context - The run's options, read for `prune`'s gate and the window; what the last
- * request reported, where it still describes `transcript`; the characters per token an estimate is
- * made at; whether a fold was just made; and `notice`, told of a move.
+ * @param context - The exchange's options, read for `prune`'s gate and the context window; what
+ * the last request reported, where it still describes `transcript`; the characters per token an
+ * estimate is made at; whether a compaction was just made; and `notice`, told of a move.
  * @returns `transcript` itself and the boundary unmoved where nothing was due, otherwise the
  * stubbed array, the new boundary and what it won back.
  */
@@ -1051,18 +1063,18 @@ function pruneBeforeStep(
 }
 
 /**
- * A step's transcript after the loop's own compaction: folded where a fold was due and its summary
- * came back, and otherwise the array it was given.
+ * A turn's transcript after the loop's own compaction: compacted where compaction was due and its
+ * summary came back, and otherwise the array it was given.
  *
- * @param transcript - The step's messages, after `beforeStep`. Not written to.
+ * @param transcript - The turn's messages, after `beforeStep`. Not written to.
  * @param reported - The last request's prompt tokens as `used`, where they still describe this
  * transcript. Empty plans from an estimate instead.
- * @param summarise - Writes the summary. Not called where no fold is due.
- * @param context - The run's options, read for `compact`'s thresholds, the window, the compaction
- * task's ceiling and the hooks; the characters per token an estimate is made at; and `notice`,
- * told of a fold.
- * @returns `transcript` itself where nothing was folded, otherwise a new array with the folded
- * stretch replaced by its summary.
+ * @param summarise - Writes the summary. Not called where no compaction is due.
+ * @param context - The exchange's options, read for `compact`'s thresholds, the context window,
+ * the compaction task's ceiling and the hooks; the characters per token an estimate is made at;
+ * and `notice`, told of a compaction.
+ * @returns `transcript` itself where nothing was compacted, otherwise a new array with the
+ * compacted stretch replaced by its summary.
  */
 async function foldBeforeStep(
   transcript: OpenAI.ChatCompletionMessageParam[],
@@ -1095,12 +1107,12 @@ async function foldBeforeStep(
 /**
  * Which events the loop fires for these hooks, read from `fire`, or from `events` without it.
  *
- * @param hooks - The run's hooks.
+ * @param hooks - The exchange's hooks.
  * @returns The events to gather before the first request, and whether `afterTurn` and
  * `beforeCompact` are the loop's to fire.
  *
  * @remarks
- * Without `fire`, `events` goes to `gather` as it was given, unfiltered, so a host that had put
+ * Without `fire`, `events` goes to `gather` as it was given, unfiltered, so an app that had put
  * something odd in it sees what it saw before. With `fire`, only the injecting events are gathered:
  * a list that names every event is the whole of the loop's firing, and `afterTurn` gathered before
  * the request would be the hooks told a reply that does not exist yet.
@@ -1118,14 +1130,14 @@ function firing(hooks: AgentLoopHooks): { before: readonly HookEvent[]; afterTur
 }
 
 /**
- * Tells the `afterTurn` hooks what was answered, with the turn it closed where the question is
+ * Tells the `afterTurn` hooks what was answered, with the exchange it closed where the question is
  * still in the transcript.
  *
- * @param hooks - The run's hooks: the runner, the context the hooks are told, who hears a note,
- * and the `question`, `turnBase` and `offset` that put the turn in the host's terms.
- * @param messages - The transcript as the run ended, the answer on the end.
+ * @param hooks - The exchange's hooks: the runner, the context the hooks are told, who hears a
+ * note, and the `question`, `turnBase` and `offset` that put the exchange in the app's terms.
+ * @param messages - The transcript as the exchange ended, the answer on the end.
  * @param at - Where the question is in `messages`. Negative — there was none, or it has been
- * folded away — tells the hooks the reply and no `turn`.
+ * compacted away — tells the hooks the reply and no `turn`.
  * @param reply - The answer's text.
  * @returns A promise of their notes — failures only, as `notify` returns them.
  */
@@ -1136,7 +1148,7 @@ const tellAfterTurn = (
   reply: string,
 ): Promise<HookNote[]> => {
   const { question, turnBase = 0 } = hooks;
-  // At the question's own position, so its uuid is the one the host's stored question has.
+  // At the question's own position, so its uuid is the one the app's stored question has.
   const told = question === undefined || at < 0 ? messages : messages.with(at, { role: Role.User, content: question });
   const prompt = hooks.context.prompt ?? question;
   return notify(
@@ -1149,7 +1161,7 @@ const tellAfterTurn = (
       ...(at >= 0
         ? {
             turn: {
-              // A fold's summary is a user message, and stands for turns rather than being one.
+              // A compaction's summary is a user message that stands for exchanges, not one of them.
               index: turnIndex(told, at, turnBase) - told.slice(0, at).filter(isSummary).length,
               messages: turnMessages(hooks.context.session.id, told, at, undefined, { offset: hooks.offset }),
             },
@@ -1161,7 +1173,7 @@ const tellAfterTurn = (
 };
 
 /**
- * Whether a message is a question: a user message that is not a fold's summary.
+ * Whether a message is a question: a user message that is not a compaction's summary.
  *
  * @param message - One message of the transcript.
  * @returns True of a `user` message `isSummary` does not claim.
@@ -1172,10 +1184,10 @@ const isQuestion = (message: OpenAI.ChatCompletionMessageParam) =>
 /**
  * The loop's own record of what it emitted, less the token deltas, for `runMetrics` at the end.
  *
- * @param heard - The host's `onEvent`, still told of every event, deltas included. Absent records
+ * @param heard - The app's `onEvent`, still told of every event, deltas included. Absent records
  * all the same.
  * @returns `recorded`, the array each event is added to as it is emitted, and `onEvent`, which the
- * loop emits through in place of the host's.
+ * loop emits through in place of the app's.
  *
  * @remarks
  * Stamped here rather than by the bus, which the loop does not know about.
@@ -1192,25 +1204,25 @@ function recorder(heard: AgentLoopOptions['onEvent']) {
 }
 
 /**
- * The names of the host's own tools.
+ * The names of the app's own tools.
  *
- * @param [tools] - The host's definitions. One that is not a function has no name, and is left out.
+ * @param [tools] - The app's definitions. One that is not a function has no name, and is left out.
  * @returns A new set, empty where there are none.
  */
 const hostToolNames = (tools: readonly OpenAI.ChatCompletionTool[] = []) =>
   new Set(tools.flatMap((tool) => toolName(tool) ?? []));
 
 /**
- * The run's options with the host's own tools kept out of discovery: off the catalogue, and out of
- * what was carried and what was picked.
+ * The exchange's options with the app's own tools kept out of discovery: off the catalogue, and out
+ * of what was carried and what was picked.
  *
  * @param options - What `runAgentLoop` was given. Not written to.
- * @returns `options` itself where there are no host tools, and otherwise a copy with `catalog`,
+ * @returns `options` itself where there are no app tools, and otherwise a copy with `catalog`,
  * `loaded` and `preselected` filtered, a server that offers none of them kept as it was.
  *
  * @remarks
  * Done once, here, so that preselection, `load_tools`, `call_tool` and the catalogue prompt all
- * read one catalogue, and a host tool is never loadable however a name of one reaches the loop.
+ * read one catalogue, and an app tool is never loadable however a name of one reaches the loop.
  */
 function hostToolsApart(options: AgentLoopOptions): AgentLoopOptions {
   const own = hostToolNames(options.hostTools);
@@ -1227,21 +1239,21 @@ function hostToolsApart(options: AgentLoopOptions): AgentLoopOptions {
     ...options,
     ...(catalog ? { catalog: catalog.map(apart) } : {}),
     ...(loaded ? { loaded: [...loaded].filter(isCatalogued) } : {}),
-    // Undefined stays undefined: an empty shortlist is a host saying it has already decided.
+    // Undefined stays undefined: an empty shortlist is an app saying it has already decided.
     ...(preselected ? { preselected: preselected.filter(isCatalogued) } : {}),
   };
 }
 
 /**
- * The run's options with `record_artifact` among the host's tools, where the run declares.
+ * The exchange's options with `record_artifact` among the app's tools, where the exchange declares.
  *
  * @param options - What `runAgentLoop` was given. Not written to.
  * @returns `options` itself where `artifacts.declare` is off, and otherwise a copy whose `hostTools`
- * open with the loop's definition, which a host tool of the same name does not displace.
+ * open with the loop's definition, which an app tool of the same name does not displace.
  *
  * @remarks
- * A host tool in all but who answers it, so it is declared in every mode, kept off the catalogue,
- * recoverable from text, and refused through `call_tool` exactly as the host's own are.
+ * An app tool in all but who answers it, so it is declared in every mode, kept off the catalogue,
+ * recoverable from text, and refused through `call_tool` exactly as the app's own are.
  */
 function withRecordTool(options: AgentLoopOptions): AgentLoopOptions {
   if (options.artifacts?.declare !== true) {
@@ -1253,13 +1265,13 @@ function withRecordTool(options: AgentLoopOptions): AgentLoopOptions {
 /**
  * Forgets each proxied load whose definition is no longer anywhere in the transcript.
  *
- * @param loaded - What the run has put a definition in the history for. Written to: a name with
- * no definition left in `messages` is taken out.
- * @param messages - The transcript a `beforeStep`, a prune or a fold has just handed the step.
+ * @param loaded - What the exchange has put a definition in the history for. Written to: a name
+ * with no definition left in `messages` is taken out.
+ * @param messages - The transcript a `beforeStep`, a prune or compaction has just handed the turn.
  *
  * @remarks
- * Read from the tool results' text rather than from which array or message objects survived, so a
- * host that rebuilds its transcript from a store each step keeps what it still sends.
+ * Read from the tool results' text rather than from which array or message objects survived, so an
+ * app that rebuilds its transcript from a store each turn keeps what it still sends.
  */
 function forgetFolded(loaded: Set<string>, messages: readonly OpenAI.ChatCompletionMessageParam[]): void {
   const present = new Set(
@@ -1273,9 +1285,9 @@ function forgetFolded(loaded: Set<string>, messages: readonly OpenAI.ChatComplet
 }
 
 /**
- * The host's definitions by name, the first kept where two share one.
+ * The app's definitions by name, the first kept where two share one.
  *
- * @param tools - Every definition the host gave. One that is not a function has no name and is
+ * @param tools - Every definition the app gave. One that is not a function has no name and is
  * left out.
  * @returns A new map, in the order of `tools`, holding the definitions themselves.
  */
@@ -1291,15 +1303,15 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
 }
 
 /**
- * Offers each message written into the transcript to the host.
+ * Offers each message written into the transcript to the app.
  *
- * @param onMessage - The host's callback, awaited. Absent offers nothing.
- * @returns The offer, taking a message, its step, the turn it came with and what the model wrote:
- * it resolves once the host has taken the message, and rejects with what the host threw — once.
+ * @param onMessage - The app's callback, awaited. Absent offers nothing.
+ * @returns The offer, taking a message, its turn, the reply it came with and what the model wrote:
+ * it resolves once the app has taken the message, and rejects with what the app threw — once.
  *
  * @remarks
- * Once `onMessage` has thrown the run is ending on that, and the results still to be written are
- * not offered to a host that has just failed to take one.
+ * Once `onMessage` has thrown the exchange is ending on that, and the results still to be written
+ * are not offered to an app that has just failed to take one.
  */
 function announcer(onMessage: AgentLoopOptions['onMessage']) {
   let heard = true;
@@ -1317,12 +1329,12 @@ function announcer(onMessage: AgentLoopOptions['onMessage']) {
 }
 
 /**
- * The `usage` event a turn ends in: the run's totals so far, and the turn's own report.
+ * The `usage` event a turn ends in: the exchange's totals so far, and the turn's own report.
  *
- * @param usage - The run's totals, this turn's already added.
- * @param turn - The turn just finished, read for its usage and why it ended.
+ * @param usage - The exchange's totals, this turn's already added.
+ * @param turn - The reply just finished, read for its usage and why it ended.
  * @param ledger - The ledger as it stands. Carried on the event as it is, not copied.
- * @param [contextLength] - The window the turn was served. Absent or zero leaves it off the report.
+ * @param [contextLength] - The context window the turn was served. Absent or zero reports none.
  * @returns The event, for the caller to emit.
  */
 const usageEvent = (usage: LoopUsage, turn: Turn, ledger: TokenLedger, contextLength?: number): RunEventInput => {
@@ -1343,15 +1355,15 @@ const usageEvent = (usage: LoopUsage, turn: Turn, ledger: TokenLedger, contextLe
 };
 
 /**
- * The calls a turn made and the answer beside them, with calls the model wrote as text taken out
+ * The calls a reply made and the answer beside them, with calls the model wrote as text taken out
  * of the answer and counted as calls.
  *
- * @param turn - The turn as it came back. Not written to.
+ * @param turn - The reply as it came back. Not written to.
  * @param recoverable - The names a call written as text may use. Absent recovers nothing, and
- * nothing is looked for in a turn that made a named call of its own or has no text.
+ * nothing is looked for in a reply that made a named call of its own or has no text.
  * @param notice - Told when calls were recovered, and how many.
  * @param mint - Where a recovered call's id comes from.
- * @returns `calls`, the turn's own less any with no name, and `content`, its text as it was — or,
+ * @returns `calls`, the reply's own less any with no name, and `content`, its text as it was — or,
  * where calls were recovered, those calls and the text without them, and `recovered` true.
  */
 function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNotice, mint: CallIdMinter) {
@@ -1372,10 +1384,10 @@ function turnCalls(turn: Turn, recoverable: string[] | undefined, notice: OnNoti
 }
 
 /**
- * Which calls a run hands back, as `handBack` says it.
+ * Which calls an exchange hands back, as `handBack` says it.
  *
  * @param handBack - The option as given.
- * @param hostNames - The host's own tools by name, which `true` hands back.
+ * @param hostNames - The app's own tools by name, which `true` hands back.
  * @returns The predicate, or `undefined` where nothing is handed back.
  */
 function handsBackFor(
@@ -1389,9 +1401,9 @@ function handsBackFor(
 }
 
 /**
- * How an exchange that stops after this step ended.
+ * How an exchange that stops after this turn ended.
  *
- * @param turn - The step's turn, read for its finish reason.
+ * @param turn - The turn's reply, read for its finish reason.
  * @param settled - What its calls came to.
  * @returns `ended` where a call ended it, `waiting` where calls were handed back, and otherwise
  * what the finish reason says.
@@ -1407,13 +1419,13 @@ function exchangeOutcome(turn: Turn, { ended, pending }: StepOutcome): RunOutcom
 }
 
 /**
- * The steps of `runAgentLoop`, throwing what they caught as it was caught.
+ * The turns of `runAgentLoop`, throwing what they caught as it was caught.
  *
  * @param options - What `runAgentLoop` was given.
- * @param standing - Written to: once the steps have set themselves up, its `read` is theirs, so the
- * caller can read the run as it stands whether they return or throw.
- * @param [pin] - What the run's session adds to each request. Absent adds nothing.
- * @returns The result of the turn that asked for no tools, whose calls ended the run, or whose
+ * @param standing - Written to: once the turns have set themselves up, its `read` is theirs, so the
+ * caller can read the exchange as it stands whether they return or throw.
+ * @param [pin] - What the exchange's session adds to each request. Absent adds nothing.
+ * @returns The result of the turn that asked for no tools, whose calls ended the exchange, or whose
  * calls were handed back, or `undefined` when `maxToolIterations` is spent.
  */
 async function runSteps(
@@ -1453,7 +1465,7 @@ async function runSteps(
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
   const notice = (text: string) => onEvent({ kind: RunEventKind.Notice, text });
-  // The host's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.
+  // The app's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.
   const ownBody = remote?.extraBody ?? config.extraBody;
   const extraBody = pin ? { ...pin.fields, ...ownBody } : ownBody;
   const sending = { ...config, extraBody };
@@ -1461,7 +1473,7 @@ async function runSteps(
 
   // Started before the preselection rather than after it: neither reads the other, and in a row
   // they cost the first request two round trips where one will do. A failing runner is a note, but
-  // a host's `onNote` that throws rejects the gather, perhaps while the preselection is still out:
+  // an app's `onNote` that throws rejects the gather, perhaps while the preselection is still out:
   // handled at once so that is no unhandled rejection, and still thrown below, where it always was.
   const fired = hooks && firing(hooks);
   const gathering: Promise<Gathered> = hooks
@@ -1483,11 +1495,11 @@ async function runSteps(
   // Each once, by name, so one given twice is declared once.
   const hostTools = loadedTools([], options.hostTools ?? []);
   const hostNames = hostToolNames(hostTools);
-  // After the head the mode declares, which a host tool of the same name does not displace.
+  // After the head the mode declares, which an app tool of the same name does not displace.
   const withHost = (head: OpenAI.ChatCompletionTool[]) => (hostTools.length ? loadedTools(head, hostTools) : head);
-  // Looked through unless the host has a tool by that name, which is then the host's to answer.
+  // Looked through unless the app has a tool by that name, which is then the app's to answer.
   const proxies = onDemand && !definitions.has(CALL_TOOL) && !hostNames.has(CALL_TOOL);
-  // What a call the model wrote as text may name: the host's tools, and the loop's own on demand.
+  // What a call the model wrote as text may name: the app's tools, and the loop's own on demand.
   const recoverable = [
     ...tools.map(toolName).filter((name) => name !== undefined),
     ...hostNames,
@@ -1504,12 +1516,13 @@ async function runSteps(
   const artifacts = new RunArtifacts();
   const { detect = false } = collecting;
   const detects = typeof detect === 'function' ? detect : detect ? () => true : undefined;
-  // A box per request, emptied once its turn is in `messages`: a failure while the tools run had
+  // A box per request, emptied once its reply is in `messages`: a failure while the tools run had
   // no request in flight.
   let inFlight: InFlight = {};
   // Declared before `standing.read`, which a failure in the hooks' gather already reads.
   let ledger: TokenLedger = options.ledger ?? [];
-  // The run as it stands, which a failure and a result both carry: written once so they cannot drift.
+  // The exchange as it stands, which a failure and a result both carry: written once so they
+  // cannot drift.
   const runSoFar = () => ({
     messages,
     usage: loopUsage(usage, cacheReported),
@@ -1537,8 +1550,8 @@ async function runSteps(
     onEvent({ kind: RunEventKind.Input, text: textOf(input.content) });
     await announce(input, step);
   };
-  // Held by reference, so a `beforeStep` that folds the head into a summary moves the question
-  // without losing it, and found again by role where a host rebuilt the transcript and the object
+  // Held by reference, so a `beforeStep` that compacts the head into a summary moves the question
+  // without losing it, and found again by role where an app rebuilt the transcript and the object
   // went with it: the only user messages the loop writes are its input, so the question is the
   // last other one that is not a summary. One that summarises the question away took every user
   // message before it too, and the hooks' context goes with it, which is right.
@@ -1549,16 +1562,18 @@ async function runSteps(
     return isFound ? at : messages.findLastIndex((message) => isQuestion(message) && isAdmitted(message) === false);
   };
   const gathered = await gathering;
-  // Read once, so what the result hands back is what every step of this run said.
+  // Read once, so what the result hands back is what every turn of this exchange said.
   const preface = hooks?.preface ?? configureHooks().preface;
 
   const loads = { toolsLoaded: 0, redundantLoads: 0, unknownToolNames: 0 };
   let previous: SentRequest | undefined;
   // The loop's prune boundary. Its stubs stay in `messages`, so between moves each request only
-  // extends the last; a rewrite or a fold renumbers the transcript, and it starts again from zero.
+  // extends the last; a rewrite or a compaction renumbers the transcript, and it starts again
+  // from zero.
   let pruneBoundary = 0;
   // The request the ledger's last entry came from, which is what the next one is measured against.
-  // Nothing before this run's first: an earlier run's head is not something the loop can see.
+  // Nothing before this exchange's first: an earlier exchange's head is not something the loop
+  // can see.
   let measured: LedgerRequest | undefined;
 
   // Proxied, a shortlist has nowhere to go but the history, where its definitions sit after the
@@ -1605,7 +1620,7 @@ async function runSteps(
 
   for (let step = 0; step < config.maxToolIterations; step++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
-    // end — so the signal is read between steps as well.
+    // end — so the signal is read between turns as well.
     signal?.throwIfAborted();
     const input = await takeInput?.();
     if (input) {
@@ -1641,7 +1656,7 @@ async function runSteps(
       next = after.messages;
       pruneBoundary = after.through;
     }
-    // A rewrite may have folded a definition away, and a load answered "already loaded" would
+    // A rewrite may have compacted a definition away, and a load answered "already loaded" would
     // then point at nothing. Only those are forgotten: a copy, or a prune that stubbed other
     // results, left every definition where it was, and sending one again costs its tokens twice.
     if (proxied && next !== messages) {
@@ -1652,7 +1667,7 @@ async function runSteps(
     onEvent({ kind: RunEventKind.Turn, text: `turn ${step + 1}` });
 
     // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
-    // first step needs nothing of its own. Proxied, it is in the history.
+    // first turn needs nothing of its own. Proxied, it is in the history.
     const routed = !proxied && preselectRouting !== PRESELECT_APPEND && preselected.length > 0 && step === 0;
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
@@ -1666,14 +1681,14 @@ async function runSteps(
       offered = loadedTools(withHost([LOAD_TOOLS_DEFINITION]), byName(loaded));
     }
     const declared = orderTools(offered, toolOrder);
-    // Unmarked, so the system prompt is the same text on every step and a load does not throw
+    // Unmarked, so the system prompt is the same text on every turn and a load does not throw
     // away the cache for the whole transcript. What is loaded is said in `declared` and in the
-    // `load_tools` result instead. The preselected first step is the one exception, by design,
+    // `load_tools` result instead. The preselected first turn is the one exception, by design,
     // and `preselectRouting: "append"` is the way out of it.
     const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
     const catalogued = onDemand && !routed;
     const sections = [instructions, catalogued ? catalogue : ''].filter((text) => text !== '');
-    // `system` as it was given when nothing is added, so a host with neither sees no change.
+    // `system` as it was given when nothing is added, so an app with neither sees no change.
     const isBare = catalogued === false && sections.length === 0;
     const prompt = isBare ? system : [system, ...sections].join('\n\n').trim();
     const request = singleSystem([
@@ -1703,7 +1718,7 @@ async function runSteps(
       onOutput: (text: string) => onEvent({ kind: RunEventKind.Output, text }),
     };
     // Built the way `negotiate` is about to build the first attempt — the same flags, the same
-    // model's refusals — so what the host is told is what is sent unless something is refused.
+    // model's refusals — so what the app is told is what is sent unless something is refused.
     if (onRequest) {
       const opening = build(supports, modelCapabilitiesFor(supports, config.model));
       onRequest({ messages: opening.messages, tools: opening.tools ?? [], step });
@@ -1781,7 +1796,7 @@ async function runSteps(
     // Calls are run from their presence, never from the finish reason. A `tool_calls` finish with
     // none assembled is a reply that went wrong on the way — a parser that missed the model's
     // template, a stream cut between the reason and the calls — and not an answer, so with nothing
-    // said either the same request is sent once more, unwritten, while a step is left to send it.
+    // said either the same request is sent once more, unwritten, while a turn is left to send it.
     const isCallless = turn.finishReason === FinishReason.ToolCalls && calls.length === 0;
     const isSilent = content.trim() === '';
     if (isCallless) {
@@ -1793,7 +1808,8 @@ async function runSteps(
       }
       notice('the model said it was calling tools but sent none; taking its reply as the answer');
     } else if (isSilent && calls.length === 0 && turn.finishReason !== FinishReason.ContentFilter) {
-      // Kept as the answer, written as `""`, so a stored transcript stays sendable: the host is told.
+      // Kept as the answer, written as `""`, so a stored transcript stays sendable: the app
+      // is told.
       notice('the model ended its turn with no answer');
     }
     askedAgain = false;
@@ -1805,18 +1821,19 @@ async function runSteps(
     const replayed = replaysReasoning(reasoningReplay, !isAnswer)
       ? { reasoning: turn.reasoning, field: turn.reasoningField, details: turn.reasoningDetails }
       : undefined;
-    // The handed-back calls go last, so the answers a host appends follow the results in call order.
+    // The handed-back calls go last, so the answers an app appends follow the results in
+    // call order.
     const split = splitHandedBack(calling, parsed);
     const assistant = assistantMessage(content, [...split.run, ...split.back.map(({ entry }) => entry)], replayed);
     // Split as it is written rather than only as it is sent, so the result's `messages` and the
-    // host's stored rows are a transcript the model can be sent, and every later request replays
-    // the same messages byte for byte. Read per step: the latch may have flipped on this request.
+    // app's stored rows are a transcript the model can be sent, and every later request replays
+    // the same messages byte for byte. Read per turn: the latch may have flipped on this request.
     const isSingle = singleCalls(config, modelCapabilitiesFor(supports, config.model));
     const pieces = stepMessages(assistant, split.back.length, isSingle);
     messages.push(pieces[0]);
     // Recovered calls were never calls on the wire: what the model said is the text they came from.
     await announce(pieces[0], step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls, replayed) });
-    // The rest are the loop's rewriting of that one reply, so they come without the turn, whose
+    // The rest are the loop's rewriting of that one reply, so they come without the reply, whose
     // whole message the first piece's `raw` already is.
     const opens =
       pieces.length > 1
@@ -1836,7 +1853,7 @@ async function runSteps(
     if (isWaiting) {
       onEvent({ kind: RunEventKind.Wait, text: `waiting for the host to answer ${counted(pending.length, 'call')}` });
     }
-    // Written while the model was answering, it is answered too, while a step is left to do it in.
+    // Written while the model was answering, it is answered too, while a turn is left to do it in.
     const hasStepLeft = step + 1 < config.maxToolIterations;
     const late = isAnswer && hasStepLeft ? await takeInput?.() : undefined;
     if (late) {
@@ -1844,15 +1861,15 @@ async function runSteps(
       continue;
     }
     if (isAnswer || ended || isWaiting) {
-      // A waiting run's tool loop goes on when the host answers, so it keeps its scratchpads and
-      // tells `afterTurn` nothing until then.
+      // A waiting exchange's tool loop goes on when the app answers, so it keeps its scratchpads
+      // and tells `afterTurn` nothing until then.
       const isOver = isWaiting === false;
-      // The tool loop is over, so its scratchpads go; what came before the question is the host's.
+      // The tool loop is over, so its scratchpads go; what came before the question is the app's.
       if (reasoningReplay === ReasoningReplay.ToolLoop && isOver) {
         messages = dropReasoning(messages, questionAt());
       }
       // Not awaited: the answer is ready, and remembering it is not something to hold it for.
-      // Handed back instead, for a host that wants its notes.
+      // Handed back instead, for an app that wants its notes.
       const afterTurn =
         hooks && fired?.afterTurn && isOver
           ? tellAfterTurn(hooks, messages, questionAt(), turn.content)

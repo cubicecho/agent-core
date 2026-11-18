@@ -1,6 +1,6 @@
 /**
  * What the loop and a dispatcher say to each other: the call it is handed, the answer it gives,
- * what the run makes of that answer, and what a call produced.
+ * what the exchange makes of that answer, and what a call produced.
  */
 
 /**
@@ -74,7 +74,7 @@ export interface ToolCallRequest {
    * `call_tool`'s own arguments did.
    *
    * @remarks
-   * A host that shows or stores what the model said reads `raw` where this is true. Whitespace is
+   * An app that shows or stores what the model said reads `raw` where this is true. Whitespace is
    * not a repair, though the replayed arguments are re-serialised either way. `runAgentLoop` always
    * sets it; optional so a request built before it existed still compiles.
    */
@@ -101,7 +101,7 @@ export interface ToolCallOutcome {
  *
  * @remarks
  * The `tool-result` event carries the same answer cut by `preview`, which is right for a readout
- * and wrong for a host that renders or stores the result: this is the text the model reads.
+ * and wrong for an app that renders or stores the result: this is the text the model reads.
  */
 export interface ToolCallResult extends ToolCallOutcome {
   id: string;
@@ -119,7 +119,7 @@ export interface ToolCallResult extends ToolCallOutcome {
 
 /**
  * A dispatcher's answer when it has more to say than the text: what the model reads, and what the
- * call produced for the host.
+ * call produced for the app.
  *
  * @remarks
  * A link meant for the model alone — one whose MCP `audience` leaves out `"user"` — is the
@@ -131,18 +131,21 @@ export interface ToolAnswer {
   /** What the call produced, in the order the tool gave them. Never sent to the model. */
   links?: ResourceLink[];
   /**
-   * Ends the run once this step's calls are answered: no further request is sent, and the loop
-   * resolves with `ended` rather than throwing. An object says why, for the host and its `done`.
+   * Ends the exchange once this turn's calls are answered: no further request is sent, and the
+   * loop resolves with `ended` rather than throwing. An object says why, for the app and its
+   * `done`.
    *
    * @remarks
-   * The step's other calls still run and are answered, so the transcript stays one an endpoint
+   * The turn's other calls still run and are answered, so the transcript stays one a model server
    * will take back. For a tool whose call is the end of the job — handing off, asking a person —
    * where the alternative is an abort, which the loop reads as a failure.
    */
   end?: boolean | { reason: string };
 }
 
-/** The call that ended a run through its answer's `end`, as `AgentLoopResult.ended` says it. */
+/**
+ * The call that ended an exchange through its answer's `end`, as `AgentLoopResult.ended` says it.
+ */
 export interface EndedBy {
   /** The call's id. */
   callId: string;
@@ -172,7 +175,7 @@ export interface ServerLogEntry {
 }
 
 /**
- * What a dispatcher may tell the run about the call it is making, besides its answer.
+ * What a dispatcher may tell the loop about the call it is making, besides its answer.
  *
  * @remarks
  * An object rather than a fourth and fifth argument, so what a call can report grows here —
@@ -193,10 +196,10 @@ export interface ToolCallReport {
  *
  * @remarks
  * `linked` is a call's answer saying so, and is the only one that takes no guessing. `declared` is
- * the model naming it through `record_artifact`, believed only where some call in the run touched
- * the location. `detected` is the loop reading a successful call as a write: a verb at the front
- * of its name and a path in its arguments. The last two are opt-in, through `artifacts` on the
- * loop's options.
+ * the model naming it through `record_artifact`, believed only where some call in the exchange
+ * touched the location. `detected` is the loop reading a successful call as a write: a verb at the
+ * front of its name and a path in its arguments. The last two are opt-in, through `artifacts` on
+ * the loop's options.
  */
 export const ArtifactSource = {
   Linked: 'linked',
@@ -207,7 +210,7 @@ export const ArtifactSource = {
 /** Any one of the sources in `ArtifactSource`. */
 export type ArtifactSource = (typeof ArtifactSource)[keyof typeof ArtifactSource];
 
-/** What the run's last write did to an artifact's location, as a detection read it. */
+/** What the exchange's last write did to an artifact's location, as a detection read it. */
 export const ArtifactAction = {
   Created: 'created',
   Updated: 'updated',
@@ -219,10 +222,10 @@ export const ArtifactAction = {
 export type ArtifactAction = (typeof ArtifactAction)[keyof typeof ArtifactAction];
 
 /**
- * One thing a run's tool calls produced: the first link to a uri, and where it came from.
+ * One thing an exchange's tool calls produced: the first link to a uri, and where it came from.
  *
  * @remarks
- * A link is what one call answered with; an artifact is what the run made, one per uri however
+ * A link is what one call answered with; an artifact is what the exchange made, one per uri however
  * many calls linked to it. A declared or detected artifact is one per location the same way, and
  * its `link` is built from what was said of it: the location as `uri`, its last segment as `name`.
  */
@@ -236,7 +239,7 @@ export interface RunArtifact {
   callId: string;
   /** That call's tool. For a `call_tool`, the tool it named. */
   tool: string;
-  /** The loop's step that call was made in, from 0. */
+  /** The turn that call was made in, from 0. */
   step: number;
   /**
    * How many calls linked to it or wrote it. A deduplicated repeat does not count, since nothing

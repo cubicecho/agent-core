@@ -173,41 +173,41 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 
 - `AgentLoopHooks` (type) — The hooks a loop runs around one question.
 - `AgentLoopOptions` (type) — What `runAgentLoop` takes.
-- `AgentLoopRequest` (type) — One step's request as `onRequest` is handed it: what the model is about to read.
+- `AgentLoopRequest` (type) — One turn's request as `onRequest` is handed it: what the model is about to read.
 - `AgentLoopResult` (type) — What a finished loop hands back.
-- `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
-- `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
-- `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none or a call's answer ends the run.
-- `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
+- `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first turn like any other.
+- `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first turn the shortlist alone.
+- `runAgentLoop` — Runs a question to its answer: one `runTurn` per turn, the tools it asks for between them, until a reply asks for none or a call's answer ends the exchange.
+- `StepWindow` (type) — How full the context window is as a turn is about to be sent, as `beforeStep` is told it.
 - `WrittenMessage` (type) — What `onMessage` is handed beside an assistant message the model wrote: that message as the model produced it.
 
 ### artifacts
 
-What a run left behind, from the two sources that take a guess: the model saying so, and a call that reads as a write.
+What an exchange left behind, from the two sources that take a guess: the model saying so, and a call that reads as a write.
 
-- `ArtifactDraft` (type) — What one declaration or detection said of a location, before it is merged into the run's.
-- `ArtifactOptions` (type) — Which of the guessing sources a run collects, beside the links every run keeps.
+- `ArtifactDraft` (type) — What one declaration or detection said of a location, before it is merged into the exchange's.
+- `ArtifactOptions` (type) — Which of the guessing sources an exchange collects, beside the links every exchange keeps.
 - `artifactSource` — How an artifact came to be known, reading an absent `source` as the link it always was.
 - `declaredArtifact` — What the model said through `record_artifact`.
 - `detectArtifact` — What a successful call wrote, if its name and arguments look like a write.
 - `mediaTypeFor` — A media type guessed off a location's extension.
 - `RECORD_ARTIFACT` — The name of the tool the loop declares and answers itself when `artifacts.declare` is on.
-- `RECORD_ARTIFACT_TOOL` — The definition of `record_artifact`, as the loop declares it beside the host's own tools.
+- `RECORD_ARTIFACT_TOOL` — The definition of `record_artifact`, as the loop declares it beside the app's own tools.
 
 ### dispatch
 
-What the loop and a dispatcher say to each other: the call it is handed, the answer it gives, what the run makes of that answer, and what a call produced.
+What the loop and a dispatcher say to each other: the call it is handed, the answer it gives, what the exchange makes of that answer, and what a call produced.
 
-- `ArtifactAction` — What the run's last write did to an artifact's location, as a detection read it.
+- `ArtifactAction` — What the exchange's last write did to an artifact's location, as a detection read it.
 - `ArtifactSource` — How the loop came to know of an artifact, most trusted first.
-- `EndedBy` (type) — The call that ended a run through its answer's `end`, as `AgentLoopResult.ended` says it.
+- `EndedBy` (type) — The call that ended an exchange through its answer's `end`, as `AgentLoopResult.ended` says it.
 - `ResourceLink` (type) — A handle to something a tool call made or found — a document it wrote, a file it saved.
-- `RunArtifact` (type) — One thing a run's tool calls produced: the first link to a uri, and where it came from.
+- `RunArtifact` (type) — One thing an exchange's tool calls produced: the first link to a uri, and where it came from.
 - `ServerLogEntry` (type) — One log message a tool's server sent while the call was running, as `ToolCallReport.log` is handed it.
 - `ServerLogLevel` — The levels a server's log message is sent at, quietest first: MCP's, which are syslog's.
-- `ToolAnswer` (type) — A dispatcher's answer when it has more to say than the text: what the model reads, and what the call produced for the host.
+- `ToolAnswer` (type) — A dispatcher's answer when it has more to say than the text: what the model reads, and what the call produced for the app.
 - `ToolCallOutcome` (type) — What one tool call did, in the order the model asked.
-- `ToolCallReport` (type) — What a dispatcher may tell the run about the call it is making, besides its answer.
+- `ToolCallReport` (type) — What a dispatcher may tell the loop about the call it is making, besides its answer.
 - `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
 - `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
@@ -227,8 +227,8 @@ What a run is doing, while it is doing it.
 - `RunEventKind` — Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it.
 - `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
 - `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
-- `RunOutcome` — How a run ended, as `runMetrics` reads it.
-- `RunUsage` (type) — What a run has spent, counted from the start of the run rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
+- `RunOutcome` — How an exchange ended, as its result says or as `runMetrics` reads it off a run's events.
+- `RunUsage` (type) — What an exchange has spent, counted from the start of the exchange rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
 - `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
 - `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
 - `stamp` — A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
@@ -237,35 +237,35 @@ What a run is doing, while it is doing it.
 
 ### failure
 
-What a failed exchange leaves behind: the run as it stood, carried on what `runAgentLoop` throws and read back off it.
+What a failed exchange leaves behind: the exchange as it stood, carried on what `runAgentLoop` throws and read back off it.
 
-- `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
-- `AgentLoopFailure` (type) — A run as it stood when `runAgentLoop` gave up on it.
-- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the run as it stood.
-- `failedRun` — The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
+- `AgentLoopError` — What `runAgentLoop` throws, carrying the exchange as it stood and what was caught as `cause`.
+- `AgentLoopFailure` (type) — An exchange as it stood when `runAgentLoop` gave up on it.
+- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the exchange as it stood.
+- `failedRun` — The exchange a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
 - `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
 
 ### remote
 
-Running against a remote agent: a model that runs a whole agent loop of its own behind the chat completions API, and hands the host's tools back to it with `finish_reason: "tool_calls"`.
+Running against a remote agent: a model that runs a whole agent loop of its own behind the chat completions API, and hands the app's tools back to it with `finish_reason: "tool_calls"`.
 
 - `IDEMPOTENCY_HEADER` — The header that makes a resent request the same request: one key per turn, kept across its retries.
-- `PROGRESS_FIELD` — The body field a remote agent's progress travels under where the host names no other: `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
+- `PROGRESS_FIELD` — The body field a remote agent's progress travels under where the app names no other: `{ progress: true }` on a request, `{ event }` on a streamed chunk, and `{ runId, events }` on an answer that is not streamed.
 - `ProgressChunk` (type) — A streamed chunk that carries one of a remote run's events: no choices, and the event beside them.
 - `progressChunk` — A run event as a progress chunk, for a server streaming a remote agent's run.
 - `progressEvent` — The run event a streamed chunk carries, where it carries one.
 - `progressEvents` — The run id and events an answer that is not streamed carries, where it carries them.
-- `REMOTE_AGENT_NOTICE` — What a notice about the options a remote agent's run sets aside opens with, ahead of their names.
+- `REMOTE_AGENT_NOTICE` — What a notice about the options an exchange with a remote agent sets aside opens with, ahead of their names.
 - `RunProgress` (type) — What an answer that is not streamed carries beside `choices`: the run, and what it said.
 - `withProgress` — An answer that is not streamed, with a remote run's events beside its `choices`.
 
 ### request-body
 
-- `buildBody` — The one place a streamed request's body is decided from a config and what the endpoint and the model have refused.
+- `buildBody` — The one place a streamed request's body is decided from a config and what the model server and the model have refused.
 
 ### run-calls
 
-The tools between two turns: a step's calls read, run and written into the transcript.
+The tools of one turn: its calls read, run and written into the transcript.
 
 - `dropReasoning` — The transcript with `reasoning_content`, `reasoning` and `reasoning_details` taken off its assistant messages from an index on.
 - `formatToolError` — What the model reads for a dispatch that threw: the error's message, opening with `Error: `.
