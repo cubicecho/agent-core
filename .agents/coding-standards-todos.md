@@ -95,7 +95,7 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | T10 | Test [pin] | Pin the capability snapshot's JSON byte for byte, hints included. | R30 provably leaves the stored format alone | — | done (`5048de8`) |
 | T12 | Test [pin] | Pin that a failure and a finished run carry the same run fields. | R29 provably changes nothing | — | done (`498717d`) |
 | A4 | API change | Export `OnNotice` and `EndpointIdentity`, which public signatures already use. | Hosts can name the types they pass | — | done (`d522ecd`) |
-| A5 | API change | Gather the tunables into one defaults module, internal ones first, host-imported ones as a separate decision. | P22; one place answers "what can be tuned" | — | approved (6.0.0, in progress) |
+| A5 | API change | Gather the tunables into one defaults module, internal ones first, host-imported ones as a separate decision. | P22; one place answers "what can be tuned" | — | done (6.0.0: `ee01b8c`…`e1dd7f0`, `c5e4428` breaking) |
 | A6 | API change | Retire the deprecated usage aliases and the deprecated hook `events` option (breaking). | P25; one name per count | — | done (`4593a50`) |
 | A7 | API change | Stop exporting `AGENT_TASKS`, `PRESELECT_SYSTEM`, `requestIndex` and `SPEC_EVENTS`. | A smaller surface, if nobody relies on them | — | declined |
 | A9 | API change (breaking, 5.0.0) | Rename the hook events `beforeTurn`/`afterTurn` to `beforeExchange`/`afterExchange`. | The one place "turn" meant an exchange | M11 | done (`79d61c8`) |
