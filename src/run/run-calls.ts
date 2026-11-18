@@ -784,7 +784,7 @@ interface HandedBack {
 }
 
 /** A turn's calls by who answers them: the loop, through `dispatch`, or the app, after the exchange. */
-export interface TurnCalls {
+interface TurnCalls {
   /** The calls the loop runs, in the order asked. */
   run: ReadCall[];
   /** The calls handed back, in the order asked. */
