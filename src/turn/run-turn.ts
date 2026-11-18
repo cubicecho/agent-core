@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import { MS_PER_SECOND } from '../core/platform.ts';
+import { MS_PER_SECOND } from '../core/consts.ts';
 import { calibrate, charsPerTokenFor } from '../endpoint/calibration.ts';
 import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from '../endpoint/capabilities.ts';
 import { errorMessage } from '../wire/errors.ts';

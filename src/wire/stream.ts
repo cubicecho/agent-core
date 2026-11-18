@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
+import { MS_PER_SECOND } from '../core/consts.ts';
 import { isAbsent, isRecord } from '../core/guards.ts';
-import { MS_PER_SECOND } from '../core/platform.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { EndpointSilent } from './retry.ts';
 import { DEFAULT_FENCES, type Fence, FenceSplitter, SPLIT_REASONING, type Split } from './thinking.ts';

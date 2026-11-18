@@ -1,6 +1,7 @@
 import type { TokenLedger } from '../context/ledger.ts';
+import { MS_PER_MINUTE } from '../core/consts.ts';
 import { getOrCreate } from '../core/guards.ts';
-import { ABORT_EVENT, MS_PER_MINUTE } from '../core/platform.ts';
+import { ABORT_EVENT } from '../core/platform.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { LOAD_TOOLS } from '../tools/tool-loading.ts';
 import type { TurnUsage } from '../wire/stream.ts';

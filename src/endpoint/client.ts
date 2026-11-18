@@ -6,9 +6,9 @@ import {
   normalizeBaseUrl,
   type RetryPolicy,
 } from '../core/config.ts';
+import { MS_PER_SECOND } from '../core/consts.ts';
 import { digestOf } from '../core/digest.ts';
 import { byCodeUnit, getOrCreate, isPositive } from '../core/guards.ts';
-import { MS_PER_SECOND } from '../core/platform.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { HttpStatus } from '../wire/wire.ts';
 
