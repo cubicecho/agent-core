@@ -1,13 +1,12 @@
 import type OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HOOK_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import {
   assembleContext,
   configureHooks,
   consult,
   gather,
-  HOOK_CONTEXT_TOKENS,
-  HOOK_PREFACE,
   type HookRunner,
   notify,
   resetHooks,
@@ -16,7 +15,7 @@ import {
   withContext,
 } from '../../src/hooks/hooks.ts';
 import { FUNCTION_TOOL, PartType, Role } from '../../src/wire/wire.ts';
-import { outcome } from '../helpers.ts';
+import { outcome, partTexts, stringContent } from '../helpers.ts';
 
 /**
  * The host's side of hooks. Running them is a runner's job and is stubbed here; what is tested is
@@ -92,7 +91,7 @@ describe('withContext', () => {
 
   it("puts the context ahead of this turn's question, and only on the request", () => {
     const sent = withContext(history, 3, '<context source="Memory">likes tea</context>');
-    const question = sent[3].content as string;
+    const question = stringContent(sent[3]);
     expect(question).toContain('<context source="Memory">likes tea</context>');
     expect(question.endsWith('now')).toBe(true);
     expect(sent[1]).toBe(history[1]);
@@ -103,8 +102,8 @@ describe('withContext', () => {
     expect(withContext(history, 3, 'ctx', 'From min-agent:')[3].content).toBe('From min-agent:\n\nctx\n\nnow');
   });
 
-  it('says HOOK_PREFACE until something moves it', () => {
-    expect(withContext(history, 3, 'ctx')[3].content).toBe(`${HOOK_PREFACE}\n\nctx\n\nnow`);
+  it('says the default preface until something moves it', () => {
+    expect(withContext(history, 3, 'ctx')[3].content).toBe(`${HOOK_DEFAULTS.preface}\n\nctx\n\nnow`);
   });
 
   it('says nothing above the blocks for an empty preface, not a blank line', () => {
@@ -116,10 +115,10 @@ describe('withContext', () => {
       ...history.slice(0, 3),
       { role: Role.User, content: [{ type: PartType.Text, text: 'now' }] },
     ];
-    const content = withContext(parts, 3, 'ctx')[3].content as { text: string }[];
-    expect(content).toHaveLength(2);
-    expect(content[0].text).toContain('ctx');
-    expect(content[1].text).toBe('now');
+    const texts = partTexts(withContext(parts, 3, 'ctx')[3]);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain('ctx');
+    expect(texts[1]).toBe('now');
   });
 
   it('leaves the request alone when there is nothing to add or nowhere to put it', () => {
@@ -176,14 +175,14 @@ describe('the budget', () => {
   const spent = (gathered: { notes: { tokens?: number }[] }) =>
     gathered.notes.reduce((sum, note) => sum + (note.tokens ?? 0), 0);
 
-  it('is HOOK_CONTEXT_TOKENS until something moves it', () => {
-    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_CONTEXT_TOKENS);
+  it('is the default budget until something moves it', () => {
+    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_DEFAULTS.contextTokens);
   });
 
   it('follows configureHooks for every call that does not give its own', async () => {
     expect(configureHooks({ contextTokens: 500 })).toEqual({
       contextTokens: 500,
-      preface: HOOK_PREFACE,
+      preface: HOOK_DEFAULTS.preface,
     });
     expect(spent(assembleContext([hungry('a'), hungry('b')]))).toBe(500);
     const run: HookRunner = async () => [hungry('a')];
@@ -209,7 +208,7 @@ describe('the budget', () => {
   it('goes back to the default on resetHooks', () => {
     configureHooks({ contextTokens: 500 });
     resetHooks();
-    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_CONTEXT_TOKENS);
+    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_DEFAULTS.contextTokens);
   });
 });
 
@@ -220,7 +219,7 @@ describe('the preface', () => {
 
   it('follows configureHooks for every call that does not give its own', () => {
     expect(configureHooks({ preface: 'From min-agent:' })).toEqual({
-      contextTokens: HOOK_CONTEXT_TOKENS,
+      contextTokens: HOOK_DEFAULTS.contextTokens,
       preface: 'From min-agent:',
     });
     expect(withContext(history, 0, 'ctx')[0].content).toBe('From min-agent:\n\nctx\n\nnow');
@@ -241,11 +240,11 @@ describe('the preface', () => {
     }
   });
 
-  it('is left alone by a budget-only call, and goes back to HOOK_PREFACE on resetHooks', () => {
+  it('is left alone by a budget-only call, and goes back to the default on resetHooks', () => {
     configureHooks({ preface: 'From min-agent:' });
     expect(configureHooks({ contextTokens: 500 }).preface).toBe('From min-agent:');
     resetHooks();
-    expect(configureHooks()).toEqual({ contextTokens: HOOK_CONTEXT_TOKENS, preface: HOOK_PREFACE });
+    expect(configureHooks()).toEqual(HOOK_DEFAULTS);
   });
 });
 
@@ -334,6 +333,20 @@ describe("a host's onNote that throws", () => {
     heard.push(note.hookId);
     throw new Error('onNote blew up');
   };
+
+  it('does not make gather reject, and every note still reaches it', async () => {
+    const heard: string[] = [];
+    const gathered = await gather(
+      failing,
+      [HookEvent.BeforeExchange],
+      { session: { id: 's1' } },
+      {
+        onNote: throwing(heard),
+      },
+    );
+    expect(gathered.notes.map((note) => note.hookId)).toEqual(['one', 'two']);
+    expect(heard).toEqual(['one', 'two']);
+  });
 
   it('does not make notify reject, and every note still reaches it', async () => {
     const heard: string[] = [];

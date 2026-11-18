@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TOOL_DISCOVERY_DEFAULTS } from '../../src/core/defaults.ts';
 import type { CatalogServer } from '../../src/tools/catalog.ts';
-import { MAX_PER_LOAD } from '../../src/tools/tool-loading.ts';
 import { JSON_SCHEMA_FORMAT } from '../../src/wire/wire.ts';
-import { type Create, catalog, config } from '../helpers.ts';
+import { answer, type Create, catalog, config } from '../helpers.ts';
 
 const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -22,12 +22,12 @@ describe('preselect', () => {
   const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
 
   it('hands back the catalogued names the small model picked', async () => {
-    create.mockResolvedValue({ choices: [{ message: { content: '["s__read", "nope"]' } }] });
+    create.mockResolvedValue(answer('["s__read", "nope"]'));
     expect(await preselect(config, 'small', catalog, 'read it')).toEqual(['s__read']);
     expect(create.mock.calls[0][0]).toMatchObject({
       response_format: { type: JSON_SCHEMA_FORMAT, json_schema: { name: 'preselection' } },
     });
-    create.mockResolvedValue({ choices: [{ message: { content: '{"tools": ["s__read"]}' } }] });
+    create.mockResolvedValue(answer('{"tools": ["s__read"]}'));
     expect(await preselect(config, 'small', catalog, 'read it')).toEqual(['s__read']);
   });
 
@@ -100,7 +100,7 @@ describe('preselect', () => {
   });
 
   it('falls through to the model when the words settle nothing', async () => {
-    create.mockResolvedValue({ choices: [{ message: { content: '{"tools": ["s__read"]}' } }] });
+    create.mockResolvedValue(answer('{"tools": ["s__read"]}'));
     expect(await preselect(config, 'small', catalog, 'sing me a song', { keywords: true })).toEqual(['s__read']);
     expect(create).toHaveBeenCalledTimes(1);
   });
@@ -140,7 +140,7 @@ describe('preselectInput and preselectSystem', () => {
 
   it('tell the preselector the cap it will be held to', () => {
     expect(preselectSystem(3)).toContain('at most 3');
-    expect(PRESELECT_SYSTEM).toContain(`at most ${MAX_PER_LOAD}`);
+    expect(PRESELECT_SYSTEM).toContain(`at most ${TOOL_DISCOVERY_DEFAULTS.maxPerLoad}`);
     expect(preselection(['gmail__send_email', 'gmail__read_email'], catalog, 1)).toEqual(['gmail__send_email']);
   });
 

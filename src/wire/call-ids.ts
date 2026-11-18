@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { TOOL_CALL_DEFAULTS } from '../core/defaults.ts';
 import type { ToolCall } from './tool-calls.ts';
 import { Role } from './wire.ts';
 
@@ -19,9 +20,6 @@ const CALL_ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01
 
 /** How long a minted id is: exactly what Mistral's tokenizers before V13 take. */
 const CALL_ID_LENGTH = 9;
-
-/** How many times a minter is asked for an id not already taken before it is given up on. */
-const MINT_ATTEMPTS = 32;
 
 /** One more than the largest unsigned 32-bit integer, which turns one into a fraction of one. */
 const UINT32_RANGE = 4_294_967_296;
@@ -114,7 +112,7 @@ export function callIdsIn(messages: readonly OpenAI.ChatCompletionMessageParam[]
  * @throws {Error} Where `mint` gives only ids already taken, as one that returns a constant does.
  */
 export function freshCallId(taken: Set<string>, mint: CallIdMinter = mintCallId): string {
-  for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < TOOL_CALL_DEFAULTS.mintAttempts; attempt++) {
     const id = mint();
     const isFree = taken.has(id) === false;
     if (isFree) {
@@ -122,7 +120,7 @@ export function freshCallId(taken: Set<string>, mint: CallIdMinter = mintCallId)
       return id;
     }
   }
-  throw new Error(`mintCallId gave ${MINT_ATTEMPTS} ids in a row that the transcript already uses`);
+  throw new Error(`mintCallId gave ${TOOL_CALL_DEFAULTS.mintAttempts} ids in a row that the transcript already uses`);
 }
 
 /** Whose ids a turn's calls go under: the server's wherever they are free, or always minted ones. */

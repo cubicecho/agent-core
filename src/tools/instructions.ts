@@ -5,25 +5,17 @@
  * tools, the things a tool description has no room for. This is where that text is put in front
  * of a model, attributed and fenced, so every app says it the same way.
  */
+import { TOOL_DISCOVERY_DEFAULTS } from '../core/defaults.ts';
 import { untrusted } from '../wire/text.ts';
 import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
 import type { CatalogServer } from './catalog.ts';
-
-/**
- * The most of one server's instructions the block carries by default, in estimated tokens.
- *
- * @remarks
- * Most servers send a paragraph or two; this leaves room for a long one and stops a server that
- * pasted its README from crowding out the operator's prompt and the catalogue after it.
- */
-export const SERVER_INSTRUCTION_TOKENS = 1000;
 
 /** How `serverInstructionsPrompt` cuts the text, and what `runAgentLoop`'s `serverInstructions` takes. */
 export interface ServerInstructionsOptions {
   /**
    * The most of one server's text kept, in estimated tokens. Zero keeps it whole.
    *
-   * @defaultValue `SERVER_INSTRUCTION_TOKENS`
+   * @defaultValue `TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens`
    */
   maxTokensPerServer?: number;
 }
@@ -39,22 +31,16 @@ export interface ServerInstructionsOptions {
  * introduces an empty section.
  *
  * @remarks
- * Attributed per server and kept as a section of its own rather than folded into the operator's
- * prompt. An MCP server is a third party — usually one installed by pasting a command out of a
- * README — and `instructions` is text that party controls, landing in the one place a model is
- * most inclined to take literally. Naming the source is what lets the model weigh "the GitHub
- * server says to search before reading" against something the user actually wrote, and lets
- * anyone reading a surprising turn back see where the instruction came from. Each text is fenced
- * by `untrusted` for the same reason, so a server cannot close its own section and write the next.
- *
- * A text over the budget is cut, and the cut is said after the fence, in the block's own voice
- * rather than inside the server's. Built from the catalogue rather than from what is loaded, so
- * it is one text for the whole session and covers a server none of whose tools is loaded yet —
- * its guidance is often about when to load them.
+ * Attributed per server and fenced by `untrusted`, because an MCP server is a third party whose text
+ * lands where a model is most inclined to take it literally: naming the source lets the model weigh
+ * it against what the user wrote, and the fence stops a server closing its own section. A text over
+ * the budget is cut, and the cut is said after the fence in the block's own voice. Built from the
+ * catalogue rather than from what is loaded, so it is one text for the whole session and covers a
+ * server none of whose tools is loaded yet.
  */
 export function serverInstructionsPrompt(
   servers: readonly Pick<CatalogServer, 'label' | 'instructions'>[],
-  { maxTokensPerServer = SERVER_INSTRUCTION_TOKENS }: ServerInstructionsOptions = {},
+  { maxTokensPerServer = TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens }: ServerInstructionsOptions = {},
 ): string {
   const sections = servers.flatMap(({ label, instructions }) => {
     const text = instructions?.trim() ?? '';

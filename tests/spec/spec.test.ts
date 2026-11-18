@@ -4,7 +4,6 @@ import { HOOK_EVENTS, HookEvent } from '../../src/hooks/hook-events.ts';
 import type { AgentLoopOptions } from '../../src/run/agent-loop.ts';
 import {
   AGENT_SPEC,
-  type AgentHook,
   type AgentSpec,
   exportSpec,
   findSpecSecrets,
@@ -166,6 +165,17 @@ describe('parseSpec', () => {
     ]);
   });
 
+  it('quotes a task key that holds a dot, as columns do', () => {
+    const result = parseSpec(
+      doc({ tasks: { 'vision.v2': { model: 3, extraBody: { temperature: 0.2 } }, 'odd.one': 'x' } }),
+    );
+    expect(result.warnings).toEqual([
+      'tasks["vision.v2"].model: must be a string, and was dropped',
+      `tasks["vision.v2"].extraBody.temperature: is tasks["vision.v2"].temperature's to set, and was dropped`,
+      'tasks["odd.one"]: must be an object, and was dropped',
+    ]);
+  });
+
   it('carries a key from a later 1.x rather than erasing it', () => {
     const result = parseSpec(doc({ id: 'a', memory: { store: 'vector' } }));
     expect(result.spec?.memory).toEqual({ store: 'vector' });
@@ -263,25 +273,14 @@ describe('parseSpec hooks', () => {
     expect(result.warnings).toEqual(['hooks[0].on: "beforeCompact" is never fired by this host']);
   });
 
-  it('reads the exchange events under their names before 5.0.0, renaming each with a warning', () => {
-    // Documents saved before the rename say beforeTurn and afterTurn, and stay importable.
-    const result = parseSpec(
-      doc({ hooks: [hook({ id: 'recall', on: 'beforeTurn', inject: true }), hook({ id: 'keep', on: 'afterTurn' })] }),
-    );
+  it('drops a hook bound to the name an exchange event had before 5.0.0, as any unknown event', () => {
+    const result = parseSpec(doc({ hooks: [hook({ on: 'beforeTurn' }), hook({ id: 'keep', on: 'afterTurn' })] }));
     expect(result.errors).toEqual([]);
-    expect(result.spec?.hooks?.map(({ on, inject }) => ({ on, inject }))).toEqual([
-      { on: 'beforeExchange', inject: true },
-      { on: 'afterExchange', inject: undefined },
-    ]);
+    expect(result.spec?.hooks).toEqual([]);
     expect(result.warnings).toEqual([
-      'hooks[0].on: "beforeTurn" is now "beforeExchange"',
-      'hooks[1].on: "afterTurn" is now "afterExchange"',
+      'hooks[0].on: "beforeTurn" is not an event, and was dropped',
+      'hooks[1].on: "afterTurn" is not an event, and was dropped',
     ]);
-  });
-
-  it('checks an old name against the events the host fires under its new one', () => {
-    const result = parseSpec(doc({ hooks: [hook({ on: 'beforeTurn' })] }), { events: ['beforeExchange'] });
-    expect(result.warnings).toEqual(['hooks[0].on: "beforeTurn" is now "beforeExchange"']);
   });
 
   it('drops a hook that is not an event at all', () => {
@@ -367,22 +366,6 @@ describe('exportSpec', () => {
     expect(again.errors).toEqual([]);
     expect(again.spec?.id).toBe('ocr');
     expect(again.spec?.bundle?.mcpServers).toEqual([{ slug: 'fs', command: 'npx' }]);
-  });
-
-  it('writes the exchange events under their new names, whatever the document it came from said', () => {
-    const old = parsed(doc({ hooks: [{ id: 'h', on: 'afterTurn', server: 'mem', tool: 'remember' }] }));
-    const out = exportSpec(old);
-    expect(out.hooks?.[0]?.on).toBe('afterExchange');
-    expect(JSON.stringify(out)).not.toContain('afterTurn');
-    // Read back, the new name needs no warning.
-    expect(parseSpec(out).warnings).toEqual([]);
-  });
-
-  it('writes a hook a host stored before 5.0.0 under the name its event has now', () => {
-    const stored: AgentHook = JSON.parse('{ "id": "h", "on": "afterTurn", "server": "mem", "tool": "remember" }');
-    expect(exportSpec({ spec: AGENT_SPEC, hooks: [stored] }).hooks).toEqual([
-      { id: 'h', on: HookEvent.AfterExchange, server: 'mem', tool: 'remember' },
-    ]);
   });
 });
 
@@ -613,6 +596,26 @@ describe('resolveAgentSpec', () => {
     ]);
   });
 
+  it('keeps the text of a prompt part that also has a reference, and drops the reference', () => {
+    const ref = { type: REF_FILE, value: './p.md' };
+    const result = parseSpec(
+      doc({
+        prompt: [
+          { id: 'identity', text: 'You are X.', ref },
+          { id: 'role', text: '', ref },
+          { id: 'lane', text: 'Review.', ref: { type: 'http', value: 'x' } },
+        ],
+      }),
+    );
+    expect(result.spec?.prompt).toEqual([
+      { id: 'identity', text: 'You are X.' },
+      { id: 'role', text: '' },
+      { id: 'lane', text: 'Review.' },
+    ]);
+    expect(result.warnings).toHaveLength(3);
+    expect(result.warnings.every((warning) => /^prompt\[\d\]\.ref: .*text/.test(warning))).toBe(true);
+  });
+
   it('replaces a server list whole rather than unioning it', () => {
     const base = parsed(doc({ tools: { servers: ['git', 'fs', 'web'] } }));
     const narrow = parsed(doc({ tools: { servers: ['git'] } }));
@@ -757,16 +760,6 @@ describe('resolveAgentSpec', () => {
     const sessionStart = parsed(doc({ hooks: [{ ...hook, on: HookEvent.SessionStart }] }));
     expect(resolveAgentSpec([injects, sessionStart]).hooks).toEqual([
       { ...hook, on: HookEvent.SessionStart, inject: true },
-    ]);
-  });
-
-  it('reads a hook a host stored before 5.0.0 under the name its event has now', () => {
-    // A host that reads hooks by hand hands its rows to the merge without parsing them.
-    const stored: AgentHook = JSON.parse(
-      '{ "id": "h", "on": "beforeTurn", "server": "mem", "tool": "recall", "inject": true }',
-    );
-    expect(resolveAgentSpec([{ spec: AGENT_SPEC, hooks: [stored] }]).hooks).toEqual([
-      { id: 'h', on: HookEvent.BeforeExchange, server: 'mem', tool: 'recall', inject: true },
     ]);
   });
 

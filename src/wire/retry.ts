@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { RETRY_DEFAULTS } from '../core/defaults.ts';
 import { ABORT_ERROR, ABORT_EVENT } from '../core/platform.ts';
 import { HttpStatus } from './wire.ts';
 
@@ -10,6 +11,8 @@ import { HttpStatus } from './wire.ts';
  * of the loop with nothing to do with the model's answer: whether the request was lost, whether
  * it was too big to have been sent at all, and how long to wait before sending it again.
  */
+
+const { firstBackoffMs, maxBackoffMs, growthPerAttempt, jitterFloorShare } = RETRY_DEFAULTS;
 
 /** The model server stopped answering mid-request. Its own class so the retry can recognise it. */
 export class EndpointSilent extends Error {
@@ -67,25 +70,6 @@ const RATE_LIMITED = /per (min|hour|day)|rate.?limit|\b[tr]pm\b|quota/i;
  */
 export const isOverflow = (detail: string) =>
   !RATE_LIMITED.test(detail) && OVERFLOW.some((pattern) => pattern.test(detail)) && /token|context/i.test(detail);
-
-/**
- * The smallest context window worth believing in, and the floor under `runTurn`'s guard.
- *
- * @remarks
- * `runTurn`'s `contextLimit` reads it as a sanity check on a number it was handed: below this,
- * the limit is taken for a placeholder — an unset column, a listing that said nothing — rather
- * than a context window worth refusing an exchange over. That is the whole of what reads it;
- * `contextLimitFor` asks the model server whatever the number, and `client.ts` does not import
- * this file.
- *
- * A model with a context window smaller than this exists, and the reason not to refuse an
- * exchange over one is that the number far more often came from a caller threading a placeholder
- * through than from such a model. A request that really does overrun a tiny context window is
- * left to the model server's own complaint, which `isOverflow` reads properly either way — so
- * what the floor costs is a round trip on the exchanges it declines to guard, and what it saves is
- * refusing the ones it would have guarded wrongly.
- */
-export const SMALLEST_LIKELY_WINDOW = 8192;
 
 /** The statuses below 500 that say "not now" rather than "not this": a timeout, a conflict, a rate limit. */
 const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([
@@ -184,30 +168,18 @@ export function isModelLoading(error: unknown): boolean {
   );
 }
 
-/** How long to wait between asking a loading server again. */
-export const LOADING_POLL_MS = 3000;
-
-/** How long `runTurn` waits for a model to load unless told otherwise. */
-export const LOADING_TIMEOUT_MS = 120_000;
-
-/** The first backoff, before jitter, which each attempt after it doubles. */
-const BACKOFF_BASE_MS = 500;
-
-/** The longest a backoff grows to, before jitter. */
-const BACKOFF_CEILING_MS = 8000;
-
-/** The least of a backoff that jitter leaves: a wait is somewhere between this share of it and all of it. */
-const JITTER_FLOOR = 0.5;
-
 /**
  * How long to wait before a retry: exponential, with jitter so several tasks failing at once do
  * not return in lockstep.
  *
- * @param attempt - Zero-based. Doubles from 500ms to a ceiling of eight seconds, before jitter.
- * @returns Milliseconds, somewhere between half of that wait and all of it, and not a whole number.
+ * @param attempt - Zero-based. Grows from `RETRY_DEFAULTS.firstBackoffMs` by `growthPerAttempt` an
+ * attempt, to a ceiling of `maxBackoffMs`, before jitter.
+ * @returns Milliseconds, somewhere between `jitterFloorShare` of that wait and all of it, and not a
+ * whole number.
  */
 export const backoffMs = (attempt: number) =>
-  Math.min(BACKOFF_CEILING_MS, 2 ** attempt * BACKOFF_BASE_MS) * (JITTER_FLOOR + Math.random() * (1 - JITTER_FLOOR));
+  Math.min(maxBackoffMs, growthPerAttempt ** attempt * firstBackoffMs) *
+  (jitterFloorShare + Math.random() * (1 - jitterFloorShare));
 
 /**
  * A delay an abort cuts short, rejecting rather than resolving early.

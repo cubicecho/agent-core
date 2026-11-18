@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
+import { TOOL_CALL_DEFAULTS, TOOL_DISCOVERY_DEFAULTS } from '../core/defaults.ts';
 import { byCodeUnit, isRecord } from '../core/guards.ts';
-import { ARGUMENT_PREVIEW_CHARS } from '../wire/tool-calls.ts';
 import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
 import type { CatalogServer } from './catalog.ts';
 
@@ -105,16 +105,11 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
  * caller separates it from its own prompt. Empty where there is nothing to list.
  *
  * @remarks
- * `runAgentLoop` passes no `loaded`, so the block is the same text on every turn. The system
- * prompt is the head of the request, and marking each load there threw away the prompt cache for
- * the whole transcript on every `load_tools` call. What is loaded is said where it does not move
- * the prefix instead: in the tool array, appended in load order (`loadedTools`), and in the
- * `load_tools` result, which answers a repeat load with "already loaded" (`loadResult`).
- *
- * Loaded tools are never removed from the list. That reads as the tool having vanished the moment
- * it was loaded, and the model loads again to get it back; hoisting them into a separate "already
- * loaded" section splits a server's tools apart, and the model picks a sibling from the longer
- * list instead.
+ * `runAgentLoop` passes no `loaded`, so the block is the same text on every turn and a load never
+ * rewrites the head of the request; what is loaded is said in the tool array (`loadedTools`) and the
+ * `load_tools` result (`loadResult`) instead. Loaded tools are never removed from the list or
+ * hoisted into a section of their own, since a model reads either as the tool vanishing and loads
+ * it again or picks a sibling.
  */
 export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
   const list = catalogList(catalog, loaded);
@@ -227,32 +222,6 @@ export function orderTools(tools: OpenAI.ChatCompletionTool[], order: ToolOrder 
 }
 
 /**
- * The most a single `load_tools` call may pull in.
- *
- * @remarks
- * A wildcard like `gmail__*` matches 33 tools, and loading them all puts the model right back
- * in the position on-demand loading exists to avoid — a tool array too large to choose from.
- * Over-broad requests are refused with the matching names listed, so the next call can be
- * precise.
- *
- * The default rather than the rule: twelve is what a small model chooses well from, and a caller
- * running a large one against a large context window can say otherwise to `expandNames`,
- * `preselection` and `preselectSystem`. Whatever it says is carried on the resolution, so the
- * refusal the model reads names the number it was actually held to.
- */
-export const MAX_PER_LOAD = 12;
-
-/**
- * The most a conversation carries between exchanges. Bounds the tool array no matter how long the
- * conversation runs; past it, the earliest-declared names this exchange did not use fall off first.
- *
- * @remarks
- * Only a caller with several exchanges needs this — one whose every exchange starts from nothing
- * has nothing to carry. Not exported: `carryOver` takes a cap of its own as `max`.
- */
-export const MAX_CARRIED = 16;
-
-/**
  * The tools to start the next exchange with: the last one's where they were, then what this
  * one used.
  *
@@ -272,7 +241,11 @@ export const MAX_CARRIED = 16;
  * loads gone, a prefix of it when every load was used. Past `max`, dropping a name from the
  * middle costs the cache from there, so it happens only when the cap forces it.
  */
-export function carryOver(previous: readonly string[], used: ReadonlySet<string>, max = MAX_CARRIED): string[] {
+export function carryOver(
+  previous: readonly string[],
+  used: ReadonlySet<string>,
+  max = TOOL_DISCOVERY_DEFAULTS.maxCarried,
+): string[] {
   const next = [...previous, ...[...used].filter((name) => !previous.includes(name))];
   const cap = Math.max(1, max);
   while (next.length > cap) {
@@ -299,7 +272,11 @@ export function carryOver(previous: readonly string[], used: ReadonlySet<string>
  * buys a wasted round trip while the model guesses the prefix, and pushes it toward
  * shotgunning wildcards.
  */
-export function expandNames(requested: string[], catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD) {
+export function expandNames(
+  requested: string[],
+  catalog: CatalogServer[],
+  maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad,
+) {
   const all = flatten(catalog);
   const matched = new Set<string>();
   const unknown: string[] = [];
@@ -346,15 +323,13 @@ export function expandNames(requested: string[], catalog: CatalogServer[], maxPe
     // model that is meant to be choosing from twelve. Already-matched names are free, so a
     // name that only repeats an earlier one never spends budget.
     const fresh = hits.filter((hit) => !matched.has(hit));
-    // Two different refusals, and answering both with "narrow it down" made one of them
-    // impossible to act on. A name that would not fit an empty call is over-broad, and the
-    // names are what the model needs. A name that only does not fit *this* call is precise
-    // enough already — telling a model that asked for one exact tool that it matches one tool,
-    // "more than the twelve one call may load", and to choose from a list holding just that
-    // name, leaves it nothing to do but send the identical call again.
-    if (fresh.length > maxPerLoad) {
+    // Two refusals: a name too broad for an empty call needs its matches listed, and a precise name
+    // that only does not fit this call is deferred, since "narrow it down" would leave it nothing to do.
+    const isOverBroad = fresh.length > maxPerLoad;
+    const overfillsThisCall = matched.size + fresh.length > maxPerLoad;
+    if (isOverBroad) {
       overBroad.push({ name, hits });
-    } else if (matched.size + fresh.length > maxPerLoad) {
+    } else if (overfillsThisCall) {
       deferred.push(name);
     } else {
       for (const hit of hits) {
@@ -695,7 +670,7 @@ export function proxiedCall(
       input = text.trim() ? JSON.parse(text) : {};
     } catch {
       throw new Error(
-        `${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
+        `${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, TOOL_CALL_DEFAULTS.argumentPreviewChars)}`,
       );
     }
   }

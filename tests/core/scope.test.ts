@@ -80,6 +80,14 @@ describe('assignSettings', () => {
     expect(held).toEqual({ limit: 10, timeoutMs: 500 });
   });
 
+  it('ignores a key that is not one of the settings', () => {
+    const held = { limit: 10 };
+    // Cast on purpose: a typo, as an untyped config would carry it.
+    const answer = assignSettings(held, { limt: 20 } as Partial<typeof held>);
+    expect(held).toEqual({ limit: 10 });
+    expect(answer).toEqual({ limit: 10 });
+  });
+
   it('answers a copy of everything in force, not the settings themselves', () => {
     const held = { limit: 10, timeoutMs: 500 };
     const answer = assignSettings(held, { timeoutMs: 900 });

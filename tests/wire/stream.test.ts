@@ -116,7 +116,7 @@ describe('streamTurn', () => {
       clientOf(() => chunks(text('hmm</think>'), text('answer'))),
       body,
       {
-        startInReasoning: true,
+        startInScratchpad: true,
         onOutput: (delta) => output.push(delta),
       },
     );

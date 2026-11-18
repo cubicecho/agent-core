@@ -27,18 +27,6 @@ export const HookEvent = {
   SessionEnd: 'sessionEnd',
   /** The app deleted a session's record. */
   SessionDelete: 'sessionDelete',
-  /**
-   * `BeforeExchange`, under its name before 5.0.0. It holds the new name, `'beforeExchange'`.
-   *
-   * @deprecated Use `HookEvent.BeforeExchange`.
-   */
-  BeforeTurn: 'beforeExchange',
-  /**
-   * `AfterExchange`, under its name before 5.0.0. It holds the new name, `'afterExchange'`.
-   *
-   * @deprecated Use `HookEvent.AfterExchange`.
-   */
-  AfterTurn: 'afterExchange',
 } as const;
 
 /** Any one of the events in `HookEvent`. */
@@ -59,14 +47,3 @@ export const HOOK_EVENTS: readonly HookEvent[] = [
  * Anything later runs once the model has already answered.
  */
 export const INJECT_EVENTS: ReadonlySet<HookEvent> = new Set([HookEvent.SessionStart, HookEvent.BeforeExchange]);
-
-/**
- * The exchange events under their names before 5.0.0, each to the name it has now.
- *
- * @remarks
- * Agent documents saved before the rename say these, and `parseSpec` reads them forever.
- */
-export const LEGACY_HOOK_EVENTS: ReadonlyMap<string, HookEvent> = new Map([
-  ['beforeTurn', HookEvent.BeforeExchange],
-  ['afterTurn', HookEvent.AfterExchange],
-]);

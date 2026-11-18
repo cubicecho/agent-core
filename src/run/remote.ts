@@ -1,15 +1,9 @@
 import type OpenAI from 'openai';
 import { ToolDiscovery } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
+import { CallIds } from '../wire/call-ids.ts';
 import type { AgentLoopOptions } from './agent-loop.ts';
-import {
-  LEGACY_EXCHANGE,
-  type LegacyRunEvent,
-  type RunEvent,
-  type RunEventInput,
-  RunEventKind,
-  renamedEvent,
-} from './events.ts';
+import { type RunEvent, type RunEventInput, RunEventKind } from './events.ts';
 
 /**
  * Running against a remote agent: a model that runs a whole agent loop of its own behind the chat
@@ -54,6 +48,12 @@ const SERVER_OWNED: ReadonlySet<string> = new Set([
   RunEventKind.Usage,
 ]);
 
+/**
+ * The kinds of event a remote agent's progress says of its own run and exchange, which are not
+ * forwarded: the loop's own start and end describe the app's exchange, and the run's end is the app's.
+ */
+const UNFORWARDED: ReadonlySet<string> = new Set([RunEventKind.Exchange, RunEventKind.ExchangeEnd, RunEventKind.Done]);
+
 /** Every kind a `RunEvent` may be, for telling one off the wire from something else. */
 const KINDS: ReadonlySet<string> = new Set(Object.values(RunEventKind));
 
@@ -75,25 +75,21 @@ export interface RunProgress {
 }
 
 /**
- * Whether a value off the wire is a whole run event, as `stamp` makes one now or made one before
- * 5.0.0.
+ * Whether a value off the wire is a whole run event, as `stamp` makes one.
  *
  * @param value - Anything, usually just parsed.
  * @returns True of an object with a known `kind`, a `runId`, a whole `seq`, an `at`, and every other
  * always-present field of the right kind. `usage` is checked only for being an object or `null`.
- * An event with the exchange under `step` rather than `exchange`, and its kind `step` where one
- * began, is a server's from before 5.0.0.
  */
-function isRunEvent(value: unknown): value is RunEvent | LegacyRunEvent {
+function isRunEvent(value: unknown): value is RunEvent {
   if (!isRecord(value)) {
     return false;
   }
-  const { kind, runId, seq, at, text, name, exchange, step, ok, usage, id } = value;
+  const { kind, runId, seq, at, text, name, exchange, ok, usage, id } = value;
   const isKnown = typeof kind === 'string' && KINDS.has(kind);
-  const isCurrent = isKnown && typeof exchange === 'string';
-  const isLegacy = (isKnown || kind === LEGACY_EXCHANGE) && typeof step === 'string';
   return (
-    (isCurrent || isLegacy) &&
+    isKnown &&
+    typeof exchange === 'string' &&
     typeof runId === 'string' &&
     Number.isInteger(seq) &&
     typeof at === 'number' &&
@@ -149,14 +145,13 @@ export function withProgress<T extends object, F extends string = typeof PROGRES
  *
  * @param chunk - One chunk of the stream, as parsed.
  * @param [field] - The field the event is under.
- * @returns The event as the server sent it — its `runId`, `seq` and `at` kept, and the names of a
- * server before 5.0.0 read as they are now — or `undefined` for a chunk with none, and for one whose
- * event is malformed or of a kind this version does not know.
+ * @returns The event as the server sent it, its `runId`, `seq` and `at` kept, or `undefined` for a
+ * chunk with none, and for one whose event is malformed or of a kind this version does not know.
  */
 export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): RunEvent | undefined {
   const carried = isRecord(chunk) ? chunk[field] : undefined;
   const event = isRecord(carried) ? carried.event : undefined;
-  return isRunEvent(event) ? renamedEvent(event) : undefined;
+  return isRunEvent(event) ? event : undefined;
 }
 
 /**
@@ -164,16 +159,15 @@ export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): R
  *
  * @param completion - The `chat.completion` body, as parsed.
  * @param [field] - The field the run is under.
- * @returns The run and its events, less any that are malformed or of an unknown kind, those of a
- * server before 5.0.0 under their names now; `undefined` where the answer carries no run id or no
- * list of events.
+ * @returns The run and its events, less any that are malformed or of an unknown kind; `undefined`
+ * where the answer carries no run id or no list of events.
  */
 export function progressEvents(completion: unknown, field: string = PROGRESS_FIELD): RunProgress | undefined {
   const carried = isRecord(completion) ? completion[field] : undefined;
   if (!isRecord(carried) || typeof carried.runId !== 'string' || !Array.isArray(carried.events)) {
     return undefined;
   }
-  return { runId: carried.runId, events: carried.events.filter(isRunEvent).map(renamedEvent) };
+  return { runId: carried.runId, events: carried.events.filter(isRunEvent) };
 }
 
 /**
@@ -231,8 +225,9 @@ interface RemoteRun {
  * @remarks
  * With progress on, the server says the `turn`, `thinking`, `output`, `tool-call`, `tool-result`
  * and `usage` of each of its turns, its handed-back calls included, so the loop says none of those
- * itself. The server's `done` is not forwarded: the run goes on past a remote stretch, and its end
- * is the app's to say. With progress off, the loop's own events are all there is, and all are said.
+ * itself. The server's `exchange`, `exchange-end` and `done` are not forwarded: the loop's own start
+ * and end say the app's exchange, and the run's end is the app's to say. With progress off, the
+ * loop's own events are all there is, and all are said.
  */
 export function remoteRun(
   extraBody: Record<string, unknown> | undefined,
@@ -257,7 +252,8 @@ export function remoteRun(
         return;
       }
       runId = event.runId;
-      if (event.kind !== RunEventKind.Done) {
+      const isForwarded = UNFORWARDED.has(event.kind) === false;
+      if (isForwarded) {
         told(event);
       }
     },
@@ -282,8 +278,9 @@ export function remoteRunOf(remote?: RemoteRun): { remoteRunId?: string } {
  *
  * @param options - What `runAgentLoop` was given. Not written to.
  * @returns `options` itself without `config.remoteAgent`, and otherwise a copy that loads tools
- * eagerly and does not compact, prune, preselect, continue, recover calls from text or size requests
- * against `contextLength`. One notice names whichever of those the app had asked for.
+ * eagerly and does not compact, prune, preselect, continue, recover calls from text, mint call ids
+ * or size requests against `contextLength`. One notice names whichever of those the app had asked
+ * for.
  *
  * @remarks
  * Ignored rather than refused: the flag comes from the model entry and the options from the app's
@@ -305,6 +302,8 @@ export function asRemoteAgent(options: AgentLoopOptions): AgentLoopOptions {
     options.preselect ? 'preselect' : '',
     isOnDemand ? `toolDiscovery "${discovery}"` : '',
     (options.maxContinuations ?? 0) > 0 ? 'maxContinuations' : '',
+    options.recoverToolCalls === true ? 'recoverToolCalls' : '',
+    options.callIds === CallIds.Minted ? `callIds "${CallIds.Minted}"` : '',
   ].filter((name) => name !== '');
   if (asked.length > 0) {
     options.onEvent?.({ kind: RunEventKind.Notice, text: `${REMOTE_AGENT_NOTICE}${asked.join(', ')}` });

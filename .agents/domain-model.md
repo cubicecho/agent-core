@@ -38,7 +38,7 @@ stage and a fix stage, runs one exchange per stage inside a single run.
 ```
 agent settings (optional document) ──┐
 the app's tools and callbacks ───────┼→ exchange: ask the model → run the tools it asked for → repeat → result
-                                     └→ events about each turn → anyone watching
+                                     └→ events: the exchange's start, each turn, its end → anyone watching
 ```
 
 - **An exchange:** given a conversation ending in a question, ask the model, run the tools it
@@ -47,7 +47,8 @@ the app's tools and callbacks ───────┼→ exchange: ask the mode
 - **One request:** built from what this server and model accept, resent without whatever it
   refuses or when it is lost, and read as it streams in. (`runTurn`)
 - **A side task:** a small one-off question, such as naming a conversation, picking tools or
-  writing a summary, that never makes the main exchange fail. (`ask`)
+  writing a summary, that never makes the main exchange fail. It is sent as one request, the same
+  way a turn's is. (`ask`, through `runTurn`)
 - **Settings from a document:** an agent written as JSON layers (app defaults, the agent, one
   task) is checked and merged into an exchange's settings. (`resolveAgentSpec`)
 - **A remote agent:** when the server runs its own agent, the package only passes the app's tools
@@ -65,12 +66,12 @@ agent document, stands apart and uses only a few small pieces, so it also loads 
 
 | Actor | Is | Reaches the package through | Can affect |
 |---|---|---|---|
-| App | the application using the package | the settings and callbacks it passes in | everything an exchange starts from: the model, the conversation, the tools; it can rewrite the conversation before each turn, add a message mid-exchange, and decide whether a paused exchange continues. It alone announces that a run is over (the `done` event) and reports its own exchange events |
+| App | the application using the package | the settings and callbacks it passes in | everything an exchange starts from: the model, the conversation, the tools; it can rewrite the conversation before each turn, add a message mid-exchange, and decide whether a paused exchange continues. It alone announces that a run is over (the `done` event), and it names each exchange the loop runs |
 | Model | the AI model on the server | its replies | what it says, which tools it calls and with what arguments, and which extra tools it loads. It cannot end or pause an exchange, except by replying without asking for tools |
 | Model server | the server the model runs on | its answers and errors | which request features are used from then on (a refused feature is not sent again), how big requests are estimated to be, and whether a reply was cut short or filtered |
 | Remote agent's server | a server that runs its own agent loop | progress reports streamed with its replies | what watchers see of its own turns, the ids of the calls it hands back, and the id of its own run |
 | Tool runner | the app's function that runs one tool call | one call in, its result out | what the model is told that call returned, and whether that answer ends the exchange. It never sees the rest of the conversation |
-| Hook runner | the app's function that runs agent hooks | the package asking at fixed moments | extra context added to the question, short notes about what the hooks did, and whether a planned summary goes ahead, when the app asks for its veto (the loop's own summaries never do). Never the conversation itself |
+| Hook runner | the app's function that runs agent hooks | the package asking at fixed moments | extra context added to the question, short notes about what the hooks did, and whether a planned summary goes ahead: the loop's own summaries ask for its veto unless the app opts out, and an app's own ask when it says so. Never the conversation itself |
 | Watcher | anything reading a run's events | the event stream | nothing; it only reads |
 | Operator | a person writing an agent document | the document's layers, or stored settings rows | the agent's settings, prompt, side tasks, hooks and which tool servers it may use. Never a password or key: exporting a document strips them |
 
@@ -87,11 +88,13 @@ From a question to what the app is told at the end.
 - Running → Running (tools answered and turns remain, or the app had a new message waiting)
 - Running → Failed with "too many turns" (the turn limit ran out)
 - Any → Failed (the app stopped it, a callback threw, a request failed, or it overflowed)
+- Any → Stopped (the app's signal aborted it, and it throws)
 - Waiting → Starting (the app answers the waiting calls and starts again: a new exchange)
 
-The outcome is on the result; a failed exchange throws and has none. The events work the outcome
-out again, and there "failed" comes only from the app's own `done` event. A reserved slot is
-always released.
+The loop says the exchange started, with an `exchange` event, and how it ended, with an
+`exchange-end` that carries the outcome, on every way out: a failed or stopped exchange sends it
+just before it throws. The outcome is on the result too; a failed exchange throws and has none
+there. A reserved slot is always released.
 
 ### A turn
 
@@ -155,7 +158,7 @@ How a long exchange stays small enough for the model to read.
 - Trimming: once the window is full enough, old tool results before a cut-off become one-line
   stubs; the cut-off only moves forward
 - Summarising: the oldest stretch is picked → hooks are told, and may veto it when the app asks
-  for that (`honourVeto`; the loop's own summaries are never vetoed) → a summary is written
+  for that (`honourVeto`, which the loop's own summaries default to) → a summary is written
   and stored as a record → applying it puts the summary in that stretch's place, keeping the
   question and the rest (`compactTranscript` does both)
 
@@ -164,7 +167,8 @@ How a long exchange stays small enough for the model to read.
 What the package remembers between exchanges (clients, server refusals, event history).
 
 - Not yet remembered → Remembered (on first use, per runtime) → Forgotten (a reset)
-- Server refusals → Saved snapshot → Remembered again on load (not size estimates or slots)
+- Server refusals learned through one fetch function → Saved snapshot → Remembered again on load,
+  for the function given (not size estimates or slots)
 
 ### An agent document
 
@@ -181,20 +185,21 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | Invariant | Enforced by |
 |---|---|
 | The SDK never retries a request itself | `getClient` (`maxRetries: 0`) |
-| A client or lookup reached through one fetch function never answers for another | `perFetch` |
+| A client, lookup, capability latch or calibration reached through one fetch function never answers for another | `perFetch` |
+| Every spelling of one URL is one model server, and the SDK is sent the URL as `baseUrlKey` writes it | `endpointKey`, `getClient` |
 | A model server at a different URL never inherits the configured key | `resolveApiKey`, `taskCall` |
 | A stored base URL is http(s) with no credentials, query, fragment or trailing slash | `normalizeBaseUrl` |
 | A reply that has produced anything is never sent again | `Produced`, checked in `negotiate` and `runTurn` |
 | The caller's abort is never reported as `EndpointSilent`, and an aborted stream never returns a reply | `streamTurn` |
 | One refusal gets at most one answer, and negotiation ends | `negotiate` over `ANSWERS`, `flagsOf` |
-| Capability flags only latch off while their entry lives, except the no-thinking hints, which `resetHints` offers again | `endpointAnswer`, `latchModel`, `latchFields` |
+| Capability flags and refused fields only latch off while their entry lives, except the no-thinking hints, which `resetHints` offers again | `latchEndpoint`, `latchModel`, `latchFields`, `latchEfforts` |
 | An effort is only stepped up the ladder, never down | `nextEffort`, `planEffortStep` |
 | A refused field is latched only if the caller offered it as droppable | `droppedFieldsAnswer` |
 | `extraBody` never sets `model`, `messages`, `stream` or `tools` | `extraFields`, `parseExtraBody` |
 | A spec layer's `extraBody` never sets what the spec spells elsewhere, whether `parseSpec` read it or not | `parseExtraBody`, and `unownedFields` on resolve (`SPELLED_BODY_FIELDS`) |
 | An absent ceiling or temperature is never sent; a ceiling of zero or less is never sent | `ceilingAndTemperature` |
 | A loading wait never spends the retry budget | `runTurn` |
-| A request is size-checked at most once, and never against a window below 8192 tokens | `runTurn` (`SMALLEST_LIKELY_WINDOW`) |
+| A request is size-checked at most once, and never against a window below `smallestLikelyWindowTokens` | `runTurn` (`REQUEST_SIZE_DEFAULTS`) |
 | An overflow, however found, stays a `ContextOverflow` | `refuseOversized`, `runTurn`, `AgentLoopOverflow` |
 | A rate-limit message is never read as an overflow | `isOverflow` |
 | Tool arguments handed to a dispatcher are always an object; replayed arguments are valid JSON | `parseToolArguments`, `readCall` |
@@ -216,8 +221,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A failure carries the exchange as it stood | `standing.read`, `runAgentLoop` |
 | At most `maxToolIterations` turns | `runTurns`, `ToolIterationLimit` |
 | Event `seq` and `runId` are the bus's to give | `stamp` |
+| Every exchange the loop runs opens with one `exchange` event and closes with one `exchange-end`, whether it returns or throws | `runAgentLoop`, `endedBy`, `exchangeEnd` |
+| An exchange's end never moves a run off waiting | `emit` |
 | A bus listener that throws never reaches the emitter | `emit` |
-| A remote agent's turn events are not said twice, and its `done` is not forwarded | `remoteRun` |
+| A remote agent's turn events are not said twice, and its `exchange`, `exchange-end` and `done` are not forwarded | `remoteRun` (`SERVER_OWNED`, `UNFORWARDED`) |
 | A remote agent's turn sends one idempotency key across its retries | `remoteRun.turnHeaders`, once per turn |
 | Each runtime has its own copy of module state | `scoped`, `currentScope` |
 | An absent or `null` spec field inherits; `0`, `""` and `[]` are values | `isAbsent` in `parseSpec` and `toLayer` (a `null` becomes absent), then `mergeLayers`, `mergeModel` and `resolveAgentSpec` |
@@ -236,19 +243,21 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `runMetrics`; the app chooses where a run starts and ends.
 - **Exchange:** one input, from a person or a machine, through to the reply it gets, made of one
   or more turns. It ends answered, cut short, filtered, ended, waiting or failed. Owner:
-  `runAgentLoop` (`src/run/agent-loop.ts`); the code still calls it a run (`RunOutcome`,
-  `AgentLoopResult`, "the run ended", "the run waits"), and the renames are pending `A` items.
+  `runAgentLoop` (`src/run/agent-loop.ts`), whose result is `AgentLoopResult` and whose outcome is
+  an `ExchangeOutcome`.
 - **Turn:** one model reply, plus running any tools it asked for; usually one request, more when a
   reply cut off at the length limit is continued. Owner: the loop in `runTurns`; the `Turn` type
   (`src/wire/stream.ts`) is the reply part, run by `runTurn`, and the `turn` event and
   `RunMetrics.turns` count them. A turn's number, from zero, is `turn`: on `AgentLoopRequest` and
-  `RunArtifact`, and the number `beforeTurn`, `onTurn` and `onMessage` are handed. `beforeStep`
-  and `StepWindow` are deprecated aliases of `beforeTurn` and `TurnWindow`.
-- **Exchange events:** what an app emits when one run holds several exchanges, such as a task's
-  stages: an exchange began, which exchange each event belongs to, and which arm a deciding
-  exchange chose. Owner: `RunEventKind.Exchange`, `RunEvent.exchange`, `RunMetrics.exchanges` and
-  `RunEventKind.Decision`; the loop never sends them. Events stored or relayed before 5.0.0 say
-  `step` for the first two, which `renamedEvent` reads under the new names.
+  `RunArtifact`, and the number `beforeTurn`, `onTurn` and `onMessage` are handed.
+- **Exchange events:** where an exchange starts and how it ended, which exchange each event belongs
+  to, and which arm a deciding exchange chose. The loop sends the start and the end of each
+  exchange it runs, the end with its outcome even when it throws, and names every event with the
+  app's name for the exchange; the app sends the choices. Owner: `RunEventKind.Exchange`,
+  `RunEventKind.ExchangeEnd`, `RunEvent.exchange`, `RunEvent.outcome`, `AgentLoopOptions.exchange`,
+  `RunMetrics.exchanges` and `RunEventKind.Decision`. A remote agent's own starts and ends are not
+  passed on. Events stored or relayed before 5.0.0 say `step` for the first and third, and the
+  package no longer reads them.
 
 ### Reaching a server
 
@@ -258,19 +267,24 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Model server:** one OpenAI-compatible server as configured: where it is, the key that
   reaches it, how long to wait, and optionally a function its requests go through. Owner:
   `Endpoint` in `src/core/config.ts`; the code calls it an endpoint throughout.
-- **Model server identity (endpoint identity):** the URL and key that tell two model servers
-  apart. Owner: `EndpointIdentity`; spelled at runtime as `endpointKey` and its digest `endpointId`.
+- **Model server identity (endpoint identity):** what tells two model servers apart: the cleaned-up
+  URL, the key, and the fetch function the requests go through. Every cache of a model server keys
+  on it (the clients, listings, served windows, capabilities and calibration); slots alone key on
+  the URL and model, since they are one server's physical caches. Owner: `EndpointIdentity` for the
+  half that can be written down, spelled `endpointKey` and its digest `endpointId`; `perFetch` for
+  the fetch function (`src/endpoint/client.ts`).
 - **Fetch function:** a function a model server's requests are sent through instead of the network,
-  so an app can answer them in process; each gets its own clients and caches. Owner:
+  so an app can answer them in process; each gets its own clients, caches and capabilities. Owner:
   `Endpoint.fetch`, `perFetch` (`src/endpoint/client.ts`).
 - **Client:** the pooled SDK client for one model server, made once and reused. Owner: `getClient`;
-  settings in `ClientPoolOptions`, `configureClients`.
+  settings in `ClientPoolSettings` (`CLIENT_POOL_DEFAULTS`), moved by `configureClients`.
 - **Key inheritance:** a model server with no key of its own borrows the configured one only when it
   points at the same server. Owner: `resolveApiKey`.
 - **Idle timeout (request timeout):** how long a streamed reply may go quiet once it has started.
-  Owner: `Endpoint.requestTimeoutSeconds`; also `timeoutMs`, `idleMs`.
+  Owner: `Endpoint.requestTimeoutSeconds`; also `idleTimeoutMs(config)`, `idleMs`.
 - **First-token timeout:** how long to wait for a reply's first token. Owner:
-  `Endpoint.firstTokenSeconds`; also `firstTokenMs(config)`, `firstChunkMs`.
+  `Endpoint.firstTokenSeconds`; also `firstTokenLimitMs(config)`, `firstChunkMs`. `TurnUsage.firstTokenMs`
+  is the wait measured, not the limit.
 - **Model listing:** the models a model server says it serves. Owner: `listModels`, `ModelInfo`.
 - **Model server probe (endpoint probe):** a one-off listing of a model server a person is still
   typing into a form. Owner: `probeEndpoint`, `EndpointProbeError`.
@@ -291,10 +305,13 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   no-thinking hints, and refused fields and efforts. Owner: `ModelCapabilities`,
   `modelCapabilitiesFor`.
 - **Latch (downgrade):** turning a capability off for good after one refusal, so later requests
-  are sent the lesser form at once. Owner: `latchModel`, `latchFields`, through which `negotiate`'s
-  `Answer`s in `ANSWERS`, a continuation and a side task latch a model's capabilities.
+  are sent the lesser form at once. Owner: `latchEndpoint`, `latchModel`, `latchFields` and
+  `latchEfforts`, through which `negotiate`'s `Answer`s in `ANSWERS`, a continuation and
+  `importCapabilities` latch a model server's and a model's capabilities.
 - **Negotiation:** sending a request and re-sending it without whatever the server refused, until
-  it answers or refuses something nothing can drop. Owner: `negotiate`.
+  it answers or refuses something nothing can drop. A refusal that names nothing it can drop is
+  not guessed at, for a side task as for a turn. Owner: `negotiate`, which `runTurn` calls for
+  both.
 - **Droppable field:** a request field the caller lets a refusal remove. Owner:
   `NegotiateOptions.droppable`, `refusedFields`.
 - **Reasoning effort:** how hard a reasoning model should think; a refused level is stepped up to
@@ -304,8 +321,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   model takes, or not at all. Owner: `ceilingAndTemperature`, `ModelParams.maxTokens`.
 - **Notice:** a one-line message saying what was given up, waited out or retried. Owner:
   `OnNotice`, `RunEventKind.Notice`.
-- **Capability snapshot:** the latches as JSON an app stores, so a restart need not learn them
-  again. Owner: `exportCapabilities`, `importCapabilities` (`src/runtime/snapshot.ts`).
+- **Capability snapshot:** the latches learned through one fetch function as JSON an app stores, so
+  a restart need not learn them again; the global fetch's unless the app names its own on both
+  sides, since a function cannot be written down. Owner: `exportCapabilities`, `importCapabilities`
+  (`src/runtime/snapshot.ts`).
 - **Schema sanitising and relaxing:** rewriting a tool's JSON Schema into shapes a strict server
   accepts, and also dropping `pattern` and `format` once a server failed to compile one. Owner:
   `sanitizeTools`, `relaxTools`, `isGrammarError` (`src/endpoint/schema-compat.ts`).
@@ -331,7 +350,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Continuation:** carrying on a reply the ceiling cut off by sending it back as a trailing
   assistant message. Owner: `continueTurn` (`src/turn/continuation.ts`).
 - **Scratchpad (reasoning, thinking):** what a model wrote while deliberating, kept apart from
-  its answer. Owner: `Turn.reasoning`, `FenceSplitter`, `stripThinking` (`src/wire/thinking.ts`).
+  its answer; a reply may start inside one its template opened in the prompt. Owner:
+  `Turn.reasoning`, `FenceSplitter`, `stripThinking` (`src/wire/thinking.ts`); `startInScratchpad`
+  on `StreamTurnOptions` and `FenceSplitterOptions`.
 - **Fence:** the markers a model puts around a scratchpad inside its text, such as `<think>`.
   Owner: `Fence`, `DEFAULT_FENCES`.
 - **Reasoning replay:** which assistant messages carry the scratchpad back to the model. Owner:
@@ -339,7 +360,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Turn usage:** what one reply cost: tokens, cache hits, timings and retries. Owner:
   `TurnUsage`; an exchange's totals are `LoopUsage` / `UsageTotals`.
 - **Token estimate:** a rough count, characters over a calibrated ratio (four until learned).
-  Owner: `estimateTokens`, `requestTokens` (`src/wire/tokens.ts`), `charsPerTokenFor`, `calibrate`.
+  Owner: `estimateTokens`, `requestTokens` (`src/wire/tokens.ts`), `charsPerTokenFor`, `calibrate`;
+  a count is printed by `formatTokens`.
 - **Untrusted fence:** a wrapper marking text as data, not instructions; hooks and server
   instructions fence what nobody vouched for with it. Owner: `untrusted`, `UNTRUSTED_PREFACE`
   (`src/wire/text.ts`).
@@ -347,11 +369,13 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 ### Side tasks
 
 - **Side task (task):** a small one-shot call that supports an exchange, such as naming it,
-  choosing its tools or summarising, and is never worth failing it. Owner: `ask`, `askReply`,
-  `askJson` (`src/turn/side-task.ts`); `TaskSpec` in a document, `SideTask` in code.
+  choosing its tools or summarising, and is never worth failing it. It is one request sent by
+  `runTurn`, as a turn's is: streamed, negotiated, retried, and waited out while the model loads.
+  Owner: `ask`, `askReply`, `askJson` (`src/turn/side-task.ts`), whose `complete` builds the body;
+  `TaskSpec` in a document, `SideTask` in code.
 - **No-thinking hints:** fields sent so a reasoning model answers a side task directly, dropped
-  per model once refused. Owner: `NO_THINKING`; the latch is `ModelCapabilities.thinkingHints`
-  (`src/endpoint/capabilities.ts`).
+  per model once a refusal names them. Owner: `NO_THINKING`, offered to `negotiate` as droppable;
+  the latch is `chat_template_kwargs` in `ModelCapabilities.refusedFields`.
 - **Structured answer:** a side task's reply as JSON for a schema. Owner: `askJson`, `parseJson`.
 - **Forgiving side task:** a side task whose failure becomes "no answer" and a notice. Owner:
   `tryAsk`.
@@ -371,9 +395,12 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   takes between turns. Owner: `AgentLoopOptions.takeInput`, `RunEventKind.Input`.
 - **Before-turn rewrite:** the app's chance to replace the transcript before a turn. Owner:
   `AgentLoopOptions.beforeTurn`, `TurnWindow`.
-- **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`.
+- **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`; its
+  `afterExchange` is the `afterExchange` hooks' notes, as a promise the loop does not wait for.
 - **Outcome:** how an exchange ended: answered, cut short, filtered, ended, waiting, or (as events
-  tell it) failed. Owner: `RunOutcome` (`src/run/events.ts`), decided by `exchangeOutcome`.
+  tell it) failed or stopped. A run's outcome is told in the same words: its last exchange's,
+  unless the app's `done` says the run failed. Owner: `ExchangeOutcome` (`src/run/events.ts`),
+  decided by `exchangeOutcome` and carried by `exchange-end`; a run's is `RunMetrics.outcome`.
 - **Failure:** what an exchange throws, carrying it as it stood. Owner: `AgentLoopError`,
   `AgentLoopOverflow`, `ToolIterationLimit`, `failedRun` (`src/run/failure.ts`).
 - **Stop (abort):** the app cancelling an exchange through its signal. Owner:
@@ -403,10 +430,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **One call per message:** writing each call in its own assistant message, for templates that
   take only one. Owner: `ModelParams.singleCallMessages`, `splitCalls`, `oneCallPerMessage`.
 - **End (ended):** a tool's answer saying the job is done, which ends the exchange once the turn's
-  calls are answered. Owner: `ToolAnswer.end`, `AgentLoopResult.ended`, `RunOutcome.Ended`.
+  calls are answered. Owner: `ToolAnswer.end`, `AgentLoopResult.ended`, `ExchangeOutcome.Ended`.
 - **Hand back (pending, waiting):** leaving a call for the app to answer later; the exchange stops
-  after the turn, waiting. Owner: `AgentLoopOptions.handBack`, `AgentLoopResult.pending`,
-  `RunOutcome.Waiting`, `RunEventKind.Wait`.
+  after the turn, waiting, with a `wait` event and then its end. Owner: `AgentLoopOptions.handBack`,
+  `AgentLoopResult.pending`, `ExchangeOutcome.Waiting`, `RunEventKind.Wait`, `RunEvent.pending`.
 - **Resume:** calling the loop again with a waiting exchange's transcript, its pending calls
   answered, and its ledger and loaded tools. Owner: the app; described on `AgentLoopResult.pending`.
 
@@ -440,8 +467,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Hook event:** a moment a hook can be bound to: a session starting, before an exchange starts,
   after it has its reply, before a summary replaces old messages, and a session ending or being
   deleted. Owner: `HookEvent` (`src/hooks/hook-events.ts`); the exchange's two are
-  `beforeExchange` and `afterExchange`. Documents saved before 5.0.0 name them `beforeTurn` and
-  `afterTurn`, which `parseSpec` still reads (`LEGACY_HOOK_EVENTS`).
+  `beforeExchange` and `afterExchange`.
 - **Hook runner:** the app's function that runs an event's hooks; the package never runs one.
   Owner: `HookRunner` (`src/hooks/hooks.ts`).
 - **Hook outcome:** what one hook did: its text, whether to inject it, its cap, and a veto.
@@ -473,7 +499,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `SUMMARY_LEAD`, `SUMMARY_ACK`.
 - **Compact threshold:** how full the context window must be before pruning or compaction is
   considered.
-  Owner: `COMPACT_AT`.
+  Owner: `COMPACTION_DEFAULTS.compactAtShare`.
 
 ### Watching a run
 
@@ -516,7 +542,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Parse:** checking any input into a document, dropping bad fields with warnings and refusing
   only what cannot be identified. Owner: `parseSpec`.
 - **Resolved agent:** the flat config the layers come to, plus prompt parts, tasks, hooks and
-  servers. Owner: `ResolvedAgent`, `RESOLVED_DEFAULTS`.
+  servers. Owner: `ResolvedAgent`, `AGENT_DEFAULTS`; served on the `./spec` subpath by
+  `src/spec/entry.ts`.
 - **Prompt part:** one named piece of system prompt, text or a reference to a file. Owner:
   `PromptPart`.
 - **Agent hook:** a tool call bound to a hook event, which the app runs. Owner: `AgentHook`.
@@ -533,6 +560,12 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 
 ### Process state
 
+- **Defaults:** every value the package chose — a limit, a wait, a share — as a frozen group of
+  plain values named for what it tunes, with a `…Settings` type. A function a caller varies takes
+  the setting as an option defaulting to the member; the client pool, event bus and hooks are moved
+  per runtime by `configure*`, which take a `Partial` of the settings. Owner: the `*_DEFAULTS`
+  groups (`src/core/defaults.ts`). The facts beside them, unit conversions, are in
+  `src/core/consts.ts`.
 - **Runtime:** one isolated set of the package's caches, with every stateful function as a
   method, for apps whose tenants must not share them. Owner: `createRuntime`, `defaultRuntime`
   (`src/runtime/runtime.ts`).
@@ -566,8 +599,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   never made. Owner: `loadShortlist`.
 - **Remote stretch:** the per-exchange part of remote-agent mode: progress asked for and
   forwarded, turn events held back, keys per turn. Owner: `remoteRun`, `SERVER_OWNED`.
-- **Per-fetch cache:** a cache kept once for the global fetch and once per app function. Owner:
-  `perFetch`.
+- **Per-fetch cache:** a cache kept once for the global fetch and once per app function, which can
+  be walked while the function is held. Owner: `perFetch`.
 - **Merge rules:** how layers combine: scalars by last layer, `extraBody` by key, prompt parts and
   hooks by id, tasks field by field, server scope whole. Owner: `mergeLayers`, `mergeModel`,
   `mergeById`, `resolveTasks`.
@@ -590,7 +623,8 @@ optional preselection. Hooks add injected context to the question's request. Bef
 pruning and compaction keep the exchange inside its context window, sized from the last reported
 prompt; the token ledger records each request's size, so an app can price stretches of the
 transcript.
-Side tasks name, choose and summarise without risking the exchange. Every turn reports events through `onEvent`, which the app files on the
+Side tasks name, choose and summarise without risking the exchange, each sent as one request the
+way a turn's is. Every turn reports events through `onEvent`, which the app files on the
 bus under the run they belong to, which may hold several exchanges, and watchers read them and
 metrics are built from them; a remote agent's server can supply those events in the loop's place.
 A session is the conversation around many runs. An operator can write the agent as a document

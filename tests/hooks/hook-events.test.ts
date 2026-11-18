@@ -6,11 +6,6 @@ describe('HookEvent', () => {
     expect(HookEvent.BeforeExchange).toBe('beforeExchange');
     expect(HookEvent.AfterExchange).toBe('afterExchange');
   });
-
-  it('keeps the old members, holding the new names, so code comparing against them still matches', () => {
-    expect(HookEvent.BeforeTurn).toBe(HookEvent.BeforeExchange);
-    expect(HookEvent.AfterTurn).toBe(HookEvent.AfterExchange);
-  });
 });
 
 describe('HOOK_EVENTS', () => {

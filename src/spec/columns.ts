@@ -4,6 +4,7 @@ import {
   type AgentSpec,
   type EndpointSpec,
   type ModelSpec,
+  pathText,
   type RetrySpec,
   type TaskSpec,
   type ToolsSpec,
@@ -215,26 +216,6 @@ function segmentsOf(path: SpecPath | ExtensionPath | SpecSection | `tasks.${stri
     return [PROMPT, path.slice(prefix.length)];
   }
   return path.split('.');
-}
-
-/**
- * A path as text, in `parseSpec`'s spelling, with a segment holding a dot quoted so it reads as one.
- *
- * @param path - The segments.
- * @returns `extensions["com.acme"].plan` for the key `com.acme`, and `extensions.com.acme` for
- * the key `acme` beneath the key `com`.
- */
-function pathText(path: readonly string[]): string {
-  let text = '';
-  for (const segment of path) {
-    const holdsDot = segment.includes('.');
-    if (holdsDot) {
-      text += `[${JSON.stringify(segment)}]`;
-    } else {
-      text += text === '' ? segment : `.${segment}`;
-    }
-  }
-  return text;
 }
 
 /**
@@ -467,22 +448,26 @@ export function defineSpecColumns<Row>(
           offer(entry, pathText(path), value);
           return;
         }
-        if (path.length === 1 && path[0] === PROMPT && Array.isArray(value)) {
+        const isPromptList = path.length === 1 && path[0] === PROMPT && Array.isArray(value);
+        if (isPromptList) {
           walkPrompt(value);
           return;
         }
-        if (path.length === 1 && path[0] === HOOKS && Array.isArray(value)) {
+        const isHookList = path.length === 1 && path[0] === HOOKS && Array.isArray(value);
+        if (isHookList) {
           for (const [index, hook] of value.entries()) {
             drops.push({ path: `${HOOKS}[${index}]`, value: hook });
           }
           return;
         }
-        if (isRecord(value) && (isStructural(path) || mappedBeneath(path))) {
+        const shouldDescend = isRecord(value) && (isStructural(path) || mappedBeneath(path));
+        if (shouldDescend) {
           for (const [key, held] of Object.entries(value)) {
             const isToken = path.length === 0 && key === TOKEN;
-            if (isToken === false) {
-              walk(held, [...path, key]);
+            if (isToken) {
+              continue;
             }
+            walk(held, [...path, key]);
           }
           return;
         }

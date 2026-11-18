@@ -127,7 +127,10 @@ export interface ModelSpec {
 export interface PromptPart {
   /** Names this layer: `project`, `identity`, `role`, `lane`. Merging happens on it. */
   id: string;
-  /** The text. Empty deletes the part a layer below contributed, `ref` included. Absent only when `ref` is given. */
+  /**
+   * The text. Empty deletes the part a layer below contributed, `ref` included. Absent only when
+   * `ref` is given: a `ref` beside a text is dropped, with a warning.
+   */
   text?: string;
   /** Where the text lives instead. The shape is validated; the reference is never resolved. */
   ref?: { type: "file" | "url"; value: string };
@@ -317,7 +320,7 @@ import nothing themselves (`core/config.ts`, `core/guards.ts`, `hooks/hook-event
 outside `src/spec/` imports it but `src/index.ts`.
 
 The result is always whole. `apiKey` is `""` whatever the layers said (see Trust), and an empty
-list of layers resolves to empty strings and `RESOLVED_DEFAULTS` rather than an error.
+list of layers resolves to empty strings and `AGENT_DEFAULTS` rather than an error.
 
 ## Absent, present, empty
 
@@ -470,11 +473,10 @@ currently refuses to save a `beforeCompact` hook because it never compacts, whic
 otherwise good agent unimportable. The validator takes the host's fired-event set (the `events`
 option), defaulting to `SPEC_EVENTS`, which is `HOOK_EVENTS`, and warns.
 
-Before 5.0.0 the exchange's two events were named `beforeTurn` and `afterTurn`. A document that
-still says them parses, each hook bound under the new name (`beforeExchange`, `afterExchange`) with
-a warning such as `hooks[0].on: "beforeTurn" is now "beforeExchange"`. `resolveAgentSpec` renames
-them silently in a layer that never went through `parseSpec`, and `exportSpec` writes only the new
-names, so a stored document needs no migration.
+Before 5.0.0 the exchange's two events were named `beforeTurn` and `afterTurn`. Since 6.0.0 those
+are unknown events like any other: a hook bound to one is dropped with a warning such as
+`hooks[0].on: "beforeTurn" is not an event, and was dropped`. Rename them to `beforeExchange` and
+`afterExchange` in stored documents once.
 
 An `inject: true` on an event outside `INJECT_EVENTS`, or a `veto: true` on any event but
 `beforeCompact`, is dropped with a warning and the hook is kept. Resolving drops the same flags

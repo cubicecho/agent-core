@@ -5,25 +5,18 @@ import {
   ReasoningReplay,
   ToolDiscovery,
 } from '../core/config.ts';
+import { AGENT_DEFAULTS } from '../core/defaults.ts';
 import { isAbsent, isRecord } from '../core/guards.ts';
-import { HOOK_EVENTS, HookEvent, INJECT_EVENTS, LEGACY_HOOK_EVENTS } from '../hooks/hook-events.ts';
+import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
  *
- * Four applications sit on this package and each one spells "an agent" differently: a singleton
- * settings row, a deliberately jobless agent table whose job comes from three other rows, an
- * override profile that resolves into a whole synthesised settings object. None of them can read
- * another's agents, and `maxTokens: 0` means *no ceiling* in one, *inherit* in the next and *a
- * real ceiling of zero* in the third. This is the shape they can all write and all read, argued
- * out in `docs/agent-spec.md` before any of it was code.
- *
- * Nothing outside `src/spec/` imports this module, and this module imports nothing that needs
- * Node: types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
- * loop takes the parts it reads, not a config object — and it is what lets the document travel
- * between apps without the loop growing an opinion about where an agent comes from. It is also
- * why this is importable in a browser, where `client.ts` and `hooks.ts` are not: an app validating
- * a pasted document in a form needs no `node:crypto`.
+ * The apps on this package each spelled "an agent" differently, to the point that `maxTokens: 0`
+ * meant three different things; this is the shape they can all write and read, argued out in
+ * `docs/agent-spec.md`. Nothing outside `src/spec/` imports this module, and it imports nothing that
+ * needs Node, so the loop has no opinion on where an agent comes from and an app can validate a
+ * pasted document in a browser.
  */
 
 /** The token a document declares itself with. A loader refuses anything else. */
@@ -129,7 +122,10 @@ export const REF_URL = 'url' as const;
 export interface PromptPart {
   /** Names this layer: `project`, `identity`, `role`, `lane`. Merging happens on it. */
   id: string;
-  /** The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given. */
+  /**
+   * The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given:
+   * `parseSpec` drops a `ref` beside a text.
+   */
   text?: string;
   /** Where the text lives instead. The shape is validated; the reference is never resolved. */
   ref?: { type: typeof REF_FILE | typeof REF_URL; value: string };
@@ -156,7 +152,10 @@ export interface ToolsSpec {
 export interface RetrySpec {
   /** Re-sends of a request lost before the model produced anything. Zero is none — a value. */
   maxRetries?: number;
-  /** Seconds to wait out a server loading its model. Zero is not at all; absent is two minutes. */
+  /**
+   * Seconds to wait out a server loading its model. Zero is not at all; absent is
+   * `MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds`.
+   */
   loadingTimeoutSeconds?: number;
 }
 
@@ -171,7 +170,7 @@ export interface TaskSpec {
   /**
    * Sampling temperature, whatever the agent's own is.
    *
-   * @defaultValue `0.3`
+   * @defaultValue `SIDE_TASK_DEFAULTS.temperature`
    */
   temperature?: number;
   /**
@@ -282,25 +281,6 @@ export interface ResolvedAgent extends AgentConfig {
   requires: readonly string[];
 }
 
-/**
- * What a field falls back to when no layer said anything at all.
- *
- * @remarks
- * Not sentinels, and not invented: `toolDiscovery`, `maxRetries` and `contextLength` are the
- * "absent everywhere" column of the document's own table, and `temperature` and `maxToolIterations`
- * are what all three consumers store as their defaults today. `maxTokens: 0` sends no ceiling,
- * leaving the reply's length to the model server. A field left out here is left out of the
- * resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no opinion".
- */
-export const RESOLVED_DEFAULTS = {
-  temperature: 0.7,
-  maxTokens: 0,
-  contextLength: 0,
-  toolDiscovery: ToolDiscovery.Eager,
-  maxToolIterations: 20,
-  maxRetries: 0,
-} as const;
-
 /** What `parseSpec` hands back. A refused document is `spec: null` with the reasons in `errors`. */
 export interface ParsedSpec {
   /** The document with everything that did not survive dropped, or null if it was refused. */
@@ -334,6 +314,26 @@ export interface ParseSpecOptions {
 
 /** A `${VAR}`-shaped string, which is kept as the literal it is rather than expanded. */
 const VARIABLE = /\$\{[^}]*\}/;
+
+/**
+ * A path as text, in `parseSpec`'s spelling, with a segment holding a dot quoted so it reads as one.
+ *
+ * @param path - The segments.
+ * @returns `extensions["com.acme"].plan` for the key `com.acme`, and `extensions.com.acme` for
+ * the key `acme` beneath the key `com`.
+ */
+export function pathText(path: readonly string[]): string {
+  let text = '';
+  for (const segment of path) {
+    const holdsDot = segment.includes('.');
+    if (holdsDot) {
+      text += `[${JSON.stringify(segment)}]`;
+    } else {
+      text += text === '' ? segment : `.${segment}`;
+    }
+  }
+  return text;
+}
 
 /** Problems in the order they were found, in `validateHooks`'s `path: what is wrong` shape. */
 class Report {
@@ -594,9 +594,10 @@ const SPELLED_BODY_FIELDS: Readonly<Record<string, keyof ModelSpec & keyof TaskS
  */
 function unownedFields(extraBody: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(extraBody).filter(
-      ([key]) => RESERVED_BODY_FIELDS.includes(key) === false && Object.hasOwn(SPELLED_BODY_FIELDS, key) === false,
-    ),
+    Object.entries(extraBody).filter(([key]) => {
+      const isOwned = RESERVED_BODY_FIELDS.includes(key) || Object.hasOwn(SPELLED_BODY_FIELDS, key);
+      return isOwned === false;
+    }),
   );
 }
 
@@ -643,8 +644,8 @@ function parseExtraBody(report: Report, path: string, value: unknown): Record<st
  *
  * @remarks
  * A part goes whole where it is not an object, has no id or an empty one, or has neither a text
- * nor a usable reference. A malformed `ref` beside a text goes alone. An empty text is kept: it is
- * how a layer deletes the part below it.
+ * nor a usable reference. A `ref` beside a text goes alone, the text winning, and so does a
+ * malformed one. An empty text is kept: it is how a layer deletes the part below it.
  */
 function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
   const parts: PromptPart[] = [];
@@ -661,11 +662,16 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
     }
     const text = report.string(`${path}.text`, held.text);
     let ref: PromptPart['ref'];
-    if (!isAbsent(held.ref)) {
+    const hasRef = isAbsent(held.ref) === false;
+    const hasText = text !== undefined;
+    if (hasRef && hasText) {
+      report.drop(`${path}.ref`, 'sits beside a text, which is used instead');
+    } else if (hasRef) {
       const raw = held.ref;
       const type = isRecord(raw) ? raw.type : undefined;
       const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
-      if ((type === REF_FILE || type === REF_URL) && value) {
+      const isKnownType = type === REF_FILE || type === REF_URL;
+      if (isKnownType && value) {
         ref = { type, value };
       } else {
         report.drop(`${path}.ref`, 'must be { type: "file" | "url", value }');
@@ -761,7 +767,7 @@ function parseRetry(report: Report, value: unknown): RetrySpec | undefined {
 function parseTasks(report: Report, value: Record<string, unknown>): Record<string, TaskSpec> {
   const tasks: Record<string, TaskSpec> = {};
   for (const [key, held] of Object.entries(value)) {
-    const path = `tasks.${key}`;
+    const path = pathText(['tasks', key]);
     if (isAbsent(held)) {
       continue;
     }
@@ -808,17 +814,6 @@ function honouredFlags({ on, inject, veto }: Pick<AgentHook, 'on' | 'inject' | '
 }
 
 /**
- * A hook under the name its event has now, where it was stored under the name before 5.0.0.
- *
- * @param hook - A hook as a layer holds it, parsed or not.
- * @returns `hook` itself where its event is current, or a copy bound to the event's new name.
- */
-function renamedHook(hook: AgentHook): AgentHook {
-  const on = LEGACY_HOOK_EVENTS.get(hook.on);
-  return on ? { ...hook, on } : hook;
-}
-
-/**
  * Reads the `hooks` array, hook by hook.
  *
  * @param report - Where what is dropped or noted is written.
@@ -830,8 +825,7 @@ function renamedHook(hook: AgentHook): AgentHook {
  * @remarks
  * A hook goes whole where it is not an object, lacks a non-empty `id`, `on`, `server` or `tool`,
  * or is bound to something that is not one of `SPEC_EVENTS`. An `inject: true` or a `veto: true`
- * its event cannot honour goes alone. `args` is carried unread. An event under its name before
- * 5.0.0 (`LEGACY_HOOK_EVENTS`) is read under its new one, with a note.
+ * its event cannot honour goes alone. `args` is carried unread.
  */
 function parseHooks(report: Report, value: unknown[], events: readonly string[]): AgentHook[] {
   const hooks: AgentHook[] = [];
@@ -849,21 +843,15 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
       report.drop(path, 'needs an id, an event, a server and a tool');
       continue;
     }
-    // A document saved before 5.0.0 names the exchange events after the turn.
-    const renamed = LEGACY_HOOK_EVENTS.get(written);
-    if (renamed) {
-      report.note(`${path}.on`, `"${written}" is now "${renamed}"`);
-    }
-    const on = renamed ?? written;
-    const event = SPEC_EVENTS.find((known) => known === on);
+    const event = SPEC_EVENTS.find((known) => known === written);
     if (!event) {
-      report.drop(`${path}.on`, `"${on}" is not an event`);
+      report.drop(`${path}.on`, `"${written}" is not an event`);
       continue;
     }
     // An app that never compacts refuses to save a `beforeCompact` hook today, which makes an
     // otherwise good agent unimportable. Kept and noted instead.
-    if (!events.includes(on)) {
-      report.note(`${path}.on`, `"${on}" is never fired by this host`);
+    if (!events.includes(event)) {
+      report.note(`${path}.on`, `"${event}" is never fired by this host`);
     }
     const { dropped, inject, veto } = honouredFlags({
       on: event,
@@ -973,21 +961,13 @@ const KNOWN = new Set([
  * where `errors` holds anything. `warnings` is filled either way.
  *
  * @remarks
- * Every problem is reported at once, in the `path: what is wrong` shape `validateHooks` already
- * uses, because an app showing an operator one error at a time makes them fix a document one
- * round trip at a time.
- *
- * The hard errors are all about the document rather than a value: it is not an object; the
- * `spec` token is missing or of another major; a container of the wrong kind; a `requires` entry
- * that is not a string, or that this app does not understand. Everything else drops the offending
- * field and warns — the lesson a consumer learned the hard way when one stored out-of-range value
- * stopped its server booting. Out-of-range values are dropped rather than clamped, because a
- * clamp invents a number the author did not write while dropping falls back to one somebody did.
- *
- * Version handling is the deliberate opposite of `importCapabilities`, which shrugs at a foreign
- * version and returns false: degrade where the loss is performance, refuse where the loss is
- * identity. A snapshot of the wrong version costs a few refused requests; an agent of the wrong
- * version is not the agent its author described.
+ * Every problem is reported at once, in `validateHooks`'s `path: what is wrong` shape, so an
+ * operator fixes a document in one round trip. The hard errors are about the document itself — not
+ * an object, a missing or foreign `spec` token, a container of the wrong kind, a `requires` entry
+ * that is not a string or not understood — and anything else drops the field with a warning, an
+ * out-of-range value dropped rather than clamped. A foreign version is refused where
+ * `importCapabilities` shrugs, because an agent of the wrong version is not the agent its author
+ * described (`docs/agent-spec.md`).
  */
 export function parseSpec(document: unknown, options: ParseSpecOptions = {}): ParsedSpec {
   const report = new Report();
@@ -1225,23 +1205,15 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * @param layers - The documents, weakest first: settings, then the agent, then a task, then
  * a stage.
  * @returns The resolved agent, built new. Always whole: an empty list gives empty strings and
- * `RESOLVED_DEFAULTS` rather than an error, and `apiKey` is `""` whatever the layers said.
+ * `AGENT_DEFAULTS` rather than an error, and `apiKey` is `""` whatever the layers said.
  *
  * @remarks
  * Absent inherits, and nothing else does: `0`, `-1`, `""` and `[]` are values that mean what they
- * say, which is the whole reason the format exists — `maxTokens: 0` means three different things
- * across the three applications this was extracted from, and `temperature: 0` is unsayable in one
- * of them. Scalars take the last layer that has the key. `extraBody` and `extensions` merge by
- * top-level key. `prompt`, `hooks` and `tasks` merge by id, ordered by first appearance, which is
- * one rule expressing two behaviours that look unrelated: different ids stack, and the same id
- * replaces. `tools.servers` replaces whole, because a tri-state cannot be unioned. `requires`
- * unions, so a layer above cannot quietly drop a requirement below it.
- *
- * No layer is ever fetched. There is no `extends` field and no URL resolution; which documents
- * layer is the app's call, the same answer `resolveApiKey` gives about keys. `apiKey` comes back
- * empty for the same reason: a document naming somebody else's model server must not be able to
- * make this app send its own provider key there. An app that wants inheritance applies
- * `resolveApiKey` afterwards.
+ * say. Scalars take the last layer that has the key, `extraBody` and `extensions` merge by top-level
+ * key, `prompt`, `hooks` and `tasks` merge by id (different ids stack, the same id replaces),
+ * `tools.servers` replaces whole and `requires` unions. No layer is ever fetched, and `apiKey` comes
+ * back empty so that a document naming somebody else's model server cannot make this app send its
+ * own key there; an app that wants inheritance applies `resolveApiKey` afterwards.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
@@ -1266,12 +1238,10 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   );
   // Each layer's flags were checked against that layer's event, and the merge may have moved the
   // hook to another one, so they are checked again. Nothing is reported: resolving has no warnings.
-  // A host that reads hooks by hand may hand over a row stored under an event's old name.
   const hooks = mergeById(
     layers.flatMap((layer) => layer.hooks ?? []),
     (hook) => hook.id,
-  ).map((stored) => {
-    const hook = renamedHook(stored);
+  ).map((hook) => {
     const { dropped, ...flags } = honouredFlags(hook);
     return kept({ ...hook, ...flags });
   });
@@ -1312,13 +1282,13 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
       servers: tools.servers,
     }),
     model: model.model ?? '',
-    maxTokens: model.maxTokens ?? RESOLVED_DEFAULTS.maxTokens,
-    temperature: model.temperature ?? RESOLVED_DEFAULTS.temperature,
-    contextLength: model.contextLength ?? RESOLVED_DEFAULTS.contextLength,
-    toolDiscovery: tools.discovery ?? RESOLVED_DEFAULTS.toolDiscovery,
+    maxTokens: model.maxTokens ?? AGENT_DEFAULTS.maxTokens,
+    temperature: model.temperature ?? AGENT_DEFAULTS.temperature,
+    contextLength: model.contextLength ?? AGENT_DEFAULTS.contextLength,
+    toolDiscovery: tools.discovery ?? AGENT_DEFAULTS.toolDiscovery,
     toolSelectModel: tasks.toolSelect?.model ?? '',
-    maxToolIterations: tools.maxIterations ?? RESOLVED_DEFAULTS.maxToolIterations,
-    maxRetries: retry.maxRetries ?? RESOLVED_DEFAULTS.maxRetries,
+    maxToolIterations: tools.maxIterations ?? AGENT_DEFAULTS.maxToolIterations,
+    maxRetries: retry.maxRetries ?? AGENT_DEFAULTS.maxRetries,
     // Byte-identical to what a consumer's `systemPromptFor` produces today, so four sources
     // survive a round trip instead of flattening into one blob nobody can edit a third of.
     systemPrompt: prompt
@@ -1350,8 +1320,8 @@ export interface ExportSpecOptions {
  *
  * @param spec - A document, ordinarily one `parseSpec` returned.
  * @param [options] - Whether to keep the secrets.
- * @returns A copy one level deep, never `spec` itself: what is not redacted or renamed is shared
- * with the original.
+ * @returns A copy one level deep, never `spec` itself: what is not redacted is shared with the
+ * original.
  *
  * @remarks
  * The property worth keeping is that **a redacted spec is still a valid spec** — it parses, it
@@ -1361,17 +1331,13 @@ export interface ExportSpecOptions {
  * fields the format gives a credential. A server can still carry one where the format gives it no
  * field — an `--api-key` among its `args`, a token in its `url` — and that is kept, because
  * cutting it would point the agent at a different server. `findSpecSecrets` says where to look.
- *
- * A hook stored under an event's name before 5.0.0 is written under its new one, so what leaves
- * the app reads without a warning.
  */
 export function exportSpec(spec: AgentSpec, { secrets = false }: ExportSpecOptions = {}): AgentSpec {
-  const out: AgentSpec = spec.hooks ? { ...spec, hooks: spec.hooks.map(renamedHook) } : { ...spec };
   if (secrets || !spec.bundle?.mcpServers) {
-    return out;
+    return { ...spec };
   }
   return {
-    ...out,
+    ...spec,
     bundle: {
       ...spec.bundle,
       mcpServers: spec.bundle.mcpServers.map(({ env: _env, headers: _headers, ...rest }) => rest),
@@ -1440,7 +1406,8 @@ const writtenOut = (value: string) => value !== '' && VARIABLE.test(value) === f
  * that is not an absolute URL.
  */
 function urlSign(text: string): SecretSign | undefined {
-  if (URL_SCHEME.test(text) === false || URL.canParse(text) === false) {
+  const isAbsoluteUrl = URL_SCHEME.test(text) && URL.canParse(text);
+  if (isAbsoluteUrl === false) {
     return undefined;
   }
   const url = new URL(text);
@@ -1497,7 +1464,8 @@ function argumentSigns(words: readonly unknown[]): [index: number, sign: SecretS
       continue;
     }
     const isFlag = word.startsWith('-');
-    const sign = flagged && isFlag === false && writtenOut(word) ? SecretSign.Flag : wordSign(word);
+    const isFlaggedValue = flagged && isFlag === false && writtenOut(word);
+    const sign = isFlaggedValue ? SecretSign.Flag : wordSign(word);
     if (sign) {
       signs.push([index, sign]);
     }
@@ -1535,7 +1503,8 @@ function serverSecrets(server: SpecServer, path: string): SecretHint[] {
   }
   for (const [key, value] of Object.entries(server)) {
     const empty = isAbsent(value) || value === '' || (typeof value === 'string' && writtenOut(value) === false);
-    if (SERVER_KEYS_READ.has(key) === false && SECRET_NAME.test(key) && empty === false) {
+    const isSecretField = SERVER_KEYS_READ.has(key) === false && SECRET_NAME.test(key) && empty === false;
+    if (isSecretField) {
       hint(key, SecretSign.Field);
     }
   }

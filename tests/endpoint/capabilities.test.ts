@@ -9,6 +9,7 @@ import {
   negotiate,
   OPTIMISTIC_MODEL,
   resetCapabilities,
+  resetHints,
 } from '../../src/endpoint/capabilities.ts';
 import type { Produced } from '../../src/wire/stream.ts';
 import { PARALLEL_TOOL_CALLS } from '../../src/wire/wire.ts';
@@ -128,7 +129,7 @@ beforeEach(() => resetCapabilities());
 
 describe('capabilitiesFor', () => {
   it('starts optimistic and hands back the same memory each time', () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     expect(supports).toEqual({
       strictSchemas: true,
       usageInStream: true,
@@ -136,15 +137,15 @@ describe('capabilitiesFor', () => {
       since: expect.any(Number),
     });
     supports.strictSchemas = false;
-    expect(capabilitiesFor('http://local/v1').strictSchemas).toBe(false);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas).toBe(false);
   });
 
   it("keeps one endpoint's refusal off another's requests", () => {
     // The globals this replaces latched for the whole process: one llama.cpp box that could not
     // compile a grammar then stripped pattern/format from every request to the cloud endpoint
     // beside it, for the life of the process, and nothing ever said so.
-    capabilitiesFor('http://local/v1').strictSchemas = false;
-    expect(capabilitiesFor('https://api.openai.com/v1').strictSchemas).toBe(true);
+    capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas = false;
+    expect(capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' }).strictSchemas).toBe(true);
   });
 
   it('keeps two keys through one router apart', () => {
@@ -152,71 +153,101 @@ describe('capabilitiesFor', () => {
     // refused is not a fact about the other. Keyed on the URL alone, the first caller through
     // latched for everyone behind it — including the `models` map underneath, which is where two
     // keys on one host are most likely to reach different weights in the first place.
-    const cheap = capabilitiesFor('https://router/v1', 'sk-cheap');
+    const cheap = capabilitiesFor({ baseUrl: 'https://router/v1', apiKey: 'sk-cheap' });
     cheap.strictSchemas = false;
     modelCapabilitiesFor(cheap, 'gpt-4o').reasoningEffort = false;
 
-    const paid = capabilitiesFor('https://router/v1', 'sk-paid');
+    const paid = capabilitiesFor({ baseUrl: 'https://router/v1', apiKey: 'sk-paid' });
     expect(paid.strictSchemas).toBe(true);
     expect(modelCapabilitiesFor(paid, 'gpt-4o').reasoningEffort).toBe(true);
-    expect(capabilitiesFor('https://router/v1', 'sk-cheap').strictSchemas).toBe(false);
+    expect(capabilitiesFor({ baseUrl: 'https://router/v1', apiKey: 'sk-cheap' }).strictSchemas).toBe(false);
   });
 
   it('reads no key and an empty one as one endpoint', () => {
     // The same reading `getClient` gives them, so a caller that threads its key through and one
     // that leaves it out are not two memories of the same local server.
-    capabilitiesFor('http://local/v1').usageInStream = false;
-    expect(capabilitiesFor('http://local/v1', '').usageInStream).toBe(false);
-    expect(capabilitiesFor('http://local/v1', undefined).usageInStream).toBe(false);
+    capabilitiesFor({ baseUrl: 'http://local/v1' }).usageInStream = false;
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1', apiKey: '' }).usageInStream).toBe(false);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1', apiKey: undefined }).usageInStream).toBe(false);
   });
 
   it('forgets everything on reset', () => {
-    capabilitiesFor('http://local/v1').usageInStream = false;
+    capabilitiesFor({ baseUrl: 'http://local/v1' }).usageInStream = false;
     resetCapabilities();
-    expect(capabilitiesFor('http://local/v1').usageInStream).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).usageInStream).toBe(true);
   });
 
   it('forgets one endpoint by name, and says whether it held anything', () => {
     // The upgrade case: one box behind the URL grew a feature, and the cloud endpoint beside it
     // is not implicated. A reset that could only clear everything made the caller re-learn the
     // other's refusals too, which is why nobody called it.
-    capabilitiesFor('http://local/v1').strictSchemas = false;
-    capabilitiesFor('https://api.openai.com/v1').usageInStream = false;
+    capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas = false;
+    capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' }).usageInStream = false;
 
     expect(resetCapabilities({ baseUrl: 'http://local/v1' })).toBe(true);
-    expect(capabilitiesFor('http://local/v1').strictSchemas).toBe(true);
-    expect(capabilitiesFor('https://api.openai.com/v1').usageInStream).toBe(false);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' }).usageInStream).toBe(false);
     expect(resetCapabilities({ baseUrl: 'http://never-met/v1' })).toBe(false);
   });
 
   it('tells one key on a router from another when forgetting one', () => {
-    capabilitiesFor('https://router/v1', 'sk-cheap').strictSchemas = false;
-    capabilitiesFor('https://router/v1', 'sk-paid').strictSchemas = false;
+    capabilitiesFor({ baseUrl: 'https://router/v1', apiKey: 'sk-cheap' }).strictSchemas = false;
+    capabilitiesFor({ baseUrl: 'https://router/v1', apiKey: 'sk-paid' }).strictSchemas = false;
     expect(resetCapabilities({ baseUrl: 'https://router/v1', apiKey: 'sk-cheap' })).toBe(true);
-    expect(capabilitiesFor('https://router/v1', 'sk-cheap').strictSchemas).toBe(true);
-    expect(capabilitiesFor('https://router/v1', 'sk-paid').strictSchemas).toBe(false);
+    expect(capabilitiesFor({ baseUrl: 'https://router/v1', apiKey: 'sk-cheap' }).strictSchemas).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'https://router/v1', apiKey: 'sk-paid' }).strictSchemas).toBe(false);
+  });
+
+  it('forgets one endpoint through its own fetch, and every fetch on a full reset', () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const through = { baseUrl: 'http://local/v1', fetch };
+    capabilitiesFor(through).strictSchemas = false;
+    capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas = false;
+
+    expect(resetCapabilities(through)).toBe(true);
+    expect(capabilitiesFor(through).strictSchemas).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas).toBe(false);
+
+    capabilitiesFor(through).strictSchemas = false;
+    expect(resetCapabilities()).toBe(true);
+    expect(capabilitiesFor(through).strictSchemas).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas).toBe(true);
+  });
+});
+
+describe('resetHints', () => {
+  it('offers the hints again through every fetch', () => {
+    const through = { baseUrl: 'http://local/v1', fetch: vi.fn<typeof globalThis.fetch>() };
+    const hints = 'chat_template_kwargs';
+    modelCapabilitiesFor(capabilitiesFor(through), 'qwen').refusedFields.add(hints);
+    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'qwen').refusedFields.add(hints);
+    resetHints();
+    expect(modelCapabilitiesFor(capabilitiesFor(through), 'qwen').refusedFields.has(hints)).toBe(false);
+    expect(modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'qwen').refusedFields.has(hints)).toBe(
+      false,
+    );
   });
 });
 
 describe('expireCapabilities', () => {
   it('drops what is older than the age and leaves the rest alone', () => {
-    const old = capabilitiesFor('http://local/v1');
+    const old = capabilitiesFor({ baseUrl: 'http://local/v1' });
     old.strictSchemas = false;
     old.since = Date.now() - 60 * 60_000;
-    capabilitiesFor('https://api.openai.com/v1').usageInStream = false;
+    capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' }).usageInStream = false;
 
     expect(expireCapabilities(30 * 60_000)).toBe(1);
-    expect(capabilitiesFor('http://local/v1').strictSchemas).toBe(true);
-    expect(capabilitiesFor('https://api.openai.com/v1').usageInStream).toBe(false);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' }).usageInStream).toBe(false);
   });
 
   it('takes a clock, and drops everything at an age of zero', () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     supports.strictSchemas = false;
     expect(expireCapabilities(60_000, supports.since + 59_000)).toBe(0);
-    expect(capabilitiesFor('http://local/v1').strictSchemas).toBe(false);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas).toBe(false);
     expect(expireCapabilities(60_000, supports.since + 60_000)).toBe(1);
-    expect(capabilitiesFor('http://local/v1').strictSchemas).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas).toBe(true);
     expect(expireCapabilities(0)).toBe(1);
     expect(expireCapabilities(0)).toBe(0);
   });
@@ -224,17 +255,25 @@ describe('expireCapabilities', () => {
   it('forgets what a model refused along with its endpoint', () => {
     // The model map hangs off the endpoint, so an endpoint that expires takes with it the
     // `max_completion_tokens` and `reasoning_effort` latches that are the expensive half.
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     modelCapabilitiesFor(supports, 'qwen').reasoningEffort = false;
     expireCapabilities(0);
-    const fresh = capabilitiesFor('http://local/v1');
+    const fresh = capabilitiesFor({ baseUrl: 'http://local/v1' });
     expect(fresh).not.toBe(supports);
     expect(modelCapabilitiesFor(fresh, 'qwen').reasoningEffort).toBe(true);
+  });
+
+  it('expires the endpoints of every fetch, and counts them together', () => {
+    const through = { baseUrl: 'http://local/v1', fetch: vi.fn<typeof globalThis.fetch>() };
+    capabilitiesFor(through).strictSchemas = false;
+    capabilitiesFor({ baseUrl: 'http://local/v1' }).strictSchemas = false;
+    expect(expireCapabilities(0)).toBe(2);
+    expect(capabilitiesFor(through).strictSchemas).toBe(true);
   });
 });
 
 describe('effortFor', () => {
-  const model = () => modelCapabilitiesFor(capabilitiesFor('https://api.openai.com/v1'), 'gpt-5');
+  const model = () => modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' }), 'gpt-5');
 
   it('sends what was asked for until the model says otherwise', () => {
     expect(effortFor(undefined, 'low')).toBe('low');
@@ -286,7 +325,7 @@ describe('effortFor', () => {
 describe('negotiate', () => {
   it('sends once against an endpoint with nothing to say about the request', async () => {
     const { send } = serverThatRefuses();
-    await expect(negotiate(capabilitiesFor('http://ok/v1'), send)).resolves.toBe('answered');
+    await expect(negotiate(capabilitiesFor({ baseUrl: 'http://ok/v1' }), send)).resolves.toBe('answered');
     expect(send).toHaveBeenCalledTimes(1);
   });
 
@@ -295,7 +334,7 @@ describe('negotiate', () => {
     // grammar keyword complains about them one at a time, and answering only the first left the
     // second to fail the request — so the first run against such an endpoint was spent
     // discovering what the second one starts knowing.
-    const supports = capabilitiesFor('http://old-llama/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://old-llama/v1' });
     const { send, asked } = serverThatRefuses(NO_USAGE, NO_GRAMMAR);
     await expect(negotiate(supports, send)).resolves.toBe('answered');
     expect(asked).toEqual([
@@ -307,14 +346,14 @@ describe('negotiate', () => {
   });
 
   it('answers them in the other order too', async () => {
-    const supports = capabilitiesFor('http://old-llama/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://old-llama/v1' });
     const { send } = serverThatRefuses(NO_GRAMMAR, NO_USAGE);
     await expect(negotiate(supports, send)).resolves.toBe('answered');
     expect(supports).toMatchObject({ strictSchemas: false, usageInStream: false });
   });
 
   it('opens with what the endpoint already refused', async () => {
-    const supports = capabilitiesFor('http://old-llama/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://old-llama/v1' });
     await negotiate(supports, serverThatRefuses(NO_GRAMMAR).send);
 
     const { send, asked } = serverThatRefuses();
@@ -325,14 +364,14 @@ describe('negotiate', () => {
 
   it('passes on a refusal that is not one of ours', async () => {
     const { send } = serverThatRefuses(new Error('model not found'));
-    await expect(negotiate(capabilitiesFor('http://ok/v1'), send)).rejects.toThrow('model not found');
+    await expect(negotiate(capabilitiesFor({ baseUrl: 'http://ok/v1' }), send)).rejects.toThrow('model not found');
     expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('gives up rather than looping on a server that will not stop complaining', async () => {
     // Termination is one pass per capability: each either latches one off for good or rethrows.
     const { send } = serverThatRefuses(NO_GRAMMAR, NO_GRAMMAR);
-    await expect(negotiate(capabilitiesFor('http://stuck/v1'), send)).rejects.toThrow('grammar');
+    await expect(negotiate(capabilitiesFor({ baseUrl: 'http://stuck/v1' }), send)).rejects.toThrow('grammar');
     expect(send).toHaveBeenCalledTimes(2);
   });
 
@@ -344,15 +383,17 @@ describe('negotiate', () => {
       produced.any = true;
       throw NO_GRAMMAR;
     });
-    await expect(negotiate(capabilitiesFor('http://ok/v1'), send, { produced })).rejects.toThrow('grammar');
+    await expect(negotiate(capabilitiesFor({ baseUrl: 'http://ok/v1' }), send, { produced })).rejects.toThrow(
+      'grammar',
+    );
     expect(send).toHaveBeenCalledTimes(1);
-    expect(capabilitiesFor('http://ok/v1').strictSchemas).toBe(true);
+    expect(capabilitiesFor({ baseUrl: 'http://ok/v1' }).strictSchemas).toBe(true);
   });
 
   it('says what it gave up on', async () => {
     const notices: string[] = [];
     const { send } = serverThatRefuses(NO_USAGE, NO_GRAMMAR);
-    await negotiate(capabilitiesFor('http://old-llama/v1'), send, {
+    await negotiate(capabilitiesFor({ baseUrl: 'http://old-llama/v1' }), send, {
       onNotice: (message) => notices.push(message),
     });
     expect(notices).toEqual([
@@ -364,7 +405,7 @@ describe('negotiate', () => {
 
 describe('modelCapabilitiesFor', () => {
   it('starts optimistic and hands back the same memory each time', () => {
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     const model = modelCapabilitiesFor(supports, 'gpt-5');
     expect(model).toEqual({ ...OPTIMISTIC_MODEL, refusedFields: new Set(), refusedEfforts: new Set() });
     expect(Object.values(OPTIMISTIC_MODEL).every((flag) => flag === true)).toBe(true);
@@ -376,7 +417,7 @@ describe('modelCapabilitiesFor', () => {
     // The whole reason this is a second level. One key reaches both, so a flag on the endpoint
     // would have the first turn on `gpt-4o` stop `gpt-5` ever being asked to reason again —
     // with the setting still reading `high` and nothing saying it had stopped.
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     modelCapabilitiesFor(supports, 'gpt-4o').reasoningEffort = false;
     expect(modelCapabilitiesFor(supports, 'gpt-5').reasoningEffort).toBe(true);
   });
@@ -384,19 +425,19 @@ describe('modelCapabilitiesFor', () => {
   it("keeps one endpoint's answer off the same name at another endpoint", () => {
     // `gpt-4o` at OpenAI and `gpt-4o` behind a proxy need not be the same weights, and a proxy
     // is free to answer to a name it does not really serve.
-    modelCapabilitiesFor(capabilitiesFor('https://api.openai.com/v1'), 'gpt-4o').legacyTokenLimit = false;
-    expect(modelCapabilitiesFor(capabilitiesFor('http://proxy/v1'), 'gpt-4o').legacyTokenLimit).toBe(true);
+    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' }), 'gpt-4o').legacyTokenLimit = false;
+    expect(modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://proxy/v1' }), 'gpt-4o').legacyTokenLimit).toBe(true);
   });
 
   it('forgets everything on reset', () => {
-    modelCapabilitiesFor(capabilitiesFor('http://local/v1'), 'm').chosenTemperature = false;
+    modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'm').chosenTemperature = false;
     resetCapabilities();
-    expect(modelCapabilitiesFor(capabilitiesFor('http://local/v1'), 'm').chosenTemperature).toBe(true);
+    expect(modelCapabilitiesFor(capabilitiesFor({ baseUrl: 'http://local/v1' }), 'm').chosenTemperature).toBe(true);
   });
 });
 
 describe('negotiate, for a model', () => {
-  const openai = () => capabilitiesFor('https://api.openai.com/v1');
+  const openai = () => capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
 
   it('stops asking a model that cannot reason for an effort', async () => {
     const supports = openai();
@@ -490,7 +531,7 @@ describe('negotiate, for a model', () => {
     // value at or above the one asked for is the one above it.
     for (const refusal of [QWEN_LLAMA_CPP('high'), QWEN_VLLM('high')]) {
       resetCapabilities();
-      const supports = capabilitiesFor('http://llama:8080/v1');
+      const supports = capabilitiesFor({ baseUrl: 'http://llama:8080/v1' });
       const notices: string[] = [];
       const { send } = modelThatRefuses(refusal);
       await expect(negotiate(supports, send, { model: 'qwen3.8-27b', onNotice: (m) => notices.push(m) })).resolves.toBe(
@@ -507,7 +548,7 @@ describe('negotiate, for a model', () => {
   });
 
   it("steps Qwen3.8's refused minimal up to low, and leaves the values it lists alone", async () => {
-    const supports = capabilitiesFor('http://llama:8080/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://llama:8080/v1' });
     const { send } = modelThatRefuses(QWEN_LLAMA_CPP('minimal'));
     await expect(negotiate(supports, send, { model: 'qwen3.8-27b' })).resolves.toBe('answered');
     const refused = modelCapabilitiesFor(supports, 'qwen3.8-27b');
@@ -519,7 +560,7 @@ describe('negotiate, for a model', () => {
   });
 
   it("reads a generic template's must be one of list", async () => {
-    const supports = capabilitiesFor('http://vllm:8000/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://vllm:8000/v1' });
     const refusal = apiError(400, "Invalid reasoning_effort: 'minimal'; must be one of ['low', 'medium', 'high']");
     const { send } = modelThatRefuses(refusal);
     await expect(negotiate(supports, send, { model: 'some-model' })).resolves.toBe('answered');
@@ -532,7 +573,7 @@ describe('negotiate, for a model', () => {
   it("gives Qwen3.8's refusal back where nothing it lists is at or above the value", async () => {
     // Stepping down from a refused value is never the answer, even to a template that lists
     // values below it.
-    const supports = capabilitiesFor('http://llama:8080/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://llama:8080/v1' });
     const { send } = modelThatRefuses(QWEN_LLAMA_CPP('max'));
     await expect(negotiate(supports, send, { model: 'qwen3.8-27b' })).rejects.toThrow('Unexpected reasoning effort');
     expect(send).toHaveBeenCalledTimes(1);
@@ -664,7 +705,7 @@ describe('negotiate, for a model', () => {
     // The endpoint's notices open with `server` and the model's with its own name, so a reader
     // knows which level latched without parsing the rest of the line.
     const notices: string[] = [];
-    const supports = capabilitiesFor('http://one-box/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://one-box/v1' });
     const refusals = [NO_USAGE, NO_EFFORT];
     const send = async () => {
       const refusal = refusals.shift();
@@ -688,7 +729,7 @@ describe('negotiate, for a model', () => {
 });
 
 describe('negotiate, for a field the caller can do without', () => {
-  const vllm = () => capabilitiesFor('http://vllm:8000/v1');
+  const vllm = () => capabilitiesFor({ baseUrl: 'http://vllm:8000/v1' });
   const UNRECOGNIZED = apiError(400, 'Unrecognized request argument supplied: min_p');
   const UNKNOWN = apiError(400, "Unknown parameter: 'chat_template_kwargs.enable_thinking'.");
   const SEVERAL = apiError(400, 'Unrecognized request arguments supplied: id_slot, min_p');
@@ -715,6 +756,30 @@ describe('negotiate, for a field the caller can do without', () => {
     const { send } = modelThatRefuses(UNKNOWN);
     await negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] });
     expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
+  });
+
+  it("reads a field from a pydantic server's loc and from Groq's wording", async () => {
+    // Mistral and other FastAPI servers name the field in a validation error's location; Groq
+    // says the property is unsupported. Side tasks rely on these since they share this path.
+    const pydantic = apiError(
+      400,
+      '{"detail":[{"type":"extra_forbidden","loc":["body","chat_template_kwargs"],"msg":"Extra inputs are not permitted"}]}',
+    );
+    const groq = apiError(400, "property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?");
+    for (const refusal of [pydantic, groq]) {
+      const supports = vllm();
+      const { send } = modelThatRefuses(refusal);
+      await expect(negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] })).resolves.toBe(
+        'answered',
+      );
+      expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
+    }
+  });
+
+  it('reads no field from a pydantic error that is not about an extra input', async () => {
+    const missing = apiError(400, '{"detail":[{"type":"missing","loc":["body","model"],"msg":"Field required"}]}');
+    const { send } = modelThatRefuses(missing);
+    await expect(negotiate(vllm(), send, { model: 'qwen', droppable: ['model'] })).rejects.toThrow('Field required');
   });
 
   it('drops every droppable field a refusal lists, in one retry', async () => {
@@ -770,7 +835,7 @@ describe('a template that renders one call per message', () => {
   const LLAMA_ONE_CALL = apiError(400, 'This model only supports single tool-calls at once!');
 
   it('latches the model to one call a message, with a notice, and sends again', async () => {
-    const supports = capabilitiesFor('http://vllm:8000/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://vllm:8000/v1' });
     const notices: string[] = [];
     const { send, asked } = modelThatRefuses(LLAMA_ONE_CALL);
     await expect(
@@ -783,7 +848,9 @@ describe('a template that renders one call per message', () => {
 
   it('passes the refusal on where no model was named', async () => {
     const { send } = modelThatRefuses(LLAMA_ONE_CALL);
-    await expect(negotiate(capabilitiesFor('http://vllm:8000/v1'), send)).rejects.toThrow('single tool-calls');
+    await expect(negotiate(capabilitiesFor({ baseUrl: 'http://vllm:8000/v1' }), send)).rejects.toThrow(
+      'single tool-calls',
+    );
   });
 });
 
@@ -791,7 +858,7 @@ describe('two runs on one endpoint', () => {
   it('does not let the run that lost the race die on the answered refusal', async () => {
     // `capabilitiesFor` hands the same object to both, which is the point of it — the refusal
     // is a fact about the server, not about either run.
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const send = async (as: { strictSchemas: boolean }) => {
       if (as.strictSchemas) {
         throw NO_GRAMMAR;
@@ -810,7 +877,7 @@ describe('two runs on one endpoint', () => {
   it('does not let the run that lost the race die on an answered model refusal', async () => {
     // The same race one level down: `modelCapabilitiesFor` hands both runs the same object, so
     // the loser finds the flag already latched off and has to send again rather than give up.
-    const supports = capabilitiesFor('https://api.openai.com/v1');
+    const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
     const send = async (_s: Capabilities, _p: Produced, model: ModelCapabilities | undefined) => {
       if (model?.reasoningEffort) {
         throw NO_EFFORT;
@@ -828,7 +895,7 @@ describe('two runs on one endpoint', () => {
   });
 
   it('still gives up on a refusal nothing here knows how to answer', async () => {
-    const supports = capabilitiesFor('http://local/v1');
+    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const send = vi.fn(async () => {
       throw apiError(401, 'Incorrect API key provided');
     });

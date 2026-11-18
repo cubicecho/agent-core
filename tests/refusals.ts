@@ -26,3 +26,6 @@ export const OWN_TEMPERATURE = apiError(
   400,
   "Unsupported value: 'temperature' does not support 0.3 with this model. " + 'Only the default (1) is supported.',
 );
+
+/** The no-thinking hints refused by name, as OpenAI refuses a field it has never heard of. */
+export const NO_HINTS = apiError(400, 'Unrecognized request argument supplied: chat_template_kwargs');

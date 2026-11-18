@@ -1,10 +1,9 @@
-import { type EndpointIdentity, RESERVED_BODY_FIELDS } from '../core/config.ts';
+import { type Endpoint, type EndpointIdentity, RESERVED_BODY_FIELDS } from '../core/config.ts';
 import { getOrCreate, isPositive } from '../core/guards.ts';
-import { scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
 import type { Produced } from '../wire/stream.ts';
-import { PARALLEL_TOOL_CALLS } from '../wire/wire.ts';
-import { endpointId } from './client.ts';
+import { CHAT_TEMPLATE_KWARGS, PARALLEL_TOOL_CALLS } from '../wire/wire.ts';
+import { endpointId, perFetch } from './client.ts';
 import { isGrammarError } from './schema-compat.ts';
 
 /**
@@ -145,16 +144,6 @@ export interface ModelCapabilities {
    * what `ModelParams.singleCallMessages` does from the start.
    */
   multiCallMessages: boolean;
-  /**
-   * Takes the no-thinking hints a side task sends, `chat_template_kwargs` asking the template to
-   * leave thinking off. Latched off by a side task, never by `negotiate`, since only a side task
-   * sends them.
-   *
-   * @remarks
-   * The model's rather than the model server's because one base URL is routinely many models, and
-   * whether the field reaches a chat template that reads it is a property of the model behind it.
-   */
-  thinkingHints: boolean;
 }
 
 /** The name of one of a model's on/off flags: every `boolean` on `ModelCapabilities`. */
@@ -178,7 +167,6 @@ export const OPTIMISTIC_MODEL: Readonly<Record<ModelFlag, true>> = {
   assistantPrefill: true,
   reasoningContent: true,
   multiCallMessages: true,
-  thinkingHints: true,
 };
 
 /** The names of those flags, for a caller that reads or latches each in turn. */
@@ -197,40 +185,29 @@ export type OnNotice = (message: string) => void;
  * What each model server cannot do, remembered for the life of the process.
  *
  * @remarks
- * Keyed by `endpointId` — `endpointKey` hashed, so a snapshot holds no key — because these are
- * facts about the server on the other end and not about this one. A llama.cpp box that cannot
- * compile a grammar and a cloud API that can are both reachable from one settings row over its
- * lifetime — an operator retargets it from Ollama this afternoon to OpenAI this evening — and the
- * first one's refusal must not quietly strip pattern/format from the second one's requests, or
- * silently cost it its token counts, for the rest of the process. Bounded by the number of
- * model servers ever configured, which is a settings row's worth.
- *
- * The API key is part of that identity, the same as it is for the client pool and the model
- * listings. A router — LiteLLM, OpenRouter, a gateway with several boxes behind it — is free to
- * send two keys to two different backends, and then what one of them refused is not a fact about
- * the other. Keyed on the URL alone the first caller through the gateway latched for everyone
- * behind it, including the `models` map underneath, which is the level where two keys through
- * one host are most likely to differ at all.
+ * Keyed by `endpointId` — `endpointKey` hashed, so a snapshot holds no key — in the copy of the
+ * model server's `fetch` (`perFetch`), as every cache of a model server is. These are facts about
+ * the server on the other end: one settings row may be retargeted from a llama.cpp box to a cloud
+ * API, and a router may send two keys to two backends, so one's refusal must not degrade the other.
+ * Bounded by the number of model servers ever configured.
  */
-const capabilities = scoped(() => new Map<string, Capabilities>());
+const capabilities = perFetch(() => new Map<string, Capabilities>());
 
 /**
  * What this model server is known not to support.
  *
- * @param baseUrl - Where the model server is. The two flags on it are per-server; what is per-model
- * hangs off `models`, which `modelCapabilitiesFor` reads.
- * @param [apiKey] - The rest of the model server's identity. Optional, because it changes nothing
- * for the ordinary case of one key per base URL and a caller with one need not thread it through;
- * absent reads as `NO_KEY`, exactly as it does in `getClient`, so a model server with no key and
- * one that passes `undefined` share an entry rather than holding two.
+ * @param endpoint - The model server: its URL, its key, absent reading as `NO_KEY`, and the
+ * `fetch` it sends through, absent being the global one. A whole `Endpoint` will do.
  * @returns The model server's live entry, made with both flags on and no models the first time it
  * is asked for.
  *
  * @remarks
- * The same object every time, so what `negotiate` latches off stays off.
+ * The same object every time for the same model server, as `getClient` and the listings tell one
+ * apart, so what `negotiate` latches off stays off. The two flags on it are per server; what is
+ * per model hangs off `models`, which `modelCapabilitiesFor` reads.
  */
-export function capabilitiesFor(baseUrl: string, apiKey?: string): Capabilities {
-  return capabilitiesById(endpointId({ baseUrl, apiKey }));
+export function capabilitiesFor(endpoint: EndpointIdentity & Pick<Endpoint, 'fetch'>): Capabilities {
+  return capabilitiesById(endpointId(endpoint), endpoint.fetch);
 }
 
 /**
@@ -257,6 +234,21 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
   }));
 }
 
+/** The name of one of a model server's own on/off flags: every `boolean` on `Capabilities`. */
+type EndpointFlag = {
+  [Key in keyof Capabilities]-?: Capabilities[Key] extends boolean ? Key : never;
+}[keyof Capabilities];
+
+/**
+ * Turns one of a model server's own flags off for good, the only way one is latched.
+ *
+ * @param supports - The model server's, as `capabilitiesFor` hands it over. Written to.
+ * @param flag - The flag to latch off. One already off stays off.
+ */
+export function latchEndpoint(supports: Capabilities, flag: EndpointFlag): void {
+  supports[flag] = false;
+}
+
 /**
  * Turns one of a model's flags off for good, the only way a flag is latched.
  *
@@ -264,8 +256,8 @@ export function modelCapabilitiesFor(supports: Capabilities, model: string): Mod
  * @param flag - The flag to latch off. One already off stays off.
  *
  * @remarks
- * `negotiate` latches through it on a refusal it reads, and the callers that read a refusal of
- * their own do as well: a continuation the model would not take, a side task's hints.
+ * `negotiate` latches through it on a refusal it reads, and so does the one caller that reads a
+ * refusal of its own: a continuation the model would not take.
  */
 export function latchModel(refused: ModelCapabilities, flag: ModelFlag): void {
   refused[flag] = false;
@@ -285,22 +277,43 @@ export function latchFields(refused: ModelCapabilities, fields: Iterable<string>
 }
 
 /**
+ * Latches efforts a model refused by value, so `effortFor` steps past them from the next request.
+ *
+ * @param refused - The model's, as `modelCapabilitiesFor` hands it over. Written to: each effort
+ * joins `refusedEfforts`, and a published list replaces `supportedEfforts`.
+ * @param efforts - The efforts refused, as the request spelled them.
+ * @param [supported] - The efforts the model published as its own, in its order. Absent leaves the
+ * list held as it was.
+ */
+export function latchEfforts(refused: ModelCapabilities, efforts: Iterable<string>, supported?: string[]): void {
+  for (const effort of efforts) {
+    refused.refusedEfforts.add(effort);
+  }
+  if (supported) {
+    refused.supportedEfforts = supported;
+  }
+}
+
+/**
  * Every model server's capabilities by `endpointId`, the live objects, for `exportCapabilities`.
  *
+ * @param [fetch] - Whose copy to read: the model servers that send through this function, absent
+ * being the global one.
  * @returns The map itself rather than a copy, read-only by type alone: what is latched or forgotten
  * afterwards shows through it.
  */
-export const knownCapabilities = (): ReadonlyMap<string, Capabilities> => capabilities();
+export const knownCapabilities = (fetch?: Endpoint['fetch']): ReadonlyMap<string, Capabilities> => capabilities(fetch);
 
 /**
  * The capabilities of the model server with this `endpointId`, created optimistic if unseen — the
  * way `importCapabilities` reaches a model server it has only a digest for.
  *
  * @param id - The digest `endpointId` gives. Not checked: any string opens an entry under itself.
+ * @param [fetch] - The function the model server sends through, absent being the global one.
  * @returns The live entry, the same object `capabilitiesFor` hands over for that model server.
  */
-export function capabilitiesById(id: string): Capabilities {
-  return getOrCreate(capabilities(), id, () => ({
+export function capabilitiesById(id: string, fetch?: Endpoint['fetch']): Capabilities {
+  return getOrCreate(capabilities(fetch), id, () => ({
     strictSchemas: true,
     usageInStream: true,
     models: new Map(),
@@ -311,8 +324,9 @@ export function capabilitiesById(id: string): Capabilities {
 /**
  * Forgets what one model server refused, or every model server's when told none.
  *
- * @param [endpoint] - Whose to forget, by the same identity `capabilitiesFor` takes. Absent clears
- * every model server, which is what tests and `resetAll` mean by it.
+ * @param [endpoint] - Whose to forget, by the same identity `capabilitiesFor` takes, its `fetch`
+ * included. Absent clears every model server through every function, which is what tests and
+ * `resetAll` mean by it.
  * @returns Whether there was anything to forget.
  *
  * @remarks
@@ -322,13 +336,13 @@ export function capabilitiesById(id: string): Capabilities {
  * *knows* it changed: a settings row saved, a health check that reads a new build string, an
  * operator pressing a button. See `expireCapabilities` for the case where nobody knows.
  */
-export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
+export function resetCapabilities(endpoint?: EndpointIdentity & Pick<Endpoint, 'fetch'>): boolean {
   if (!endpoint) {
-    const held = capabilities().size > 0;
-    capabilities().clear();
+    const held = capabilities.copies().some((known) => known.size > 0);
+    capabilities.reset();
     return held;
   }
-  return capabilities().delete(endpointId(endpoint));
+  return capabilities(endpoint.fetch).delete(endpointId(endpoint));
 }
 
 /**
@@ -336,12 +350,15 @@ export function resetCapabilities(endpoint?: EndpointIdentity): boolean {
  *
  * @remarks
  * A test seam, as `resetCapabilities` is. Every model the current scope knows is offered the hints
- * again on its next side task; `resetCapabilities` forgets these with the rest.
+ * again on its next side task;
+ * `resetCapabilities` forgets these with the rest.
  */
 export function resetHints() {
-  for (const supports of capabilities().values()) {
-    for (const refused of supports.models.values()) {
-      refused.thinkingHints = true;
+  for (const known of capabilities.copies()) {
+    for (const supports of known.values()) {
+      for (const refused of supports.models.values()) {
+        refused.refusedFields.delete(CHAT_TEMPLATE_KWARGS);
+      }
     }
   }
 }
@@ -351,7 +368,7 @@ export function resetHints() {
  *
  * @param maxAgeMs - How old an entry may be. Zero or less expires everything.
  * @param [now] - The clock, for tests.
- * @returns How many model servers were forgotten.
+ * @returns How many model servers were forgotten, through every `fetch` together.
  *
  * @remarks
  * The other half of the problem `resetCapabilities` solves: a server upgraded behind the same URL
@@ -366,12 +383,15 @@ export function resetHints() {
  */
 export function expireCapabilities(maxAgeMs: number, now = Date.now()): number {
   let dropped = 0;
-  for (const [id, known] of capabilities()) {
-    if (now - known.since < maxAgeMs) {
-      continue;
+  for (const known of capabilities.copies()) {
+    for (const [id, supports] of known) {
+      const isFresh = now - supports.since < maxAgeMs;
+      if (isFresh) {
+        continue;
+      }
+      known.delete(id);
+      dropped++;
     }
-    capabilities().delete(id);
-    dropped++;
   }
   return dropped;
 }
@@ -634,8 +654,8 @@ export const ceilingAndTemperature = (
   maxTokens: number | undefined,
   temperature: number | undefined,
 ) => {
-  const ceiling =
-    refused?.legacyTokenLimit === false ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+  const refusesMaxTokens = refused?.legacyTokenLimit === false;
+  const ceiling = refusesMaxTokens ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
   const isTemperatureSent = temperature !== undefined && refused?.chosenTemperature !== false;
   return {
     ...(isPositive(maxTokens) ? ceiling : {}),
@@ -773,14 +793,21 @@ const NAMES_TEMPERATURE = /(['"`])temperature\1|\btemperature\s+(?:is|does|must|
  */
 const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(detail) && /only the default/i.test(detail);
 
+/** A pydantic validation error saying a field is not one the model takes, as Mistral sends it. */
+const EXTRA_INPUT = /extra_forbidden|extra inputs are not permitted/i;
+
+/** The field a pydantic validation error locates in the request body: `"loc":["body","min_p"]`. */
+const BODY_LOCATION = /"loc"\s*:\s*\[\s*"body"\s*,\s*"([^"]+)"/g;
+
 /**
- * The fields a refusal names as ones the model server has never heard of, in the two wordings
- * OpenAI has used: `Unrecognized request argument supplied: min_p` (or `arguments`, listing
- * several) and `Unknown parameter: 'min_p'.`
+ * The fields a refusal names as ones the model server has never heard of, in the wordings known:
+ * OpenAI's `Unrecognized request argument supplied: min_p` (or `arguments`, listing several) and
+ * `Unknown parameter: 'min_p'.`, Groq's `property 'min_p' is unsupported`, and a pydantic server's
+ * `"loc":["body","min_p"]` beside `extra_forbidden` or `Extra inputs are not permitted` (Mistral).
  *
  * @param detail - The server's error text.
  * @returns The top-level names, in the refusal's order and not deduplicated; empty where it is in
- * neither wording.
+ * none of those wordings.
  *
  * @remarks
  * A nested name — `'chat_template_kwargs.enable_thinking'` — is answered at its top-level field,
@@ -789,11 +816,16 @@ const refusesChosenTemperature = (detail: string) => NAMES_TEMPERATURE.test(deta
 function unknownFields(detail: string): string[] {
   const [, listed] = detail.match(/unrecognized request arguments? supplied:\s*([^\n]+)/i) ?? [];
   const [, , quoted] = detail.match(/unknown parameter:\s*(['"`])([^'"`]+)\1/i) ?? [];
+  const [, , property] = detail.match(/property\s+(['"`])([^'"`]+)\1\s+is\s+unsupported/i) ?? [];
   let names: string[] = [];
   if (listed) {
     names = listed.split(',');
   } else if (quoted) {
     names = [quoted];
+  } else if (property) {
+    names = [property];
+  } else if (EXTRA_INPUT.test(detail)) {
+    names = [...detail.matchAll(BODY_LOCATION)].map(([, name]) => name);
   }
   return names
     .map(
@@ -944,12 +976,12 @@ type Answer = (refusal: Refusal) => string | undefined;
  * `undefined` having touched nothing.
  */
 const endpointAnswer =
-  (flag: 'strictSchemas' | 'usageInStream', matches: (detail: string) => boolean, notice: string): Answer =>
+  (flag: EndpointFlag, matches: (detail: string) => boolean, notice: string): Answer =>
   ({ detail, supports }) => {
     if (!supports[flag] || !matches(detail)) {
       return undefined;
     }
-    supports[flag] = false;
+    latchEndpoint(supports, flag);
     return notice;
   };
 
@@ -986,10 +1018,7 @@ const effortStepAnswer: Answer = ({ detail, named }) => {
   if (!named || !stepped) {
     return undefined;
   }
-  named.refused.refusedEfforts.add(stepped.value);
-  if (stepped.supported) {
-    named.refused.supportedEfforts = stepped.supported;
-  }
+  latchEfforts(named.refused, [stepped.value], stepped.supported);
   return `${named.name} does not reason at ${stepped.value}; retrying at ${stepped.next}`;
 };
 
@@ -1066,8 +1095,7 @@ const ANSWERS: readonly Answer[] = [
 
 /**
  * Sends a request, re-sending it each time the answer is this model server refusing something the
- * request can do without. Returns once the model server has answered, or throws if the refusal is
- * not one of ours.
+ * request can do without.
  *
  * @typeParam T - What `send` resolves, which is handed back as it came.
  * @param supports - What this model server has already refused. Latched further as it refuses more.
@@ -1081,27 +1109,12 @@ const ANSWERS: readonly Answer[] = [
  * as it was caught.
  *
  * @remarks
- * A loop rather than one retry. A server that has heard of neither `stream_options` nor a
- * grammar keyword complains about them one at a time, and answering only the first leaves the
- * second to fail the request — so the first exchange against such a model server is spent
- * discovering what the second one starts knowing. It terminates in at most one pass per capability,
- * since each pass either latches one off for good or rethrows.
- *
- * One loop over both levels, because a refusal arrives the same way whichever it is about and
- * one request can meet both. An OpenAI reasoning model has two waiting on its own — the ceiling
- * is spelled the other way, and then the temperature is not ours to pick — so a loop that
- * stopped after the first answer would hand the caller the second.
- *
- * `send` is a thunk rather than a request body because the body has to be rebuilt from the
- * latched flags: `relaxTools` applies to the tools that were just sanitised, and
- * `stream_options` is present or absent rather than adjusted. It is generic over what it
- * resolves, so a caller whose request resolves a stream object before any chunk is read is the
- * same shape as one that resolves a finished reply.
- *
- * It is handed the `produced` flag rather than being expected to close over one. There is only
- * ever one flag in a request — the same box `streamTurn` sets and the re-send below reads — and a
- * caller that passed it to only one of the two got a request that had already streamed tokens sent
- * again, silently, with the watcher seeing every one of them twice.
+ * A loop rather than one retry, because a server complains about unknown fields one at a time and
+ * one request can meet refusals at both levels; it ends after one pass per capability at most,
+ * since each pass latches one off or rethrows. A refusal is recognised by its text rather than its
+ * HTTP status, since servers send an unsupported field back under all sorts of statuses. `send` is
+ * a thunk handed the `produced` flag, because the body is rebuilt from the latched flags and a
+ * request that has already streamed tokens must never be sent again.
  */
 export async function negotiate<T>(
   supports: Capabilities,
@@ -1141,13 +1154,8 @@ export async function negotiate<T>(
       } else if (flagsOf(supports, model).every((flag, index) => flag === sent[index])) {
         throw error;
       }
-      // Otherwise the refusal was answered by whoever got there first, and this attempt was
-      // built before the answer existed. Two exchanges opening on a fresh llama.cpp box both get
-      // the grammar error; the first latches it off and re-sends, and the second used to find the
-      // flag already clear, fall through to the throw and die on an error the process had just
-      // learned to fix — `isTransient` refuses a 400, so `runTurn` would not send it again either.
-      // Sending it again is the whole of the fix: flags only ever latch off, so this gives up after
-      // one pass per flag.
+      // Otherwise another exchange answered this refusal after this attempt was built, so it is sent
+      // again; flags only latch off, so this gives up after one pass per flag.
     }
   }
 }

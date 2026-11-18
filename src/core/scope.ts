@@ -72,15 +72,18 @@ export function scoped<T extends {}>(create: () => T): Scoped<T> {
 /**
  * Writes what a caller gave onto the settings in force, field by field, skipping what is unusable.
  *
- * @param held - The settings in force. Written to — the same object the module goes on reading.
- * @param options - What to change. A field left out is left alone.
+ * @param held - The settings in force, every one an own key. Written to — the same object the
+ * module goes on reading.
+ * @param options - What to change. A field left out is left alone, and a key `held` does not have
+ * is ignored.
  * @param [usable] - Whether a value may be written under a name.
  * @returns A copy of everything in force afterwards, including what this call did not change.
  *
  * @remarks
  * The body of every `configure*`: a module's settings are one object per runtime, read where they
  * are used, so writing a field onto it is what makes the change apply from the next read. A field
- * that fails its check keeps what it had, which is how a half-built config narrows nothing.
+ * that fails its check keeps what it had, which is how a half-built config narrows nothing. A
+ * misspelt key is not a setting, so it is never written where a reset or the next read would find it.
  */
 export function assignSettings<T extends object>(
   held: T,
@@ -88,7 +91,8 @@ export function assignSettings<T extends object>(
   usable: (value: unknown, name: string) => boolean = isPositive,
 ): T {
   for (const [name, value] of Object.entries(options)) {
-    if (usable(value, name)) {
+    const isSetting = Object.hasOwn(held, name);
+    if (isSetting && usable(value, name)) {
       held[name as keyof T] = value as T[keyof T];
     }
   }

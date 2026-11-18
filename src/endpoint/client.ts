@@ -6,9 +6,10 @@ import {
   normalizeBaseUrl,
   type RetryPolicy,
 } from '../core/config.ts';
+import { MS_PER_SECOND } from '../core/consts.ts';
+import { CLIENT_POOL_DEFAULTS, type ClientPoolSettings, MODEL_SERVER_DEFAULTS } from '../core/defaults.ts';
 import { digestOf } from '../core/digest.ts';
 import { byCodeUnit, getOrCreate, isPositive } from '../core/guards.ts';
-import { MS_PER_SECOND } from '../core/platform.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { HttpStatus } from '../wire/wire.ts';
 
@@ -28,12 +29,13 @@ export const NO_KEY = 'agent-core';
 const limitMs = (seconds: number) => (seconds > 0 ? seconds * MS_PER_SECOND : undefined);
 
 /**
- * A model server's request timeout in the SDK's spelling: milliseconds, `undefined` for no limit.
+ * A model server's idle timeout, `requestTimeoutSeconds`, in the SDK's spelling: milliseconds,
+ * `undefined` for no limit.
  *
  * @param config - Read for `requestTimeoutSeconds` alone. Zero, less, or absent means no limit.
- * @returns The request timeout in milliseconds, or `undefined` for no limit.
+ * @returns The idle timeout in milliseconds, or `undefined` for no limit.
  */
-export const timeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
+export const idleTimeoutMs = (config: Pick<Endpoint, 'requestTimeoutSeconds'>): number | undefined =>
   limitMs(config.requestTimeoutSeconds ?? 0);
 
 /**
@@ -58,14 +60,22 @@ type Fetch = typeof globalThis.fetch;
  * One cache, held once for the global `fetch` and once for each function an app gave a
  * model server.
  */
-interface PerFetch<T extends {}> {
+export interface PerFetch<T extends {}> {
   /**
    * The copy for the model servers that send through `fetch`, absent being the global one, made on
    * first use.
    */
   (fetch: Fetch | undefined): T;
+  /** The current scope's copies: the global one's first, then those of the functions still held. */
+  copies(): T[];
   /** Drops the current scope's copies: the global one's and every function's. */
   reset(): void;
+}
+
+/** One scope's copies for the app's functions, and a weak reference to each so they can be walked. */
+interface HostCopies<T extends {}> {
+  byFetch: WeakMap<Fetch, T>;
+  live: Set<WeakRef<T>>;
 }
 
 /**
@@ -73,20 +83,39 @@ interface PerFetch<T extends {}> {
  *
  * @typeParam T - The cache.
  * @param create - Builds a fresh, empty copy. Called once per function per scope, and again after `reset`.
- * @returns The reader, with a `reset` on it, both acting on the scope current when called.
+ * @returns The reader, with `copies` and `reset` on it, all acting on the scope current when called.
  *
  * @remarks
- * Two model servers with one URL and key and different functions may reach two different servers,
- * so neither a client nor a listing found through one function may answer for another, or for the
- * global `fetch`. A function's copy lives in a `WeakMap` under the function itself rather than
- * under a key minted for it, so it goes when the app drops the function: an app making one per
- * exchange would otherwise leave a listing behind for every exchange it ever made.
+ * This is half of what one model server is: `endpointKey` is the other half, the key inside each
+ * copy. Two model servers with one URL and key and different functions may reach two different
+ * servers, so nothing found through one function may answer for another, or for the global `fetch`.
+ * A function's copy lives in a `WeakMap` under the function itself, and is walked through a
+ * `WeakRef`, so it goes when the app drops the function: an app making one per exchange would
+ * otherwise leave a copy behind for every exchange it ever made.
  */
-function perFetch<T extends {}>(create: () => T): PerFetch<T> {
+export function perFetch<T extends {}>(create: () => T): PerFetch<T> {
   const own = scoped(create);
-  const hosts = scoped(() => new WeakMap<Fetch, T>());
-  const read = (fetch: Fetch | undefined) => (fetch ? getOrCreate(hosts(), fetch, create) : own());
+  const hosts = scoped((): HostCopies<T> => ({ byFetch: new WeakMap(), live: new Set() }));
+  // Drops a copy's reference from the walk once the copy itself has gone with its function.
+  const forget = new FinalizationRegistry<{ live: Set<WeakRef<T>>; ref: WeakRef<T> }>(({ live, ref }) =>
+    live.delete(ref),
+  );
+  const hostCopy = (fetch: Fetch) => {
+    const held = hosts();
+    return getOrCreate(held.byFetch, fetch, () => {
+      const copy = create();
+      const ref = new WeakRef(copy);
+      held.live.add(ref);
+      forget.register(copy, { live: held.live, ref });
+      return copy;
+    });
+  };
+  const read = (fetch: Fetch | undefined) => (fetch ? hostCopy(fetch) : own());
   return Object.assign(read, {
+    copies: () => {
+      const held = [...hosts().live].map((ref) => ref.deref());
+      return [own(), ...held.filter((copy) => copy !== undefined)];
+    },
     reset: () => {
       own.reset();
       hosts.reset();
@@ -109,78 +138,23 @@ const sender = (config: Pick<Endpoint, 'fetch'>): Fetch => config.fetch ?? globa
  * A client per model server, made once and kept.
  *
  * @remarks
- * The SDK holds its own connection pool, and an exchange makes a request per turn on top of
- * whatever side tasks it asks for — building a fresh client for each of them throws that pool
- * away every time. A map rather than the single slot it would otherwise be, because agents each
- * name their own model server: two running side by side on different servers would evict each
- * other's client on every request.
- *
- * `maxRetries: 0` turns the SDK's own retrying off. Streaming is what this is for, and a stream
- * that has already emitted tokens must not be replayed from the top — the caller knows whether
- * anything has been produced yet and the SDK does not. See `retry.ts`.
- *
- * Bounded, because a cache is only a cache while its keys are. Insertion order is the whole of
- * the eviction: a `Map` iterates oldest-first, and `getClient` re-inserts on a hit. One pool per
- * `fetch` (`perFetch`), each held to `maxClients`, so a client built on one function never sends
- * for another.
+ * The SDK holds its own connection pool, which a client per request would throw away, and agents
+ * on different servers side by side would evict each other's client from a single slot.
+ * `maxRetries: 0` turns the SDK's own retrying off, since a stream that has emitted tokens must not
+ * be replayed and only the caller knows whether it has (`retry.ts`). Bounded to `maxClients` per
+ * `fetch` (`perFetch`), oldest first: a `Map` iterates in insertion order and `getClient`
+ * re-inserts on a hit.
  */
 const clients = perFetch(() => new Map<string, OpenAI>());
 
 /**
- * How many model servers' clients are kept at once, until `configureClients` moves it.
- *
- * @remarks
- * This is a backstop rather than a design. The key includes the API key, and every argument in
- * this file for what bounds these caches is "a settings row's worth" — true of the deployments
- * this was written for, and false the moment a consumer mints a key per *user*, where the map
- * grows one client and one connection pool per tenant for the life of the process with
- * `resetClients` as the only release.
- *
- * Thirty-two is far more model servers than a settings table holds, so a deployment-shaped consumer
- * never reaches it, and an evicted client costs its connection pool and nothing else — the next
- * request through that model server builds another. See `getClient` for the constraint stated as a
- * constraint.
+ * What the client pool may be told to change, across a process: any of `ClientPoolSettings`, the
+ * rest left as they are. See `configureClients`.
  */
-const MAX_CLIENTS = 32;
-
-/** How long a model missing from a listing stays unlisted before the server is asked again. */
-const LISTING_MISS_MS = 30_000;
-
-/**
- * How long a context window lookup may take in all, until `configureClients` moves it.
- *
- * @remarks
- * Its own number because `requestTimeoutSeconds` is how long to wait for a model to speak, and a
- * listing that has not answered in ten seconds is not going to.
- */
-const LOOKUP_TIMEOUT_MS = 10_000;
-
-/** What the client pool is held to across a process. Every field optional; see `configureClients`. */
-export interface ClientPoolOptions {
-  /** How many model servers' clients are kept at once. The least recently asked for goes first. */
-  maxClients?: number;
-  /**
-   * How long, in milliseconds, a model missing from a server's listing — or a server that answered
-   * without a served context window, or whose `/api/v0/models` answered with an error other than a
-   * missing route — is taken at its word before the model server is asked again.
-   */
-  listingMissMs?: number;
-  /**
-   * How long, in milliseconds, one `contextLimitFor`, `servedWindow` or `listModels` may take over
-   * all of its requests. A model server's own request timeout still applies where it is shorter.
-   */
-  lookupTimeoutMs?: number;
-}
-
-/** The numbers this module was written with. */
-const CLIENT_DEFAULTS: Required<ClientPoolOptions> = {
-  maxClients: MAX_CLIENTS,
-  listingMissMs: LISTING_MISS_MS,
-  lookupTimeoutMs: LOOKUP_TIMEOUT_MS,
-};
+export type ClientPoolOptions = Partial<ClientPoolSettings>;
 
 /** What is in force now. Read where it is used, so a change applies from the next call. */
-const poolLimits = scoped((): Required<ClientPoolOptions> => ({ ...CLIENT_DEFAULTS }));
+const poolLimits = scoped((): ClientPoolSettings => ({ ...CLIENT_POOL_DEFAULTS }));
 
 /**
  * Drops the least recently asked-for clients until the pool fits. Nothing is closed on the way
@@ -221,28 +195,25 @@ const evict = (pool: Map<string, OpenAI>) => {
  * next `getClient`. A shorter `listingMissMs` applies to misses already remembered, since each is
  * a timestamp compared against it when read.
  */
-export function configureClients(options: ClientPoolOptions = {}): Required<ClientPoolOptions> {
+export function configureClients(options: ClientPoolOptions = {}): ClientPoolSettings {
   const inForce = assignSettings(poolLimits(), options);
   evict(clients(undefined));
   return inForce;
 }
-
-/** How many idle windows the first chunk gets when `firstTokenSeconds` is not given. */
-const FIRST_TOKEN_FACTOR = 5;
 
 /**
  * The wait for a streamed reply's first chunk, in the SDK's spelling: `undefined` is no limit.
  *
  * @param config - Read for `firstTokenSeconds`, and `requestTimeoutSeconds` where that is absent.
  * @returns Milliseconds. `firstTokenSeconds` where it is given, zero or less being no limit;
- * otherwise five request timeouts, and no limit where the request has none.
+ * otherwise `MODEL_SERVER_DEFAULTS.firstTokenIdleWindows` request timeouts, and no limit where the request has none.
  */
-export const firstTokenMs = (
+export const firstTokenLimitMs = (
   config: Pick<Endpoint, 'requestTimeoutSeconds' | 'firstTokenSeconds'>,
 ): number | undefined => {
   if (config.firstTokenSeconds === undefined) {
-    const idle = timeoutMs(config);
-    return idle === undefined ? undefined : idle * FIRST_TOKEN_FACTOR;
+    const idle = idleTimeoutMs(config);
+    return idle === undefined ? undefined : idle * MODEL_SERVER_DEFAULTS.firstTokenIdleWindows;
   }
   return limitMs(config.firstTokenSeconds);
 };
@@ -252,13 +223,13 @@ export const firstTokenMs = (
  *
  * @param config - Where to send requests and how long to wait. An absent `apiKey` becomes `NO_KEY`,
  * and a `fetch` is what the client sends through.
- * @returns The pooled client: the same object for the same base URL, key, timeout and `fetch`, until
- * it is evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
+ * @returns The pooled client: the same object for the same model server and timeout, until it is
+ * evicted or `resetClients` runs. Asking for it makes it the last in line to be evicted.
  *
  * @remarks
- * Pooled on the four fields that change how a request is sent, so agents sharing a server share
- * a connection and agents on different servers never share a client. The `fetch` picks the pool
- * (`perFetch`) rather than joining the key, since a function cannot be stringified.
+ * Pooled on the model server, as `endpointKey` and the `fetch` tell one apart, and on the timeout,
+ * so agents sharing a server share a connection and agents on different servers never share a
+ * client. Four spellings of one URL are one client, sent to the URL as `baseUrlKey` writes it.
  *
  * The pool is per *deployment*, not per request: what belongs in this map is a model server an
  * operator configured, and everything cached in this package is bounded on that reading. A
@@ -269,10 +240,8 @@ export const firstTokenMs = (
  */
 export function getClient(config: Endpoint): OpenAI {
   const apiKey = config.apiKey || NO_KEY;
-  const timeout = timeoutMs(config);
-  // Stringified rather than joined on a separator: no character is impossible in a URL or a
-  // key, and two different model servers must never resolve to the same cached client.
-  const key = JSON.stringify([config.baseUrl, apiKey, timeout]);
+  const timeout = idleTimeoutMs(config);
+  const key = JSON.stringify([endpointKey(config), timeout]);
   const pool = clients(config.fetch);
   const existing = pool.get(key);
   if (existing) {
@@ -283,7 +252,7 @@ export function getClient(config: Endpoint): OpenAI {
     return existing;
   }
   const client = new OpenAI({
-    baseURL: config.baseUrl,
+    baseURL: baseUrlKey(config.baseUrl),
     apiKey,
     timeout,
     maxRetries: 0,
@@ -367,15 +336,12 @@ export interface ModelInfo {
  * round trip.
  *
  * @remarks
- * Keyed by `endpointKey`, because two model servers are two different sets of models and one of
- * them having answered says nothing about the other — and because a key can be the difference
- * between what a router will show one caller and another.
+ * Keyed by `endpointKey` in the copy of the model server's `fetch`, because two model servers are
+ * two different sets of models and one of them having answered says nothing about the other.
  *
  * The timeout is deliberately not in it, which is where this key parts company with the
  * clients'. Which models a server offers has nothing to do with how long we are willing to wait
  * for it, so two settings rows differing only there ask once between them rather than twice.
- * `fetch` is not in it either, but picks the copy it is read from (`perFetch`), as it does for
- * every lookup cache here: two functions may reach two servers behind one URL.
  *
  * It is only ever a cache of something asked for anyway, and a listing that fails leaves
  * whatever was there rather than emptying it.
@@ -409,33 +375,21 @@ const trainedOnly = perFetch(() => new Map<string, Set<string>>());
 const misses = perFetch(() => new Map<string, number>());
 
 /**
- * What counts as one model server, everywhere in this package that has to remember something about
- * one — the model listings directly, and `capabilities`, the no-thinking hints among them, through
- * its digest `endpointId`.
+ * What counts as one model server inside each `perFetch` copy, everywhere in this package that
+ * remembers something about one: the clients, the listings and served windows, and, through its
+ * digest `endpointId`, the capability latches and calibration.
  *
  * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
- * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
- * config, and absent and empty already mean the same thing. The timeout and `fetch` are
- * deliberately not in it; see `listings`.
+ * `Endpoint` requires it: absent and empty already mean the same thing. The `fetch` picks the copy
+ * this is looked up in, and the timeout is not part of the model server.
  * @returns The URL as `baseUrlKey` writes it and the key, as one JSON string, the key in the clear.
  *
  * @remarks
  * The URL and the key together, because the key is part of what is on the other end rather than
- * only how it is paid for: a router is free to send two keys to two different backends, and then
- * what one of them refused is not a fact about the other. Absent reads as `NO_KEY`, so a
- * model server with no key and one that passes `undefined` are one entry rather than two. The URL
- * is normalised for the same reason: `…/v1/` and `…/v1` are one server, and two entries for it
- * would learn every refusal twice.
- *
- * Stringified rather than joined on a separator, for the reason `getClient` gives: no character
- * is impossible in a URL or a key, and two model servers must never collide on one entry. An app
- * keeping its own per-model-server state keys it on this rather than on a copy of it, so the two
- * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
- *
- * The capability latches and the no-thinking hints stay on this alone, by way of `endpointId`,
- * whatever `fetch` a model server sends through: they are what a snapshot carries to the next
- * process, where no function is the same one, and what a model refused is a fact about the model
- * behind the URL.
+ * only how it is paid for: a router is free to send two keys to two different backends. Absent
+ * reads as `NO_KEY`, and the URL is normalised, so `…/v1/` and `…/v1` are one entry rather than
+ * two. Stringified rather than joined on a separator, since no character is impossible in a URL
+ * or a key; `endpointId` is the one to write down.
  */
 export const endpointKey = (config: EndpointIdentity) =>
   JSON.stringify([baseUrlKey(config.baseUrl), config.apiKey || NO_KEY]);
@@ -470,8 +424,9 @@ export const endpointId = (config: EndpointIdentity) => digestOf(endpointKey(con
  * Served context windows found by asking a server's own API, keyed on model server and model.
  *
  * @remarks
- * A model's entry stays until `resetClients`, like a listing; a server that answered without one
- * is asked again after `listingMissMs`, like a listing that did not name the model.
+ * Every answer, a window included, stands for `listingMissMs`, the timer the slot count read from
+ * the same `/props` answer is on: a server restarted with another `-c` must not be sized by its
+ * old window for the life of the process.
  */
 const served = perFetch(() => new Map<string, { window: number; at: number }>());
 
@@ -554,7 +509,7 @@ const refused = (config: Pick<Endpoint, 'fetch'>, endpoint: string) => {
  * whichever is first. Never fires where neither is set.
  */
 const lookupSignal = (config: Pick<Endpoint, 'requestTimeoutSeconds'>, signal?: AbortSignal): AbortSignal => {
-  const boundMs = Math.min(timeoutMs(config) ?? Number.POSITIVE_INFINITY, poolLimits().lookupTimeoutMs);
+  const boundMs = Math.min(idleTimeoutMs(config) ?? Number.POSITIVE_INFINITY, poolLimits().lookupTimeoutMs);
   const bound = Number.isFinite(boundMs) ? [AbortSignal.timeout(boundMs)] : [];
   return AbortSignal.any([...bound, ...(signal ? [signal] : [])]);
 };
@@ -645,18 +600,12 @@ export interface LookupOptions {
  * of `options.signal`: a server that could not be reached answers zero too.
  *
  * @remarks
- * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, per slot, and LM
- * Studio on `/api/v0/models` as `loaded_context_length` while the model is loaded. Both differ
- * from the trained context window in the case that matters, a model started in a smaller one than
- * it was built for, and reading the trained one lets an overflow through the guard meant to catch
- * it. Ollama reports nothing on either; an operator there has to declare the context window.
- *
- * Zero where no answer was found, which is remembered for `listingMissMs`. A server without
- * either route is latched and not asked again. `/api/v0/models` is also dropped on its own: until
- * `resetClients` once it answers as a route that is not there, and for `listingMissMs` after any
- * other error. A server that could not be reached is not remembered at all.
- *
- * The listing is not read here; `contextLimitFor` reads it first and comes here after.
+ * llama.cpp reports it on `/props` as `default_generation_settings.n_ctx`, and LM Studio on
+ * `/api/v0/models` as `loaded_context_length`; either can be smaller than the trained context
+ * window, which would let an overflow through the guard. What it answers, zero included, is
+ * remembered for `listingMissMs`, a server without either route is latched, and one that could not
+ * be reached is not remembered (README, "Sizing a request before sending it"). The listing is not
+ * read here: `contextLimitFor` reads it first.
  */
 export async function servedWindow(
   config: Endpoint & { model: string },
@@ -681,7 +630,7 @@ async function readServed(config: Endpoint & { model: string }, within: AbortSig
   }
   const key = modelKey(endpoint, config.model);
   const known = served(config.fetch).get(key);
-  if (known && (known.window > 0 || isAnswerFresh(known.at))) {
+  if (known && isAnswerFresh(known.at)) {
     return known.window;
   }
 
@@ -754,7 +703,8 @@ async function readSlots(config: Endpoint & { model: string }, within: AbortSign
   }
   const key = modelKey(endpoint, config.model);
   const known = slotCounts(config.fetch).get(key);
-  if (known && (known.gone || isAnswerFresh(known.at))) {
+  const answerStands = known && (known.gone || isAnswerFresh(known.at));
+  if (answerStands) {
     return known.slots;
   }
   try {
@@ -857,12 +807,9 @@ export class EndpointProbeError extends Error {
 
 /** What `probeEndpoint` takes besides the model server. */
 export interface ProbeOptions extends LookupOptions {
-  /** How many models come back at most, the first by id. Defaults to `PROBE_MODEL_LIMIT`. */
+  /** How many models come back at most, the first by id. Defaults to `MODEL_SERVER_DEFAULTS.probeModelLimit`. */
   limit?: number;
 }
-
-/** How many models `probeEndpoint` hands back unless told otherwise: enough for any picker. */
-const PROBE_MODEL_LIMIT = 500;
 
 /** The statuses that mean the key, not the server, is what is wrong. */
 const UNAUTHORIZED: ReadonlySet<number> = new Set([HttpStatus.Unauthorized, HttpStatus.Forbidden]);
@@ -896,7 +843,7 @@ const REDIRECT_MAX = 399;
  */
 export async function probeEndpoint(
   endpoint: EndpointIdentity & Pick<Endpoint, 'requestTimeoutSeconds' | 'fetch'>,
-  { signal, limit = PROBE_MODEL_LIMIT }: ProbeOptions = {},
+  { signal, limit = MODEL_SERVER_DEFAULTS.probeModelLimit }: ProbeOptions = {},
 ): Promise<ModelInfo[]> {
   const baseUrl = normalizeBaseUrl(endpoint.baseUrl);
   if (baseUrl === null) {
@@ -927,7 +874,8 @@ export async function probeEndpoint(
   }
   const { status } = response;
   // A browser hands a refused redirect back as an opaque response with status zero.
-  if (response.type === 'opaqueredirect' || (status >= REDIRECT_MIN && status <= REDIRECT_MAX)) {
+  const isRedirect = response.type === 'opaqueredirect' || (status >= REDIRECT_MIN && status <= REDIRECT_MAX);
+  if (isRedirect) {
     const location = response.headers.get('location');
     throw new EndpointProbeError(
       ProbeFailure.Redirected,
@@ -945,7 +893,8 @@ export async function probeEndpoint(
       status,
     );
   }
-  if (response.ok === false) {
+  const requestFailed = response.ok === false;
+  if (requestFailed) {
     throw new EndpointProbeError(
       ProbeFailure.Failed,
       `${url.origin} answered ${status} when asked for its models.`,
@@ -995,23 +944,10 @@ export async function probeEndpoint(
  * unknown context window.
  *
  * @remarks
- * `declared` is the operator's own number, and it wins outright: a model server can report the
- * context window a model was *built* with while serving it in a much smaller one — llama.cpp will
- * happily load a 256k model at `-c 16384` and go on listing it as 256k — and an exchange refused on
- * the honest-looking number is an exchange that fails at the model server instead.
- *
- * Otherwise the model server's listing — asked once, and again whenever it does not name this
- * model, since a model can arrive after the first listing was taken. A context window stated at the
- * top of the model's entry is taken as the one being served, and nothing else is asked. Where the
- * listing did not settle it — no context window, only llama.cpp's trained one, no entry, no listing
- * — the server's own API is asked (`servedWindow`), and what it says wins; the trained context
- * window is what is left when it says nothing. A server that will not list models still has to be
- * able to run a turn: a failure here is an unknown context window, not a failed exchange.
- *
- * The listing goes first because it is the one route every server here has, and the native ones
- * are two more requests that a server stating its context window in the listing never needed.
- * Asked first, they were also asked again every `listingMissMs` for the life of the process on a
- * server whose `/props` answers without one, by any app that sizes the context window per turn.
+ * `declared` wins outright, because a server can list the context window a model was built with
+ * while serving it in a much smaller one. Otherwise the listing goes first, as the one route every
+ * server has, and the server's own API (`servedWindow`) is asked only where it did not settle the
+ * question (README, "Sizing a request before sending it").
  */
 export async function contextLimitFor(
   config: Endpoint & { model: string },
@@ -1028,20 +964,16 @@ export async function contextLimitFor(
     listings(config.fetch)
       .get(key)
       ?.find((model) => model.id === config.model);
-  // The listing is asked for again when it does not name this model, rather than only when
-  // there is no listing at all. Models arrive after a process starts — an `ollama pull` on a
-  // box that has been up a week, a worker added to a router, a name the operator has only just
-  // typed into settings — and a cache keyed on "we have asked once" answers zero for every one
-  // of them until a restart. Zero means "nobody knows", so what the operator loses is the
-  // context meter and, in a consumer that compacts on it, compaction: the session then runs at
-  // the context window instead of under it and fails against the model server's own refusal.
+  // Asked again when the listing does not name this model, not only when there is none: models
+  // arrive after a process starts, and a zero cached until a restart costs the meter and compaction.
   if (!listed()) {
     const missKey = modelKey(key, config.model);
     const asked = misses(config.fetch).get(missKey);
     // Asked again, but not on every call. A model that is never coming answers the same zero
     // however often the model server is asked, and a caller sizing a context window per turn pays a
     // round trip for each of them; `listingMissMs` is how long that answer is allowed to stand.
-    if (asked === undefined || isAnswerFresh(asked) === false) {
+    const shouldAskAgain = asked === undefined || isAnswerFresh(asked) === false;
+    if (shouldAskAgain) {
       // A failure is not remembered: a model server that was down when the last exchange started is
       // not a model server with no models, and a context window nobody could ask about is not a
       // failed exchange.
@@ -1133,7 +1065,8 @@ export function resolveApiKey(
     return own.apiKey;
   }
   const baseUrl = own.baseUrl?.trim();
-  if (inherited && baseUrl && !sameUrl(baseUrl, inherited.baseUrl)) {
+  const isOtherServer = inherited && baseUrl && sameUrl(baseUrl, inherited.baseUrl) === false;
+  if (isOtherServer) {
     return NO_KEY;
   }
   return inherited?.apiKey || env.OPENAI_API_KEY || NO_KEY;

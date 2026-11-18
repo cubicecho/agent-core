@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
-import { MS_PER_SECOND } from '../core/platform.ts';
+import { MS_PER_SECOND } from '../core/consts.ts';
+import { MODEL_SERVER_DEFAULTS, REQUEST_SIZE_DEFAULTS } from '../core/defaults.ts';
 import { calibrate, charsPerTokenFor } from '../endpoint/calibration.ts';
 import { type Capabilities, type ModelCapabilities, negotiate, type OnNotice } from '../endpoint/capabilities.ts';
 import { errorMessage } from '../wire/errors.ts';
@@ -10,39 +11,20 @@ import {
   isModelLoading,
   isOverflow,
   isTransient,
-  LOADING_POLL_MS,
-  LOADING_TIMEOUT_MS,
-  SMALLEST_LIKELY_WINDOW,
   sleep,
 } from '../wire/retry.ts';
 import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from '../wire/stream.ts';
-import { compact, requestTokens } from '../wire/tokens.ts';
+import { formatTokens, requestTokens } from '../wire/tokens.ts';
 
 /**
  * One request, given as many attempts as the caller allows.
  *
- * Two different things are being recovered from here, and they nest. The inner one is a capability
- * the model server turns out not to have — `stream_options`, a grammar keyword — or that the model
- * does not, given `model` below. Either is a refusal: it is answered by sending a lesser request,
- * and it latches for the life of the process against the model server or against that one model on
- * it, so it costs one failed call rather than one an exchange. The outer one is the model server
- * being unreachable, busy or silent, which is not about this request at all and is worth simply
- * waiting out.
- *
- * A request too big for the context window is neither, and comes out of here as `ContextOverflow`
- * however it was found out about — by the `contextLimit` guard below before a round trip was
- * spent, or by the model server's own refusal after one. The option decides how early the caller
- * hears, not what it hears.
- *
- * Both are bounded by the same rule: nothing is sent again once the model has started
- * answering. The tokens are already out and on their way to whoever is watching, and a second
- * attempt would say everything twice. That is what `produced` is, one box per attempt — set by
- * a chunk that carried something rather than by a chunk arriving, so the empty opening chunk
- * most servers send does not cost the retry.
- *
- * What the turn cost in attempts comes back on its usage — `wallMs`, `retries`, `timeouts` — and
- * what its prompt was reported at calibrates the ratio the next request to that model is sized
- * with. See `calibrate`.
+ * It recovers from two things, nested: a capability the model server or the model turns out not to
+ * have, answered with a lesser request and latched for the life of the process, and the model
+ * server being unreachable, busy or silent, which is waited out. A request too big for the context
+ * window is neither, and comes out as `ContextOverflow` whether the `contextLimit` guard or the model
+ * server found it. Nothing is sent again once the model has started answering (`produced`, set by a
+ * chunk that carried something), since a second attempt would say everything twice.
  */
 
 /** What `runTurn` takes besides the client, the capabilities and the request. */
@@ -70,7 +52,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * rather than by the model server one round trip later. It is opt-in because the number is the
    * caller's to find: `contextLimitFor` asks the model server, an operator's own setting overrides
    * it, and neither is something a turn should be doing network I/O to discover. A context window
-   * below `SMALLEST_LIKELY_WINDOW` is not believed — a model with one that small is rare enough
+   * below `REQUEST_SIZE_DEFAULTS.smallestLikelyWindowTokens` is not believed — a model with one that small is rare enough
    * that the number is far more likely a caller threading a placeholder through, and refusing an
    * exchange over one would be the guard failing exactly the callers it was meant to help.
    */
@@ -94,11 +76,11 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * How long to wait on a server answering that the model is still loading; zero gives up on the
    * first such answer like any other 503.
    *
-   * @defaultValue `120000`
+   * @defaultValue `MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds`, in milliseconds
    *
    * @remarks
-   * Polled every three seconds without spending `maxRetries`, and announced once rather than
-   * per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
+   * Polled every `MODEL_SERVER_DEFAULTS.loadingPollSeconds` without spending `maxRetries`, and
+   * announced once rather than per poll. A consumer that starts alongside its llama.cpp, or asks a router for a model it
    * has to swap in, meets this on its first request every time.
    */
   loadingTimeoutMs?: number;
@@ -147,15 +129,16 @@ function refuseOversized(
 ): void {
   const needed = requestTokens(body, { charsPerToken });
   const reserve = Math.max(0, body.max_completion_tokens ?? body.max_tokens ?? 0);
-  if (needed + reserve <= contextLimit) {
+  const fitsWindow = needed + reserve <= contextLimit;
+  if (fitsWindow) {
     return;
   }
   // Not retried, and deliberately not a capability: `isTransient` refuses it and none of the
   // words below are ones `negotiate` reads as a refusal it can answer, so this leaves both
   // loops on the first attempt instead of being sent again to be refused again.
-  const reserved = reserve ? ` plus ${compact(reserve)} reserved for the reply` : '';
+  const reserved = reserve ? ` plus ${formatTokens(reserve)} reserved for the reply` : '';
   throw new ContextOverflow(
-    `the request is about ${compact(needed)} tokens${reserved}, over this model's ${compact(contextLimit)}`,
+    `the request is about ${formatTokens(needed)} tokens${reserved}, over this model's ${formatTokens(contextLimit)}`,
   );
 }
 
@@ -197,7 +180,7 @@ export async function runTurn(
     contextLimit = 0,
     model,
     droppable,
-    loadingTimeoutMs = LOADING_TIMEOUT_MS,
+    loadingTimeoutMs = MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds * MS_PER_SECOND,
     ...stream
   }: RunTurnOptions = {},
 ): Promise<Turn> {
@@ -211,7 +194,7 @@ export async function runTurn(
   const measured = (capabilities: Capabilities, forModel: ModelCapabilities | undefined) => {
     const body = request(capabilities, forModel);
     sent = body;
-    if (!sized && contextLimit >= SMALLEST_LIKELY_WINDOW) {
+    if (!sized && contextLimit >= REQUEST_SIZE_DEFAULTS.smallestLikelyWindowTokens) {
       sized = true;
       refuseOversized(body, contextLimit, charsPerTokenFor(supports, body.model));
     }
@@ -245,16 +228,8 @@ export async function runTurn(
       if (produced.any || stream.signal?.aborted) {
         throw error;
       }
-      // The model server's own refusal, classified here rather than left to the caller. One failure
-      // had two error types depending on an option about something else: a caller that gave a
-      // `contextLimit` got `ContextOverflow` from the guard above, and one that did not — the
-      // default — got a raw SDK error and had to know to run `isOverflow` over its message
-      // itself. `runTurn` is offered as the whole loop, so the classification this package
-      // already knows how to do belongs inside it.
-      //
-      // The original is kept as `cause`, because the model server's wording is the half that names
-      // the number. A rate limit borrows the same words and is not one of these — `isOverflow`
-      // rules it out, and it goes on to be retried below as the 429 it is.
+      // Classified here so one failure has one error type whether or not the caller gave a
+      // `contextLimit`; the original is the `cause`, since its wording names the number.
       if (!(error instanceof ContextOverflow) && isOverflow(errorMessage(error))) {
         throw new ContextOverflow(errorMessage(error), { cause: error });
       }
@@ -263,14 +238,15 @@ export async function runTurn(
         if (loadingSince === undefined) {
           loadingSince = now;
           onNotice?.(
-            `${modelLabel(model)} is still loading — waiting up to ${compact(loadingTimeoutMs / MS_PER_SECOND)}s`,
+            `${modelLabel(model)} is still loading — waiting up to ${formatTokens(loadingTimeoutMs / MS_PER_SECOND)}s`,
           );
         }
-        if (now - loadingSince < loadingTimeoutMs) {
+        const canKeepWaiting = now - loadingSince < loadingTimeoutMs;
+        if (canKeepWaiting) {
           // Not an attempt: the request was never looked at, and a two-minute load would
           // otherwise have to be bought with a retry budget meant for dropped connections.
           attempt--;
-          await sleep(LOADING_POLL_MS, stream.signal);
+          await sleep(MODEL_SERVER_DEFAULTS.loadingPollSeconds * MS_PER_SECOND, stream.signal);
           continue;
         }
       }

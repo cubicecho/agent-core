@@ -23,21 +23,16 @@ export interface Endpoint {
    * answering slowly needs.
    *
    * @remarks
-   * Not the whole request, which may take as long as the model keeps talking. On a streamed reply
-   * it is the silence allowed between chunks, the idle watchdog; the wait for the first chunk is
-   * `firstTokenSeconds`. On a call that does not stream, a side task or a model listing, it is
-   * the SDK's timer, which runs until the response headers arrive.
-   *
-   * Optional because a consumer that has no timeout to give should not have to invent one. Two
-   * of the three servers this was extracted from carry no such field, and requiring it made
-   * them write `requestTimeoutSeconds: 0` to mean "I have no opinion", which is a made-up
-   * number standing in for an absent one.
+   * On a streamed reply it is the silence allowed between chunks, the first chunk waiting
+   * `firstTokenSeconds` instead except on a side task; on a call that does not stream, such as a model
+   * listing, it is the SDK's timer until the response headers arrive. Optional, so a consumer with no
+   * timeout to give need not invent a `0` that means "no opinion".
    */
   requestTimeoutSeconds?: number;
   /**
    * How long a streamed reply may wait for its first chunk. Zero or less is no limit.
    *
-   * @defaultValue Five times `requestTimeoutSeconds`
+   * @defaultValue `MODEL_SERVER_DEFAULTS.firstTokenIdleWindows` times `requestTimeoutSeconds`
    *
    * @remarks
    * Its own number because the first wait is prefill, and on a local server prefill of a long
@@ -61,13 +56,14 @@ export interface Endpoint {
 }
 
 /**
- * What makes a model server the one it is: where it lives and whose key reaches it.
+ * What makes a model server the one it is, as far as can be written down: where it lives and whose
+ * key reaches it.
  *
  * @remarks
- * The narrow half of `Endpoint`, for everything that only has to tell two model servers apart — the
- * client pool, the capability latches, a side task borrowing the agent's key. The timeouts and
- * `fetch` are not in it: a different patience is not a different server, and this is what is
- * digested and written down, which a function cannot be.
+ * The narrow half of `Endpoint` that `endpointKey` and `endpointId` read. Every cache of a model
+ * server keys on it inside the copy of the `fetch` the requests go through, so one model server is
+ * this and that function together. The timeouts are not in it, since a different patience is not
+ * a different server, and `fetch` is not, since a function cannot be digested or written down.
  */
 export interface EndpointIdentity {
   /**
@@ -105,7 +101,9 @@ export function normalizeBaseUrl(raw: string): string | null {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return null;
   }
-  if (url.username || url.password || url.search || url.hash) {
+  const hasCredentials = url.username !== '' || url.password !== '';
+  const hasQueryOrFragment = url.search !== '' || url.hash !== '';
+  if (hasCredentials || hasQueryOrFragment) {
     return null;
   }
   return url.toString().replace(/\/+$/, '');
@@ -282,8 +280,8 @@ export interface ToolPolicy {
 export interface RetryPolicy {
   maxRetries: number;
   /**
-   * How long to wait for a local server that says it is still loading the model, absent two
-   * minutes and zero not at all. Separate from `maxRetries`, which is sized for a request that
+   * How long to wait for a local server that says it is still loading the model: absent is
+   * `MODEL_SERVER_DEFAULTS.loadingTimeoutSeconds`, and zero not at all. Separate from `maxRetries`, which is sized for a request that
    * was lost rather than for weights being read off a disk. See `isModelLoading`.
    */
   loadingTimeoutSeconds?: number;

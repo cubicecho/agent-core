@@ -1,7 +1,9 @@
-import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
+import { COMPACTION_DEFAULTS, PRESELECT_DEFAULTS, SIDE_TASK_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
+import type { HookNote, HookRunner } from '../../src/hooks/hooks.ts';
+import type { AgentLoopHooks } from '../../src/run/agent-loop.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
 import {
@@ -14,6 +16,7 @@ import {
   summarised,
   templateRefusal,
   tool,
+  toolNames,
 } from '../helpers.ts';
 
 const create = vi.fn<Create>();
@@ -131,14 +134,10 @@ describe('taskCall', () => {
     const same = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1/', apiKey: '' } }, {}, main);
     expect(same.endpoint).toEqual({ baseUrl: 'http://main/v1', apiKey: 'sk-main' });
     // One entry for the endpoint, so a refusal the main turn learned is known to the side task.
-    expect(capabilitiesFor(same.endpoint.baseUrl, same.endpoint.apiKey)).toBe(
-      capabilitiesFor(main.baseUrl, main.apiKey),
-    );
+    expect(capabilitiesFor(same.endpoint)).toBe(capabilitiesFor(main));
     // Without the agent the endpoint is sent as it stands, and that is a second entry.
     const alone = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1', apiKey: '' } });
-    expect(capabilitiesFor(alone.endpoint.baseUrl, alone.endpoint.apiKey)).not.toBe(
-      capabilitiesFor(main.baseUrl, main.apiKey),
-    );
+    expect(capabilitiesFor(alone.endpoint)).not.toBe(capabilitiesFor(main));
   });
 
   it("never sends the agent's key to another endpoint, and keeps a key the task has", () => {
@@ -187,15 +186,27 @@ describe("a side task's own settings", () => {
 
     const title = taskCall(resolved.tasks.title, {}, resolved);
     await ask(title.endpoint, title.model, 'Name it.', 'a chat', title.options);
-    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 512 });
+    expect(body(0)).toMatchObject({
+      model: 'tiny',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: SIDE_TASK_DEFAULTS.maxTokens,
+    });
 
     const compaction = taskCall(resolved.tasks.compaction, {}, resolved);
     await summariser(compaction.endpoint, compaction.model, compaction.options)('a transcript');
-    expect(body(1)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 1024 });
+    expect(body(1)).toMatchObject({
+      model: 'tiny',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: COMPACTION_DEFAULTS.summaryTokens,
+    });
 
     const select = taskCall(resolved.tasks.toolSelect, {}, resolved);
     await preselect(select.endpoint, select.model, catalog, 'read it', select.options);
-    expect(body(2)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 256 });
+    expect(body(2)).toMatchObject({
+      model: 'tiny',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: PRESELECT_DEFAULTS.maxTokens,
+    });
 
     for (const nth of [0, 1, 2]) {
       // No effort was chosen for the task, so it is told not to think, whatever the agent does.
@@ -235,13 +246,13 @@ describe("a side task's own settings", () => {
     }
   });
 
-  it('lets preselect be given a temperature, and keeps 0.3 without one', async () => {
+  it('lets preselect be given a temperature, and keeps the side task one without it', async () => {
     create.mockResolvedValue(answer('["s__read"]'));
     const config = { baseUrl: 'http://local/v1', apiKey: '' };
     await preselect(config, 'small', catalog, 'read it', { temperature: 0 });
     await preselect(config, 'small', catalog, 'read it');
     expect(body(0).temperature).toBe(0);
-    expect(body(1).temperature).toBe(0.3);
+    expect(body(1).temperature).toBe(SIDE_TASK_DEFAULTS.temperature);
   });
 });
 
@@ -262,11 +273,10 @@ describe("a side task's extraBody", () => {
 
   it('never lets it set what the request is built around', async () => {
     create.mockResolvedValue(answer('ok'));
-    const extraBody = { model: 'other', messages: [], stream: true, tools: [], top_k: 20 };
+    const extraBody = { model: 'other', messages: [], stream: false, tools: [], top_k: 20 };
     await ask(config, 'qwen', 'Name it.', 'a chat', { extraBody });
-    expect(body(0)).toMatchObject({ model: 'qwen', top_k: 20 });
+    expect(body(0)).toMatchObject({ model: 'qwen', stream: true, top_k: 20 });
     expect(body(0).messages).toHaveLength(2);
-    expect(body(0)).not.toHaveProperty('stream');
     expect(body(0)).not.toHaveProperty('tools');
   });
 
@@ -314,8 +324,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     apiKey: 'sk-main',
   });
   /** The names of the tools the nth request declared. */
-  const declared = (nth: number) =>
-    ((body(nth).tools ?? []) as OpenAI.ChatCompletionFunctionTool[]).map((t) => t.function.name);
+  const declared = (nth: number) => toolNames(body(nth).tools);
 
   it('runs neither side task unless asked to', async () => {
     create.mockResolvedValueOnce(says('hello'));
@@ -350,7 +359,11 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   it("gives a preselector on the agent's endpoint the agent's key and its own defaults", async () => {
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     await run(onDemand({ toolSelect: { model: 'tiny' } }), { preselect: true });
-    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 256 });
+    expect(body(0)).toMatchObject({
+      model: 'tiny',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: PRESELECT_DEFAULTS.maxTokens,
+    });
     expect(new Set(reached.map((endpoint) => JSON.stringify(endpoint)))).toEqual(
       new Set([JSON.stringify({ baseUrl: 'http://main/v1', apiKey: 'sk-main' })]),
     );
@@ -369,7 +382,11 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     };
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     await run(config, { preselect: true });
-    expect(body(0)).toMatchObject({ model: 'small', temperature: 0.3, max_tokens: 256 });
+    expect(body(0)).toMatchObject({
+      model: 'small',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: PRESELECT_DEFAULTS.maxTokens,
+    });
     expect(declared(1)).toEqual(['s__read']);
   });
 
@@ -390,8 +407,13 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     const result = await run(onDemand({}), { preselect: true });
     // The preselector's defaults rather than the agent's temperature and ceiling.
-    expect(body(0)).toMatchObject({ model: 'big', temperature: 0.3, max_tokens: 256 });
-    expect(body(0).stream).toBeUndefined();
+    expect(body(0)).toMatchObject({
+      model: 'big',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: PRESELECT_DEFAULTS.maxTokens,
+    });
+    // The preselection, not the exchange's first turn: it is the one that asks for a schema.
+    expect(body(0)).toHaveProperty('response_format');
     expect(new Set(reached.map((endpoint) => JSON.stringify(endpoint)))).toEqual(
       new Set([JSON.stringify({ baseUrl: 'http://main/v1', apiKey: 'sk-main' })]),
     );
@@ -469,7 +491,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     };
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     expect((await run(settings, { preselect: true })).preselected).toEqual(['s__read']);
-    expect(body(0)).toMatchObject({ model: 'm', temperature: 0.3 });
+    expect(body(0)).toMatchObject({ model: 'm', temperature: SIDE_TASK_DEFAULTS.temperature });
 
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     const named = { ...settings, toolSelectModel: settings.toolSelectModel || settings.model };
@@ -538,10 +560,12 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(result.context).toContain('remembered');
   });
 
-  it("rejects with a note hearer's throw from the gather, not unhandled, while the preselection is out", async () => {
+  it("carries on past a note hearer's throw from the gather while the preselection is out", async () => {
     let answerPreselect: (value: unknown) => void = () => undefined;
-    create.mockImplementationOnce(() => new Promise((resolve) => (answerPreselect = resolve)));
-    const failing = run(onDemand({ toolSelect: { model: 'tiny' } }), {
+    create
+      .mockImplementationOnce(() => new Promise((resolve) => (answerPreselect = resolve)))
+      .mockResolvedValueOnce(says('hello'));
+    const running = run(onDemand({ toolSelect: { model: 'tiny' } }), {
       preselect: true,
       hooks: {
         // A runner that fails is a note, and the host's hearer of it throws.
@@ -551,15 +575,14 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
           throw new Error('hearer broke');
         },
       },
-    }).catch((thrown: unknown) => thrown);
-    // Long enough for the gather to have rejected with nothing yet awaiting it.
+    });
+    // Long enough for the gather to have finished with nothing yet awaiting it.
     await new Promise((resolve) => setTimeout(resolve, 20));
     answerPreselect(answer('["s__read"]'));
-    const error = await failing;
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe('hearer broke');
-    expect(failedRun(error)?.preselected).toEqual(['s__read']);
-    expect(create).toHaveBeenCalledTimes(1);
+    const result = await running;
+    expect(result.notes.map((note) => note.error)).toEqual(['hooks down']);
+    expect(result.preselected).toEqual(['s__read']);
+    expect(create).toHaveBeenCalledTimes(2);
   });
 
   it('says what it opened with when the run fails', async () => {
@@ -594,7 +617,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       onEvent: (event) => events.push(event),
     });
     // The summary first: the task's model and temperature, and the summariser's own ceiling.
-    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0, max_tokens: 1024 });
+    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0, max_tokens: COMPACTION_DEFAULTS.summaryTokens });
     expect(reached).toContainEqual({ baseUrl: 'http://side/v1', apiKey: NO_KEY });
     // Then the turn, on the folded transcript.
     expect(body(1)).toMatchObject({ model: 'big', temperature: 1 });
@@ -641,7 +664,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     ]);
     expect(compacting.compacting[0].uuid).toMatch(/^s:41:/);
     // The summary is a user message, and is not counted as a turn of its own.
-    await result.afterTurn;
+    await result.afterExchange;
     const told = (run.mock.calls as unknown[][]).find((args) => args[0] === 'afterExchange')?.[1] as {
       turn: { index: number };
     };
@@ -700,7 +723,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       compact: true,
       hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeCompact] },
     });
-    await result.afterTurn;
+    await result.afterExchange;
     expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([HookEvent.BeforeCompact]);
   });
 
@@ -714,12 +737,48 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       compact: true,
       hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeExchange, HookEvent.AfterExchange] },
     });
-    await result.afterTurn;
+    await result.afterExchange;
     expect(body(1).messages.slice(0, 2)).toEqual(summarised('what was said'));
     expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([
       HookEvent.BeforeExchange,
       HookEvent.AfterExchange,
     ]);
+  });
+
+  describe('a beforeCompact hook that vetoes', () => {
+    const guard = vi.fn<HookRunner>(async (event) =>
+      event === HookEvent.BeforeCompact ? [outcome({ event, label: 'Guard', hookId: 'keep', veto: true })] : [],
+    );
+    const folding = (extra: Partial<AgentLoopHooks>, events: RunEventInput[] = []) =>
+      runAgentLoop({
+        config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+        messages: long,
+        dispatch: async () => 'done',
+        compact: true,
+        hooks: { run: guard, context: { session: { id: 's' } }, ...extra },
+        onEvent: (event) => events.push(event),
+      });
+
+    it('stops the fold, says so, and the exchange goes on uncompacted', async () => {
+      create.mockResolvedValueOnce(says('hello'));
+      const events: RunEventInput[] = [];
+      const heard: HookNote[] = [];
+      const result = await folding({ onNote: (note) => heard.push(note) }, events);
+      // No summary was asked for: the only request is the turn, on the transcript as it was.
+      expect(create).toHaveBeenCalledOnce();
+      expect(body(0).messages).toEqual(long);
+      expect(result.messages.slice(0, long.length)).toEqual(long);
+      expect(heard).toContainEqual(expect.objectContaining({ event: HookEvent.BeforeCompact, veto: true }));
+      const notices = events.flatMap((event) => (event.kind === RunEventKind.Notice ? [event.text] : []));
+      expect(notices).toEqual([expect.stringContaining('Guard')]);
+      expect(notices[0]).toContain('vetoed');
+    });
+
+    it('is not read with honourVeto: false, and the fold goes ahead', async () => {
+      create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
+      await folding({ honourVeto: false });
+      expect(body(1).messages).toEqual([...summarised('what was said'), long[2]]);
+    });
   });
 
   it('does not fold without the task, however full the window', async () => {
@@ -755,7 +814,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       compact: { target: 0.5 },
     });
     expect(create).toHaveBeenCalledTimes(3);
-    expect(body(1)).toMatchObject({ model: 'tiny', temperature: 0.3 });
+    expect(body(1)).toMatchObject({ model: 'tiny', temperature: SIDE_TASK_DEFAULTS.temperature });
     expect(body(2).messages.slice(0, 2)).toEqual(summarised('what was said'));
   });
 

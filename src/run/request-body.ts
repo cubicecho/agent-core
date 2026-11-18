@@ -105,13 +105,14 @@ export function buildBody(
   // Beside tools only: OpenAI refuses the field on a request without them.
   const oneAtATime = isSingle && declared.length > 0 ? { [PARALLEL_TOOL_CALLS]: false } : {};
   const replayed = isSingle ? oneCallPerMessage(messages) : messages;
+  const refusesScratchpad = refused?.reasoningContent === false;
   return {
     ...ceilingAndTemperature(refused, config.maxTokens, config.temperature),
     ...(effort ? { reasoning_effort: effort as OpenAI.ReasoningEffort } : {}),
     ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
     ...extraFields(refused, { ...oneAtATime, ...config.extraBody }),
     model: config.model,
-    messages: refused?.reasoningContent === false ? dropReasoning(replayed) : replayed,
+    messages: refusesScratchpad ? dropReasoning(replayed) : replayed,
     stream: true,
     ...(declared.length ? { tools: declared } : {}),
   };

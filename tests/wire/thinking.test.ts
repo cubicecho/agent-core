@@ -61,7 +61,7 @@ describe('FenceSplitter', () => {
   });
 
   it('starts inside the fence when told the template opened it', () => {
-    const { parts } = split(['weighing</think>answer'], new FenceSplitter(undefined, { startInside: true }));
+    const { parts } = split(['weighing</think>answer'], new FenceSplitter(undefined, { startInScratchpad: true }));
     expect(parts).toEqual([
       { kind: SPLIT_REASONING, text: 'weighing' },
       { kind: SPLIT_OUTPUT, text: 'answer' },

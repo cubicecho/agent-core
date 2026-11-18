@@ -21,9 +21,9 @@ export const RECORD_ARTIFACT_TOOL: OpenAI.ChatCompletionFunctionTool = {
   function: {
     name: RECORD_ARTIFACT,
     description:
-      'Name something a tool call in this run stored, so the run lists it: a file one of your tools ' +
-      'wrote, a page it published, an object it uploaded. Only for a location a tool was actually ' +
-      'given or answered with, and only after that call: one that no tool call in this run touched ' +
+      'Name something one of your tools stored, so it is listed with your work: a file you wrote, ' +
+      'a page you published, an object you uploaded. Only for a location a tool was actually ' +
+      'given or answered with, and only after that call: one that no tool call so far touched ' +
       'is refused. Your reply is already kept, so never record it, and never invent a file to put ' +
       'it in. Calling this adds the title and description a person would want.',
     parameters: {
@@ -444,7 +444,8 @@ export class RunArtifacts {
     // Over a link, only what it left out; over a guess, what the model said wins.
     const fill = (field: 'title' | 'description' | 'mimeType', value: string | undefined) => {
       const isTaken = isLinked && Boolean(known.link[field]);
-      if (value && isTaken === false) {
+      const shouldFill = value && isTaken === false;
+      if (shouldFill) {
         known.link = { ...known.link, [field]: value };
       }
     };

@@ -12,7 +12,10 @@ interface Declared {
 
 const declared = vi.hoisted((): Declared[] => []);
 
-/** `scoped` as it is, but noting every store a module declares, so none can be left out. */
+/**
+ * `scoped` as it is, but noting every store a module declares, so none can be left out. A store
+ * `perFetch` builds is the module's that called `perFetch`.
+ */
 vi.mock('../../src/core/scope.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/core/scope.ts')>();
   return {
@@ -20,7 +23,11 @@ vi.mock('../../src/core/scope.ts', async (importOriginal) => {
     scoped: <T extends {}>(create: () => T) => {
       const store = actual.scoped(create);
       const frames = new Error().stack?.split('\n') ?? [];
-      const module = frames.map((frame) => /\/src\/(\w+\/[\w-]+\.ts)/.exec(frame)?.[1]).find(Boolean) ?? '';
+      const module =
+        frames
+          .filter((frame) => frame.includes('perFetch') === false)
+          .map((frame) => /\/src\/(\w+\/[\w-]+\.ts)/.exec(frame)?.[1])
+          .find(Boolean) ?? '';
       declared.push({ store, create, module });
       return store;
     },
@@ -37,6 +44,8 @@ const { createRuntime } = await import('../../src/runtime/runtime.ts');
 
 const SENTINEL = Symbol('drift');
 const KEY = {};
+/** What a set is marked with: a weak reference, as the sets a reset walks hold (`perFetch`'s). */
+const HELD = new WeakRef(KEY);
 const NUMBER = -1;
 const TEXT = 'drift';
 
@@ -49,7 +58,7 @@ const dirty = (value: unknown) => {
   if (value instanceof Map) {
     value.set(SENTINEL, SENTINEL);
   } else if (value instanceof Set) {
-    value.add(SENTINEL);
+    value.add(HELD);
   } else if (value instanceof WeakMap) {
     value.set(KEY, SENTINEL);
   } else if (typeof value === 'object' && value !== null) {

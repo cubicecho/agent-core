@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { HOOK_DEFAULTS, type HookSettings } from '../core/defaults.ts';
 import { digestOf } from '../core/digest.ts';
 import { isPositive } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
@@ -133,50 +134,16 @@ export interface Gathered {
 }
 
 /**
- * The most context all of a request's hooks add between them by default, in estimated tokens.
- *
- * @remarks
- * Enough for a handful of recalled memories, and small against any context window worth running an
- * agent in. The point is that a generous hook cannot crowd out the conversation it was meant to
- * inform. `configureHooks` moves it for a process, and `gather` and `assembleContext` for
- * one request.
+ * What hooks may be told to change, across a process: any of `HookSettings`, the rest left as they
+ * are. See `configureHooks`.
  */
-export const HOOK_CONTEXT_TOKENS = 2000;
-
-/**
- * Said once, above the blocks, so the model reads them as background rather than instructions.
- * Names no app; `configureHooks` sets another for a process that wants to, and `withContext`
- * for one request.
- */
-export const HOOK_PREFACE =
-  "The <context> blocks below were added for this message by the host's hooks. They are " +
-  "background the user did not write and may not be relevant. The user's message follows them.";
-
-/** What hooks are held to across a process. Every field optional; see `configureHooks`. */
-export interface HookOptions {
-  /**
-   * The budget every injecting hook shares, when a call does not give its own. Each hook is still
-   * held to its own `maxTokens` inside it.
-   */
-  contextTokens?: number;
-  /**
-   * Said above the context blocks, when a call does not give its own. Empty says nothing, and the
-   * blocks lead the question on their own.
-   */
-  preface?: string;
-}
-
-/** The settings this module was written with. */
-const HOOK_DEFAULTS: Required<HookOptions> = {
-  contextTokens: HOOK_CONTEXT_TOKENS,
-  preface: HOOK_PREFACE,
-};
+export type HookOptions = Partial<HookSettings>;
 
 /** What is in force now. Read where it is used, so a change applies from the next request. */
-const hookSettings = scoped((): Required<HookOptions> => ({ ...HOOK_DEFAULTS }));
+const hookSettings = scoped((): HookSettings => ({ ...HOOK_DEFAULTS }));
 
 /**
- * The check each hook setting's value must pass, one for every member of `HookOptions`.
+ * The check each hook setting's value must pass, one for every member of `HookSettings`.
  *
  * @remarks
  * A map rather than an object, because the key is whatever a caller's config held and an object
@@ -186,7 +153,7 @@ const USABLE_BY_SETTING: ReadonlyMap<string, (value: unknown) => boolean> = new 
   Object.entries({
     contextTokens: isPositive,
     preface: (value: unknown) => typeof value === 'string',
-  } satisfies Record<keyof HookOptions, (value: unknown) => boolean>),
+  } satisfies Record<keyof HookSettings, (value: unknown) => boolean>),
 );
 
 /**
@@ -217,7 +184,7 @@ const usableHookSetting = (value: unknown, name: string) => USABLE_BY_SETTING.ge
  * `gather` instead, and a `preface` passed to `withContext` or `runAgentLoop`'s hooks wins over
  * this one the same way.
  */
-export function configureHooks(options: HookOptions = {}): Required<HookOptions> {
+export function configureHooks(options: HookOptions = {}): HookSettings {
   return assignSettings(hookSettings(), options, usableHookSetting);
 }
 
@@ -275,7 +242,7 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
  * @param outcomes - What the runners returned. An injecting outcome on an event that cannot inject
  * adds nothing; a failed one is noted wherever it falls, including past the budget.
  * @param [maxTokens] - The budget every block shares. Absent, or not a number above zero, is what
- * `configureHooks` last set — `HOOK_CONTEXT_TOKENS` unless something moved it.
+ * `configureHooks` last set — `HOOK_DEFAULTS.contextTokens` unless something moved it.
  * @returns The blocks joined by a blank line — an empty string when nothing was injected — and the
  * notes in the order of `outcomes`.
  *
@@ -382,22 +349,12 @@ const UUID_DIGEST_CHARS = 12;
  * transcript order. Empty when there is none.
  *
  * @remarks
- * Tool calls and their results are left out. They are the model's working rather than the
- * conversation, and most of a transcript's characters; a memory server that filed them would
- * recall a directory listing ahead of the decision it led to.
- *
- * The uuid is the session, the position and a digest of what was said. Position alone is not stable
- * — a retry cuts the transcript back and writes a new answer at the same index, and a server
- * deduping on it would keep the answer that was thrown away — and text alone would make two
- * identical "ok"s one memory. The same message sent twice, after its exchange and again when it is
- * compacted, is one.
- *
- * That position is the array's, which is the app's only while the two agree. Once a compaction has
- * replaced the head of a request with one summary message, the same message sits at a lower index
- * there than it does in a transcript the app kept whole — so the same exchange, sent after it and
- * again when it is compacted, would arrive under two uuids and be remembered twice. `offset` is
- * what puts the numbering back on the app's own indexes; passing the stored transcript rather than
- * the request avoids the question entirely.
+ * Tool calls and their results are left out: they are the model's working and most of the
+ * characters, and a memory server filing them would recall a directory listing ahead of the
+ * decision it led to. The uuid is the session, the position and a digest of the text, so an answer
+ * a retry replaced at the same index is a new memory, two identical "ok"s are two, and the same
+ * message sent twice is one. The position is the array's, so once a compaction has shifted a
+ * request, `offset` puts the numbering back on the app's own indexes.
  */
 export function turnMessages(
   sessionId: string,
@@ -506,11 +463,12 @@ const tellSafely = (notes: readonly HookNote[], onNote?: OnNote) => {
  * budget is spent in.
  * @param context - What the hooks are told.
  * @param [options] - `signal` is handed to the runner, and should be the exchange's own: a user
- * who stopped the exchange stopped its recall. `onNote` hears each note as the whole is assembled.
+ * who stopped the exchange stopped its recall. `onNote` hears each note as the whole is assembled,
+ * and one it throws on is dropped.
  * `maxTokens` is the shared budget for this request, read as `assembleContext` reads it: absent
  * or unusable is the process's, from `configureHooks`.
  * @returns What `assembleContext` built from every event's outcomes together. Does not reject for a
- * runner that did.
+ * runner or an `onNote` that did.
  *
  * @remarks
  * This is on the path of the first token, so the events run together rather than one after the
@@ -527,9 +485,7 @@ export async function gather(
 ): Promise<Gathered> {
   const outcomes = await Promise.all(events.map((event) => runSafely(run, event, context, signal)));
   const gathered = assembleContext(outcomes.flat(), maxTokens);
-  for (const note of gathered.notes) {
-    onNote?.(note);
-  }
+  tellSafely(gathered.notes, onNote);
   return gathered;
 }
 

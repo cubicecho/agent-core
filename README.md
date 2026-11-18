@@ -27,13 +27,14 @@ only, Node >=22.
 | `stream` | Reads one streamed reply back into a message: token callbacks, tool-call reassembly, a fenced scratchpad taken out of the answer, and the idle watchdog that turns a silent model server into `EndpointSilent`. |
 | `capabilities` | What a model server turned out not to support — and, under it, what one model on that server did not — plus the loop that answers either when it says so. `capabilitiesFor`, `modelCapabilitiesFor`, `negotiate`. |
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
-| `side-task` | One-shot calls that support an exchange without being one — small prompt, short answer, no tools, never worth failing the exchange over. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
+| `side-task` | One-shot calls that support an exchange without being one — small prompt, short answer, no tools, never worth failing the exchange over. Each is one request sent by `runTurn`, as a turn is. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
 | `hooks` | The app's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the exchange's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
 | `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, `stamp` for an app that numbers its own, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per model server, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. And `resolveApiKey`, for a caller deciding which key a model server gets, and `probeEndpoint`, for listing one a form has not saved yet. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its model server reports: `charsPerTokenFor`, `calibrate`. |
 | `continuation` | `continueTurn`: carries on an answer the token ceiling cut off, by prefilling it as a trailing assistant message. |
+| `defaults` | Every number this package chose, grouped by what it tunes: `RETRY_DEFAULTS`, `COMPACTION_DEFAULTS`, `HOOK_DEFAULTS` and the rest, each a frozen object with a `…Settings` type. [Below](#the-numbers-it-was-written-with). |
 | `config` | The structural interfaces every function here asks for, and `normalizeBaseUrl`, the one rule for when two base URLs are one model server. |
 | `run-turn` | `runTurn`: one request with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: one exchange — `runTurn` per turn, the tools between, `load_tools` and preselection handled, until the model stops asking. |
@@ -68,11 +69,11 @@ and nothing is re-sent once the model has started answering.
 
 ```ts
 import {
-  capabilitiesFor, emit, getClient, negotiate, relaxTools, sanitizeTools, streamTurn, timeoutMs,
+  capabilitiesFor, emit, getClient, idleTimeoutMs, negotiate, relaxTools, sanitizeTools, streamTurn,
 } from "@cubicecho/agent-core";
 
 const declared = sanitizeTools(tools);
-const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+const supports = capabilitiesFor(config);
 
 const turn = await negotiate(supports, (supports, produced) =>
   streamTurn(
@@ -83,7 +84,7 @@ const turn = await negotiate(supports, (supports, produced) =>
       ...(supports.usageInStream ? { stream_options: { include_usage: true } } : {}),
       tools: supports.strictSchemas ? declared : relaxTools(declared),
     },
-    { produced, signal, idleMs: timeoutMs(config), onOutput: (text) => emit(runId, { kind: "output", text }) },
+    { produced, signal, idleMs: idleTimeoutMs(config), onOutput: (text) => emit(runId, { kind: "output", text }) },
   ),
 );
 ```
@@ -172,7 +173,7 @@ model writes as an answer; `ALL_FENCES` adds `<thinking>` and `<reasoning>`, whi
 quoting, and is what the side tasks use. Pass `fences: []` to read `content` as all answer. A reply
 cut off inside a fence has an empty `content`, not the scratchpad promoted to one. A template that
 opens `<think>` in the prompt leaves only the closing tag, so everything before it is moved to
-`reasoning` when it arrives; `startInReasoning: true` says so up front, so `onOutput` is never told
+`reasoning` when it arrives; `startInScratchpad: true` says so up front, so `onOutput` is never told
 it at all.
 
 ## What the model refuses, rather than the server
@@ -275,7 +276,7 @@ answer it is continuing joined on, and `runAgentLoop` reads it into a failure's 
 
 `idleMs` is silence, not a deadline: the timer is rearmed on every chunk, so a model that is still
 talking is never cut off however long it takes, and one that has stopped answering raises
-`EndpointSilent` rather than hanging the exchange. `timeoutMs(config)` returns `undefined` for a
+`EndpointSilent` rather than hanging the exchange. `idleTimeoutMs(config)` returns `undefined` for a
 `requestTimeoutSeconds` of zero or absent, which waits forever — what a local model answering slowly
 needs.
 
@@ -283,11 +284,12 @@ The first chunk gets its own allowance, `firstChunkMs`, because the first wait i
 seconds for a long prompt on a local GPU, minutes on a CPU, and longer again when the server is
 loading the model on demand. It holds until a chunk carries something, so an empty
 `{"role":"assistant"}` sent before the prompt is read does not start the idle clock.
-`firstTokenMs(config)` reads `firstTokenSeconds` off the endpoint, and five times
+`firstTokenLimitMs(config)` reads `firstTokenSeconds` off the endpoint, and five times
 `requestTimeoutSeconds` where that is absent. With a watchdog armed, the SDK's own timer is switched
 off for the stream; it runs until the headers arrive, which is the end of prefill, and used to
-abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, side
-tasks and model listings, the same way.
+abandon one at the idle number. `requestTimeoutSeconds` still bounds calls that do not stream, such
+as model listings, the same way. A side task streams, and waits `requestTimeoutSeconds` for its first
+chunk as well as between chunks.
 
 ## Structured side tasks
 
@@ -347,6 +349,36 @@ Nothing is thrown for a cut-off reply, since whether one is still worth keeping 
 call. `askJson` needs no such variant: a reply cut off before its JSON closed does not parse, so it
 comes back `undefined`, as a reply with no JSON in it does.
 
+### How a side task is sent
+
+A side task is one request sent by `runTurn`, the way an exchange's turn is: streamed, negotiated
+past what the model server refuses, sent again when it is lost, waited out while a local server
+loads the model, and measured for the next request's token estimate. What `ask` adds is the body:
+the ceiling and temperature, a reasoning effort, the no-thinking hints, `extraBody`, and
+`askJson`'s `response_format`.
+
+- **A lost request** — a dropped connection, a 429 or 5xx, a model server gone silent — is sent
+  again after a backoff, twice unless `maxRetries` says otherwise. A side task can therefore take
+  longer than one round trip before it fails.
+- **A model still loading** is waited out for up to two minutes, polled without spending a retry,
+  with one notice.
+- **A refusal** is answered by `negotiate` alone. The no-thinking hints (`chat_template_kwargs`) are
+  a droppable field, latched into the model's `refusedFields` when a refusal names them, and the
+  effort is latched or stepped up as an exchange's is. A refusal that names nothing is not guessed
+  at: the side task fails, and `tryAsk` turns that into no answer and a notice.
+
+```ts
+const title = await tryAsk("title", () => ask(config, small, "Name this chat.", first, { onNotice, signal }), {
+  onNotice,
+  signal,
+});                                              // undefined where it failed, after its retries
+```
+
+Before 6.0.0 a side task did not stream, retried nothing, and answered a 400 or 422 that
+`negotiate` could not read by sending it once more without the hints and the effort, latching the
+hints if that got through. Snapshots changed shape with it: 6.0.0 writes version 2, and a version 1
+snapshot from before is not imported, so the latches are learned again.
+
 ## Sizing a request before sending it
 
 `runTurn` will refuse a request that cannot fit rather than spending a round trip finding out:
@@ -374,7 +406,9 @@ Where the listing does not settle it, the server's own API is asked (`servedWind
 (`loaded_context_length`). That covers a model listed with no context window, which is LM Studio, and one
 listed with only `meta.n_ctx_train`, which is llama.cpp. The trained context window differs from the served
 one in the case the guard exists for, a 256k model started at `-c 16384`, so it is used only when
-neither native route gives a number. A server with neither route is latched and not asked again.
+neither native route gives a number. What a native route answers, a context window included, stands
+for `listingMissMs`, so a server restarted with another `-c` is sized by its new one within the
+interval. A server with neither route is latched and not asked again.
 `/api/v0/models` is also dropped on its own: for the life of the process once it answers 404, 405
 or 501, and for `listingMissMs` after any other error. A 200 that is not JSON counts as a missing
 route: it is what a proxy with a web app of its own (llm-router) answers on every path it does not
@@ -452,7 +486,7 @@ image, or outside one to eight characters a token, is not taken.
 caller sizing its own work can use the same number:
 
 ```ts
-const charsPerToken = charsPerTokenFor(capabilitiesFor(config.baseUrl, config.apiKey), config.model);
+const charsPerToken = charsPerTokenFor(capabilitiesFor(config), config.model);
 const plan = planCompaction(messages, { limit, used, charsPerToken });
 ```
 
@@ -724,15 +758,16 @@ if (result.ended) {
 The turn's other calls still run, whichever side of the end the model asked for them and however
 `parallel` batches them: they were asked for in the same reply, and a model that says "write the
 file, then hand off" wants the file written in either order. Where two calls end it, `ended` is
-the first in the order asked. Everything else is a finished exchange's — `usage`, `metrics`,
+the first in the order asked, and an end in the last turn `maxToolIterations` allows resolves too,
+since nothing was left undone. Everything else is a finished exchange's — `usage`, `metrics`,
 `messages`, `artifacts`, the `afterExchange` hooks — with `metrics.outcome` `ended` and a notice
 saying which tool ended it. `turn` is the reply that made the call, so its `content` is whatever
 the model wrote beside its calls, often nothing; the exchange's answer is what the ending tool took.
 The tool, its definition and its wording stay the app's: this is only the exit.
 
-An app's `done` that carries the call — `id`, `name` the tool, `text` the reason — is read by
-`runMetrics` as `ended` too, so the outcome is the same whether it is read off the result or the
-events.
+The exchange's `exchange-end` event carries the call as well — `id`, `name` the tool, `text` the
+reason — and its `outcome` is `ended`, so `runMetrics` reads the same outcome off the events as the
+result has.
 
 Arguments go through `parseToolArguments`, which is lenient where the model's meaning is plain:
 JSON held in a string is opened, and the almost-JSON local models write — single quotes, Python's
@@ -894,7 +929,9 @@ dispatched, get no result and no `tool-result` event, are not counted in `used`,
 nothing after the turn.
 Each is told as a `tool-call` event and to `onToolCall`, then one `wait` event says the exchange is
 waiting. `wait` is not `done`: the run goes on under the same id, and `watch` keeps following it.
-`metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The
+The exchange's `exchange-end` follows the `wait`, with `outcome` `waiting` and the calls' ids in
+`pending`. `metrics.outcome` is `waiting`, and `runMetrics` reads it so until the next exchange
+begins. The
 `afterExchange` hooks are not told, and under `reasoningReplay: "tool-loop"` the scratchpads stay,
 since the tool loop is not over. A wait in the last turn `maxToolIterations` allows resolves like any other.
 
@@ -914,7 +951,7 @@ An app that finds the waiting exchange by the id an answer comes back with, acro
 - **`dedupeToolCalls`.** Never asked of a handed-back call. Two identical ones are both pending,
   each under its own id: only the app knows whether asking twice means twice.
 - **A call that ends the exchange.** The end wins. The calls that would have been handed back are
-  answered `Not run: the run ended first.`, nothing is pending, and the result has `ended`.
+  answered `Not needed: the task finished first.`, nothing is pending, and the result has `ended`.
 - **Arguments that do not parse.** Answered by the loop with the parse error, as always, so the
   model fixes them: a call is handed back only where it would have been dispatched.
 
@@ -1016,7 +1053,7 @@ anything, under its label, with the text inside an `untrusted` fence. The text i
 in the one place a model most takes literally, so it is named rather than folded into the
 operator's prompt: the model can weigh one server's advice against what the user asked, and a
 surprising turn can be traced back to where the instruction came from. A text over
-`maxTokensPerServer` (`SERVER_INSTRUCTION_TOKENS`, 1000, by default; zero keeps it whole) is cut,
+`maxTokensPerServer` (`TOOL_DISCOVERY_DEFAULTS.serverInstructionTokens`, 1000, by default; zero keeps it whole) is cut,
 and the cut is said after the fence.
 
 ```ts
@@ -1145,7 +1182,9 @@ a lesser body and a continuation with the reply so far on the end, and neither i
 reason, prefill, decode and tool time, the slowest turn, mean time to first token, draft
 acceptance, the largest prompt against its context window, turns cut off, tool errors by name, what
 `load_tools` resolved to (`toolsLoaded`, `redundantLoads`, `unknownToolNames`, off each load's
-result as `loads`), and an `outcome` — `answered`, `truncated`, `filtered`, `ended`, `waiting` or `failed`. The loop returns it as `metrics`. Every turn carries its own context
+result as `loads`), and an `outcome`, an `ExchangeOutcome`: `answered`, `truncated`, `filtered`,
+`ended`, `waiting`, `failed` or `stopped`. The loop returns it as `metrics`, where `outcome` is
+always set and is the exchange's own. Every turn carries its own context
 window and every load its own counts, so an app that runs one loop per stage gets the whole run from
 `runMetrics` over all the loops' events, with no per-loop result to merge. It is a sibling of `fold`
 rather than part of it, since `fold`'s blocks are for display and a summary is not one:
@@ -1155,8 +1194,10 @@ const metrics = runMetrics(history(runId), { contextLength: config.contextLength
 ```
 
 Counts are always present; every other field is absent where no turn reported what it is made of.
-What it cannot say: whether a failed run was stopped, errored or ran out of tool iterations, and
-whether the app compacted — neither is in the events.
+`exchanges` counts the `exchange` events, one for each loop and any the app sends of its own, and
+`outcome` is the run's: its last `exchange-end`'s, or `failed` where the app's `done` was not ok
+and that exchange had not already failed or stopped. It is absent while an exchange is going. What
+it cannot say: whether the app compacted, which is not in the events.
 
 `beforeTurn` is handed the transcript before each request and may return a replacement, which is
 where compaction goes (below). Its third argument is `{ used, limit, ledger }` — the prompt the
@@ -1190,7 +1231,7 @@ session.messages.push(
   { role: "user", content: prompt, hookContext: result.context, hookPreface: result.preface },
   ...result.messages.slice(history.length + 1),
 );
-await result.afterTurn; // only if its notes are wanted, or the process is about to exit
+await result.afterExchange; // only if its notes are wanted, or the process is about to exit
 ```
 
 `withContext` with those two arguments builds the question exactly as the loop sent it, whatever
@@ -1198,7 +1239,7 @@ await result.afterTurn; // only if its notes are wanted, or the process is about
 `result.messages` is the transcript the loop was given plus what the exchange added — earlier questions
 as the app passed them, this one as typed — which is why the snippet stores only the new tail.
 
-`afterTurn` on the result is the `afterExchange` hooks' notes as a promise. The loop still returns
+`afterExchange` on the result is the `afterExchange` hooks' notes as a promise. The loop still returns
 without waiting; an app that stores those notes with the exchange, or would otherwise exit before the
 exchange is remembered, awaits it once the answer is out.
 
@@ -1236,7 +1277,7 @@ await runAgentLoop({
 ```
 
 `hooks.fire` says which events the loop fires itself, and it fires no others: `sessionStart` and
-`beforeExchange` gathered before the first request, `beforeCompact` beside each compaction
+`beforeExchange` gathered before the first request, `beforeCompact` ahead of each compaction
 `compact` makes, `afterExchange` once answered. Left out, it is `beforeExchange`, `beforeCompact`
 and `afterExchange`: every event the loop has a point for but `sessionStart`. An app that fires the
 exchange's events around a stage of its own still hands the loop its hooks for compaction:
@@ -1250,7 +1291,7 @@ await runAgentLoop({
 });
 ```
 
-An event left out of `fire` is one the result has nothing for: the result's `afterTurn` is resolved
+An event left out of `fire` is one the result has nothing for: the result's `afterExchange` is resolved
 and empty without `afterExchange`, and `notes` and `context` are empty without an injecting event,
 since the app's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
 loop and are ignored there.
@@ -1296,7 +1337,7 @@ still recognised by the signal the app aborted.
 
 A failure while a turn's tools are running leaves a transcript that can be sent again. The results
 that came back are kept, a call the exchange was stopped during is answered `Stopped before this call
-finished.`, and one the loop never reached `Not run: the run stopped first.` — a call with no
+finished.`, and one the loop never reached `Not run: stopped before this call started.` — a call with no
 result is a transcript a model server refuses. Those are announced through `onMessage` like any other
 result. The reply of a request that was in flight when the exchange stopped or failed — a stop, the
 model server going silent, a stream that broke after its first token — is not in `messages`, because it
@@ -1349,8 +1390,8 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   given. An app that fills these from its settings sends only what was chosen for this call.
 - **The server's work stays on the server.** Compaction, pruning, preselection, on-demand loading
   (tools go out eagerly, so `load_tools` never hides the app's), continuations, recovering calls
-  from the answer's text and the context-window guard are all set aside, with one notice
-  (`REMOTE_AGENT_NOTICE`) naming those the app had asked for. They are ignored rather than refused:
+  from the answer's text, minted call ids and the context-window guard are all set aside, with one
+  notice (`REMOTE_AGENT_NOTICE`) naming those the app had asked for. They are ignored rather than refused:
   the flag comes from the model entry and the options from the app's code, so a refusal would have
   every app branch on it. A session still sends its header, but no llama.cpp slot is probed or
   pinned.
@@ -1363,8 +1404,9 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   `turn`, `thinking`, `output`, `tool-call`, `tool-result` or `usage` of its own: the server already
   tells a handed-back call's `tool-call`, and its `tool-result` when the answer resumes the run, so
   neither is shown twice. The loop's own notices, `input`, and the `artifact` and `server-log` of the
-  app's own dispatches are still said. The server's `done` is not forwarded, since the loop's run
-  goes on past it and its end is the app's to say. `emit` files a forwarded event under the app's
+  app's own dispatches are still said. The server's `exchange`, `exchange-end` and `done` are not
+  forwarded: the loop's own start and end say the app's exchange, and the run's end is the app's to
+  say. A forwarded event that names no exchange gets the loop's `exchange`. `emit` files a forwarded event under the app's
   run and numbering and keeps its `at`; with progress off, the loop says everything itself.
 - **Call ids are kept as the server sent them**, never renamed by `distinctCallIds`, because the
   next request resumes the server's run by them.
@@ -1481,6 +1523,10 @@ vetoes nothing. A compaction passed `forced: true`, because a request was alread
 big, goes ahead regardless: a veto there only trades the summary for a `ContextOverflow`.
 `consult` is the same wait for an app that compacts its own way.
 
+`runAgentLoop({ compact: true })` honours a veto by default: its hooks run ahead of the summary, and
+a veto leaves the exchange uncompacted, with a notice naming the hooks that made it. Pass
+`hooks.honourVeto: false` to run them beside the summary instead and read no veto.
+
 ```ts
 const compacted = await compactTranscript(messages, plan, summarise, {
   hooks: { run, context, onNote, honourVeto: true },
@@ -1509,16 +1555,16 @@ before it with only its tail added.
 const plan = planPrune(messages, config.contextLength ?? 0, { through: stored, used: lastPromptTokens });
 if (plan) {
   stored = plan.through;
-  notice(pruneNotice(plan)); // cleared 4 old tool results (~9,120 tokens) as the window filled
+  notice(pruneNotice(plan)); // cleared 4 old tool results (~9,120 tokens) as the context window filled
 }
 const sent = pruneThrough(messages, stored);
 ```
 
 A plan never moves the boundary backwards and never moves it for nothing. It moves to the earliest
-of the latest `keepLast` (5) results once the context window is past `at` (`COMPACT_AT`,
-compaction's own line) — by the larger of `used` and the estimate, since a report does not count the
-results that came after it — and only when what it clears is at least `minShare` (`PRUNE_SHARE`, a
-tenth) of the context window. `compacted: true`, beside a compaction that has rewritten the head
+of the latest `keepLast` (`PRUNE_DEFAULTS.keepLastResults`, 5) results once the context window is past
+`at` (`COMPACTION_DEFAULTS.compactAtShare`, compaction's own line) — by the larger of `used` and the estimate, since a report does not count the
+results that came after it — and only when what it clears is at least `minShare`
+(`PRUNE_DEFAULTS.minShare`, a tenth) of the context window. `compacted: true`, beside a compaction that has rewritten the head
 anyway, skips both gates: the cache is already lost, so the move is free. `from` leaves out results
 a compaction has already taken out of the request. `at: 0` with a larger `minShare` is a pure
 hysteresis on what is won back.
@@ -1579,7 +1625,8 @@ kept tail alone, with the system prompt, the tool schemas and the summary sittin
 uncounted; given a `target`, the cut is the first user message at which `used`, less what is
 compacted, plus the summary's ceiling (`summaryTokens`, 1024 unless given) is at or under it, and the
 plan's `after` says what that leaves. Where no cut reaches it the plan compacts as far as the last
-user message and `after` says how far short it fell. Without `target` nothing changes.
+user message and `after` says how far short it fell. An earlier summary the new one replaces is not
+credited, so `after` errs high by at most that much. Without `target` nothing changes.
 
 A new epoch starts whenever a request did more than append: a compaction or a prune in `beforeTurn`, a
 system prompt that moved, and a tool array that grew — a `load_tools` in on-demand mode adds a
@@ -1692,12 +1739,23 @@ import { stamp } from "@cubicecho/agent-core";
 const event = stamp(input, runId, ++lastSeq, Date.now()); // an `at` on the input wins
 ```
 
-A run that holds several exchanges, such as a task's stages, says so itself: an `exchange` event as
-each begins (`name` names it), and `exchange` on every event inside it, so a watcher can group the
-run the way the work is written and `fold` never joins text across two of them. `runMetrics` counts
-them as `exchanges`. The loop never sends either. Before 5.0.0 these were the `step` kind and the
-`step` field; `fold`, `runMetrics`, `progressEvent` and `progressEvents` still read events stored
-or relayed that way, under the new names.
+Each exchange says where it starts and ends. `runAgentLoop` sends an `exchange` event first and an
+`exchange-end` last, on every way out: with `outcome` and, where a call ended it, that call, or the
+handed-back calls' ids in `pending`; and just before it throws, with `outcome` `failed`, or
+`stopped` where the app's signal aborted, and the error's message as `text`. Given an `exchange`
+name — a task's stage — it names the start with it and puts it on every event of the exchange that
+names none, so a watcher can group a run of several exchanges the way the work is written and
+`fold` never joins text across two of them. `runMetrics` counts the starts as `exchanges` and reads
+the outcome off the ends. A `wait` stays what keeps a run that handed calls back on the waiting
+clock; its exchange's end follows it.
+
+```ts
+await runAgentLoop({ ...options, exchange: "triage", onEvent: (event) => emit(runId, event) });
+```
+
+Before 5.0.0 these were the `step` kind and the
+`step` field, and since 6.0.0 nothing reads events stored or relayed that way: an app that keeps
+them renames them when it reads them back.
 
 The five numbers behind that — the backlog cap, the slack it is trimmed in batches of, and the
 three deadlines the sweep reaps on (a finished run, an unended one, and one waiting on calls it
@@ -1764,7 +1822,7 @@ app that stores what the user typed never stores the context as something they s
 beside the question instead, and put back on every later request: a question that loses its blocks
 on the next exchange rewrites the prompt from there on, and the server's prefix cache with it.
 `runAgentLoop` hands back `context` and `preface` for the same purpose. Every
-injecting hook shares `HOOK_CONTEXT_TOKENS` (2000) by default, each held to its own `maxTokens`
+injecting hook shares `HOOK_DEFAULTS.contextTokens` (2000) by default, each held to its own `maxTokens`
 inside that, so a generous hook cannot crowd out the conversation it was meant to inform.
 
 The budget is the caller's to move, at either level. `configureHooks` sets it for the process, and
@@ -1783,7 +1841,7 @@ Either one given something that is not a number above zero keeps what was there,
 `configureEvents` does, so a `0` threaded through for "no opinion" does not switch recall off.
 `resetHooks` (and `resetAll`) puts the default back.
 
-The preface said above the blocks moves the same way. `HOOK_PREFACE` names no app, so an app that
+The preface said above the blocks moves the same way. `HOOK_DEFAULTS.preface` names no app, so an app that
 wants its own name says so once with `configureHooks({ preface })`, and a `preface` passed to
 `withContext` (or on `runAgentLoop`'s `hooks`) wins over it for one request. An empty string is a
 preface of nothing — the blocks lead the question on their own, with no blank line above them —
@@ -1836,7 +1894,7 @@ This matters because the three consumers do not agree on the fields. `task_serve
 row has no `contextLength`; `min-agent` spells it `contextLimit` and carries no retry budget.
 A single god interface would have forced two of them to grow columns they have no use for.
 
-The seam is not finished. `timeoutMs` narrows to the one field it reads, but `getClient` still
+The seam is not finished. `idleTimeoutMs` narrows to the one field it reads, but `getClient` still
 asks for the whole of `Endpoint`. `requestTimeoutSeconds` became optional in v2, so a consumer
 with no timeout to give now leaves it out rather than inventing a `0`.
 
@@ -1855,18 +1913,26 @@ const result = await runAgentLoop({ config, messages, dispatch });
 
 It is runtime only. `parseSpec` never reads one, `exportSpec` never writes one, `resolveAgentSpec`
 never produces one, and it is not part of `EndpointIdentity`, `endpointKey` or `endpointId`, so a
-snapshot and a digest are what they were. The app adds it to the resolved endpoint, as it adds the
-key.
+digest is what it was. The app adds it to the resolved endpoint, as it adds the key.
 
-Nothing found through one function answers for another, or for the global `fetch`. Every cache in
-`client.ts`, the client pool and the listings and native-route answers, is held once for the global
-`fetch` and once per function, in a `WeakMap` under the function, so two endpoints with one URL and
-different functions never share a client or a listing, and a function the app drops takes its
-copies with it. An app that makes a function per run makes a client per run too, which is cheap
-when the function is in process. The capability latches, the no-thinking hints among them, stay keyed on the
-URL and the key alone, since they are what a snapshot carries to the next process.
+Nothing found through one function answers for another, or for the global `fetch`. Every cache of a
+model server, the client pool, the listings and native-route answers, the capability latches (the
+no-thinking hints among them) and the calibrated characters per token, is held once for the global
+`fetch` and once per function, in a `WeakMap` under the function. Two endpoints with one URL and
+different functions never share a client, a listing or a refusal, and a function the app drops
+takes its copies with it. An app that makes a function per run makes a client per run too, which is
+cheap when the function is in process, and learns each refusal again per run.
 
-A side task reaches the same function in two ways. `taskCall`, and so the loop's own `preselect` and
+A snapshot cannot hold a function, so `exportCapabilities` and `importCapabilities` take the one to
+read or write the latches for, a whole endpoint being fine, and the global `fetch`'s when given none:
+
+```ts
+importCapabilities(settings.capabilities, config);   // on boot, with this process's `forward`
+settings.capabilities = exportCapabilities(config);  // the latches learned through `forward`
+```
+
+A side task is a streamed request like any other, so a function that answers one in process answers
+it as a stream. It reaches the same function in two ways. `taskCall`, and so the loop's own `preselect` and
 `compact`, gives a task on the agent's model server the agent's `fetch` as it gives it the agent's key.
 A task on another model server is never given it, since an app's function may add that server's
 credentials; an app answering every model server itself sets its function on each task's endpoint:
@@ -1943,7 +2009,9 @@ that is a decision an app makes rather than inherits from a default.
 
 The subpath is separate from the main entry for one reason: `client.ts` and `hooks.ts` import
 `node:crypto`, and `spec.ts` imports only modules that need nothing from Node and import nothing
-themselves, so a browser validating a pasted document in a form can load it. Nothing outside
+themselves, so a browser validating a pasted document in a form can load it. Its entry,
+`src/spec/entry.ts`, is `spec.ts` and `AGENT_DEFAULTS`, the fallbacks `resolveAgentSpec` fills in,
+which live with the other groups in `core/defaults.ts`. Nothing outside
 `src/spec/` imports it — the same direction the config seam runs, which is what lets a document
 travel between apps without the loop growing an opinion about where an agent comes from.
 
@@ -2069,6 +2137,49 @@ await preselect(config, settings.toolSelectModel || settings.model, catalog, pro
 const result = await runAgentLoop({ config, preselect: { keywords: true }, compact: true, ... });
 ```
 
+## The numbers it was written with
+
+Every value here that somebody chose — a limit, a wait, a share of the context window, a retry
+count — is in one module, `src/core/defaults.ts`, as a member of a group named for what it tunes.
+Each group is a frozen object of plain JSON values with a written-out `…Settings` type, and all of
+them are exported, so "what can be changed about compaction?" has one answer:
+
+```ts
+import { configureEvents, EVENT_BUS_DEFAULTS } from "@cubicecho/agent-core";
+
+// Tool calls that take an hour want twice the unended retention, whatever the default is.
+configureEvents({ retainUnendedMs: EVENT_BUS_DEFAULTS.retainUnendedMs * 2 });
+```
+
+| Group | Tunes |
+| --- | --- |
+| `CLIENT_POOL_DEFAULTS` | the client pool: `maxClients`, `listingMissMs`, `lookupTimeoutMs` |
+| `MODEL_SERVER_DEFAULTS` | waiting on a model server: the first token, the probe's listing, a model loading |
+| `RETRY_DEFAULTS` | the backoff between attempts at a lost request |
+| `REQUEST_SIZE_DEFAULTS` | sizing a request with no tokenizer: the ratio, its calibration, the smallest window believed |
+| `CONTINUATION_DEFAULTS` | carrying on a cut-off answer |
+| `TOOL_CALL_DEFAULTS` | quoting a call back, and minting an id for one |
+| `SIDE_TASK_DEFAULTS` | a side task's ceiling, temperature and retries |
+| `PRESELECT_DEFAULTS` | choosing tools before an exchange, by model or by keyword |
+| `TOOL_DISCOVERY_DEFAULTS` | how many tools a load takes and a conversation carries, and a server's instruction budget |
+| `HOOK_DEFAULTS` | the context hooks share, and the preface above it |
+| `COMPACTION_DEFAULTS` | when to compact, how much to keep, what a summary may cost |
+| `PRUNE_DEFAULTS` | what a prune leaves whole, and what it has to win back |
+| `TOKEN_LEDGER_DEFAULTS` | telling a kept prompt cache from a broken one |
+| `EVENT_BUS_DEFAULTS` | what the bus keeps of a run, and for how long |
+| `AGENT_DEFAULTS` | what `resolveAgentSpec` gives a field no layer set (also on `@cubicecho/agent-core/spec`) |
+
+Nothing reads a group as a switch. A function a caller varies takes the setting as an option, and
+its default is the member: `ask`'s `maxTokens` is `SIDE_TASK_DEFAULTS.maxTokens` until a call says
+otherwise. The three process-wide ones are moved by `configureClients`, `configureEvents` and
+`configureHooks` (or a runtime's options), which take a `Partial` of the group's settings and hand
+back what is in force. A group itself never changes while the program runs. A unit is in each
+member's name, in the unit a person would edit, except where an app already sets the value by name:
+`retainMs` and `listingMissMs` stayed in milliseconds rather than break every `configureEvents` call.
+
+The facts that could not be otherwise, `MS_PER_SECOND` and `MS_PER_MINUTE`, are beside it in
+`src/core/consts.ts`, and are not exported.
+
 ## What is kept for the life of the process
 
 Three caches outlive any one run: the `OpenAI` clients, the model listings, and the latched
@@ -2076,9 +2187,11 @@ capabilities, which include the models that refused a side task's no-thinking hi
 characters per token each model was measured at, is keyed on the model server's capabilities object, so
 it goes with them. All three are
 held once per runtime — once per process, unless you make another, [below](#a-runtime-of-its-own)
-— and keyed on the same notion of a model server — its base URL and its API key — and the clients' key carries the request
-timeout as well, since that changes how a request is sent. The clients and listings are held apart
-per `Endpoint.fetch` as well, [above](#a-model-server-answered-in-process).
+— and keyed on the same notion of a model server: its base URL as `baseUrlKey` writes it, its API
+key, and its `Endpoint.fetch` ([above](#a-model-server-answered-in-process)). The clients' key
+carries the request timeout as well, since that changes how a request is sent. The slots a session
+is pinned to are the one exception: they are one server's physical caches, so they are kept per URL
+and model alone.
 
 **They are keyed per deployment, not per request.** What belongs in them is a model server an
 operator configured: a settings row, an agent definition, an environment variable. Everything
@@ -2139,7 +2252,9 @@ settings.capabilities = exportCapabilities();       // on shutdown, or after a n
 ```
 
 A snapshot names model servers by `endpointId`, a SHA-256 digest of the URL and key, so it can be
-written to a settings row or a file without a credential going with it. Importing merges and only
+written to a settings row or a file without a credential going with it. It holds the latches of the
+model servers that send through the global `fetch`; an app with a function of its own passes it on
+both sides ([A model server answered in process](#a-model-server-answered-in-process)). Importing merges and only
 latches off, the same as a refusal does. A snapshot of another `version` is ignored. How old is too
 old is left to the consumer, who can read `savedAt` first: a server upgraded between boots may
 accept what it used to refuse, and nothing latched ever unlatches on its own.
@@ -2150,7 +2265,7 @@ request until something forgets what it refused, and `resetCapabilities` takes t
 forget:
 
 ```ts
-resetCapabilities({ baseUrl: row.baseUrl, apiKey: row.apiKey });  // this one changed
+resetCapabilities(row);                                           // this one changed, through its fetch
 expireCapabilities(6 * 60 * 60_000);                              // anything half a day old
 ```
 

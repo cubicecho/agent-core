@@ -1,7 +1,12 @@
+import type { Endpoint } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
 import {
   capabilitiesById,
   knownCapabilities,
+  latchEfforts,
+  latchEndpoint,
+  latchFields,
+  latchModel,
   MODEL_FLAGS,
   modelCapabilitiesFor,
   OPTIMISTIC_MODEL,
@@ -17,7 +22,7 @@ import {
  */
 
 /** The version `importCapabilities` accepts. Raised when what is latched changes shape. */
-export const CAPABILITY_SNAPSHOT_VERSION = 1;
+export const CAPABILITY_SNAPSHOT_VERSION = 2;
 
 /** What one model on a model server refused. `true` is not refused, as on `ModelCapabilities`. */
 export interface ModelSnapshot {
@@ -41,8 +46,6 @@ export interface ModelSnapshot {
    * from before it was latched lacks it, which `importCapabilities` reads as not refused.
    */
   multiCallMessages: boolean;
-  /** Takes the no-thinking hints `ask` sends. */
-  thinkingHints: boolean;
   /**
    * Efforts refused by value rather than by field, so a restart does not spend a request per rung
    * walking the ladder again. Absent in a snapshot taken before they were latched, which reads as
@@ -98,39 +101,35 @@ const refusedAnything = (model: ModelSnapshot) =>
   MODEL_FLAGS.some((flag) => !model[flag]) || model.refusedFields.length > 0 || (model.refusedEfforts?.length ?? 0) > 0;
 
 /**
- * Latches every string in a stored list into a live set, skipping what is not a list of them.
+ * The strings in a stored list, skipping what is not a list of them.
  *
- * @param held - The live set. Written to, and only ever added to.
- * @param stored - The list as the snapshot holds it. Anything but an array is skipped whole, and
- * an entry that is not a string is skipped on its own.
+ * @param stored - The list as the snapshot holds it.
+ * @returns Its strings, in order. Anything but an array reads as none, and an entry that is not a
+ * string is skipped on its own.
  */
-const latchInto = (held: Set<string>, stored: unknown) => {
-  if (!Array.isArray(stored)) {
-    return;
-  }
-  for (const value of stored) {
-    if (typeof value === 'string') {
-      held.add(value);
-    }
-  }
-};
+const storedStrings = (stored: unknown): string[] =>
+  Array.isArray(stored) ? stored.filter((value) => typeof value === 'string') : [];
 
 /**
- * Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
+ * Every refusal this process has latched through one `fetch`, as a JSON-safe blob to store and hand
+ * back on boot.
  *
+ * @param [through] - Read for `fetch` alone: the latches of the model servers that send through
+ * it, absent being the global `fetch`. A whole `Endpoint` will do.
  * @returns A fresh object that shares nothing with the live latches, its lists copied and the two
  * refused ones sorted.
  *
  * @remarks
- * Covers what `negotiate` latches on model servers and models and the models `ask` found refusing
- * the no-thinking hints. Only what was actually refused is in it, so a snapshot of a process that
- * met no refusals has no model servers. Model servers are named by digest rather than URL and key,
- * since the blob is meant to be written somewhere and a key must not be written with it. Each
- * carries the `since` it was learned at, so importing it does not make an old latch young again.
+ * Covers what `negotiate` latches on model servers and models, the no-thinking hints among the
+ * refused fields. Only what was actually refused is in it. Model servers are named by digest rather
+ * than URL and key, since a key must not be written with the blob, and each carries the `since` it
+ * was learned at. A function cannot be written down, so the blob does not say which `fetch` it was
+ * taken through: an app whose model servers send through one of its own exports and imports with
+ * the same function on each side, and the latches of any other function are not in it.
  */
-export function exportCapabilities(): CapabilitySnapshot {
+export function exportCapabilities(through: Pick<Endpoint, 'fetch'> = {}): CapabilitySnapshot {
   const endpoints: Record<string, EndpointSnapshot> = {};
-  for (const [id, supports] of knownCapabilities()) {
+  for (const [id, supports] of knownCapabilities(through.fetch)) {
     const models: Record<string, ModelSnapshot> = {};
     for (const [name, refused] of supports.models) {
       const model = optimisticModel();
@@ -148,7 +147,9 @@ export function exportCapabilities(): CapabilitySnapshot {
         models[name] = model;
       }
     }
-    if (!supports.strictSchemas || !supports.usageInStream || Object.keys(models).length) {
+    const hasRefusal =
+      supports.strictSchemas === false || supports.usageInStream === false || Object.keys(models).length > 0;
+    if (hasRefusal) {
       endpoints[id] = {
         strictSchemas: supports.strictSchemas,
         usageInStream: supports.usageInStream,
@@ -165,6 +166,8 @@ export function exportCapabilities(): CapabilitySnapshot {
  *
  * @param snapshot - What `exportCapabilities` returned, as stored. Read defensively: a field of the
  * wrong type is skipped rather than trusted.
+ * @param [through] - Read for `fetch` alone: the function whose model servers the latches are for,
+ * absent being the global `fetch`, as `exportCapabilities` was given it.
  * @returns Whether the snapshot was of this version and applied.
  *
  * @remarks
@@ -172,10 +175,9 @@ export function exportCapabilities(): CapabilitySnapshot {
  * off whatever the snapshot says, and one the snapshot has off is turned off. A snapshot of another
  * version, or anything that is not one, is ignored — a stale shape costs the refused requests it
  * would have saved, which is what a restart cost before. How old is too old is the consumer's call,
- * made on `savedAt` before importing, or afterwards per model server with `expireCapabilities`,
- * since a server behind a URL can be upgraded between boots.
+ * made on `savedAt` before importing, or afterwards with `expireCapabilities`.
  */
-export function importCapabilities(snapshot: unknown): boolean {
+export function importCapabilities(snapshot: unknown, through: Pick<Endpoint, 'fetch'> = {}): boolean {
   if (!isRecord(snapshot) || snapshot.version !== CAPABILITY_SNAPSHOT_VERSION) {
     return false;
   }
@@ -186,12 +188,12 @@ export function importCapabilities(snapshot: unknown): boolean {
     if (!isRecord(endpoint)) {
       continue;
     }
-    const supports = capabilitiesById(id);
+    const supports = capabilitiesById(id, through.fetch);
     if (endpoint.strictSchemas === false) {
-      supports.strictSchemas = false;
+      latchEndpoint(supports, 'strictSchemas');
     }
     if (endpoint.usageInStream === false) {
-      supports.usageInStream = false;
+      latchEndpoint(supports, 'usageInStream');
     }
     // Older of the two, so a snapshot ages an entry and never rejuvenates one: importing must not
     // be a way to keep a latch from ever reaching `expireCapabilities`.
@@ -208,19 +210,14 @@ export function importCapabilities(snapshot: unknown): boolean {
       const refused = modelCapabilitiesFor(supports, name);
       for (const flag of MODEL_FLAGS) {
         if (model[flag] === false) {
-          refused[flag] = false;
+          latchModel(refused, flag);
         }
       }
-      latchInto(refused.refusedEfforts, model.refusedEfforts);
       // Replaced rather than merged: two lists of what one model takes are two readings of the
       // same fact, and the stored one is at least as recent as an empty absent.
-      if (Array.isArray(model.supportedEfforts)) {
-        const listed = model.supportedEfforts.filter((value) => typeof value === 'string');
-        if (listed.length) {
-          refused.supportedEfforts = listed;
-        }
-      }
-      latchInto(refused.refusedFields, model.refusedFields);
+      const listed = storedStrings(model.supportedEfforts);
+      latchEfforts(refused, storedStrings(model.refusedEfforts), listed.length ? listed : undefined);
+      latchFields(refused, storedStrings(model.refusedFields));
     }
   }
   return true;

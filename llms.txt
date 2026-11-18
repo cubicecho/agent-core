@@ -14,14 +14,11 @@ Full prose, worked examples and the reasoning behind each seam are in README.md;
 Keeping a long exchange inside its context window: stale tool results cleared, and the oldest stretch compacted into a summary the model writes itself.
 
 - `applyCompaction` — The transcript as the model server should see it: the compacted head replaced by its summary.
-- `COMPACT_AT` — The fraction of the context window in use before a summary is worth its own round trip.
 - `CompactionOptions` (type) — What `planCompaction` takes.
 - `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
 - `CompactionRecord` (type) — One compaction, as an app that keeps its transcript append-only stores it.
 - `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
 - `compactTranscript` — The transcript with the plan's stretch replaced by its summary, as `applyCompaction` writes it.
-- `KEEP_RATIO` — The fraction of the context window the kept tail may fill, leaving room for the exchange to grow again.
-- `PRUNE_SHARE` — The share of the context window a prune has to win back on its own before it is worth the prompt cache it costs.
 - `PruneOptions` (type) — What `pruneToolResults` takes.
 - `PrunePlan` (type) — Where `planPrune` puts the boundary, and what moving it there clears.
 - `PrunePlanOptions` (type) — What `planPrune` takes beside the transcript and the context window.
@@ -56,7 +53,7 @@ What this package needs to know about a caller's configuration.
 
 - `AgentConfig` (type) — A whole agent configuration — every part, plus the two fields that belong to no group.
 - `Endpoint` (type) — Where to send a request and how long to wait.
-- `EndpointIdentity` (type) — What makes a model server the one it is: where it lives and whose key reaches it.
+- `EndpointIdentity` (type) — What makes a model server the one it is, as far as can be written down: where it lives and whose key reaches it.
 - `ModelParams` (type) — What to ask the model for.
 - `normalizeBaseUrl` — A base URL worth storing: http or https, no credentials, query or fragment, no trailing slash.
 - `ReasoningReplay` — Which assistant messages an exchange writes the model's scratchpad onto, under the field it arrived in.
@@ -65,13 +62,48 @@ What this package needs to know about a caller's configuration.
 - `ToolDiscovery` — How tool definitions reach the model.
 - `ToolPolicy` (type) — How tools reach the model, and how long it may keep calling them.
 
+### defaults
+
+Every value this package chose where another choice would still work, grouped by what it tunes.
+
+- `AGENT_DEFAULTS` — What `resolveAgentSpec` gives a field no layer set.
+- `AgentSettings` (type) — What an agent document falls back to where no layer said anything at all, as `resolveAgentSpec` resolves it.
+- `CLIENT_POOL_DEFAULTS` — The bounds the client pool was written with, until `configureClients` moves them.
+- `ClientPoolSettings` (type) — The client pool: how many model servers' clients are kept, and how long what they said is believed.
+- `COMPACTION_DEFAULTS` — When and how far a transcript is compacted, where the caller does not say.
+- `CONTINUATION_DEFAULTS` — How far `continueTurn` carries an answer on, and how it tells a server that started over.
+- `CompactionSettings` (type) — Compaction: the oldest stretch of a transcript folded into a summary the model writes itself.
+- `ContinuationSettings` (type) — Carrying on a reply that stopped at its ceiling mid-answer.
+- `EVENT_BUS_DEFAULTS` — The numbers a run of the shape the bus was written for wants, until `configureEvents` moves them.
+- `EventBusSettings` (type) — The event bus: what it keeps of a run, and for how long.
+- `HOOK_DEFAULTS` — The hook settings this package was written with, until `configureHooks` moves them.
+- `HookSettings` (type) — Hooks: what the context they inject is held to.
+- `MODEL_SERVER_DEFAULTS` — The waits the model server code was written with.
+- `ModelServerSettings` (type) — Waiting on a model server: for its first token, for its listing, and for a model to load.
+- `PRESELECT_DEFAULTS` — How `preselect` and `preselectByKeywords` choose, where their caller does not say.
+- `PRUNE_DEFAULTS` — What a prune leaves whole, where the caller does not say.
+- `PreselectSettings` (type) — Choosing an exchange's tools before it starts, by a small model or by the request's own words.
+- `PruneSettings` (type) — Pruning: old tool results in a transcript replaced by a one-line stub.
+- `REQUEST_SIZE_DEFAULTS` — The ratio a request is sized by, and the bounds a measured one is held to.
+- `RETRY_DEFAULTS` — The backoff `backoffMs` was written with.
+- `RequestSizeSettings` (type) — Sizing a request against the context window, with no tokenizer to hand.
+- `RetrySettings` (type) — Resending a request that was lost: how long to wait between attempts.
+- `SIDE_TASK_DEFAULTS` — What `ask`, `askJson` and the side tasks built on them send where their caller does not say.
+- `SideTaskSettings` (type) — A side task: one short call that supports an exchange without being one.
+- `TOKEN_LEDGER_DEFAULTS` — How the ledger tells a kept cache from a broken one.
+- `TOOL_CALL_DEFAULTS` — How much of a call is quoted back, and how hard an unused id is looked for.
+- `TOOL_DISCOVERY_DEFAULTS` — The caps on-demand tool loading was written with.
+- `TokenLedgerSettings` (type) — The token ledger: what each request cost, and whether its prompt cache held.
+- `ToolCallSettings` (type) — Reading a model's tool calls, and reporting them to a watcher.
+- `ToolDiscoverySettings` (type) — The tools the model is shown: how many it may pull in, keep, and read about.
+
 ### calibration
 
 How many characters a token is worth on one model, learned from what its model server reports.
 
 - `calibrate` — Takes one reading from a request that was answered, so the next one to this model is sized by it.
-- `charsPerTokenFor` — The characters per token to size a request to this model with, four until a turn has reported one.
-- `resetCalibration` — Forgets every reading, so the next request is sized at `CHARS_PER_TOKEN` again.
+- `charsPerTokenFor` — The characters per token to size a request to this model with, `REQUEST_SIZE_DEFAULTS.charsPerToken` until a turn has reported one.
+- `resetCalibration` — Forgets every reading, so the next request is sized at `REQUEST_SIZE_DEFAULTS.charsPerToken` again.
 
 ### capabilities
 
@@ -94,14 +126,15 @@ What a model server turned out not to support, and answering it when it says so.
 
 ### client
 
-- `ClientPoolOptions` (type) — What the client pool is held to across a process.
+- `ClientPoolOptions` (type) — What the client pool may be told to change, across a process: any of `ClientPoolSettings`, the rest left as they are.
 - `configureClients` — Changes what the client pool is held to, for a process whose model servers are not shaped like the deployments these defaults were chosen for.
 - `contextLimitFor` — How much a model will read, in tokens.
 - `EndpointProbeError` — `probeEndpoint` could not list a model server's models; `kind` says why.
 - `endpointId` — `endpointKey` hashed, for the remembered facts that can leave the process.
-- `endpointKey` — What counts as one model server, everywhere in this package that has to remember something about one — the model listings directly, and `capabilities`, the no-thinking hints among them, through its digest `endpointId`.
-- `firstTokenMs` — The wait for a streamed reply's first chunk, in the SDK's spelling: `undefined` is no limit.
+- `endpointKey` — What counts as one model server inside each `perFetch` copy, everywhere in this package that remembers something about one: the clients, the listings and served windows, and, through its digest `endpointId`, the capability latches and calibration.
+- `firstTokenLimitMs` — The wait for a streamed reply's first chunk, in the SDK's spelling: `undefined` is no limit.
 - `getClient` — The client for a model server, built once and kept.
+- `idleTimeoutMs` — A model server's idle timeout, `requestTimeoutSeconds`, in the SDK's spelling: milliseconds, `undefined` for no limit.
 - `LookupOptions` (type) — What a lookup takes besides the server: `listModels`, `servedWindow` and `contextLimitFor`.
 - `listModels` — Asks a model server what it serves, and remembers the answer.
 - `ModelInfo` (type) — A model a server lists, and what it says the model will read.
@@ -113,7 +146,6 @@ What a model server turned out not to support, and answering it when it says so.
 - `resolveApiKey` — The key to send, where a model server may inherit one from the settings it overrides.
 - `servedSlots` — How many slots a llama.cpp server runs a model in, for pinning a session to one of them.
 - `servedWindow` — The context window a local server's own API says it is serving a model in, for the servers whose listing does not say.
-- `timeoutMs` — A model server's request timeout in the SDK's spelling: milliseconds, `undefined` for no limit.
 
 ### schema-compat
 
@@ -153,12 +185,10 @@ Lifecycle hooks, from the app's side: what a session looks like to them, where t
 - `consult` — Runs an event's hooks and waits for their say, for an app that will hold off when one of them vetoes.
 - `Gathered` (type) — The context a set of outcomes adds to a request, and a note for each hook worth mentioning.
 - `gather` — Runs the hooks ahead of a request and builds what they add to it.
-- `HOOK_CONTEXT_TOKENS` — The most context all of a request's hooks add between them by default, in estimated tokens.
-- `HOOK_PREFACE` — Said once, above the blocks, so the model reads them as background rather than instructions.
 - `HookContext` (type) — What an app knows at an event.
 - `HookMessage` (type) — One message of a session as a hook is handed it.
 - `HookNote` (type) — One hook's line for whoever is watching: the context it added, or why it added none.
-- `HookOptions` (type) — What hooks are held to across a process.
+- `HookOptions` (type) — What hooks may be told to change, across a process: any of `HookSettings`, the rest left as they are.
 - `HookOutcome` (type) — What one hook did.
 - `HookRunner` (type) — Runs one event's hooks.
 - `notify` — Runs the hooks for an event that reads what happened and adds nothing to a request.
@@ -178,7 +208,6 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first turn like any other.
 - `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first turn the shortlist alone.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per turn, the tools it asks for between them, until a reply asks for none or a call's answer ends the exchange.
-- `StepWindow` (type) — The old name of `TurnWindow`.
 - `TurnWindow` (type) — How full the context window is as a turn is about to be sent, as `beforeTurn` is told it.
 - `WrittenMessage` (type) — What `onMessage` is handed beside an assistant message the model wrote: that message as the model produced it.
 
@@ -217,7 +246,8 @@ What the loop and a dispatcher say to each other: the call it is handed, the ans
 What a run is doing, while it is doing it.
 
 - `configureEvents` — Changes what the bus keeps, for a process whose runs are not shaped like the ones these defaults were chosen for.
-- `EventBusOptions` (type) — What the bus keeps and for how long.
+- `EventBusOptions` (type) — What the bus may be told to change, across a process: any of `EventBusSettings`, the rest left as they are.
+- `ExchangeOutcome` — How an exchange ended, as its result says or as `runMetrics` reads it off a run's events.
 - `emit` — Records one event and hands it to everyone watching that run.
 - `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
 - `fold` — A run's events with each stretch of `thinking` or of `output` joined into one block, for a reader that takes a run in snapshots.
@@ -228,7 +258,6 @@ What a run is doing, while it is doing it.
 - `RunEventKind` — Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it.
 - `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
 - `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
-- `RunOutcome` — How an exchange ended, as its result says or as `runMetrics` reads it off a run's events.
 - `RunUsage` (type) — What an exchange has spent, counted from the start of the exchange rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
 - `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
 - `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
@@ -294,7 +323,7 @@ What model servers and models refused, carried across a restart.
 - `CAPABILITY_SNAPSHOT_VERSION` — The version `importCapabilities` accepts.
 - `CapabilitySnapshot` (type) — Every latched refusal in the process, JSON-safe.
 - `EndpointSnapshot` (type) — What one model server refused, and under it what each of its models did.
-- `exportCapabilities` — Every refusal this process has latched, as a JSON-safe blob to store and hand back on boot.
+- `exportCapabilities` — Every refusal this process has latched through one `fetch`, as a JSON-safe blob to store and hand back on boot.
 - `importCapabilities` — Latches what a stored snapshot says was refused, on top of whatever this process has learned.
 - `ModelSnapshot` (type) — What one model on a model server refused.
 
@@ -332,7 +361,6 @@ A JSON document that defines an agent, and the rules for reading one.
 - `parseSpec` — Reads a document, dropping what it cannot use and refusing only what it cannot identify.
 - `REF_FILE` — The `ref.type` of a prompt part whose text is in a file.
 - `REF_URL` — The `ref.type` of a prompt part whose text is behind a URL.
-- `RESOLVED_DEFAULTS` — What a field falls back to when no layer said anything at all.
 - `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the app's to act on.
 - `ResolvedTask` (type) — One side task, resolved: a model, and the model server it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
@@ -359,7 +387,6 @@ How an exchange finds its tools: every definition each time, loaded from the cat
 
 ### instructions
 
-- `SERVER_INSTRUCTION_TOKENS` — The most of one server's instructions the block carries by default, in estimated tokens.
 - `ServerInstructionsOptions` (type) — How `serverInstructionsPrompt` cuts the text, and what `runAgentLoop`'s `serverInstructions` takes.
 - `serverInstructionsPrompt` — The connected servers' own instructions, as a block for the system prompt.
 
@@ -458,7 +485,6 @@ Everything about a request failing that is not about what the request said.
 - `isModelLoading` — Whether a failure is a local server still loading the model, rather than one failing to serve.
 - `isOverflow` — Whether a refusal means the request was too big, rather than merely refused.
 - `isTransient` — Whether a failed request is worth trying again.
-- `SMALLEST_LIKELY_WINDOW` — The smallest context window worth believing in, and the floor under `runTurn`'s guard.
 
 ### stream
 
@@ -505,10 +531,10 @@ Telling a model's scratchpad from its answer when both arrive in `content`.
 
 - `ContextBreakdown` (type) — What a request is made of, by the part of it a consumer can actually do something about.
 - `ContextBreakdownOptions` (type) — What `contextTokens` takes besides the request.
-- `compact` — A token count as a message shows it: 1234 → "1.2k".
 - `contextChars` — What each part of a request is worth in characters, by the same walk `requestTokens` divides.
 - `contextTokens` — What each part of a request costs the context window, in tokens, adding up to the whole.
 - `estimateTokens` — Rough token count.
+- `formatTokens` — A token count as a message shows it: 1234 → "1.2k".
 - `messageTokens` — One message's estimated tokens, by the same count `requestTokens` sums for a whole request.
 - `requestChars` — How many characters a request is worth: the walk `requestTokens` divides, without the division.
 - `requestTokens` — What this request will cost the context window, in tokens, near enough.

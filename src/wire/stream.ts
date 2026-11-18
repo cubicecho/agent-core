@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
+import { MS_PER_SECOND } from '../core/consts.ts';
 import { isAbsent, isRecord } from '../core/guards.ts';
-import { MS_PER_SECOND } from '../core/platform.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { EndpointSilent } from './retry.ts';
 import { DEFAULT_FENCES, type Fence, FenceSplitter, SPLIT_REASONING, type Split } from './thinking.ts';
@@ -312,6 +312,10 @@ export interface Turn {
    * @remarks
    * Kept because some models want it back on the assistant message: `runAgentLoop` writes it
    * there as `reasoningReplay` says, under `reasoningField`.
+   *
+   * Field and fenced reasoning are joined in the order they arrived, with one exception. Where a
+   * closing fence with no opening one moves earlier answer text into the scratchpad
+   * (`FenceSplitter`), that text lands after any field reasoning that arrived before the close.
    */
   reasoning: string;
   /**
@@ -544,7 +548,8 @@ function assembledCalls(calls: readonly PartialCall[], mint: CallIdMinter): Tool
     // A server that streams a call without an id still needs one for the result to answer,
     // and two calls it put under one index must not be answered as one.
     const isFree = call.id !== '' && taken.has(call.id) === false;
-    if (isFree === false && call.minted === '') {
+    const needsMintedId = isFree === false && call.minted === '';
+    if (needsMintedId) {
       call.minted = freshCallId(taken, mint);
     }
     const id = isFree ? call.id : call.minted;
@@ -633,7 +638,8 @@ function partialTurn(
   calls: readonly PartialCall[],
   mint: CallIdMinter,
 ): PartialTurn | undefined {
-  if (content === '' && reasoning === '' && calls.length === 0) {
+  const isEmpty = content === '' && reasoning === '' && calls.length === 0;
+  if (isEmpty) {
     return undefined;
   }
   return {
@@ -649,7 +655,7 @@ export interface StreamTurnOptions {
   signal?: AbortSignal;
   /**
    * Silence allowed before the request is given up on. Zero or undefined waits forever, which
-   * is what `timeoutMs` means by a timeout of zero and what a local model answering slowly
+   * is what `idleTimeoutMs` means by a timeout of zero and what a local model answering slowly
    * needs.
    */
   idleMs?: number;
@@ -660,7 +666,7 @@ export interface StreamTurnOptions {
    *
    * @remarks
    * The first wait is prefill, or a server loading the model, and is routinely many times the
-   * gap between tokens. See `Endpoint.firstTokenSeconds` and `firstTokenMs`.
+   * gap between tokens. See `Endpoint.firstTokenSeconds` and `firstTokenLimitMs`.
    */
   firstChunkMs?: number;
   /** Set by the first chunk that carries anything, so a failed call knows if it can be retried. */
@@ -686,7 +692,7 @@ export interface StreamTurnOptions {
    * Without this the scratchpad is still moved out of `content` once the closing tag arrives,
    * but `onOutput` will have been told it first.
    */
-  startInReasoning?: boolean;
+  startInScratchpad?: boolean;
   /** The model's scratchpad, as it arrives, from its own field or from a fence in `content`. */
   onThinking?: (delta: string) => void;
   /** The model's answer, as it arrives. */
@@ -747,7 +753,7 @@ export async function streamTurn(
     produced,
     inFlight,
     fences = DEFAULT_FENCES,
-    startInReasoning,
+    startInScratchpad,
     onThinking,
     onOutput,
     onChunk,
@@ -811,11 +817,12 @@ export async function streamTurn(
     });
     // Both kinds of scratchpad in the order they arrived: the field's as it comes, the fenced
     // kind as the splitter settles it, including answer it moves to the scratchpad on a lone close.
+    // That moved answer is appended when the close arrives, after any field reasoning before it.
     let reasoning = '';
     let fenced = 0;
     let reasoningField: ReasoningField | undefined;
     const details: ReasoningDetail[] = [];
-    const splitter = new FenceSplitter(fences, { startInside: startInReasoning });
+    const splitter = new FenceSplitter(fences, { startInScratchpad });
     const report = (parts: Split[]) => {
       reasoning += splitter.reasoning.slice(fenced);
       fenced = splitter.reasoning.length;
@@ -870,13 +877,8 @@ export async function streamTurn(
       // OpenRouter sends these beside `reasoning`, which already carries their text for the
       // watcher, so they are kept to send back and are not reported a second time.
       const blocks = Array.isArray(delta.reasoning_details) ? delta.reasoning_details.filter(isRecord) : [];
-      // Latched on what the chunk carried, not on its having arrived. Most OpenAI-compatible
-      // servers open a stream with a content-free `{"role":"assistant"}` before the first
-      // token; latching on that made a model server that primes and then wedges unrepeatable,
-      // which is exactly the case the watchdog raises `EndpointSilent` for. Tool-call
-      // fragments count even though no callback reports them: a partial call is state the reply
-      // has accumulated, and losing a retry is the safer half of that trade. Set before the
-      // callbacks, so a watcher that throws mid-token cannot be told the same token twice.
+      // Latched on what the chunk carried, not on its arrival, so a content-free opening chunk keeps the
+      // retry; a partial tool call counts, and it is set before the callbacks so no token is told twice.
       const carried = Boolean(thinking || delta.content || delta.tool_calls?.length || blocks.length);
       if (carried && !talking) {
         rearm(true);

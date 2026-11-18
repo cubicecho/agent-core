@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CLIENT_POOL_DEFAULTS, EVENT_BUS_DEFAULTS, HOOK_DEFAULTS } from '../../src/core/defaults.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { type Create, endpoint, reply, says } from '../helpers.ts';
@@ -22,13 +23,20 @@ const OpenAI = (await import('openai')).default;
 const { configureClients, getClient } = await import('../../src/endpoint/client.ts');
 const { capabilitiesFor } = await import('../../src/endpoint/capabilities.ts');
 const { configureEvents, emit, history } = await import('../../src/run/events.ts');
-const { configureHooks, HOOK_PREFACE, withContext } = await import('../../src/hooks/hooks.ts');
+const { configureHooks, withContext } = await import('../../src/hooks/hooks.ts');
 const { ask } = await import('../../src/turn/side-task.ts');
 const { resetAll } = await import('../../src/runtime/reset.ts');
 const { charsPerTokenFor } = await import('../../src/endpoint/calibration.ts');
 const { createRuntime, defaultRuntime } = await import('../../src/runtime/runtime.ts');
 
-const refusal = () => new OpenAI.APIError(400, { error: {} }, 'rejected', undefined);
+/** The no-thinking hints refused by name. Built here, since this file mocks the SDK whole. */
+const refusal = () =>
+  new OpenAI.APIError(
+    400,
+    { message: 'Unrecognized request argument supplied: chat_template_kwargs' },
+    undefined,
+    undefined,
+  );
 /** Whether the no-thinking hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
 const body = {
@@ -55,10 +63,10 @@ describe('createRuntime', () => {
   it('keeps what an endpoint refused to itself', () => {
     const one = createRuntime();
     const two = createRuntime();
-    one.capabilitiesFor(endpoint.baseUrl).usageInStream = false;
-    expect(one.capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(false);
-    expect(two.capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(true);
-    expect(capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(true);
+    one.capabilitiesFor(endpoint).usageInStream = false;
+    expect(one.capabilitiesFor(endpoint).usageInStream).toBe(false);
+    expect(two.capabilitiesFor(endpoint).usageInStream).toBe(true);
+    expect(capabilitiesFor(endpoint).usageInStream).toBe(true);
   });
 
   it("latches the no-thinking hints for itself alone, across the retry's awaits", async () => {
@@ -79,7 +87,7 @@ describe('createRuntime', () => {
   it('measures characters per token for itself alone', () => {
     const one = createRuntime();
     // One capabilities object, so it is the readings that are apart and not only the endpoints.
-    const supports = capabilitiesFor(endpoint.baseUrl);
+    const supports = capabilitiesFor(endpoint);
     one.calibrate(supports, body, 1000);
     expect(one.charsPerTokenFor(supports, 'm')).not.toBe(4);
     expect(charsPerTokenFor(supports, 'm')).toBe(4);
@@ -103,12 +111,12 @@ describe('createRuntime', () => {
       hooks: { contextTokens: 50 },
     });
     // Not inherited from the default runtime: the part left out is the package's default.
-    expect(runtime.configureClients()).toEqual({ maxClients: 7, listingMissMs: 30_000, lookupTimeoutMs: 10_000 });
-    expect(runtime.configureEvents().maxEvents).toBe(1000);
-    expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_PREFACE });
+    expect(runtime.configureClients()).toEqual({ ...CLIENT_POOL_DEFAULTS, maxClients: 7 });
+    expect(runtime.configureEvents().maxEvents).toBe(EVENT_BUS_DEFAULTS.maxEvents);
+    expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_DEFAULTS.preface });
     // And nothing it was given reached the process.
     expect(configureClients().maxClients).toBe(2);
-    expect(configureHooks()).toEqual({ contextTokens: 2000, preface: "the process's" });
+    expect(configureHooks()).toEqual({ contextTokens: HOOK_DEFAULTS.contextTokens, preface: "the process's" });
   });
 
   it('reads its own settings where a function takes its default from them', () => {
@@ -138,7 +146,7 @@ describe('createRuntime', () => {
     runtime.resetAll();
     expect(runtime.getClient(endpoint)).not.toBe(mine);
     expect(runtime.history('run')).toEqual([]);
-    expect(runtime.configureClients().maxClients).toBe(32);
+    expect(runtime.configureClients().maxClients).toBe(CLIENT_POOL_DEFAULTS.maxClients);
     expect(getClient(endpoint)).toBe(again);
     expect(history('run')).toHaveLength(1);
   });
@@ -179,7 +187,7 @@ describe("a runtime's context", () => {
     expect(runtime.history('run').length).toBeGreaterThan(0);
     expect(history('run')).toEqual([]);
     // The loop's client came from the runtime's pool, and the process's is still empty.
-    expect(runtime.capabilitiesFor(endpoint.baseUrl)).not.toBe(capabilitiesFor(endpoint.baseUrl));
+    expect(runtime.capabilitiesFor(endpoint)).not.toBe(capabilitiesFor(endpoint));
   });
 
   it('keeps two runtimes apart while their calls interleave', async () => {

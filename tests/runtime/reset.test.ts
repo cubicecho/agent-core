@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CLIENT_POOL_DEFAULTS, HOOK_DEFAULTS } from '../../src/core/defaults.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { type Create, endpoint, reply } from '../helpers.ts';
@@ -22,7 +23,7 @@ const OpenAI = (await import('openai')).default;
 const { configureClients, getClient } = await import('../../src/endpoint/client.ts');
 const { capabilitiesFor } = await import('../../src/endpoint/capabilities.ts');
 const { emit, history } = await import('../../src/run/events.ts');
-const { configureHooks, HOOK_PREFACE } = await import('../../src/hooks/hooks.ts');
+const { configureHooks } = await import('../../src/hooks/hooks.ts');
 const { ask } = await import('../../src/turn/side-task.ts');
 const { resetAll } = await import('../../src/runtime/reset.ts');
 const { calibrate, charsPerTokenFor } = await import('../../src/endpoint/calibration.ts');
@@ -33,9 +34,16 @@ const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[n
 
 /** Teaches the process one latched refusal per module, so there is something to forget. */
 const latchEverything = async () => {
-  create.mockRejectedValueOnce(new OpenAI.APIError(400, { error: {} }, 'rejected', undefined)).mockResolvedValue(reply);
+  // The no-thinking hints refused by name. Built here, since this file mocks the SDK whole.
+  const refusal = new OpenAI.APIError(
+    400,
+    { message: 'Unrecognized request argument supplied: chat_template_kwargs' },
+    undefined,
+    undefined,
+  );
+  create.mockRejectedValueOnce(refusal).mockResolvedValue(reply);
   await ask(endpoint, 'qwen', 'system', 'user');
-  capabilitiesFor(endpoint.baseUrl).usageInStream = false;
+  capabilitiesFor(endpoint).usageInStream = false;
   emit('run-a', { kind: RunEventKind.Output, text: 'one' });
   return getClient(endpoint);
 };
@@ -56,9 +64,9 @@ describe('resetAll', () => {
 
   it('forgets what an endpoint was found not to support', async () => {
     await latchEverything();
-    expect(capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(false);
+    expect(capabilitiesFor(endpoint).usageInStream).toBe(false);
     resetAll();
-    expect(capabilitiesFor(endpoint.baseUrl).usageInStream).toBe(true);
+    expect(capabilitiesFor(endpoint).usageInStream).toBe(true);
   });
 
   it('forgets which models refused the no-thinking hints', async () => {
@@ -72,7 +80,7 @@ describe('resetAll', () => {
   });
 
   it("forgets what each model's characters per token were measured at", () => {
-    const supports = capabilitiesFor(endpoint.baseUrl);
+    const supports = capabilitiesFor(endpoint);
     const body = {
       model: 'm',
       stream: true as const,
@@ -102,12 +110,12 @@ describe('resetAll', () => {
   it("puts the client pool's bounds back", () => {
     configureClients({ maxClients: 1, listingMissMs: 1, lookupTimeoutMs: 1 });
     resetAll();
-    expect(configureClients()).toEqual({ maxClients: 32, listingMissMs: 30_000, lookupTimeoutMs: 10_000 });
+    expect(configureClients()).toEqual(CLIENT_POOL_DEFAULTS);
   });
 
   it("puts the hooks' budget and preface back", () => {
     configureHooks({ contextTokens: 10, preface: '' });
     resetAll();
-    expect(configureHooks()).toEqual({ contextTokens: 2000, preface: HOOK_PREFACE });
+    expect(configureHooks()).toEqual(HOOK_DEFAULTS);
   });
 });

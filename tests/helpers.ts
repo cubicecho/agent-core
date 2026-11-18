@@ -4,6 +4,7 @@ import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
 import type { HookOutcome } from '../src/hooks/hooks.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
+import { toolName } from '../src/tools/tool-loading.ts';
 import { textOf } from '../src/wire/text.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire/wire.ts';
 
@@ -26,8 +27,9 @@ export type Message = OpenAI.ChatCompletionMessageParam;
 /**
  * The SDK's `chat.completions.create` as the code calls it, which every fake of it is typed as.
  *
- * The body is either kind, since a side task asks without streaming. What the fake answers is left
- * to the test: the SDK promises a whole stream or completion, which no test builds.
+ * The body is either kind, since a test may call the client itself without streaming. What the
+ * fake answers is left to the test: the SDK promises a whole stream or completion, which no test
+ * builds.
  */
 export type Create = (body: OpenAI.ChatCompletionCreateParams, options?: OpenAI.RequestOptions) => unknown;
 
@@ -82,13 +84,35 @@ export const says = (content: string, finish: FinishReason = FinishReason.Stop) 
     { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
   );
 
+/** What a side task's reply carries beside its text. */
+export interface AnswerParts {
+  /** Why the model stopped. Absent or `null` is a server that never said. */
+  finishReason?: string | null;
+  /** A scratchpad sent in `reasoning_content`, beside the text rather than fenced inside it. */
+  reasoning?: string;
+}
+
 /**
- * What a call that does not stream is answered with.
+ * A side task's reply, streamed: what it says as one delta, then why it stopped.
  *
  * @param content - What the model says.
- * @returns The completion, with only its message set.
+ * @param [parts] - Why it stopped, and a scratchpad in its own field.
+ * @returns The stream.
  */
-export const answer = (content: string) => ({ choices: [{ message: { content } }] });
+export const answer = (content: string, { finishReason = null, reasoning }: AnswerParts = {}) =>
+  chunks(
+    { choices: [{ delta: { content, ...(reasoning === undefined ? {} : { reasoning_content: reasoning }) } }] },
+    { choices: [{ delta: {}, finish_reason: finishReason }] },
+  );
+
+/**
+ * A streamed reply in words, as a server on a port sends one.
+ *
+ * @param content - What the model says.
+ * @returns The response.
+ */
+export const respondInWords = (content: string) =>
+  streamed({ choices: [{ index: 0, delta: { content }, finish_reason: FinishReason.Stop }] });
 
 /** An answer for a test that does not care what was said. */
 export const reply = answer('ok');
@@ -148,6 +172,89 @@ export const tool = (name: string): OpenAI.ChatCompletionTool => ({
   type: FUNCTION_TOOL,
   function: { name, description: name, parameters: { type: SchemaType.Object, properties: {} } },
 });
+
+/**
+ * The function tools of a request's tool list, which is what every test that reads a definition wants.
+ *
+ * @param [tools] - The list, as a body declares it. Absent reads as none.
+ * @returns The function tools, in order. A tool of any other type is left out.
+ */
+export const functionTools = (tools: readonly OpenAI.ChatCompletionTool[] = []) =>
+  tools.filter((entry): entry is OpenAI.ChatCompletionFunctionTool => entry.type === FUNCTION_TOOL);
+
+/**
+ * The names a request's tool list declares.
+ *
+ * @param [tools] - The list, as a body declares it. Absent reads as none.
+ * @returns Each tool's name, in order: `undefined` for a tool that is not a function.
+ */
+export const toolNames = (tools: readonly OpenAI.ChatCompletionTool[] = []) => tools.map(toolName);
+
+/**
+ * A call's arguments, as the transcript holds them.
+ *
+ * @param call - A call off an assistant message.
+ * @returns The arguments text, or `undefined` for a call that is not a function call.
+ */
+export const callArguments = (call: OpenAI.ChatCompletionMessageToolCall) =>
+  call.type === FUNCTION_TOOL ? call.function.arguments : undefined;
+
+/**
+ * A message of the role a test expects, failing the test where it is another.
+ *
+ * @param message - The message, such as `result.messages[1]`.
+ * @param role - The role it should have.
+ * @returns The message, typed as that role's.
+ */
+export function ofRole<R extends Message['role']>(
+  message: Message | undefined,
+  role: R,
+): Extract<Message, { role: R }> {
+  const isRole = message !== undefined && hasRole(message, role);
+  if (isRole) {
+    return message;
+  }
+  throw new Error(`expected a ${role} message, got ${message?.role ?? 'none'}`);
+}
+
+/**
+ * Whether a message has a role.
+ *
+ * @param message - The message.
+ * @param role - The role.
+ * @returns `true` where it has it, narrowing the message to that role's.
+ */
+const hasRole = <R extends Message['role']>(message: Message, role: R): message is Extract<Message, { role: R }> =>
+  message.role === role;
+
+/**
+ * A message's content where the test expects it to be one string, failing the test where it is a list of parts.
+ *
+ * @param message - The message.
+ * @returns The content.
+ */
+export function stringContent(message: Message | undefined): string {
+  const content = message?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  throw new Error(`expected string content, got ${JSON.stringify(content)}`);
+}
+
+/**
+ * The text of each part of a message whose content is a list of parts, failing the test where it is a string.
+ *
+ * @param message - The message.
+ * @returns Each part's text, in order: `undefined` for a part that carries none.
+ */
+export function partTexts(message: Message | undefined): (string | undefined)[] {
+  const content = message?.content;
+  const isParts = Array.isArray(content);
+  if (isParts) {
+    return content.map((part) => ('text' in part ? part.text : undefined));
+  }
+  throw new Error(`expected a list of parts, got ${JSON.stringify(content)}`);
+}
 
 /**
  * A tool as a catalogue lists it.

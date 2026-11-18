@@ -1,6 +1,7 @@
 import type { TokenLedger } from '../context/ledger.ts';
+import { EVENT_BUS_DEFAULTS, type EventBusSettings } from '../core/defaults.ts';
 import { getOrCreate } from '../core/guards.ts';
-import { ABORT_EVENT, MS_PER_MINUTE } from '../core/platform.ts';
+import { ABORT_EVENT } from '../core/platform.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { LOAD_TOOLS } from '../tools/tool-loading.ts';
 import type { TurnUsage } from '../wire/stream.ts';
@@ -20,68 +21,11 @@ import { type ResourceLink, ServerLogLevel } from './dispatch.ts';
  * outcome is in the database. Nothing here survives a restart, and nothing here is the record.
  */
 
-/** What the bus keeps and for how long. Every field optional; see `configureEvents`. */
-export interface EventBusOptions {
-  /** How many events one run keeps for a watcher that joins late. A chatty run loses its oldest. */
-  maxEvents?: number;
-  /**
-   * How far past the cap the backlog is allowed to run before it is trimmed.
-   *
-   * @remarks
-   * Dropping the oldest event on every push means shifting a thousand-element array tens of
-   * thousands of times over a reasoning run — the one thing in here that would ever show up in a
-   * profile. Trimming in batches makes it a few dozen splices instead, at the cost of the backlog
-   * sometimes being a little longer than the cap, which nothing depends on. The one field here
-   * that is an implementation detail rather than a policy: raising it trades memory for fewer
-   * splices, and there is no reason to lower it.
-   */
-  trimSlack?: number;
-  /** How long a finished run stays readable, for a watcher that arrives just after the end. */
-  retainMs?: number;
-  /**
-   * The same for a run that has not said `done`, which is a far more dangerous thing to drop.
-   *
-   * @remarks
-   * A finished run has nothing more to say, so forgetting it a minute later costs a late watcher
-   * a backlog and nothing else. An unfinished one is still writing: `touched` only moves on
-   * `emit`, so a live run that spends a minute inside one slow tool call looked exactly like an
-   * abandoned one and was reaped out from under itself. What made that more than a lost backlog
-   * is that the next `emit` builds a fresh stream with `seq` back at zero — and `seq` is the
-   * field `RunEvent` documents for ordering and de-duplication, so a client that reconnects
-   * across the gap discards the new events as ones it has already seen.
-   *
-   * The sweep still has to reap them, because a run killed by a signal or simply forgotten
-   * reaches no `done` either. This is the backstop for a caller that never says so; `endRun` is
-   * for one that knows. Anything shorter than the longest a tool call may take is a live run
-   * reaped out from under itself.
-   */
-  retainUnendedMs?: number;
-  /**
-   * The same for a run whose last event is `wait`: one that handed calls back and stopped until
-   * they are answered, under the same id and the same numbering.
-   *
-   * @remarks
-   * A wait is a planned silence as long as the person answering takes, and the client watching it
-   * has usually gone by the time the run resumes. Reaping it on `retainUnendedMs` restarted `seq`,
-   * so a client reconnecting across the wait discarded the resumed run's events, `done` included.
-   */
-  retainWaitingMs?: number;
-}
-
-/** How many minutes an unended run's events are kept, absent a `retainUnendedMs`. */
-const RETAIN_UNENDED_MINUTES = 30;
-
-/** How many minutes a waiting run's events are kept, absent a `retainWaitingMs`: a day. */
-const RETAIN_WAITING_MINUTES = 24 * 60;
-
-/** The numbers a run of the shape this bus was written for wants. */
-const DEFAULTS: Required<EventBusOptions> = {
-  maxEvents: 1000,
-  trimSlack: 256,
-  retainMs: MS_PER_MINUTE,
-  retainUnendedMs: RETAIN_UNENDED_MINUTES * MS_PER_MINUTE,
-  retainWaitingMs: RETAIN_WAITING_MINUTES * MS_PER_MINUTE,
-};
+/**
+ * What the bus may be told to change, across a process: any of `EventBusSettings`, the rest left as
+ * they are. See `configureEvents`.
+ */
+export type EventBusOptions = Partial<EventBusSettings>;
 
 /**
  * One runtime's bus, held as a single object so a watcher and the sweep timer keep hold of the
@@ -90,13 +34,13 @@ const DEFAULTS: Required<EventBusOptions> = {
  */
 interface Bus {
   /** What is in force now. Read where it is used, so a change applies from the next event. */
-  limits: Required<EventBusOptions>;
+  limits: EventBusSettings;
   streams: Map<string, Stream>;
   /** The pending sweep, see `sweep`. */
   sweeping: ReturnType<typeof setTimeout> | null;
 }
 
-const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sweeping: null }));
+const bus = scoped((): Bus => ({ limits: { ...EVENT_BUS_DEFAULTS }, streams: new Map(), sweeping: null }));
 
 /**
  * Changes what the bus keeps, for a process whose runs are not shaped like the ones these
@@ -113,21 +57,21 @@ const bus = scoped((): Bus => ({ limits: { ...DEFAULTS }, streams: new Map(), sw
  * own, set through its options or its own `configureEvents`.
  * What it costs is memory against how much of a run a late or slow watcher can still read —
  * a server with hundreds of concurrent runs wants a smaller backlog, and one whose tool calls
- * take an hour wants a longer `retainUnendedMs` than the thirty minutes assumed here.
+ * take an hour wants a longer `retainUnendedMs` than the `EVENT_BUS_DEFAULTS` one.
  *
  * Changes apply from the next event and the next sweep. Nothing already buffered is trimmed to
  * a cap that has just come down, because the trim happens on push; the backlog settles to the
  * new number as the run goes on.
  */
-export function configureEvents(options: EventBusOptions = {}): Required<EventBusOptions> {
+export function configureEvents(options: EventBusOptions = {}): EventBusSettings {
   return assignSettings(bus().limits, options);
 }
 
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export const RunEventKind = {
   /**
-   * An exchange began: one of the app's own, such as a task's stage. `name` names it, `text` its
-   * kind.
+   * An exchange began. `runAgentLoop` sends one first, `name` its `exchange` option; an app may
+   * send its own too, `text` its kind.
    */
   Exchange: 'exchange',
   /** A deciding exchange chose an arm. `text` is the arm it took. */
@@ -173,15 +117,22 @@ export const RunEventKind = {
   /**
    * The exchange stopped to wait for the app to answer calls it handed back: the turn's `tool-call`
    * events with no `tool-result`, as `AgentLoopResult.pending` lists them. `text` says how many.
-   * Not an end: the run goes on, under the same id, once they are answered, and `watch` keeps
-   * following it until `done`.
+   *
+   * @remarks
+   * The exchange's `exchange-end` follows it, outcome `waiting`. The run's is not an end: it goes
+   * on, under the same id, once they are answered, and the bus keeps it on `retainWaitingMs`.
    */
   Wait: 'wait',
   /**
+   * An exchange ended, last of its events, whether it returned or threw. `outcome` says how; on
+   * `ended`, `id`, `name` and `text` are the call, its tool and the reason, and on `waiting`,
+   * `pending` the handed-back calls' ids. `text` is the error's message on `failed` or `stopped`,
+   * and `ok` is false on those two alone.
+   */
+  ExchangeEnd: 'exchange-end',
+  /**
    * The run ended, as the app announces it: `runAgentLoop` never sends it, and `endRun` sends one
-   * only to a run still watched. Last where it is sent. Where a tool call ended the exchange, it
-   * carries that call: `id` the call's, `name` the tool, and `text` the reason, as
-   * `AgentLoopResult.ended` has them.
+   * only to a run still watched. Last where it is sent. `ok` false is a run that failed.
    */
   Done: 'done',
 } as const;
@@ -221,7 +172,7 @@ export interface RunUsage {
   turn?: TurnReport;
   /**
    * The exchange's token ledger as of this turn, whole rather than the entry it added — an app
-   * whose exchange then fails still holds the latest one, and a rewrite in `beforeStep` moves
+   * whose exchange then fails still holds the latest one, and a rewrite in `beforeTurn` moves
    * earlier entries. Absent from a caller emitting usage of its own.
    */
   ledger?: TokenLedger;
@@ -299,7 +250,7 @@ export interface RunEvent {
    * exchange, and empty throughout for an app that sends no `exchange` events.
    */
   exchange: string;
-  /** Outcome on `tool-result` and `done`, otherwise null. */
+  /** Outcome on `tool-result`, `exchange-end` and `done`, otherwise null. */
   ok: boolean | null;
   /** Running totals on `usage`, otherwise null. */
   usage: RunUsage | null;
@@ -318,6 +269,13 @@ export interface RunEvent {
    * whose arguments did not parse, which loaded nothing. Optional for the reason `id` is.
    */
   loads?: LoadCounts;
+  /** How the exchange ended, on `exchange-end` and on no other kind. Optional for the reason `id` is. */
+  outcome?: ExchangeOutcome;
+  /**
+   * The ids of the calls handed back, on an `exchange-end` whose outcome is `waiting`, in the order
+   * asked. Optional for the reason `id` is.
+   */
+  pending?: string[];
 }
 
 /**
@@ -357,39 +315,6 @@ export const stamp = (input: RunEventInput, runId: string, seq: number, at: numb
   seq,
 });
 
-/** What `RunEventKind.Exchange` and `RunEvent.exchange` were called before 5.0.0. */
-export const LEGACY_EXCHANGE = 'step' as const;
-
-/**
- * A run event as an app stored or a server relayed it before 5.0.0, when an exchange was a step.
- *
- * @remarks
- * Its kind may be `step` for an exchange beginning, and the exchange it belongs to is under `step`.
- * task_server and ai-router keep and relay events, so these are read for as long as one is kept.
- */
-export interface LegacyRunEvent extends Omit<RunEvent, 'kind' | 'exchange'> {
-  kind: RunEventKind | typeof LEGACY_EXCHANGE;
-  /** Which exchange it belongs to, under the field's old name. */
-  step: string;
-  /** Where an event carries both names, the new one, which wins unless it is empty. */
-  exchange?: string;
-}
-
-/**
- * An event under the names it has since 5.0.0, where it was stored or relayed under the old ones.
- *
- * @param event - An event as it was read: current, or a `LegacyRunEvent`.
- * @returns `event` itself where it says nothing old. Otherwise a copy, with a `step` kind read as
- * `exchange` and the `step` field moved to `exchange`, unless the event names an exchange already.
- */
-export function renamedEvent(event: RunEvent | LegacyRunEvent): RunEvent {
-  if ('step' in event) {
-    const { step, kind, exchange, ...rest } = event;
-    return { ...rest, kind: kind === LEGACY_EXCHANGE ? RunEventKind.Exchange : kind, exchange: exchange || step };
-  }
-  return event;
-}
-
 /** Where a stream's run stands, as its events so far say, which sets how long the sweep keeps it. */
 const StreamPhase = {
   /** Still writing, or gone quiet with no `done`. */
@@ -408,7 +333,7 @@ const RETENTION_BY_PHASE = {
   [StreamPhase.Live]: 'retainUnendedMs',
   [StreamPhase.Waiting]: 'retainWaitingMs',
   [StreamPhase.Ended]: 'retainMs',
-} as const satisfies Record<StreamPhase, keyof EventBusOptions>;
+} as const satisfies Record<StreamPhase, keyof EventBusSettings>;
 
 /**
  * The phase an event puts a run in that has not ended, for the kinds that move it off `live`.
@@ -507,12 +432,8 @@ export function endRun(runId: string) {
   if (!stream) {
     return;
   }
-  // Watchers are parked on a promise that only an `emit` to *this* stream can resolve, and the
-  // delete below puts it beyond the reach of every later one — the next `emit` builds a fresh
-  // stream and wakes nobody. So they are told the run is over first: a watcher that is handed
-  // `done` completes, runs its `finally` and lets its consumer go, where one left parked holds
-  // an open subscription that can never say anything again. An SSE client on the other end of
-  // that is a connection that never closes.
+  // Watchers are parked on a promise only an `emit` to this stream resolves, and the delete puts it
+  // beyond reach, so they are handed `done` first: one left parked is an SSE connection that never closes.
   if (stream.listeners.size) {
     emit(runId, { kind: RunEventKind.Done, ok: false, text: 'run ended' });
   }
@@ -536,13 +457,16 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   const event = stamp(input, runId, ++stream.seq, at);
   stream.events.push(event);
   stream.touched = at;
-  if (stream.events.length > limits.maxEvents + limits.trimSlack) {
+  const isOverfull = stream.events.length > limits.maxEvents + limits.trimSlack;
+  if (isOverfull) {
     stream.events.splice(0, stream.events.length - limits.maxEvents);
   }
   // A finished run is kept for a moment so a watcher that arrives just after the end still sees
   // how it went, then dropped: its record is the row, not this. A waiting one is kept far longer.
+  // An exchange's end says nothing of whether the run goes on: after a `wait`, it is still waiting.
   const isOver = stream.phase === StreamPhase.Ended;
-  if (isOver === false) {
+  const movesPhase = isOver === false && event.kind !== RunEventKind.ExchangeEnd;
+  if (movesPhase) {
     stream.phase = PHASE_BY_KIND.get(event.kind) ?? StreamPhase.Live;
   }
   scheduleSweep(held);
@@ -632,14 +556,8 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
   let wake: (() => void) | null = null;
   const listener = (event: RunEvent) => {
     queue.push(event);
-    // The bus caps its own backlog at `maxEvents`; without this the watcher downstream of it
-    // had no cap at all, so a client too slow to keep up held every delta a run ever emitted.
-    // The oldest go, which is what the backlog does, and the gap is reported once below.
-    //
-    // Dropped here means released here. Advancing the cursor alone left the dropped events in
-    // the slots behind it, to be freed by the compaction in the drain below — which a consumer
-    // that has stalled does not reach, and a stalled consumer is the whole reason for the cap.
-    // It read as capped and held every event anyway: 16MB where the cap promises a third of one.
+    // Capped as the bus's own backlog is, oldest first, and released here rather than by the drain's
+    // compaction, which a stalled consumer (the reason for the cap) never reaches.
     const cut = queue.length - head - limits.maxEvents;
     if (cut > limits.trimSlack) {
       queue = queue.slice(head + cut);
@@ -698,12 +616,8 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
     // signal — a run's whole backlog kept by a watcher that finished on `done`.
     signal?.removeEventListener(ABORT_EVENT, onAbort);
     stream.listeners.delete(listener);
-    // A watcher can name a run that has not started, or will never start. Nothing was recorded
-    // under it, so nothing is left behind either — and a run that has ended has nothing more to
-    // say to anyone, so the last watcher leaving takes the backlog with it.
-    // Against `stream` rather than the id: this generator may have outlived its own entry — a
-    // sweep or an `endRun` drops it and a later `emit` files the same run under a new one — and
-    // the last watcher of the old stream has no business deleting the new one.
+    // Nothing is left behind for a run that never started or has ended. Checked against `stream`, not
+    // the id: a later `emit` may have filed the same run under a new stream, which is not ours to delete.
     const stillFiled = streams.get(runId) === stream;
     const unwatched = stream.listeners.size === 0;
     const nothingMoreToSay = stream.phase === StreamPhase.Ended || stream.events.length === 0;
@@ -748,7 +662,7 @@ export const resetEvents = () => {
   }
   held.sweeping = null;
   // In place, so a watcher still open reads the defaults too and not the caps it began under.
-  Object.assign(held.limits, DEFAULTS);
+  Object.assign(held.limits, EVENT_BUS_DEFAULTS);
 };
 
 /**
@@ -756,7 +670,6 @@ export const resetEvents = () => {
  * reader that takes a run in snapshots.
  *
  * @param events - Events in `seq` order, from `history` or collected from `watch`. Not written to.
- * Events stored before 5.0.0 are read under their new names (`renamedEvent`).
  * @returns One event per block, every one a copy. A stretch of `thinking` or of `output` within
  * one exchange is a single block with the texts joined; anything else is a block to itself.
  *
@@ -784,9 +697,7 @@ export function fold(events: RunEvent[]): RunEvent[] {
     parts = [];
   };
 
-  for (const stored of events) {
-    // A store may hold events from before 5.0.0, which group by `step`.
-    const event = renamedEvent(stored);
+  for (const event of events) {
     const last = blocks[blocks.length - 1];
     const mergeable = event.kind === RunEventKind.Thinking || event.kind === RunEventKind.Output;
     const continuesLast = last && last.kind === event.kind && last.exchange === event.exchange;
@@ -819,7 +730,7 @@ export function fold(events: RunEvent[]): RunEvent[] {
  * a mean of a number a server never sent would be a number nobody measured.
  */
 export interface RunMetrics {
-  /** The caller's own `exchange` events. */
+  /** `exchange` events: one per exchange `runAgentLoop` ran, and any the app sent of its own. */
   exchanges: number;
   /** Turns of the agent loop, one per `usage` report. */
   turns: number;
@@ -894,8 +805,12 @@ export interface RunMetrics {
    * has none.
    */
   largestPromptShare?: number;
-  /** How it ended, read off `done` and the last turn, or `waiting` after a `wait` nothing followed. */
-  outcome?: RunOutcome;
+  /**
+   * How the run ended, in an exchange's terms: its last `exchange-end`'s outcome, or `failed` where
+   * a `done` was not ok and that exchange did not fail already. Absent where no exchange has ended
+   * since the last one began, and no `done` said the run failed.
+   */
+  outcome?: ExchangeOutcome;
 }
 
 /** The fields of `RunMetrics` that are a number, which are the ones a report can be added to. */
@@ -910,7 +825,7 @@ const SEVERITY: readonly string[] = Object.values(ServerLogLevel);
 const WARNING = SEVERITY.indexOf(ServerLogLevel.Warning);
 
 /** How an exchange ended, as its result says or as `runMetrics` reads it off a run's events. */
-export const RunOutcome = {
+export const ExchangeOutcome = {
   /** The exchange did not fail, and its last turn was neither cut off nor withheld. */
   Answered: 'answered',
   /** The exchange did not fail, and its last turn is an answer the reply ceiling cut off. */
@@ -923,44 +838,37 @@ export const RunOutcome = {
   Filtered: 'filtered',
   /**
    * The exchange did not fail, and a tool call ended it: `AgentLoopResult.ended` says which, and so
-   * does a `done` that names the tool.
+   * does its `exchange-end`.
    */
   Ended: 'ended',
   /**
-   * The exchange stopped: it handed calls back and waits for the app to answer them, as a `wait`
-   * event with no `turn` or `done` after it says, and `AgentLoopResult.pending` lists them.
+   * The exchange stopped: it handed calls back and waits for the app to answer them, as
+   * `AgentLoopResult.pending` and its `exchange-end` list them.
    */
   Waiting: 'waiting',
   /**
-   * `done` said the run was not ok. Whether that was an error, a stop or the tool budget is in
-   * the app's own `done` text and not here.
+   * The exchange threw: a request or a callback failed, it overflowed, or its turns ran out. Never on
+   * a result; for a run, also a `done` that was not ok.
    */
   Failed: 'failed',
+  /** The app's signal stopped the exchange, which then threw: never on a result. */
+  Stopped: 'stopped',
 } as const;
 
-/** Any one of the outcomes in `RunOutcome`. */
-export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
+/** Any one of the outcomes in `ExchangeOutcome`. */
+export type ExchangeOutcome = (typeof ExchangeOutcome)[keyof typeof ExchangeOutcome];
 
 /**
- * How a run that reported `done` ended.
+ * How a run ended, from its last exchange's end and its `done`.
  *
- * @param done - The `done` event. Only an `ok` of `false` is a failure; one that names a tool was
- * ended by it; anything else is read off the turn.
- * @param last - The last turn a `usage` event reported, if any did.
- * @returns `failed` for a `done` that was not ok, `ended` for one that names the tool that ended
- * the exchange, `truncated` where the last turn ran into the reply ceiling, `filtered` where a
- * content filter withheld it, and `answered` otherwise.
+ * @param ending - The last `exchange-end`, where no exchange began after it.
+ * @param failed - Whether a `done` said the run was not ok.
+ * @returns `failed` where the run failed and that exchange did not, else that exchange's outcome;
+ * `undefined` where neither says anything.
  */
-function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOutcome {
-  if (ok === false) {
-    return RunOutcome.Failed;
-  }
-  // Read as a truthy string, so an event put together by hand without one is not ended.
-  const isEnded = Boolean(name);
-  if (isEnded) {
-    return RunOutcome.Ended;
-  }
-  return endingOf(last?.finishReason);
+function runOutcome(ending: RunEvent | undefined, failed: boolean): ExchangeOutcome | undefined {
+  const failedAfter = failed && ending?.ok !== false;
+  return failedAfter ? ExchangeOutcome.Failed : ending?.outcome;
 }
 
 /**
@@ -970,9 +878,9 @@ function outcomeOf({ ok, name }: RunEvent, last: TurnReport | undefined): RunOut
  * A map rather than an object, because the key is whatever the server sent and an object would
  * look `constructor` up on its prototype.
  */
-const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, RunOutcome> = new Map([
-  [FinishReason.Length, RunOutcome.Truncated],
-  [FinishReason.ContentFilter, RunOutcome.Filtered],
+const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, ExchangeOutcome> = new Map([
+  [FinishReason.Length, ExchangeOutcome.Truncated],
+  [FinishReason.ContentFilter, ExchangeOutcome.Filtered],
 ]);
 
 /**
@@ -981,8 +889,8 @@ const OUTCOME_BY_FINISH: ReadonlyMap<string | undefined, RunOutcome> = new Map([
  * @param finishReason - The last turn's `finish_reason`, as the server sent it.
  * @returns `truncated` for `length`, `filtered` for `content_filter`, and `answered` otherwise.
  */
-export function endingOf(finishReason: string | undefined): RunOutcome {
-  return OUTCOME_BY_FINISH.get(finishReason) ?? RunOutcome.Answered;
+export function endingOf(finishReason: string | undefined): ExchangeOutcome {
+  return OUTCOME_BY_FINISH.get(finishReason) ?? ExchangeOutcome.Answered;
 }
 
 /** What `runMetrics` takes besides the events. */
@@ -998,11 +906,10 @@ export interface RunMetricsOptions {
  * A run's totals, timings and cache findings, derived from the events it emitted.
  *
  * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
- * that has lost its oldest events to the cap sums what it still has. Events stored before 5.0.0
- * are read under their new names (`renamedEvent`).
+ * that has lost its oldest events to the cap sums what it still has.
  * @param [options] - The served context window, for how full the run came to it.
  * @returns A summary of the caller's own. The counts are zero for an empty list, and `outcome` is
- * absent for a run that has not reported `done`.
+ * what `RunMetrics.outcome` says: absent while an exchange is going.
  *
  * @remarks
  * A sibling of `fold` rather than part of it. `fold` hands back events, and a client renders
@@ -1044,19 +951,16 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   // Calls waiting for their results, by call id, oldest first. An event built without an id is
   // paired by its tool's name, which is all it carries.
   const pending = new Map<string, number[]>();
-  let last: TurnReport | undefined;
-  // Whether the run's latest stretch stopped on a `wait`; the next turn is the run going on.
-  let waits = false;
+  // The last exchange's end, until another exchange begins, and whether a `done` said the run failed.
+  let ending: RunEvent | undefined;
+  let failed = false;
 
-  for (const stored of events) {
-    // A store may hold events from before 5.0.0, whose exchanges are `step` events.
-    const event = renamedEvent(stored);
+  for (const event of events) {
     if (event.kind === RunEventKind.Exchange) {
       metrics.exchanges++;
-    } else if (event.kind === RunEventKind.Turn) {
-      waits = false;
-    } else if (event.kind === RunEventKind.Wait) {
-      waits = true;
+      ending = undefined;
+    } else if (event.kind === RunEventKind.ExchangeEnd) {
+      ending = event;
     } else if (event.kind === RunEventKind.ToolCall) {
       if (event.name === LOAD_TOOLS) {
         metrics.loadCalls++;
@@ -1064,7 +968,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       getOrCreate(pending, event.id ?? event.name, () => []).push(event.at);
     } else if (event.kind === RunEventKind.ToolResult) {
       metrics.toolCalls++;
-      if (event.ok === false) {
+      const toolFailed = event.ok === false;
+      if (toolFailed) {
         metrics.toolErrors[event.name] = (metrics.toolErrors[event.name] ?? 0) + 1;
       }
       if (event.loads) {
@@ -1087,7 +992,6 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       }
     } else if (event.kind === RunEventKind.Usage && event.usage?.turn) {
       const turn = event.usage.turn;
-      last = turn;
       metrics.turns++;
       metrics.requests += 1 + (turn.continuations ?? 0);
       metrics.promptTokens += turn.prompt;
@@ -1129,13 +1033,13 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
         }
       }
     } else if (event.kind === RunEventKind.Done) {
-      metrics.outcome = outcomeOf(event, last);
+      failed = event.ok === false;
     }
   }
 
-  const isWaiting = waits && metrics.outcome === undefined;
-  if (isWaiting) {
-    metrics.outcome = RunOutcome.Waiting;
+  const outcome = runOutcome(ending, failed);
+  if (outcome) {
+    metrics.outcome = outcome;
   }
   if (events.length > 1) {
     metrics.wallMs = events[events.length - 1].at - events[0].at;

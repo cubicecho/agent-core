@@ -1,10 +1,11 @@
 import type { Endpoint } from '../core/config.ts';
+import { PRESELECT_DEFAULTS, TOOL_DISCOVERY_DEFAULTS } from '../core/defaults.ts';
 import { byCodeUnit, counted, isRecord } from '../core/guards.ts';
 import type { OnNotice } from '../endpoint/capabilities.ts';
 import { askJson, tryAsk } from '../turn/side-task.ts';
 import { SchemaType } from '../wire/wire.ts';
 import type { CatalogServer } from './catalog.ts';
-import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
+import { catalogList, expandNames } from './tool-loading.ts';
 
 /**
  * Choosing an exchange's tools before it starts, from the request and the catalogue's names.
@@ -15,15 +16,7 @@ import { catalogList, expandNames, MAX_PER_LOAD } from './tool-loading.ts';
  * names, which costs nothing and is trusted only when the words are clear about it.
  */
 
-/**
- * Where a request is cut for the preselector, in characters.
- *
- * @remarks
- * A tool choice is made on what the work is, which is the top of a request rather than all of
- * it — and the whole of a long one is paid for again in the preselection call. `preselectInput`
- * takes another number for a caller whose requests are not shaped that way.
- */
-const PRESELECT_PROMPT_CHARS = 2000;
+const { bm25K1, bm25B, shortestPluralChars } = PRESELECT_DEFAULTS;
 
 /**
  * The system prompt a preselector is given, holding it to the cap its answer will be held to.
@@ -41,7 +34,7 @@ const PRESELECT_PROMPT_CHARS = 2000;
  * A wrong guess is cheap — an unused definition is a few hundred tokens for one exchange — but a
  * broad guess is not, so the same cap applies here as to a `load_tools` call.
  */
-export const preselectSystem = (maxPerLoad = MAX_PER_LOAD) =>
+export const preselectSystem = (maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad) =>
   'You choose tools. Below is a catalogue of tool names, then a request. Reply with a JSON ' +
   'object whose "tools" array holds the names the request is likely to need — exact names from ' +
   `the catalogue, at most ${maxPerLoad}, and as few as could do the job. Reply with ` +
@@ -77,8 +70,11 @@ export const PRESELECT_SYSTEM = preselectSystem();
  * @returns The message text: the listing under a `# Tool catalogue` heading, then the cut request
  * under `# Request`.
  */
-export const preselectInput = (catalog: CatalogServer[], prompt: string, maxPromptChars = PRESELECT_PROMPT_CHARS) =>
-  `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, maxPromptChars)}`;
+export const preselectInput = (
+  catalog: CatalogServer[],
+  prompt: string,
+  maxPromptChars = PRESELECT_DEFAULTS.maxPromptChars,
+) => `# Tool catalogue\n\n${catalogList(catalog)}\n\n# Request\n\n${prompt.slice(0, maxPromptChars)}`;
 
 /**
  * Resolves a preselection against the catalogue: unknown names dropped, count capped.
@@ -92,7 +88,11 @@ export const preselectInput = (catalog: CatalogServer[], prompt: string, maxProm
  * @returns Names as the catalogue spells them, each once, in the order they resolved, and never
  * more than `maxPerLoad`. Empty where nothing resolved.
  */
-export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoad = MAX_PER_LOAD): string[] {
+export function preselection(
+  names: unknown,
+  catalog: CatalogServer[],
+  maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad,
+): string[] {
   const list = isRecord(names) ? names.tools : names;
   if (!Array.isArray(list)) {
     return [];
@@ -101,46 +101,8 @@ export function preselection(names: unknown, catalog: CatalogServer[], maxPerLoa
   return expandNames(wanted, catalog, maxPerLoad).matched.slice(0, maxPerLoad);
 }
 
-/**
- * Saturation and length normalisation for the BM25 score. Robertson's usual values.
- *
- * @remarks
- * Nothing here is tuned for this corpus, because tuning them against a catalogue of forty short
- * documents would be fitting noise. `dropoff` and `minScore` are the knobs worth turning.
- */
-const BM25_K1 = 1.2;
-const BM25_B = 0.75;
-
 /** What BM25 adds to both counts in its inverse document frequency, so a term every document holds still scores. */
 const IDF_SMOOTHING = 0.5;
-
-/**
- * The least a best match may score and still be acted on without a model.
- *
- * @remarks
- * A BM25 score, so it is read against the shape of the corpus rather than as a percentage: a
- * query term carried by half the catalogue is worth about 0.7, and one carried by a single tool
- * about 3. One at this floor is therefore "something more distinctive than a word every other
- * tool uses", which is the weakest evidence worth skipping a round trip on.
- *
- * A term is distinctive only against other terms, so a catalogue of three or four tools rarely
- * clears it. That is the right answer rather than a gap: a catalogue that small is not costing
- * enough tokens to be worth choosing from in the first place.
- */
-const KEYWORD_MIN_SCORE = 1;
-
-/**
- * How far the best unpicked tool must fall below the last picked one for the cut to count clean.
- *
- * @remarks
- * Half. The cap is the only reason a hit is dropped, so a hit just underneath it scoring nearly
- * as much as one just above means the ranking chose arbitrarily, which is exactly the case a
- * model should be spent on.
- */
-const KEYWORD_DROPOFF = 0.5;
-
-/** The longest word `terms` leaves its trailing `s` on: `bus` and `was` are not plurals. */
-const SHORTEST_PLURAL = 3;
 
 /** What the preselector's reply schema is called on the wire. */
 const PRESELECT_SCHEMA_NAME = 'preselection';
@@ -183,9 +145,10 @@ const terms = (text: string): string[] =>
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((word) => word.length > 1 && !NOISE.has(word))
-    .map((word) =>
-      word.length > SHORTEST_PLURAL && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word,
-    );
+    .map((word) => {
+      const isPlural = word.length > shortestPluralChars && word.endsWith('s') && word.endsWith('ss') === false;
+      return isPlural ? word.slice(0, -1) : word;
+    });
 
 /** One tool's score against a request. */
 export interface ToolMatch {
@@ -209,25 +172,25 @@ export interface KeywordPreselectOptions {
   /**
    * The most to pick. The same cap the model is held to.
    *
-   * @defaultValue `12`
+   * @defaultValue `TOOL_DISCOVERY_DEFAULTS.maxPerLoad`
    */
   maxPerLoad?: number;
   /**
    * The floor under a confident best match.
    *
-   * @defaultValue `1`
+   * @defaultValue `PRESELECT_DEFAULTS.keywordMinScore`
    */
   minScore?: number;
   /**
    * The gap a confident cut needs.
    *
-   * @defaultValue `0.5`
+   * @defaultValue `PRESELECT_DEFAULTS.keywordDropoffShare`
    */
   dropoff?: number;
   /**
    * Where the request is cut — the same head `preselectInput` reads.
    *
-   * @defaultValue `2000`
+   * @defaultValue `PRESELECT_DEFAULTS.maxPromptChars`
    */
   maxPromptChars?: number;
 }
@@ -244,31 +207,21 @@ export interface KeywordPreselectOptions {
  * or nothing scored.
  *
  * @remarks
- * A preselection call costs a round trip to a model that is being asked to do term matching, and
- * on a local box that is seconds before the exchange has started. For a catalogue of a few dozen
- * tools the words usually decide it: a request that says "commit" and a tool called `git__commit`
- * need no reasoning to connect.
- *
- * BM25 rather than counting shared words, because the ranking has to survive the words every tool
- * uses. "list", "get" and "file" are in half the descriptions in a real catalogue, and a plain
- * overlap count hands the top of the ranking to whichever tool has the longest description. The
- * inverse document frequency makes a term worth what it distinguishes, and the length
- * normalisation stops a wordy description from outscoring the tool actually named.
- *
- * `confident` is what a caller acts on, and it is deliberately hard to earn: something more
- * distinctive than a word the whole catalogue shares has to have matched, and the tools left
- * unpicked have to score well below the ones picked. Anything else is ambiguous, and ambiguous is
- * what the model is for. Nothing matching is not confident either — the words cannot tell "this
- * request needs no tools" from "these words are not in the catalogue".
+ * A preselection call costs a model round trip, seconds on a local box, for what is often term
+ * matching: "commit" and `git__commit` need no reasoning to connect. BM25 rather than a count of
+ * shared words, so a word every tool uses is worth only what it distinguishes and a wordy
+ * description does not outscore the tool actually named. `confident` is deliberately hard to earn —
+ * a distinctive word has to match and the unpicked tools have to score well below the picked — since
+ * ambiguous is what the model is for (README, "What the servers say about themselves").
  */
 export function preselectByKeywords(
   catalog: CatalogServer[],
   prompt: string,
   {
-    maxPerLoad = MAX_PER_LOAD,
-    minScore = KEYWORD_MIN_SCORE,
-    dropoff = KEYWORD_DROPOFF,
-    maxPromptChars = PRESELECT_PROMPT_CHARS,
+    maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad,
+    minScore = PRESELECT_DEFAULTS.keywordMinScore,
+    dropoff = PRESELECT_DEFAULTS.keywordDropoffShare,
+    maxPromptChars = PRESELECT_DEFAULTS.maxPromptChars,
   }: KeywordPreselectOptions = {},
 ): KeywordPreselection {
   const empty: KeywordPreselection = { names: [], confident: false, ranked: [] };
@@ -307,8 +260,8 @@ export function preselectByKeywords(
       }
       const held = documents.get(term) ?? 0;
       const idf = Math.log(1 + (docs.length - held + IDF_SMOOTHING) / (held + IDF_SMOOTHING));
-      const norm = BM25_K1 * (1 - BM25_B + (BM25_B * doc.terms.length) / length);
-      score += (idf * found * (BM25_K1 + 1)) / (found + norm);
+      const norm = bm25K1 * (1 - bm25B + (bm25B * doc.terms.length) / length);
+      score += (idf * found * (bm25K1 + 1)) / (found + norm);
     }
     if (score > 0) {
       ranked.push({ name: doc.name, score });
@@ -336,13 +289,13 @@ export interface PreselectOptions {
   /**
    * The reply's ceiling.
    *
-   * @defaultValue `256`
+   * @defaultValue `PRESELECT_DEFAULTS.maxTokens`
    */
   maxTokens?: number;
   /**
    * As `SideTaskOptions.temperature`.
    *
-   * @defaultValue `0.3`
+   * @defaultValue `SIDE_TASK_DEFAULTS.temperature`
    */
   temperature?: number;
   /** As `SideTaskOptions.reasoningEffort`: absent keeps the no-thinking hints. */
@@ -352,7 +305,7 @@ export interface PreselectOptions {
   /**
    * The most tools the choice may name.
    *
-   * @defaultValue `12`
+   * @defaultValue `TOOL_DISCOVERY_DEFAULTS.maxPerLoad`
    */
   maxPerLoad?: number;
   /**
@@ -399,11 +352,11 @@ export async function preselect(
   {
     signal,
     onNotice,
-    maxTokens = 256,
+    maxTokens = PRESELECT_DEFAULTS.maxTokens,
     temperature,
     reasoningEffort,
     extraBody,
-    maxPerLoad = MAX_PER_LOAD,
+    maxPerLoad = TOOL_DISCOVERY_DEFAULTS.maxPerLoad,
     keywords,
   }: PreselectOptions = {},
 ): Promise<string[]> {

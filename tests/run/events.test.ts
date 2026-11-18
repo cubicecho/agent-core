@@ -1,15 +1,16 @@
 import { setFlagsFromString } from 'node:v8';
 import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MS_PER_MINUTE } from '../../src/core/consts.ts';
+import { EVENT_BUS_DEFAULTS } from '../../src/core/defaults.ts';
 import {
   configureEvents,
+  ExchangeOutcome,
   emit,
   endRun,
   fold,
   history,
-  type RunEvent,
   RunEventKind,
-  RunOutcome,
   resetEvents,
   runMetrics,
   stamp,
@@ -65,18 +66,20 @@ describe('emit', () => {
   });
 
   it('trims the backlog in batches, back to the cap', () => {
-    // 1000 kept, 256 of slack: the 1257th push is the one that trims.
-    for (let i = 0; i < 1256; i++) {
+    // `maxEvents` kept and `trimSlack` of slack: the push past both is the one that trims.
+    const { maxEvents, trimSlack } = EVENT_BUS_DEFAULTS;
+    const pushed = maxEvents + trimSlack + 1;
+    for (let i = 1; i < pushed; i++) {
       emit('chatty', { kind: RunEventKind.Output, text: 'x' });
     }
-    expect(history('chatty')).toHaveLength(1256);
+    expect(history('chatty')).toHaveLength(pushed - 1);
 
     emit('chatty', { kind: RunEventKind.Output, text: 'x' });
     const kept = history('chatty');
-    expect(kept).toHaveLength(1000);
+    expect(kept).toHaveLength(maxEvents);
     // The oldest went, and the sequence numbers do not restart.
-    expect(kept[0].seq).toBe(258);
-    expect(kept[kept.length - 1].seq).toBe(1257);
+    expect(kept[0].seq).toBe(pushed - maxEvents + 1);
+    expect(kept[kept.length - 1].seq).toBe(pushed);
   });
 });
 
@@ -254,13 +257,13 @@ describe('watch, cancelled', () => {
 
     // A listener holds the stream past every deadline: the sweep skips any stream one is on, so
     // this is the leak the sweep exists to prevent, arriving by the one route it cannot see.
-    vi.advanceTimersByTime(31 * 60_000);
+    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainUnendedMs + MS_PER_MINUTE);
     expect(history('abandoned')).toHaveLength(1);
 
     const parked = watcher.next();
     stop.abort();
     await parked;
-    vi.advanceTimersByTime(31 * 60_000);
+    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainUnendedMs + MS_PER_MINUTE);
     expect(history('abandoned')).toEqual([]);
   });
 
@@ -330,7 +333,7 @@ describe('cleanup', () => {
 
     // On the unfinished run's much longer clock: a minute of quiet is a slow tool call, not a
     // death, and the run below depends on the difference.
-    vi.advanceTimersByTime(31 * 60_000);
+    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainUnendedMs + MS_PER_MINUTE);
     expect(history('abandoned')).toEqual([]);
   });
 
@@ -357,6 +360,15 @@ describe('cleanup', () => {
 
     expect(history('handed')).toHaveLength(2);
     expect(emit('handed', { kind: RunEventKind.Output, text: 'resumed' }).seq).toBe(3);
+  });
+
+  it('keeps a run waiting through the end of the exchange that handed its calls back', () => {
+    vi.useFakeTimers();
+    emit('handed', { kind: RunEventKind.Wait, text: '1 call' });
+    emit('handed', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Waiting, ok: true, pending: ['c1'] });
+
+    vi.advanceTimersByTime(4 * 60 * 60_000);
+    expect(history('handed')).toHaveLength(2);
   });
 
   it('forgets a waiting run once its own clock runs out, and an unended one on the unended clock again', () => {
@@ -439,19 +451,13 @@ describe('configureEvents', () => {
     // A half-built config — a `0` standing in for "no opinion", a parsed env var that came back
     // `NaN` — must not turn the backlog off. Nothing here has a meaningful zero.
     expect(configureEvents({ maxEvents: 0, retainMs: -1, trimSlack: Number.NaN })).toEqual(configureEvents());
-    expect(configureEvents().maxEvents).toBe(1000);
+    expect(configureEvents().maxEvents).toBe(EVENT_BUS_DEFAULTS.maxEvents);
   });
 
   it("is undone by a reset, so one test's cap is not the next one's", () => {
     configureEvents({ maxEvents: 4, retainMs: 5_000 });
     resetEvents();
-    expect(configureEvents()).toEqual({
-      maxEvents: 1000,
-      trimSlack: 256,
-      retainMs: 60_000,
-      retainUnendedMs: 30 * 60_000,
-      retainWaitingMs: 24 * 60 * 60_000,
-    });
+    expect(configureEvents()).toEqual(EVENT_BUS_DEFAULTS);
   });
 });
 
@@ -475,24 +481,6 @@ describe('fold', () => {
     emit('r', { kind: RunEventKind.Output, text: 'first', exchange: 'one' });
     emit('r', { kind: RunEventKind.Output, text: 'second', exchange: 'two' });
     expect(fold(history('r')).map((block) => block.text)).toEqual(['first', 'second']);
-  });
-
-  it('reads events stored before 5.0.0 under the names they have now', () => {
-    // An app's store holds what 4.x emitted: `kind: "step"`, and the exchange under `step`.
-    const stored: RunEvent[] = JSON.parse(
-      JSON.stringify([
-        { runId: 'r', seq: 1, at: 1, kind: 'step', text: 'stage', name: 'plan', step: '', ok: null, usage: null },
-        { runId: 'r', seq: 2, at: 2, kind: 'output', text: 'first', name: '', step: 'one', ok: null, usage: null },
-        { runId: 'r', seq: 3, at: 3, kind: 'output', text: 'second', name: '', step: 'two', ok: null, usage: null },
-      ]),
-    );
-    const blocks = fold(stored);
-    expect(blocks.map(({ kind, exchange, text }) => ({ kind, exchange, text }))).toEqual([
-      { kind: RunEventKind.Exchange, exchange: '', text: 'stage' },
-      { kind: RunEventKind.Output, exchange: 'one', text: 'first' },
-      { kind: RunEventKind.Output, exchange: 'two', text: 'second' },
-    ]);
-    expect(blocks.some((block) => 'step' in block)).toBe(false);
   });
 
   it('does not merge across a different kind', () => {
@@ -530,17 +518,6 @@ describe('fold', () => {
 });
 
 describe('runMetrics', () => {
-  it('counts the exchanges of a run stored before 5.0.0, whose events say step', () => {
-    const stored: RunEvent[] = JSON.parse(
-      JSON.stringify([
-        { runId: 'r', seq: 1, at: 1, kind: 'step', text: '', name: 'plan', step: '', ok: null, usage: null },
-        { runId: 'r', seq: 2, at: 2, kind: 'step', text: '', name: 'act', step: '', ok: null, usage: null },
-        { runId: 'r', seq: 3, at: 3, kind: 'exchange', text: '', name: 'check', exchange: '', ok: null, usage: null },
-      ]),
-    );
-    expect(runMetrics(stored).exchanges).toBe(3);
-  });
-
   it('counts nothing and measures nothing for a run with no turns', () => {
     const metrics = runMetrics([]);
     expect(metrics).toEqual({
@@ -639,6 +616,7 @@ describe('runMetrics', () => {
         turn: { prompt: 500, completion: 5, total: 505, cached: 0, finishReason: FinishReason.Stop },
       },
     });
+    emit('r', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Answered, ok: true });
     at(2000);
     emit('r', { kind: RunEventKind.Done, ok: true });
 
@@ -667,7 +645,7 @@ describe('runMetrics', () => {
       draftAcceptance: 0.5,
       largestPrompt: 500,
       largestPromptShare: 0.5,
-      outcome: RunOutcome.Answered,
+      outcome: ExchangeOutcome.Answered,
     });
     // Over the 400 prompt tokens whose cache was reported, not the 900 of all of them.
     expect(metrics.cacheHitRatio).toBeCloseTo(30 / 400);
@@ -731,34 +709,36 @@ describe('runMetrics', () => {
     expect(runMetrics([call('a', 0), result('z', 5), result('a', 50)]).toolMs).toBe(50);
   });
 
-  it("reads the outcome off the last turn and the run's end", () => {
-    const turn = (finishReason: string) => ({
-      kind: RunEventKind.Usage,
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        turn: { prompt: 0, completion: 0, total: 0, cached: 0, finishReason },
-      },
-    });
-    emit('cut', turn(FinishReason.Length));
-    emit('cut', { kind: RunEventKind.Done, ok: true });
-    expect(runMetrics(history('cut')).outcome).toBe(RunOutcome.Truncated);
-    emit('withheld', turn(FinishReason.ContentFilter));
-    emit('withheld', { kind: RunEventKind.Done, ok: true });
-    expect(runMetrics(history('withheld')).outcome).toBe(RunOutcome.Filtered);
-    emit('broke', turn(FinishReason.Stop));
-    emit('broke', { kind: RunEventKind.Done, ok: false });
-    expect(runMetrics(history('broke')).outcome).toBe(RunOutcome.Failed);
-    emit('running', turn(FinishReason.Stop));
+  it('counts the exchanges from their start events', () => {
+    emit('staged', { kind: RunEventKind.Exchange, name: 'plan' });
+    emit('staged', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Answered, ok: true });
+    emit('staged', { kind: RunEventKind.Exchange, name: 'act' });
+    expect(runMetrics(history('staged')).exchanges).toBe(2);
+  });
+
+  it("reads the outcome off the last exchange's end, and none while an exchange is going", () => {
+    const end = (outcome: ExchangeOutcome) => ({ kind: RunEventKind.ExchangeEnd, outcome, ok: true });
+    emit('two', { kind: RunEventKind.Exchange });
+    emit('two', end(ExchangeOutcome.Truncated));
+    emit('two', { kind: RunEventKind.Exchange });
+    expect(runMetrics(history('two'))).not.toHaveProperty('outcome');
+    emit('two', end(ExchangeOutcome.Ended));
+    expect(runMetrics(history('two')).outcome).toBe(ExchangeOutcome.Ended);
+    emit('two', { kind: RunEventKind.Done, ok: true });
+    expect(runMetrics(history('two')).outcome).toBe(ExchangeOutcome.Ended);
+    emit('running', { kind: RunEventKind.Turn });
     expect(runMetrics(history('running'))).not.toHaveProperty('outcome');
   });
 
-  it('reads a run as ended by a tool where its done names one, and as failed where it was not ok', () => {
-    emit('asked', { kind: RunEventKind.Done, ok: true, id: 'c0', name: 'ask_person', text: 'needs a key' });
-    expect(runMetrics(history('asked')).outcome).toBe(RunOutcome.Ended);
-    emit('ended-badly', { kind: RunEventKind.Done, ok: false, name: 'ask_person' });
-    expect(runMetrics(history('ended-badly')).outcome).toBe(RunOutcome.Failed);
+  it('reads a run whose done was not ok as failed, unless its last exchange said how it failed', () => {
+    emit('broke', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Answered, ok: true });
+    emit('broke', { kind: RunEventKind.Done, ok: false });
+    expect(runMetrics(history('broke')).outcome).toBe(ExchangeOutcome.Failed);
+    emit('unstarted', { kind: RunEventKind.Done, ok: false });
+    expect(runMetrics(history('unstarted')).outcome).toBe(ExchangeOutcome.Failed);
+    emit('stopped', { kind: RunEventKind.ExchangeEnd, outcome: ExchangeOutcome.Stopped, ok: false });
+    emit('stopped', { kind: RunEventKind.Done, ok: false });
+    expect(runMetrics(history('stopped')).outcome).toBe(ExchangeOutcome.Stopped);
   });
 
   it('counts the turns a session run served on no slot of its own, and only where any said', () => {

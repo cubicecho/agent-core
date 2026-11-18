@@ -132,8 +132,8 @@ export interface ToolAnswer {
   links?: ResourceLink[];
   /**
    * Ends the exchange once this turn's calls are answered: no further request is sent, and the
-   * loop resolves with `ended` rather than throwing. An object says why, for the app and its
-   * `done`.
+   * loop resolves with `ended` rather than throwing. An object says why, for the app and the
+   * exchange's `exchange-end`.
    *
    * @remarks
    * The turn's other calls still run and are answered, so the transcript stays one a model server

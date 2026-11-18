@@ -1,23 +1,15 @@
 import type OpenAI from 'openai';
+import { REQUEST_SIZE_DEFAULTS } from '../core/defaults.ts';
 import { isPositive } from '../core/guards.ts';
 import { CALL_EXTRA_KEYS, type CallExtraKey, FUNCTION_TOOL, PartType, Role } from './wire.ts';
 
 /**
- * The characters one token is taken to be, where nothing has measured it.
- *
- * @remarks
- * The fallback, not the rule: once a reply has come back with a reported prompt count, `runTurn`
- * divides by what the model on that model server was measured at instead. See `charsPerTokenFor`.
- */
-export const CHARS_PER_TOKEN = 4;
-
-/**
- * Rough token count. Characters over four, because there is no tokenizer here and there is not
- * going to be one: a server that will not say how big its context window is will not lend us its
+ * Rough token count. Characters over `REQUEST_SIZE_DEFAULTS.charsPerToken`, because there is no
+ * tokenizer here and there is not going to be one: a server that will not say how big its context window is will not lend us its
  * vocabulary either.
  *
  * @param text - Prose or serialised JSON — both counted the same way, which is why JSON reads low.
- * @returns The length over four, rounded up: zero for an empty string, and one for
+ * @returns The length over that ratio, rounded up: zero for an empty string, and one for
  * anything shorter than a token.
  *
  * @remarks
@@ -30,19 +22,19 @@ export const CHARS_PER_TOKEN = 4;
  * a tool block's, a request's, and the breakdown of a context window. `hooks` and `instructions`
  * read this to cap the block each adds, as can an app sizing its own prompt.
  */
-export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
+export const estimateTokens = (text: string) => Math.ceil(text.length / REQUEST_SIZE_DEFAULTS.charsPerToken);
 
 /**
  * Text cut to fit a token budget, with an ellipsis where the cut is.
  *
  * @param text - What to cut. Cut whatever its length, so a caller checks the budget first.
- * @param maxTokens - The budget, in tokens of `CHARS_PER_TOKEN` characters.
+ * @param maxTokens - The budget, in tokens of `REQUEST_SIZE_DEFAULTS.charsPerToken` characters.
  * @returns The head of the text, trailing space trimmed, and `…`: no longer than the budget.
  */
 export const clipToTokens = (text: string, maxTokens: number) =>
-  `${text.slice(0, maxTokens * CHARS_PER_TOKEN - 1).trimEnd()}…`;
+  `${text.slice(0, maxTokens * REQUEST_SIZE_DEFAULTS.charsPerToken - 1).trimEnd()}…`;
 
-/** Where `compact` starts counting in thousands. */
+/** Where `formatTokens` starts counting in thousands. */
 const THOUSAND = 1000;
 
 /**
@@ -55,7 +47,8 @@ const THOUSAND = 1000;
  * @remarks
  * The numbers in an overflow message are large and nobody reads the units digit.
  */
-export const compact = (tokens: number) => (tokens >= THOUSAND ? `${(tokens / THOUSAND).toFixed(1)}k` : String(tokens));
+export const formatTokens = (tokens: number) =>
+  tokens >= THOUSAND ? `${(tokens / THOUSAND).toFixed(1)}k` : String(tokens);
 
 /** What `{"role":"","content":""},` costs around a message's own text, in characters. */
 const ENVELOPE = 25;
@@ -63,11 +56,8 @@ const ENVELOPE = 25;
 /** The same for `{"id":"","type":"function","function":{"name":"","arguments":""}},` in a call. */
 const CALL_ENVELOPE = 66;
 
-// `ENVELOPE` is the two keys every message has. These are the three that only some do, and each
-// is the key with its punctuation and the comma after the value it holds — the value's own
-// length is counted where the value is read. Applying `ENVELOPE` alone to these shapes left the
-// keys out, which cost 4.5 tokens on every tool result: the message a tool-using exchange has most
-// of, and short in the direction that lets an overflow through the guard meant to catch it.
+// The three keys only some messages have, each with its punctuation and trailing comma. Left out,
+// they undercounted every tool result by 4.5 tokens, the side that lets an overflow through.
 
 /** What `"name":"",` costs around a message's name. */
 const NAME_KEY = 10;
@@ -121,7 +111,7 @@ export interface TokenEstimateOptions {
    * The divisor — `charsPerTokenFor` for a model whose reported usage has calibrated it. A value
    * that is not a number above zero is ignored.
    *
-   * @defaultValue `4`
+   * @defaultValue `REQUEST_SIZE_DEFAULTS.charsPerToken`
    */
   charsPerToken?: number;
 }
@@ -130,9 +120,10 @@ export interface TokenEstimateOptions {
  * The divisor an option asked for, or the fallback when it asked for nothing usable.
  *
  * @param charsPerToken - What the caller gave. Absent, zero, negative or `NaN` is nothing usable.
- * @returns `charsPerToken` when it is above zero, otherwise four.
+ * @returns `charsPerToken` when it is above zero, otherwise `REQUEST_SIZE_DEFAULTS.charsPerToken`.
  */
-const divisor = (charsPerToken: number | undefined) => (isPositive(charsPerToken) ? charsPerToken : CHARS_PER_TOKEN);
+const divisor = (charsPerToken: number | undefined) =>
+  isPositive(charsPerToken) ? charsPerToken : REQUEST_SIZE_DEFAULTS.charsPerToken;
 
 /**
  * How many characters one message is worth: its keys, and its content in whichever shape.
@@ -209,19 +200,11 @@ export function messageChars(message: OpenAI.ChatCompletionMessageParam): number
  * The tools half, cached against the array.
  *
  * @remarks
- * Serialising two dozen JSON schemas to measure them, on every turn, to get the same number every
- * time, was the more expensive half of this function.
- *
- * The array is the key, so this pays only a caller that hands the same one back. That is not what
- * a turn built through `sanitizeTools` or `relaxTools` does — both are a `map`, so each build
- * allocates a fresh array however stable the tools inside it are, and those builds miss here every
- * time. It is not free to change: keying on the tools instead would hit for them, at the cost of
- * the array-level memoisation `tests/wire/tokens.test.ts` pins, which deliberately holds a mutated array
- * to its first reading. Sizing happens once per turn either way, so the miss costs one walk of the
- * schemas rather than a walk per attempt.
- *
- * Characters rather than tokens, so a calibrated divisor applies to the schemas without walking
- * them again.
+ * The array is the key, so only a caller that hands the same array back hits; a turn built through
+ * `sanitizeTools` or `relaxTools` maps a fresh one and misses, costing one walk of the schemas per
+ * turn. Keying on the tools instead would hit, at the cost of the array-level memoisation
+ * `tests/wire/tokens.test.ts` pins. Characters rather than tokens, so a calibrated divisor applies
+ * without walking the schemas again.
  */
 const toolLengths = new WeakMap<OpenAI.ChatCompletionTool[], number>();
 

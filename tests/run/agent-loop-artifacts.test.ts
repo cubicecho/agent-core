@@ -1,9 +1,8 @@
-import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
 import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { type Create, chunks, config, type Message, says, tool } from '../helpers.ts';
+import { type Create, chunks, config, type Message, says, tool, toolNames } from '../helpers.ts';
 
 const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -41,8 +40,7 @@ const calls = (...list: [name: string, args: Record<string, unknown>][]) =>
 const question: Message[] = [{ role: Role.User, content: 'hi' }];
 const bodies = () => create.mock.calls.map(([body]) => body);
 /** What each request was sent, by the name of every tool it declared. */
-const declared = () =>
-  bodies().map((body) => (body.tools ?? []).map((t) => (t as OpenAI.ChatCompletionFunctionTool).function.name));
+const declared = () => bodies().map((body) => toolNames(body.tools));
 const results = (messages: Message[]) =>
   messages.flatMap((message) => (message.role === Role.Tool ? [String(message.content)] : []));
 const names = ['fs__write_file', 'fs__read_file', 'fs__edit_file'];
@@ -193,7 +191,7 @@ describe('artifacts', () => {
         dispatch: async () => 'contents',
       });
       expect(results(result.messages).slice(1)).toEqual([
-        'No tool call in this run touched answer.md, so it was not recorded. Record only what one of your tools stored, after the call that stored it.',
+        'No tool call so far touched answer.md, so it was not recorded. Record only what one of your tools stored, after the call that stored it.',
         'record_artifact needs a location.',
       ]);
       expect(result.toolCalls.map(({ ok }) => ok)).toEqual([true, false, false]);

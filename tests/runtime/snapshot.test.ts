@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiError, type Create, reply } from '../helpers.ts';
+import { type Create, reply } from '../helpers.ts';
+import { NO_HINTS } from '../refusals.ts';
 
 const create = vi.fn<Create>();
 vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
@@ -16,7 +17,6 @@ const { CAPABILITY_SNAPSHOT_VERSION, exportCapabilities, importCapabilities } = 
 );
 
 const config = { baseUrl: 'http://box/v1', apiKey: 'sk-secret', requestTimeoutSeconds: 60 };
-const refuseHints = apiError(400, 'no');
 
 afterEach(() => {
   create.mockReset();
@@ -31,7 +31,7 @@ describe('capability snapshots', () => {
       const other = { ...config, baseUrl: 'http://other/v1', apiKey: '' };
       const quiet = { ...config, baseUrl: 'http://quiet/v1' };
 
-      const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+      const supports = capabilitiesFor(config);
       supports.strictSchemas = false;
       const big = modelCapabilitiesFor(supports, 'big');
       big.legacyTokenLimit = false;
@@ -41,20 +41,20 @@ describe('capability snapshots', () => {
       big.supportedEfforts = ['minimal', 'low', 'high'];
       // Asked about and refused nothing, so it is left out.
       modelCapabilitiesFor(supports, 'idle');
-      capabilitiesFor(quiet.baseUrl, quiet.apiKey).usageInStream = false;
+      capabilitiesFor(quiet).usageInStream = false;
 
       // The hints refused by a model with other refusals, by one with none, and on an endpoint
       // with nothing else latched.
-      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      create.mockRejectedValueOnce(NO_HINTS).mockResolvedValueOnce(reply);
       await ask(config, 'big', 'system', 'user');
-      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      create.mockRejectedValueOnce(NO_HINTS).mockResolvedValueOnce(reply);
       await ask(config, 'small', 'system', 'user');
-      create.mockRejectedValueOnce(refuseHints).mockResolvedValueOnce(reply);
+      create.mockRejectedValueOnce(NO_HINTS).mockResolvedValueOnce(reply);
       await ask(other, 'tiny', 'system', 'user');
 
       const written = JSON.stringify(exportCapabilities(), null, 2);
       expect(written).toBe(`{
-  "version": 1,
+  "version": 2,
   "savedAt": "2026-01-02T03:04:05.000Z",
   "endpoints": {
     "${endpointId(config)}": {
@@ -69,8 +69,8 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": false,
           "refusedFields": [
+            "chat_template_kwargs",
             "min_p",
             "top_k"
           ],
@@ -91,8 +91,9 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": false,
-          "refusedFields": [],
+          "refusedFields": [
+            "chat_template_kwargs"
+          ],
           "refusedEfforts": []
         }
       },
@@ -116,8 +117,9 @@ describe('capability snapshots', () => {
           "assistantPrefill": true,
           "reasoningContent": true,
           "multiCallMessages": true,
-          "thinkingHints": false,
-          "refusedFields": [],
+          "refusedFields": [
+            "chat_template_kwargs"
+          ],
           "refusedEfforts": []
         }
       },
@@ -135,7 +137,7 @@ describe('capability snapshots', () => {
   });
 
   it('holds nothing for a process that met no refusals', () => {
-    capabilitiesFor(config.baseUrl, config.apiKey);
+    capabilitiesFor(config);
     const snapshot = exportCapabilities();
     expect(snapshot.version).toBe(CAPABILITY_SNAPSHOT_VERSION);
     expect(Number.isNaN(Date.parse(snapshot.savedAt))).toBe(false);
@@ -143,12 +145,12 @@ describe('capability snapshots', () => {
   });
 
   it('carries every latch across a restart, without the key', async () => {
-    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const supports = capabilitiesFor(config);
     supports.strictSchemas = false;
     const model = modelCapabilitiesFor(supports, 'big');
     model.legacyTokenLimit = false;
     model.refusedFields.add('min_p');
-    create.mockRejectedValueOnce(refuseHints).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await ask(config, 'small', 'system', 'user');
 
     const stored = JSON.stringify(exportCapabilities());
@@ -170,19 +172,17 @@ describe('capability snapshots', () => {
             assistantPrefill: true,
             reasoningContent: true,
             multiCallMessages: true,
-            thinkingHints: true,
           },
           small: {
             reasoningEffort: true,
             legacyTokenLimit: true,
             chosenTemperature: true,
             refusedEfforts: [],
-            refusedFields: [],
+            refusedFields: ['chat_template_kwargs'],
             structuredOutput: true,
             assistantPrefill: true,
             reasoningContent: true,
             multiCallMessages: true,
-            thinkingHints: false,
           },
         },
       },
@@ -191,7 +191,7 @@ describe('capability snapshots', () => {
     resetAll();
     create.mockReset();
     expect(importCapabilities(JSON.parse(stored))).toBe(true);
-    const restored = capabilitiesFor(config.baseUrl, config.apiKey);
+    const restored = capabilitiesFor(config);
     expect(restored.strictSchemas).toBe(false);
     expect(modelCapabilitiesFor(restored, 'big')).toMatchObject({ legacyTokenLimit: false });
     expect([...modelCapabilitiesFor(restored, 'big').refusedFields]).toEqual(['min_p']);
@@ -204,31 +204,31 @@ describe('capability snapshots', () => {
   it('carries which efforts a model refused, and the list it published', () => {
     // Otherwise every restart spends a request per rung walking the same ladder, which is the
     // whole reason the snapshot exists.
-    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const supports = capabilitiesFor(config);
     const refused = modelCapabilitiesFor(supports, 'big');
     refused.refusedEfforts.add('none');
     refused.supportedEfforts = ['minimal', 'low', 'medium', 'high'];
     const stored = JSON.parse(JSON.stringify(exportCapabilities()));
     resetAll();
     expect(importCapabilities(stored)).toBe(true);
-    const back = modelCapabilitiesFor(capabilitiesFor(config.baseUrl, config.apiKey), 'big');
+    const back = modelCapabilitiesFor(capabilitiesFor(config), 'big');
     expect([...back.refusedEfforts]).toEqual(['none']);
     expect(back.supportedEfforts).toEqual(['minimal', 'low', 'medium', 'high']);
   });
 
   it("carries a model's refusal of a trailing assistant message", () => {
-    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const supports = capabilitiesFor(config);
     modelCapabilitiesFor(supports, 'big').assistantPrefill = false;
     const stored = JSON.parse(JSON.stringify(exportCapabilities()));
     expect(stored.endpoints[endpointId(config)].models.big.assistantPrefill).toBe(false);
     resetAll();
     expect(importCapabilities(stored)).toBe(true);
-    const restored = capabilitiesFor(config.baseUrl, config.apiKey);
+    const restored = capabilitiesFor(config);
     expect(modelCapabilitiesFor(restored, 'big').assistantPrefill).toBe(false);
   });
 
   it('only latches off, whatever the snapshot says', () => {
-    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const supports = capabilitiesFor(config);
     supports.usageInStream = false;
     const id = endpointId(config);
     importCapabilities({
@@ -237,13 +237,13 @@ describe('capability snapshots', () => {
       endpoints: { [id]: { strictSchemas: true, usageInStream: true, models: {} } },
     });
     expect(supports.usageInStream).toBe(false);
-    expect(capabilitiesFor(config.baseUrl, config.apiKey)).toBe(supports);
+    expect(capabilitiesFor(config)).toBe(supports);
   });
 
   it('keeps the older age, so importing never makes a latch young again', () => {
     // Otherwise a consumer that stores a snapshot and reads it back on every boot has an entry
     // that is permanently minutes old, and `expireCapabilities` never reaches it.
-    const supports = capabilitiesFor(config.baseUrl, config.apiKey);
+    const supports = capabilitiesFor(config);
     supports.strictSchemas = false;
     const stored = JSON.parse(JSON.stringify(exportCapabilities()));
     const id = endpointId(config);
@@ -251,7 +251,7 @@ describe('capability snapshots', () => {
 
     resetAll();
     expect(importCapabilities(stored)).toBe(true);
-    expect(capabilitiesFor(config.baseUrl, config.apiKey).since).toBe(stored.endpoints[id].since);
+    expect(capabilitiesFor(config).since).toBe(stored.endpoints[id].since);
 
     // And a second import of a newer snapshot of the same endpoint does not undo that.
     const fresh = {
@@ -259,7 +259,7 @@ describe('capability snapshots', () => {
       endpoints: { [id]: { ...stored.endpoints[id], since: Date.now() } },
     };
     expect(importCapabilities(fresh)).toBe(true);
-    expect(capabilitiesFor(config.baseUrl, config.apiKey).since).toBe(stored.endpoints[id].since);
+    expect(capabilitiesFor(config).since).toBe(stored.endpoints[id].since);
   });
 
   it('treats a snapshot from before ages were written as met now', () => {
@@ -272,7 +272,7 @@ describe('capability snapshots', () => {
         endpoints: { [id]: { strictSchemas: false, usageInStream: true, models: {} } },
       }),
     ).toBe(true);
-    const restored = capabilitiesFor(config.baseUrl, config.apiKey);
+    const restored = capabilitiesFor(config);
     expect(restored.strictSchemas).toBe(false);
     expect(restored.since).toBeGreaterThanOrEqual(at);
   });
@@ -283,14 +283,14 @@ describe('capability snapshots', () => {
     expect(importCapabilities({ version: 0, savedAt: '', endpoints })).toBe(false);
     expect(importCapabilities(null)).toBe(false);
     expect(importCapabilities('nope')).toBe(false);
-    expect(capabilitiesFor(config.baseUrl, config.apiKey).strictSchemas).toBe(true);
+    expect(capabilitiesFor(config).strictSchemas).toBe(true);
     expect(
       importCapabilities({
         version: CAPABILITY_SNAPSHOT_VERSION,
         endpoints: { [id]: { models: { m: { refusedFields: [1, 'top_k'] } } } },
       }),
     ).toBe(true);
-    const model = modelCapabilitiesFor(capabilitiesFor(config.baseUrl, config.apiKey), 'm');
+    const model = modelCapabilitiesFor(capabilitiesFor(config), 'm');
     expect([...model.refusedFields]).toEqual(['top_k']);
     expect(model.reasoningEffort).toBe(true);
   });

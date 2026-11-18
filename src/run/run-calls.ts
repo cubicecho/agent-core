@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { ReasoningReplay } from '../core/config.ts';
+import { TOOL_CALL_DEFAULTS } from '../core/defaults.ts';
 import { isRecord } from '../core/guards.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
 import {
@@ -66,17 +67,17 @@ import { RunEventKind } from './events.ts';
  * @remarks
  * For events, never for the transcript: the model reads the whole of what a tool returned.
  */
-export const preview = (text: string, limit = 2000) =>
+export const preview = (text: string, limit = TOOL_CALL_DEFAULTS.eventPreviewChars) =>
   text.length > limit ? `${text.slice(0, limit)}… (${text.length} chars)` : text;
 
 /** What a tool call the exchange was stopped during is answered with, in place of a result. */
 const STOPPED_CALL = 'Stopped before this call finished.';
 
 /** The same for a call of that turn the loop never got to. */
-const UNRUN_CALL = 'Not run: the run stopped first.';
+const UNRUN_CALL = 'Not run: stopped before this call started.';
 
 /** What a call that would have been handed back is answered with, where a call of its turn ended the exchange. */
-const ENDED_CALL = 'Not run: the run ended first.';
+const ENDED_CALL = 'Not needed: the task finished first.';
 
 /**
  * What a tool's answer reads as where it said nothing: the words agent-mcp-pool uses for an MCP
@@ -687,7 +688,7 @@ function answerRecord(run: Calling, args: Record<string, unknown>): string {
   const from = run.artifacts.seen(draft.location);
   if (from === undefined) {
     throw new Error(
-      `No tool call in this run touched ${draft.location}, so it was not recorded. ` +
+      `No tool call so far touched ${draft.location}, so it was not recorded. ` +
         'Record only what one of your tools stored, after the call that stored it.',
     );
   }
@@ -739,7 +740,8 @@ function lookThrough(run: Calling, entry: ReadCall): LookedThrough {
   // nothing a load could not, and the refusal is the call's answer.
   let inner = args ?? {};
   let refused: { error: unknown } | undefined;
-  if (proxy && args && run.hostNames.has(name)) {
+  const proxiesHostTool = proxy && args && run.hostNames.has(name);
+  if (proxiesHostTool) {
     // Declared already, so the model is pointed at the call it can make rather than told the
     // tool does not exist.
     refused = { error: new Error(`${name} is not in the catalogue; call it directly, not through ${CALL_TOOL}.`) };
@@ -784,7 +786,7 @@ interface HandedBack {
 }
 
 /** A turn's calls by who answers them: the loop, through `dispatch`, or the app, after the exchange. */
-export interface TurnCalls {
+interface TurnCalls {
   /** The calls the loop runs, in the order asked. */
   run: ReadCall[];
   /** The calls handed back, in the order asked. */
@@ -831,7 +833,8 @@ export function splitHandedBack(run: Calling, parsed: ReadCall[]): TurnCalls {
  */
 function markUsed(run: Calling, name: string) {
   const { catalog, onDemand, proxied } = run;
-  if (onDemand && !proxied && inCatalog(catalog, name)) {
+  const countsAsLoaded = onDemand && proxied === false && inCatalog(catalog, name);
+  if (countsAsLoaded) {
     run.loaded.add(name);
   }
   run.used.add(name);
@@ -903,8 +906,8 @@ function batchEnd(
   for (let at = from; at < total; at++) {
     const prepared = ready(at);
     prepared.passed ??= answersItself(prepared, answered, batch) || parallel(prepared.request);
-    const reads = prepared.passed;
-    if (reads === false) {
+    const isWrite = prepared.passed === false;
+    if (isWrite) {
       return at === from ? at + 1 : at;
     }
     if (prepared.dedupable) {
@@ -1113,10 +1116,10 @@ export async function runCalls(
     const at = ends.findIndex((end) => end !== false);
     const end = ends[at];
     const outcome = outcomes[at];
-    const ended =
-      end === undefined || end === false || outcome === undefined
-        ? undefined
-        : { callId: outcome.id, name: outcome.name, ...(end.reason === undefined ? {} : { reason: end.reason }) };
+    const hasEndingCall = end !== undefined && end !== false && outcome !== undefined;
+    const ended = hasEndingCall
+      ? { callId: outcome.id, name: outcome.name, ...(end.reason === undefined ? {} : { reason: end.reason }) }
+      : undefined;
     const hasMessageToOpen = back.length > 0 && opens !== undefined && ran.length > 0;
     if (hasMessageToOpen) {
       asked = parsed.length;
@@ -1174,7 +1177,7 @@ export async function loadShortlist(
   // Checked against the transcript, so two questions in one history do not share an id.
   const id = freshCallId(callIdsIn(messages), run.mintCallId);
   const args = JSON.stringify({ names });
-  // Held to its own length rather than `MAX_PER_LOAD`: that cap is for a model choosing, and an
+  // Held to its own length rather than `maxPerLoad`: that cap is for a model choosing, and an
   // app that shortlisted more has already chosen.
   const content = proxyLoadResult(expandNames(names, catalog, names.length), catalog, shortlist);
   run.onEvent({ kind: RunEventKind.ToolCall, id, name: LOAD_TOOLS, text: preview(args) });

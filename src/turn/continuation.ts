@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { CONTINUATION_DEFAULTS } from '../core/defaults.ts';
 import {
   type Capabilities,
   latchFields,
@@ -29,13 +30,15 @@ import { modelLabel, type RequestBuilder, type RunTurnOptions, runTurn } from '.
  * reply and a prefill the cache mostly already holds.
  */
 
+const { restartProbeChars, restartMinChars } = CONTINUATION_DEFAULTS;
+
 /** What `continueTurn` takes besides what `runTurn` does. */
 export interface ContinueTurnOptions extends RunTurnOptions {
   /**
    * How many more requests one answer may be given; zero continues nothing. The cap is what
    * stops a model that never reaches a stop token from looping on the ceiling.
    *
-   * @defaultValue `1`
+   * @defaultValue `CONTINUATION_DEFAULTS.maxContinuations`
    */
   maxContinuations?: number;
   /**
@@ -108,12 +111,6 @@ function refusePrefillFields(refused: ModelCapabilities, detail: string): boolea
   return true;
 }
 
-/** How much of the answer's opening a reply has to repeat to have started over. */
-const RESTART_PROBE = 40;
-
-/** The shortest opening worth testing for a restart; shorter ones are repeated by chance. */
-const RESTART_MIN = 12;
-
 /**
  * Whether the continuation began the answer again rather than carrying it on — how a server that
  * ignores the prefill shows itself, since it takes the request without complaint.
@@ -121,11 +118,11 @@ const RESTART_MIN = 12;
  * @param answer - The answer so far, as it was sent back as the prefill.
  * @param continuation - The content the continuation came back with.
  * @returns True where the continuation opens with the answer's own opening, leading whitespace
- * aside on both. Never true for an answer whose opening is shorter than `RESTART_MIN`.
+ * aside on both. Never true for an answer whose opening is shorter than `CONTINUATION_DEFAULTS.restartMinChars`.
  */
 const restarted = (answer: string, continuation: string) => {
-  const opening = answer.trimStart().slice(0, RESTART_PROBE);
-  return opening.length >= RESTART_MIN && continuation.trimStart().startsWith(opening);
+  const opening = answer.trimStart().slice(0, restartProbeChars);
+  return opening.length >= restartMinChars && continuation.trimStart().startsWith(opening);
 };
 
 /** The fields of a usage that add across two requests, when both reported them. */
@@ -181,7 +178,8 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
     const bMs = next[over];
     // Tokens over time for both together, which is each rate weighted by the time it held.
     const bothTimed = a !== undefined && b !== undefined && aMs !== undefined && bMs !== undefined;
-    if (bothTimed && aMs + bMs) {
+    const hasHeldTime = bothTimed && Boolean(aMs + bMs);
+    if (hasHeldTime) {
       joined[rate] = (a * aMs + b * bMs) / (aMs + bMs);
     } else {
       delete joined[rate];
@@ -237,34 +235,22 @@ function joinPartial(sofar: Turn, piece: PartialTurn | undefined): PartialTurn {
  *
  * @remarks
  * Only a turn cut off at the ceiling, with an answer begun and no tool call in it, is continued;
- * any other comes back as it was. Content and scratchpad are joined in order, the tool calls a
- * continuation makes are kept, and usage is summed across the requests with `continuations`
- * counting them. The continuation is read as starting in the answer, whatever `startInReasoning`
- * says: a template that opens a fence for a fresh reply does not open one for a prefill. Its tokens
- * reach `onOutput` as they arrive, so a watcher sees one answer carry on rather than two.
- *
- * The request also says `continue_final_message: true` and `add_generation_prompt: false`, without
- * which vLLM answers afresh. They are this request's rather than the conversation's, so they win
- * over a key of the same name in what `request` builds: vLLM refuses `add_generation_prompt: true`
- * beside the other. A model that refuses either by name stops being sent both, latched in its
- * `refusedFields`, and the continuation is sent again without them before anything is concluded
- * about the prefill.
- *
- * Whether the server continues at all is latched per model as `assistantPrefill`. A refusal of the
- * request latches it off, and so does a continuation that begins the answer again, which is how a
- * server that takes the request and ignores the prefill — hosted OpenAI among them — shows itself;
- * that check is only as good as a restart being word for word. Either way the answer so far is
- * kept, with a notice. So is it when the continuation fails any other way, since the tokens
- * already in hand are worth more than the error; only a stop is thrown. An `inFlight` box reads
- * the answer so far with the continuation's piece joined on, so a stop mid-continuation keeps it
- * all.
+ * any other comes back as it was. The continuation is read as starting in the answer whatever
+ * `startInScratchpad` says, since a template that opens a fence for a fresh reply does not open one
+ * for a prefill. The answer so far is kept with a notice however the continuation fails, short of a
+ * stop; the fields it sends and the `assistantPrefill` latch are in the README's "What the servers
+ * say about themselves".
  */
 export async function continueTurn(
   client: OpenAI,
   supports: Capabilities,
   request: RequestBuilder,
   turn: Turn,
-  { maxContinuations = 1, replayReasoning = true, ...options }: ContinueTurnOptions = {},
+  {
+    maxContinuations = CONTINUATION_DEFAULTS.maxContinuations,
+    replayReasoning = true,
+    ...options
+  }: ContinueTurnOptions = {},
 ): Promise<Turn> {
   const refused = options.model === undefined ? undefined : modelCapabilitiesFor(supports, options.model);
   const who = modelLabel(options.model);
@@ -275,7 +261,8 @@ export async function continueTurn(
   let joined = turn;
   const droppable = [...(options.droppable ?? []), ...PREFILL_KEYS];
   for (let count = 0; count < maxContinuations && isContinuable(joined); count++) {
-    if (refused?.assistantPrefill === false) {
+    const refusesPrefill = refused?.assistantPrefill === false;
+    if (refusesPrefill) {
       break;
     }
     const answer = joined.content;
@@ -297,21 +284,22 @@ export async function continueTurn(
         supports,
         (capabilities, forModel) => {
           const body = request(capabilities, forModel);
-          const scratchpad = forModel?.reasoningContent === false ? {} : thought;
+          const refusesScratchpad = forModel?.reasoningContent === false;
+          const scratchpad = refusesScratchpad ? {} : thought;
           return {
             ...body,
             ...prefillFields(forModel),
             messages: [...body.messages, { role: Role.Assistant, content: answer, ...scratchpad }],
           };
         },
-        { ...options, ...told, droppable, startInReasoning: false },
+        { ...options, ...told, droppable, startInScratchpad: false },
       );
     } catch (error) {
       if (options.signal?.aborted) {
         throw error;
       }
       if (error instanceof ContextOverflow) {
-        options.onNotice?.('no room left in the window to continue the cut-off reply');
+        options.onNotice?.('no room left in the context window to continue the cut-off reply');
       } else if (refused && refusesRequest(error) && refusePrefillFields(refused, errorMessage(error))) {
         // The fields were what it refused, not the trailing message: the attempt is not spent.
         options.onNotice?.(`${who} does not take ${PREFILL_KEYS.join(', ')}; continuing without them`);

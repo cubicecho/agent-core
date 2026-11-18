@@ -12,6 +12,7 @@ import {
   SUMMARY_LEAD,
   summaryInput,
 } from '../../src/context/compaction.ts';
+import { COMPACTION_DEFAULTS, PRUNE_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import { type HookRunner, turnMessages } from '../../src/hooks/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../../src/tools/tool-loading.ts';
@@ -115,16 +116,17 @@ describe('planPrune', () => {
     const messages = run(7);
     expect(planPrune(messages, 8000, { estimate: chars, through: 3 })).toBeUndefined();
     expect(planPrune(messages, 8000, { estimate: chars, through: 5 })).toBeUndefined();
-    // Five results or fewer: there is nothing outside the latest five.
-    expect(planPrune(run(5), 1000, { estimate: chars, at: 0 })).toBeUndefined();
+    // `keepLastResults` results or fewer: there is nothing outside the latest few.
+    const { keepLastResults } = PRUNE_DEFAULTS;
+    expect(planPrune(run(keepLastResults), 1000, { estimate: chars, at: 0 })).toBeUndefined();
     // Short results stay whole wherever the boundary is, so moving past them clears nothing.
-    const short = [user('q'), result('a'), result('b'), ...run(5).slice(1)];
+    const short = [user('q'), result('a'), result('b'), ...run(keepLastResults).slice(1)];
     expect(planPrune(short, 1000, { estimate: chars, at: 0, minShare: 0 })).toBeUndefined();
   });
 
   it('waits for the window to fill past `at`, by the larger of the report and the estimate', () => {
     const messages = run(7);
-    // 7001 characters in a window of 10,000 is under COMPACT_AT.
+    // 7001 characters in a window of 10,000 is under `compactAtShare`.
     expect(planPrune(messages, 10_000, { estimate: chars })).toBeUndefined();
     expect(planPrune(messages, 10_000, { estimate: chars, used: 7500 })?.through).toBe(3);
     // A report that predates the latest results does not hold the estimate down.
@@ -158,7 +160,7 @@ describe('planPrune', () => {
     expect(planPrune(run(7), 8000, { estimate: chars, maxChars: 1000, at: 0, minShare: 0 })).toBeUndefined();
   });
 
-  it('expresses both hosts: the gate past COMPACT_AT with a tenth to win, and a marker moved on a quarter', () => {
+  it('expresses both hosts: the gate past compactAtShare with a tenth to win, and a marker moved on a quarter', () => {
     // task-server: no stored marker, gated at three quarters of the window, a tenth to win back.
     const filling = run(9);
     expect(planPrune(filling, 12_000, { estimate: chars })).toEqual({ through: 5, cleared: 4, tokens: 4 * SAVED });
@@ -225,10 +227,10 @@ describe('pruneThrough', () => {
 describe('pruneNotice', () => {
   it('says the counts, and why the boundary moved', () => {
     expect(pruneNotice({ through: 3, cleared: 2, tokens: 12_345 })).toBe(
-      'cleared 2 old tool results (~12,345 tokens) as the window filled',
+      'cleared 2 old tool results (~12,345 tokens) as the context window filled',
     );
     expect(pruneNotice({ through: 3, cleared: 1, tokens: 900 }, true)).toBe(
-      'cleared 1 old tool result (~900 tokens) alongside a fold',
+      'cleared 1 old tool result (~900 tokens) alongside a compaction',
     );
   });
 });
@@ -317,7 +319,7 @@ describe('planCompaction', () => {
 
     it("assumes the summariser's own ceiling for the summary unless told", () => {
       const plan = planCompaction(long, { limit: 10000, used: 9000, estimate, target: 0.5 });
-      expect(plan).toMatchObject({ cut: 7, after: 9000 - 60 + 1024 });
+      expect(plan).toMatchObject({ cut: 7, after: 9000 - 60 + COMPACTION_DEFAULTS.summaryTokens });
     });
 
     it('leaves a plan made by keepRatio as it was', () => {
@@ -334,7 +336,7 @@ describe('summaryInput', () => {
       from: 0,
       cut: 2,
       toSummarise: [
-        user('y'.repeat(5000)),
+        user('y'.repeat(COMPACTION_DEFAULTS.summaryMessageChars + 1)),
         {
           role: Role.Assistant,
           content: null,
@@ -342,7 +344,7 @@ describe('summaryInput', () => {
         },
       ],
     });
-    expect(text).toBe(`user: ${'y'.repeat(4000)}\n\nassistant: read({})`);
+    expect(text).toBe(`user: ${'y'.repeat(COMPACTION_DEFAULTS.summaryMessageChars)}\n\nassistant: read({})`);
   });
 });
 

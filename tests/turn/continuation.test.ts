@@ -30,7 +30,7 @@ const cut = (content = 'The sky is blue because', extra: Partial<Turn> = {}): Tu
   ...extra,
 });
 
-const supports = () => capabilitiesFor('http://local/v1');
+const supports = () => capabilitiesFor({ baseUrl: 'http://local/v1' });
 
 afterEach(() => resetCapabilities());
 
@@ -53,7 +53,7 @@ describe('continueTurn', () => {
     const create = vi.fn<Create>().mockReturnValue(replies(' of the way light scatters.', FinishReason.Stop));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
       model: 'm',
-      startInReasoning: true,
+      startInScratchpad: true,
     });
     expect(create).toHaveBeenCalledTimes(1);
     // What vLLM needs to read the trailing message as a prefill rather than open a fresh turn.
@@ -213,10 +213,8 @@ describe('continueTurn', () => {
     const create = vi
       .fn<Create>()
       .mockRejectedValueOnce(
-        apiError(
-          422,
-          '[{"type":"extra_forbidden","loc":["body","add_generation_prompt"],"msg":"Extra inputs are not permitted"}]',
-        ),
+        // A wording no unknown-field reader knows: only the field's name is in it.
+        apiError(422, 'Template option add_generation_prompt cannot be used with this model'),
       )
       .mockReturnValue(replies(' more.'));
     const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
