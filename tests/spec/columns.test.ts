@@ -215,7 +215,7 @@ describe('defineSpecColumns', () => {
         model: { model: 'qwen', reasoningEffort: 'high', extraBody: { top_k: 20, min_p: 0.05 } },
         retry: { loadingTimeoutSeconds: 30 },
         tasks: { title: { model: 'tiny', maxTokens: 64 } },
-        hooks: [{ id: 'recall', on: 'beforeTurn', server: 'memory', tool: 'recall' }],
+        hooks: [{ id: 'recall', on: 'beforeExchange', server: 'memory', tool: 'recall' }],
       });
       expect(MARKED.dropped(spec)).toEqual([
         { path: '$schema', value: 'https://example.com/agent.json' },
@@ -303,7 +303,7 @@ describe('defineSpecColumns', () => {
       const spec = parsed({
         spec: AGENT_SPEC,
         tools: { servers: ['memory'], maxIterations: 4 },
-        hooks: [{ id: 'recall', on: 'beforeTurn', server: 'memory', tool: 'recall' }],
+        hooks: [{ id: 'recall', on: 'beforeExchange', server: 'memory', tool: 'recall' }],
         extensions: { 'com.example.host': { anything: true } },
       });
       expect(table.dropped(spec)).toEqual([{ path: 'tools.maxIterations', value: 4 }]);

@@ -7,7 +7,7 @@ import {
   RunArtifacts,
 } from '../../src/run/artifacts.ts';
 
-const at = (callId: string, tool = 'fs__write_file', step = 0) => ({ callId, tool, step });
+const at = (callId: string, tool = 'fs__write_file', turn = 0) => ({ callId, tool, turn });
 
 describe('detectArtifact', () => {
   it('reads a write verb and a path as a created file, sized by its content', () => {
@@ -79,7 +79,7 @@ describe('RunArtifacts', () => {
         link: { uri: 'p.md', name: 'p.md', title: 'Plan', description: 'The plan.', mimeType: 'text/markdown' },
         callId: 'c0',
         tool: 'fs__write_file',
-        step: 0,
+        turn: 0,
         count: 2,
         source: 'declared',
         action: 'updated',

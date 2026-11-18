@@ -342,7 +342,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0, max_tokens: 64 });
     // On its own endpoint, and without the agent's key: that key was issued for another server.
     expect(reached).toContainEqual({ baseUrl: 'http://side/v1', apiKey: NO_KEY });
-    // And the first step opens with what it picked.
+    // And the first turn opens with what it picked.
     expect(body(1)).toMatchObject({ model: 'big', temperature: 1 });
     expect(declared(1)).toEqual(['s__read']);
   });
@@ -506,7 +506,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(shown(1)).toContain('the user likes tea');
   });
 
-  it("runs the preselection beside the hooks' gather, and sends the first step after both", async () => {
+  it("runs the preselection beside the hooks' gather, and sends the first turn after both", async () => {
     const PAUSE_MS = 80;
     const spans: Record<string, { from: number; to: number }> = {};
     const timed = async <T>(name: string, value: T) => {
@@ -515,11 +515,11 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       spans[name] = { from, to: performance.now() };
       return value;
     };
-    let firstStepAt = 0;
+    let firstTurnAt = 0;
     create
       .mockImplementationOnce(() => timed('preselect', answer('["s__read"]')))
       .mockImplementationOnce(() => {
-        firstStepAt = performance.now();
+        firstTurnAt = performance.now();
         return says('hello');
       });
     const result = await run(onDemand({ toolSelect: { model: 'tiny' } }), {
@@ -533,7 +533,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     // Each began before the other ended.
     expect(gathering.from).toBeLessThan(picking.to);
     expect(picking.from).toBeLessThan(gathering.to);
-    expect(firstStepAt).toBeGreaterThanOrEqual(Math.max(picking.to, gathering.to));
+    expect(firstTurnAt).toBeGreaterThanOrEqual(Math.max(picking.to, gathering.to));
     expect(result.preselected).toEqual(['s__read']);
     expect(result.context).toContain('remembered');
   });
@@ -604,7 +604,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   });
 
   it("folds a single question's tool loop, keeping the question, and numbers it from the offset", async () => {
-    const step = (id: string): Message[] => [
+    const turn = (id: string): Message[] => [
       {
         role: Role.Assistant,
         content: `reading ${id}`,
@@ -613,7 +613,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       { role: Role.Tool, tool_call_id: id, content: 'line '.repeat(150) },
     ];
     const question: Message = { role: Role.User, content: 'summarise the repo' };
-    const loop: Message[] = [question, ...['a', 'b', 'c', 'd', 'e'].flatMap(step)];
+    const loop: Message[] = [question, ...['a', 'b', 'c', 'd', 'e'].flatMap(turn)];
     const run = vi.fn(async () => []);
     const events: RunEventInput[] = [];
     create.mockResolvedValueOnce(answer('read a to d')).mockResolvedValueOnce(says('done'));
@@ -642,7 +642,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(compacting.compacting[0].uuid).toMatch(/^s:41:/);
     // The summary is a user message, and is not counted as a turn of its own.
     await result.afterTurn;
-    const told = (run.mock.calls as unknown[][]).find((args) => args[0] === 'afterTurn')?.[1] as {
+    const told = (run.mock.calls as unknown[][]).find((args) => args[0] === 'afterExchange')?.[1] as {
       turn: { index: number };
     };
     expect(told.turn.index).toBe(0);
@@ -712,13 +712,13 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       messages: long,
       dispatch: async () => 'done',
       compact: true,
-      hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeTurn, HookEvent.AfterTurn] },
+      hooks: { run, context: { session: { id: 's' } }, fire: [HookEvent.BeforeExchange, HookEvent.AfterExchange] },
     });
     await result.afterTurn;
     expect(body(1).messages.slice(0, 2)).toEqual(summarised('what was said'));
     expect((run.mock.calls as unknown[][]).map(([event]) => event)).toEqual([
-      HookEvent.BeforeTurn,
-      HookEvent.AfterTurn,
+      HookEvent.BeforeExchange,
+      HookEvent.AfterExchange,
     ]);
   });
 
@@ -735,7 +735,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(body(0).messages.length).toBe(3);
   });
 
-  it('plans a later step from the prompt the last one reported', async () => {
+  it('plans a later turn from the prompt the last one reported', async () => {
     // Short by any estimate, but the server said 900 of 1000: tool schemas and a system prompt
     // are in the window too, and only the report counts them.
     const short: Message[] = [

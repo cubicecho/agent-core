@@ -245,7 +245,7 @@ A document with every field set, as an operator would read it:
   "hooks": [
     {
       "id": "remember",
-      "on": "beforeTurn",
+      "on": "beforeExchange",
       "server": "memory",
       "tool": "recall",
       "args": { "query": "{{prompt}}" },
@@ -374,7 +374,7 @@ from a row) and for what the merge itself makes:
   spells (`temperature`, `max_tokens`, `max_completion_tokens`, `reasoning_effort`), so a row
   cannot send a temperature over the stated one, past the negotiation.
 - A hook merged by id loses an `inject` or a `veto` its merged event cannot honour. A layer can
-  move a hook from `beforeTurn` to `afterTurn` by id without restating it, and the `inject` from
+  move a hook from `beforeExchange` to `afterExchange` by id without restating it, and the `inject` from
   below would otherwise come with it.
 
 Resolving has no warnings, so both drops are silent. `parseSpec` is where an operator is told.
@@ -469,6 +469,12 @@ A hook bound to an event this host never fires is a note rather than an error. `
 currently refuses to save a `beforeCompact` hook because it never compacts, which makes an
 otherwise good agent unimportable. The validator takes the host's fired-event set (the `events`
 option), defaulting to `SPEC_EVENTS`, which is `HOOK_EVENTS`, and warns.
+
+Before 5.0.0 the exchange's two events were named `beforeTurn` and `afterTurn`. A document that
+still says them parses, each hook bound under the new name (`beforeExchange`, `afterExchange`) with
+a warning such as `hooks[0].on: "beforeTurn" is now "beforeExchange"`. `resolveAgentSpec` renames
+them silently in a layer that never went through `parseSpec`, and `exportSpec` writes only the new
+names, so a stored document needs no migration.
 
 An `inject: true` on an event outside `INJECT_EVENTS`, or a `veto: true` on any event but
 `beforeCompact`, is dropped with a warning and the hook is kept. Resolving drops the same flags

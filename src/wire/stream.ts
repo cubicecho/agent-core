@@ -188,23 +188,8 @@ export interface UsageTotals {
   cacheReported: boolean;
 }
 
-/**
- * What a loop spent, as `AgentLoopResult.usage` and a failed exchange's `usage` carry it.
- *
- * @remarks
- * `UsageTotals`, with the four counts also under the names this field had before it: an app that
- * reads `usage.prompt` keeps compiling and reads the same number as `usage.promptTokens`.
- */
-export interface LoopUsage extends TurnUsage, UsageTotals {
-  /** @deprecated Read `promptTokens`, the same number. */
-  prompt: number;
-  /** @deprecated Read `completionTokens`, the same number. */
-  completion: number;
-  /** @deprecated Read `totalTokens`, the same number. */
-  total: number;
-  /** @deprecated Read `cachedTokens`, the same number, and `cacheReported` for whether it was reported. */
-  cached: number;
-}
+/** What a loop spent, as `AgentLoopResult.usage` and a failed exchange's `usage` carry it. */
+export type LoopUsage = UsageTotals;
 
 /**
  * Whether a reply's usage says the model server reported its cache.
@@ -215,17 +200,13 @@ export interface LoopUsage extends TurnUsage, UsageTotals {
 export const reportsCache = (usage: TurnUsage): boolean => usage.uncached !== undefined;
 
 /**
- * A loop's summed counts in both spellings, for its result and its `usage` events.
+ * A loop's summed counts in the run-level spelling, for its result and its `usage` events.
  *
  * @param counts - The four counts summed over the loop's turns. Not written to.
  * @param cacheReported - Whether any of those turns reported a cache count.
- * @returns A new usage holding the four counts under both names, and the flag.
+ * @returns A new usage holding the four counts as `UsageTotals` names them, and the flag.
  */
 export const loopUsage = (counts: TurnUsage, cacheReported: boolean): LoopUsage => ({
-  prompt: counts.prompt,
-  completion: counts.completion,
-  total: counts.total,
-  cached: counts.cached,
   promptTokens: counts.prompt,
   completionTokens: counts.completion,
   totalTokens: counts.total,

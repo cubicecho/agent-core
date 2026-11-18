@@ -7,6 +7,7 @@ import {
   endRun,
   fold,
   history,
+  type RunEvent,
   RunEventKind,
   RunOutcome,
   resetEvents,
@@ -26,7 +27,7 @@ afterEach(() => {
 
 describe('emit', () => {
   it("numbers a run's events from one, in order", () => {
-    emit('r', { kind: RunEventKind.Step, name: 'plan' });
+    emit('r', { kind: RunEventKind.Exchange, name: 'plan' });
     emit('r', { kind: RunEventKind.Output, text: 'a' });
     emit('r', { kind: RunEventKind.Done, ok: true });
     expect(history('r').map((event) => event.seq)).toEqual([1, 2, 3]);
@@ -93,7 +94,7 @@ describe('stamp', () => {
       kind: RunEventKind.Notice,
       text: 'hi',
       name: '',
-      step: '',
+      exchange: '',
       ok: null,
       usage: null,
       runId: 'own',
@@ -200,7 +201,7 @@ describe('watch', () => {
   });
 
   it('reads the backlog first, then what happens next, and stops at done', async () => {
-    emit('r', { kind: RunEventKind.Step, name: 'plan' });
+    emit('r', { kind: RunEventKind.Exchange, name: 'plan' });
     emit('r', { kind: RunEventKind.Output, text: 'before' });
 
     const seen: string[] = [];
@@ -216,7 +217,7 @@ describe('watch', () => {
     emit('r', { kind: RunEventKind.Done, ok: true });
     await reading;
 
-    expect(seen).toEqual(['step:', 'output:before', 'output:after', 'done:']);
+    expect(seen).toEqual(['exchange:', 'output:before', 'output:after', 'done:']);
   });
 
   it("leaves a live run's backlog behind when a watcher goes away", async () => {
@@ -456,9 +457,9 @@ describe('configureEvents', () => {
 
 describe('fold', () => {
   it('merges consecutive tokens of one kind into one block', () => {
-    emit('r', { kind: RunEventKind.Output, text: 'he', step: 's' });
-    emit('r', { kind: RunEventKind.Output, text: 'llo', step: 's' });
-    emit('r', { kind: RunEventKind.Done, ok: true, step: 's' });
+    emit('r', { kind: RunEventKind.Output, text: 'he', exchange: 's' });
+    emit('r', { kind: RunEventKind.Output, text: 'llo', exchange: 's' });
+    emit('r', { kind: RunEventKind.Done, ok: true, exchange: 's' });
 
     const blocks = fold(history('r'));
     expect(blocks.map((block) => [block.kind, block.text])).toEqual([
@@ -469,11 +470,29 @@ describe('fold', () => {
     expect(blocks[0].seq).toBe(2);
   });
 
-  it('does not merge two blocks that belong to different steps', () => {
-    // The fix merged in from task_server: same kind, same run, different step is two things.
-    emit('r', { kind: RunEventKind.Output, text: 'first', step: 'one' });
-    emit('r', { kind: RunEventKind.Output, text: 'second', step: 'two' });
+  it('does not merge two blocks that belong to different exchanges', () => {
+    // The fix merged in from task_server: same kind, same run, different exchange is two things.
+    emit('r', { kind: RunEventKind.Output, text: 'first', exchange: 'one' });
+    emit('r', { kind: RunEventKind.Output, text: 'second', exchange: 'two' });
     expect(fold(history('r')).map((block) => block.text)).toEqual(['first', 'second']);
+  });
+
+  it('reads events stored before 5.0.0 under the names they have now', () => {
+    // An app's store holds what 4.x emitted: `kind: "step"`, and the exchange under `step`.
+    const stored: RunEvent[] = JSON.parse(
+      JSON.stringify([
+        { runId: 'r', seq: 1, at: 1, kind: 'step', text: 'stage', name: 'plan', step: '', ok: null, usage: null },
+        { runId: 'r', seq: 2, at: 2, kind: 'output', text: 'first', name: '', step: 'one', ok: null, usage: null },
+        { runId: 'r', seq: 3, at: 3, kind: 'output', text: 'second', name: '', step: 'two', ok: null, usage: null },
+      ]),
+    );
+    const blocks = fold(stored);
+    expect(blocks.map(({ kind, exchange, text }) => ({ kind, exchange, text }))).toEqual([
+      { kind: RunEventKind.Exchange, exchange: '', text: 'stage' },
+      { kind: RunEventKind.Output, exchange: 'one', text: 'first' },
+      { kind: RunEventKind.Output, exchange: 'two', text: 'second' },
+    ]);
+    expect(blocks.some((block) => 'step' in block)).toBe(false);
   });
 
   it('does not merge across a different kind', () => {
@@ -511,10 +530,21 @@ describe('fold', () => {
 });
 
 describe('runMetrics', () => {
+  it('counts the exchanges of a run stored before 5.0.0, whose events say step', () => {
+    const stored: RunEvent[] = JSON.parse(
+      JSON.stringify([
+        { runId: 'r', seq: 1, at: 1, kind: 'step', text: '', name: 'plan', step: '', ok: null, usage: null },
+        { runId: 'r', seq: 2, at: 2, kind: 'step', text: '', name: 'act', step: '', ok: null, usage: null },
+        { runId: 'r', seq: 3, at: 3, kind: 'exchange', text: '', name: 'check', exchange: '', ok: null, usage: null },
+      ]),
+    );
+    expect(runMetrics(stored).exchanges).toBe(3);
+  });
+
   it('counts nothing and measures nothing for a run with no turns', () => {
     const metrics = runMetrics([]);
     expect(metrics).toEqual({
-      steps: 0,
+      exchanges: 0,
       turns: 0,
       requests: 0,
       toolCalls: 0,
@@ -549,7 +579,7 @@ describe('runMetrics', () => {
   it("sums a run's turns, times its tools and weighs what only some turns reported", () => {
     vi.useFakeTimers({ now: 1000 });
     const at = (ms: number) => vi.setSystemTime(1000 + ms);
-    emit('r', { kind: RunEventKind.Step, name: 'plan' });
+    emit('r', { kind: RunEventKind.Exchange, name: 'plan' });
     emit('r', {
       kind: RunEventKind.Usage,
       usage: {
@@ -614,7 +644,7 @@ describe('runMetrics', () => {
 
     const metrics = runMetrics(history('r'), { contextLength: 1000 });
     expect(metrics).toMatchObject({
-      steps: 1,
+      exchanges: 1,
       turns: 3,
       requests: 4,
       toolCalls: 2,

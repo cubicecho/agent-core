@@ -16,7 +16,7 @@ const whole = (): Required<AgentLoopFailure> => ({
   partial: { content: 'half an answer', reasoning: 'thinking' },
   usage: loopUsage({ prompt: 10, completion: 2, total: 12, cached: 4 }, true),
   toolCalls: [{ id: 'c1', name: 'read', ok: true }],
-  artifacts: [{ link: { uri: 'file:///a.md', name: 'a.md' }, callId: 'c1', tool: 'read', step: 0, count: 1 }],
+  artifacts: [{ link: { uri: 'file:///a.md', name: 'a.md' }, callId: 'c1', tool: 'read', turn: 0, count: 1 }],
   loaded: ['read'],
   used: ['read'],
   preselected: ['read', 'write'],

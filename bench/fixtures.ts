@@ -81,7 +81,7 @@ export const deltas = (count = 20_000): RunEvent[] =>
     kind: i % 2000 === 1999 ? RunEventKind.Output : RunEventKind.Thinking,
     text: 'token ',
     name: '',
-    step: i < count / 2 ? 'plan' : 'act',
+    exchange: i < count / 2 ? 'plan' : 'act',
     ok: null,
     usage: null,
   }));

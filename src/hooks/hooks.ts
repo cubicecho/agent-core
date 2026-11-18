@@ -501,7 +501,7 @@ const tellSafely = (notes: readonly HookNote[], onNote?: OnNote) => {
  * Runs the hooks ahead of a request and builds what they add to it.
  *
  * @param run - Runs one event's hooks.
- * @param events - Which to run: `["beforeTurn"]` ordinarily, and `sessionStart` ahead of it on a
+ * @param events - Which to run: `["beforeExchange"]` ordinarily, and `sessionStart` ahead of it on a
  * session's first exchange. The outcomes are assembled in this order, so it is also the order the
  * budget is spent in.
  * @param context - What the hooks are told.
@@ -538,7 +538,7 @@ export async function gather(
  * rejects, so an app can fire it without awaiting it.
  *
  * @param run - Runs the event's hooks.
- * @param event - `afterTurn`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
+ * @param event - `afterExchange`, `beforeCompact`, `sessionEnd` or `sessionDelete`. An injecting event
  * works too, but what its hooks return is dropped, since there is no request here to add it to.
  * @param context - What the hooks are told.
  * @param [onNote] - Hears each note — which, with nothing injected, is only ever a failure. One it

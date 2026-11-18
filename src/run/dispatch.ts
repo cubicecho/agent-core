@@ -240,7 +240,7 @@ export interface RunArtifact {
   /** That call's tool. For a `call_tool`, the tool it named. */
   tool: string;
   /** The turn that call was made in, from 0. */
-  step: number;
+  turn: number;
   /**
    * How many calls linked to it or wrote it. A deduplicated repeat does not count, since nothing
    * was made twice, a call that links one uri twice counts once, and a declaration counts none.

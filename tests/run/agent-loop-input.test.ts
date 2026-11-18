@@ -51,9 +51,9 @@ beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
 describe('takeInput', () => {
-  it("goes on with input once the step's calls have answered, before the next request", async () => {
+  it("goes on with input once the turn's calls have answered, before the next request", async () => {
     create.mockReturnValueOnce(calls('a')).mockReturnValueOnce(says('done'));
-    const heard: { message: Message; step: number }[] = [];
+    const heard: { message: Message; turn: number }[] = [];
     const events: string[] = [];
     const result = await runAgentLoop({
       config,
@@ -62,8 +62,8 @@ describe('takeInput', () => {
       dispatch: async () => 'a ran',
       // The first ask is before the first request; the second is once `a` has answered.
       takeInput: inputOn(2, 'use b instead'),
-      onMessage: (message, step) => {
-        heard.push({ message, step });
+      onMessage: (message, turn) => {
+        heard.push({ message, turn });
       },
       onEvent: (event) => {
         if (event.kind === RunEventKind.Input) {
@@ -73,7 +73,7 @@ describe('takeInput', () => {
     });
     expect(sent(1)).toEqual(['user: hi', 'assistant: null', 'tool: a ran', 'user: use b instead']);
     expect(outline(result.messages)).toEqual([...sent(1), 'assistant: done']);
-    expect(heard.map(({ message, step }) => `${step} ${message.role}`)).toEqual([
+    expect(heard.map(({ message, turn }) => `${turn} ${message.role}`)).toEqual([
       '0 assistant',
       '0 tool',
       '1 user',
@@ -88,18 +88,18 @@ describe('takeInput', () => {
     expect(sent(0)).toEqual(['user: hi', 'user: and bye']);
   });
 
-  it('answers input written while the model was answering, in another step', async () => {
+  it('answers input written while the model was answering, in another turn', async () => {
     create.mockReturnValueOnce(says('first')).mockReturnValueOnce(says('second'));
     const takeInput = inputOn(2, 'one more thing');
     const result = await runAgentLoop({ config, messages: [user('hi')], dispatch: async () => '', takeInput });
     expect(sent(1)).toEqual(['user: hi', 'assistant: first', 'user: one more thing']);
     expect(result.turn.content).toBe('second');
     expect(outline(result.messages)).toEqual([...sent(1), 'assistant: second']);
-    // At the top of each step, and after each answer.
+    // At the top of each turn, and after each answer.
     expect(takeInput).toHaveBeenCalledTimes(4);
   });
 
-  it('leaves input to the host where no step is left to answer it in', async () => {
+  it('leaves input to the host where no turn is left to answer it in', async () => {
     create.mockReturnValueOnce(says('done'));
     const takeInput = vi.fn(() => undefined);
     const result = await runAgentLoop({
@@ -126,10 +126,12 @@ describe('takeInput', () => {
     expect(takeInput).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the hooks on the question where a host rebuilds the transcript each step', async () => {
+  it('keeps the hooks on the question where a host rebuilds the transcript each turn', async () => {
     create.mockReturnValueOnce(calls('a')).mockReturnValueOnce(says('done'));
     const run = vi.fn<HookRunner>(async (event) =>
-      event === HookEvent.BeforeTurn ? [outcome({ event, text: 'you like tea', inject: true, maxTokens: 500 })] : [],
+      event === HookEvent.BeforeExchange
+        ? [outcome({ event, text: 'you like tea', inject: true, maxTokens: 500 })]
+        : [],
     );
     await runAgentLoop({
       config,
@@ -137,8 +139,8 @@ describe('takeInput', () => {
       tools: [tool('a')],
       dispatch: async () => 'a ran',
       takeInput: inputOn(2, 'use b instead'),
-      // New message objects every step, as a host reading its store would hand back.
-      beforeStep: (messages) => messages.map((message) => ({ ...message })),
+      // New message objects every turn, as a host reading its store would hand back.
+      beforeTurn: (messages) => messages.map((message) => ({ ...message })),
       hooks: { run, context: { session: { id: 's1' } } },
     });
     const [question, , , input] = sent(1);

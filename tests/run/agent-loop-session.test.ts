@@ -142,7 +142,7 @@ describe('runAgentLoop with a session', () => {
     expect(pins().map(({ id_slot }) => id_slot)).toEqual([0, 0, 0]);
   });
 
-  it('gives a session back its slot on its next loop, so its steps share one cache', async () => {
+  it('gives a session back its slot on its next loop, so its turns share one cache', async () => {
     server(2);
     await run('a');
     await run('b');

@@ -652,7 +652,7 @@ const { artifacts } = await runAgentLoop({
   // ...
   dispatch: ({ name, args }, signal) => pool.call(name, args, { signal, links: true }),
 });
-// [{ link: { uri, name, title?, ... }, callId, tool, step, count }]
+// [{ link: { uri, name, title?, ... }, callId, tool, turn, count }]
 ```
 
 The loop collects them into the exchange's `artifacts`: one per uri in the order first seen, each with
@@ -675,7 +675,7 @@ const { artifacts } = await runAgentLoop({
   // ...
   artifacts: { declare: true, detect: true },
 });
-// [{ link, callId, tool, step, count, source: "declared", action: "updated", sizeBytes }]
+// [{ link, callId, tool, turn, count, source: "declared", action: "updated", sizeBytes }]
 ```
 
 - **`declare`** puts `record_artifact` (`RECORD_ARTIFACT_TOOL`) beside `hostTools` on every turn,
@@ -725,7 +725,7 @@ The turn's other calls still run, whichever side of the end the model asked for 
 `parallel` batches them: they were asked for in the same reply, and a model that says "write the
 file, then hand off" wants the file written in either order. Where two calls end it, `ended` is
 the first in the order asked. Everything else is a finished exchange's — `usage`, `metrics`,
-`messages`, `artifacts`, the `afterTurn` hooks — with `metrics.outcome` `ended` and a notice
+`messages`, `artifacts`, the `afterExchange` hooks — with `metrics.outcome` `ended` and a notice
 saying which tool ended it. `turn` is the reply that made the call, so its `content` is whatever
 the model wrote beside its calls, often nothing; the exchange's answer is what the ending tool took.
 The tool, its definition and its wording stay the app's: this is only the exit.
@@ -812,7 +812,7 @@ the prompt and the whole transcript is prefilled again, on the very turn that wa
 tokens. Proxied, every turn declares `PROXY_TOOLS` and nothing else: `load_tools`, and `call_tool`,
 which takes `{ name, arguments }`. A load answers with each new tool's name, description and
 parameters as a line of JSON, since no request will ever declare them, and with a pointer back for
-one whose definition is already in the conversation. Whether it still is, after a `beforeStep`, a
+one whose definition is already in the conversation. Whether it still is, after a `beforeTurn`, a
 prune or a compaction, is read off the transcript's text, so only a definition one of them took out is
 sent again. A `call_tool` is refused for a name outside
 the catalogue, takes `arguments` as an object or as JSON in a string, and reaches `dispatch` as the
@@ -862,7 +862,7 @@ await runAgentLoop({
   messages: history,
   tools: pool.tools(),
   catalog: pool.catalog(),
-  hostTools: [ASK_PERSON_DEFINITION], // declared beside load_tools and call_tool, on every step
+  hostTools: [ASK_PERSON_DEFINITION], // declared beside load_tools and call_tool, on every turn
   dispatch: (call, signal) =>
     call.name === ASK_PERSON ? ask(call.args) : pool.call(call.name, call.args, signal),
 });
@@ -894,9 +894,9 @@ dispatched, get no result and no `tool-result` event, are not counted in `used`,
 nothing after the turn.
 Each is told as a `tool-call` event and to `onToolCall`, then one `wait` event says the exchange is
 waiting. `wait` is not `done`: the run goes on under the same id, and `watch` keeps following it.
-`metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The `afterTurn`
-hooks are not told, and under `reasoningReplay: "tool-loop"` the scratchpads stay, since the tool
-loop is not over. A wait in the last turn `maxToolIterations` allows resolves like any other.
+`metrics.outcome` is `waiting`, and `runMetrics` reads it so until a later `turn`. The
+`afterExchange` hooks are not told, and under `reasoningReplay: "tool-loop"` the scratchpads stay,
+since the tool loop is not over. A wait in the last turn `maxToolIterations` allows resolves like any other.
 
 The transcript holds the turn's calls with the handed-back ones last, whatever order the model
 asked in, so `messages` end in the results of the calls the loop ran and an app that appends one
@@ -944,14 +944,14 @@ tools, and the config. A resume also needs:
 
 - **No second preselection.** Pass no `preselect`, or `preselected: []`. A proxied shortlist would
   otherwise be written after the answers.
-- **The hooks told once.** Fire only `afterTurn` and `beforeCompact` on a resume, with `question`
-  the question as typed, and put the first call's `context` back with `withContext`, as for any
+- **The hooks told once.** Fire only `afterExchange` and `beforeCompact` on a resume, with
+  `question` the question as typed, and put the first call's `context` back with `withContext`, as for any
   later call (see `hooks`).
 - **Its own budget.** `maxToolIterations` counts per call, and `usage` and `metrics` are per call
   too; `runMetrics` over every stretch's events sums the run.
 - **An estimate on its first turn.** The ledger carries, but the loop's own `prune` and `compact`
   plan the first turn of any call from an estimate: a figure carried from an earlier call cannot
-  be checked against a transcript the app may have compacted since. An app planning in `beforeStep`
+  be checked against a transcript the app may have compacted since. An app planning in `beforeTurn`
   can measure with `estimateFrom(window.ledger, messages)`.
 
 ### Input that arrives while it runs
@@ -1033,7 +1033,7 @@ router's name. An app that assembles its own prompt calls `serverInstructionsPro
 
 What is loaded there is what the history holds, so `loaded` comes back empty and the `loaded`
 option is not read: there is nothing to carry, and a definition a compaction took away has to be
-loadable again. For the same reason a `beforeStep` that returns a different array makes the loop
+loadable again. For the same reason a `beforeTurn` that returns a different array makes the loop
 forget what it loaded, which costs a definition sent twice at worst. `call_tool` is honoured in
 `ondemand` mode as well — a session switched out of proxied mode still has it in its history, and
 a model copies what it has seen work — unless the app has a tool of that name, which is then the
@@ -1111,8 +1111,7 @@ continue, one to find out.
 
 Every turn ends in a `usage` event, whether or not the model server reported tokens. Its totals are the
 exchange's so far — `promptTokens`, `completionTokens`, `totalTokens`, `cachedTokens` and
-`cacheReported`, the `UsageTotals` spelling that `result.usage` and a failed exchange's `usage` share
-(their older `prompt`, `completion`, `total` and `cached` are still there, deprecated). A
+`cacheReported`, the `UsageTotals` spelling that `result.usage` and a failed exchange's `usage` share. A
 `cachedTokens` of zero is a miss only where `cacheReported` is true; false is a model server that never
 said; `reportsCache` asks the same of one turn's `TurnUsage`. Its `turn` is that turn's own `TurnUsage` and `finishReason`, with the `contextLength` the loop
 was told. The loop adds what only
@@ -1120,7 +1119,7 @@ it can know: `toolsDeclared` and `toolSchemaTokens` for the tool block it sent, 
 request on, `cacheExpected` (the previous prompt plus its reply) and — where a cache count was
 reported — `cacheBroken`, a hit short of 90% of the previous prompt. A broken cache is given a
 `cacheBreakReason` read off the request against the one before: `tools-changed`, `system-changed`,
-`history-rewritten` (a compaction or a prune in `beforeStep`), or `none-known` where the new request
+`history-rewritten` (a compaction or a prune in `beforeTurn`), or `none-known` where the new request
 only appended, which points at the server — a slot evicted, a template that re-renders the tail.
 
 The same `turn` carries `context`, the request cut by `contextTokens` into `system`, `tools`,
@@ -1132,12 +1131,12 @@ prompt it rides on, this turn's messages apart from the ones before — takes th
 ```ts
 await runAgentLoop({
   ...options,
-  onRequest: ({ messages, tools, step }) => measure(step, messages, tools),
+  onRequest: ({ messages, tools, turn }) => measure(turn, messages, tools),
 });
 ```
 
 It is called once a turn, before the request goes out, with the messages and tools as the client
-is about to be sent them. It is for reading: `beforeStep` is where the transcript is changed. What
+is about to be sent them. It is for reading: `beforeTurn` is where the transcript is changed. What
 it reports is the request as first built. A retry sends that again, but a refusal is answered with
 a lesser body and a continuation with the reply so far on the end, and neither is reported — and
 `context` is measured on the same first request, against the first prompt reported for the turn.
@@ -1159,12 +1158,13 @@ Counts are always present; every other field is absent where no turn reported wh
 What it cannot say: whether a failed run was stopped, errored or ran out of tool iterations, and
 whether the app compacted — neither is in the events.
 
-`beforeStep` is handed the transcript before each request and may return a replacement, which is
+`beforeTurn` is handed the transcript before each request and may return a replacement, which is
 where compaction goes (below). Its third argument is `{ used, limit, ledger }` — the prompt the
 exchange's last request reported, the context window, and the token ledger so far — so an app can compact
 mid-exchange without tracking usage itself; `used` is absent before the first turn and where the
 model server reported nothing. Hooks are gathered once, onto the question, and never written into
-the transcript that comes back; `afterTurn` is told the reply without the exchange waiting on it.
+the transcript that comes back; `afterExchange` is told the reply without the exchange waiting on
+it.
 
 That leaves an earlier question's context to the app, because the loop only ever touches the
 current one. A question sent with `<context>` blocks in one exchange and bare in the next is a different
@@ -1198,7 +1198,7 @@ await result.afterTurn; // only if its notes are wanted, or the process is about
 `result.messages` is the transcript the loop was given plus what the exchange added — earlier questions
 as the app passed them, this one as typed — which is why the snippet stores only the new tail.
 
-`afterTurn` on the result is the `afterTurn` hooks' notes as a promise. The loop still returns
+`afterTurn` on the result is the `afterExchange` hooks' notes as a promise. The loop still returns
 without waiting; an app that stores those notes with the exchange, or would otherwise exit before the
 exchange is remembered, awaits it once the answer is out.
 
@@ -1209,25 +1209,25 @@ as well (see [Hooks](#hooks)). Such an app passes the question as it was typed a
 too, or the preselector is shown the context in front of it and picks tools for what was recalled
 rather than what was asked.
 
-It can still leave `afterTurn` to the loop, with three things the transcript it handed over cannot
-say. `hooks.question` is the question as typed, which the hooks are told in place of the one with
+It can still leave `afterExchange` to the loop, with three things the transcript it handed over
+cannot say. `hooks.question` is the question as typed, which the hooks are told in place of the one with
 the recall on it — at the same position, so its uuid is the stored question's — and as `prompt`
 where the context has none. `hooks.turnBase` is the user messages of the app's transcript that the
 loop's does not hold, added to `turn.index`: what a compaction took and did not send again, or the exchanges
 before one that starts from a transcript of its own. `hooks.offset` numbers the messages, as it
 does for `beforeCompact`. The question is found by reference, and by role — the last user message
-that is not a summary — where `beforeStep` rebuilt the transcript from a store and the object went
+that is not a summary — where `beforeTurn` rebuilt the transcript from a store and the object went
 with it.
 
 ```ts
 await runAgentLoop({
   ...options,
   messages: request, // from the store, the recall already on the question
-  beforeStep: () => rebuild(),
+  beforeTurn: () => rebuild(),
   hooks: {
     run,
     context,
-    fire: [HookEvent.BeforeCompact, HookEvent.AfterTurn], // beforeTurn is the host's
+    fire: [HookEvent.BeforeCompact, HookEvent.AfterExchange], // beforeExchange is the host's
     question: prompt,
     turnBase: foldedQuestions, // stored user messages the fold took and did not send again
     offset: turnStart - requestIndex(turnStart, fold), // the request's numbering onto the store's
@@ -1236,24 +1236,24 @@ await runAgentLoop({
 ```
 
 `hooks.fire` says which events the loop fires itself, and it fires no others: `sessionStart` and
-`beforeTurn` gathered before the first request, `beforeCompact` beside each compaction `compact` makes,
-`afterTurn` once answered. Left out, it is all of them — `events` (`beforeTurn` by default), then
-`afterTurn` and `beforeCompact` — which is what the loop always did. An app that fires the exchange's
-events around a stage of its own still hands the loop its hooks for compaction:
+`beforeExchange` gathered before the first request, `beforeCompact` beside each compaction
+`compact` makes, `afterExchange` once answered. Left out, it is `beforeExchange`, `beforeCompact`
+and `afterExchange`: every event the loop has a point for but `sessionStart`. An app that fires the
+exchange's events around a stage of its own still hands the loop its hooks for compaction:
 
 ```ts
 await runAgentLoop({
   ...options,
   compact: true,
-  hooks: { run, context, fire: [HookEvent.BeforeCompact] }, // beforeTurn and afterTurn are the host's
+  // beforeExchange and afterExchange are the host's.
+  hooks: { run, context, fire: [HookEvent.BeforeCompact] },
 });
 ```
 
-An event left out of `fire` is one the result has nothing for: `afterTurn` is resolved and empty
-without `afterTurn`, and `notes` and `context` are empty without an injecting event, since the
-app's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
-loop and are ignored there. `events` is deprecated: it is the injecting half of `fire`, and is
-ignored once `fire` is given.
+An event left out of `fire` is one the result has nothing for: the result's `afterTurn` is resolved
+and empty without `afterExchange`, and `notes` and `context` are empty without an injecting event,
+since the app's own `gather` and `notify` hold those. `sessionEnd` and `sessionDelete` have no point in a
+loop and are ignored there.
 
 An app that stores its transcript — a row per message, so a crash or a stop mid-exchange still leaves
 readable history — gets each message as the loop appends it, and the exchange as it stood when the loop
@@ -1271,7 +1271,7 @@ try {
   if (run) await store.keep(sessionId, { usage: run.usage, loaded: run.loaded, ledger: run.ledger });
   if (signal.aborted) return; // a stop, told by the signal as it always was
   if (error instanceof ContextOverflow) return compactAndRetry(run?.messages);
-  if (error instanceof ToolIterationLimit) return outOfSteps();
+  if (error instanceof ToolIterationLimit) return outOfTurns();
   throw error; // an AgentLoopError: the message is the cause's, and the cause is on `cause`
 }
 ```
@@ -1283,7 +1283,7 @@ fourth argument, `{ raw }`: the same message as the model produced it, its text 
 written into it left there, and its calls' arguments exactly as streamed, under the same ids. Store
 or show `raw` to keep what the model said; replay `message` to keep what a model server will take back.
 The loop's own messages — a proxied exchange's preselected load — come without it. `onTurn` is not awaited and never sees a tool
-result; this is the one to store from. What it returns is ignored, since `beforeStep` is the one way to rewrite
+result; this is the one to store from. What it returns is ignored, since `beforeTurn` is the one way to rewrite
 the transcript, and what it throws ends the exchange.
 
 Everything the loop throws carries the exchange. A spent `maxToolIterations` is a `ToolIterationLimit`,
@@ -1461,7 +1461,7 @@ its own; an app that numbers messages across exchanges passes `hooks.offset`, th
 exchange's first message, so the ids `beforeCompact` is told match its own.
 
 ```ts
-beforeStep: async (messages, step) => {
+beforeTurn: async (messages, turn) => {
   const plan = planCompaction(messages, { limit: config.contextLength ?? 0, used: lastPromptTokens });
   if (!plan) return;
   return compactTranscript(
@@ -1523,11 +1523,11 @@ anyway, skips both gates: the cache is already lost, so the move is free. `from`
 a compaction has already taken out of the request. `at: 0` with a larger `minShare` is a pure
 hysteresis on what is won back.
 
-`runAgentLoop({ prune: true })` does this itself: after `beforeStep`, ahead of `compact`, which
+`runAgentLoop({ prune: true })` does this itself: after `beforeTurn`, ahead of `compact`, which
 then plans from what is left — so a prune that brings the request back under the line spares it the
 summary — and again with `compacted` after a compaction. Each move is a `notice` with the counts. Its
 stubs stay in the loop's transcript and in the result's `messages`, as a compaction's summary does; an
-app that keeps the transcript whole calls `planPrune` in its own `beforeStep` and stores the
+app that keeps the transcript whole calls `planPrune` in its own `beforeTurn` and stores the
 boundary. An object moves `at`, `minShare`, `keepLast` and `maxChars`.
 
 ### What the messages cost, measured
@@ -1542,7 +1542,7 @@ is replayed.
 
 `runAgentLoop` keeps that as a ledger — one `{ through, prompt, epoch }` per request: the index of
 the request's last message, the prompt it reported, and an epoch that changes whenever the prefix
-did. It comes back as `result.ledger`, rides on every `usage` event, and is handed to `beforeStep`;
+did. It comes back as `result.ledger`, rides on every `usage` event, and is handed to `beforeTurn`;
 pass it back as `ledger` on the next exchange and it is continued. It is a plain array of three numbers
 an entry, so it stores as two columns on the message row `through` names or as JSON beside the
 session.
@@ -1551,7 +1551,7 @@ session.
 const result = await runAgentLoop({
   ...options,
   ledger: session.ledger,
-  beforeStep: async (messages, step, { used, limit, ledger }) => {
+  beforeTurn: async (messages, turn, { used, limit, ledger }) => {
     const plan = planCompaction(messages, {
       limit,
       used,
@@ -1581,10 +1581,10 @@ compacted, plus the summary's ceiling (`summaryTokens`, 1024 unless given) is at
 plan's `after` says what that leaves. Where no cut reaches it the plan compacts as far as the last
 user message and `after` says how far short it fell. Without `target` nothing changes.
 
-A new epoch starts whenever a request did more than append: a compaction or a prune in `beforeStep`, a
+A new epoch starts whenever a request did more than append: a compaction or a prune in `beforeTurn`, a
 system prompt that moved, and a tool array that grew — a `load_tools` in on-demand mode adds a
 schema to the head, so the group beside it is left unmeasured rather than charged for it. When
-`beforeStep` returns a different transcript the loop moves the entries that still stand to their new
+`beforeTurn` returns a different transcript the loop moves the entries that still stand to their new
 indexes with `rebaseLedger(ledger, before, after)`, which an app that compacts between exchanges calls
 itself. Differences inside an old epoch stay good, since the prefix they shared cancels.
 
@@ -1682,8 +1682,8 @@ blocks for display, and `endRun` drops a finished run's buffer.
 
 An app that numbers and stores a run's events itself — a run that waits on an answer can outlive this
 bus, and the process too, and its `seq` must never start again — makes each event with `stamp`,
-which is what `emit` does too. The empty defaults (`text`, `name` and `step` `""`, `ok` and `usage`
-`null`) go under what the input says, and the run id and sequence over it, so the stored events
+which is what `emit` does too. The empty defaults (`text`, `name` and `exchange` `""`, `ok` and
+`usage` `null`) go under what the input says, and the run id and sequence over it, so the stored events
 keep `RunEvent`'s shape as it grows:
 
 ```ts
@@ -1691,6 +1691,13 @@ import { stamp } from "@cubicecho/agent-core";
 
 const event = stamp(input, runId, ++lastSeq, Date.now()); // an `at` on the input wins
 ```
+
+A run that holds several exchanges, such as a task's stages, says so itself: an `exchange` event as
+each begins (`name` names it), and `exchange` on every event inside it, so a watcher can group the
+run the way the work is written and `fold` never joins text across two of them. `runMetrics` counts
+them as `exchanges`. The loop never sends either. Before 5.0.0 these were the `step` kind and the
+`step` field; `fold`, `runMetrics`, `progressEvent` and `progressEvents` still read events stored
+or relayed that way, under the new names.
 
 The five numbers behind that — the backlog cap, the slack it is trimmed in batches of, and the
 three deadlines the sweep reaps on (a finished run, an unended one, and one waiting on calls it
@@ -1717,8 +1724,8 @@ measured against rather than the module's own.
 
 ## Hooks
 
-A hook is something an app runs at a point in a session — `sessionStart` and `beforeTurn`, whose
-output can reach the request, then `afterTurn`, `beforeCompact`, `sessionEnd` and `sessionDelete`,
+A hook is something an app runs at a point in a session — `sessionStart` and `beforeExchange`, whose
+output can reach the request, then `afterExchange`, `beforeCompact`, `sessionEnd` and `sessionDelete`,
 which can only read what happened. What runs is not decided here. `gather` and `notify` take a
 `HookRunner`, and `@cubicecho/agent-mcp-pool`'s `runHooks` is one as it stands: its types are the
 shapes restated here, so its outcomes pass straight through without either package importing the
@@ -1741,14 +1748,14 @@ const run: HookRunner = (event, context, { signal }) =>
 const context = { session: { id }, host: "my-host", prompt, turn: { index: turnIndex(messages) } };
 const gathered = await gather(
   run,
-  messages.length === 0 ? ["sessionStart", "beforeTurn"] : ["beforeTurn"],
+  messages.length === 0 ? ["sessionStart", "beforeExchange"] : ["beforeExchange"],
   context,
   { signal, onNote: (note) => emit(runId, { kind: "notice", name: note.hookId, text: note.error ?? note.text }) },
 );
 messages.push({ role: "user", content: prompt });
 const request = withContext(messages, messages.length - 1, gathered.context);
 // ... the turn ...
-void notify(run, "afterTurn", { ...context, reply, turn: { ...context.turn, messages: turnMessages(id, messages, turnStart) } });
+void notify(run, "afterExchange", { ...context, reply, turn: { ...context.turn, messages: turnMessages(id, messages, turnStart) } });
 ```
 
 The context goes on this exchange's question and never into the system prompt — a prompt that changed
@@ -1769,7 +1776,7 @@ afford more recall than an 8k one:
 import { configureHooks, gather } from "@cubicecho/agent-core";
 
 configureHooks({ contextTokens: 4000 });
-const gathered = await gather(run, ["beforeTurn"], context, { maxTokens: contextLimit / 20 });
+const gathered = await gather(run, ["beforeExchange"], context, { maxTokens: contextLimit / 20 });
 ```
 
 Either one given something that is not a number above zero keeps what was there, as
@@ -2029,7 +2036,7 @@ which stays the flattened spelling for an app that is not on the spec — and `c
 compact the transcript before a turn, once `planCompaction` says the `contextLength` context window
 is filling, with `tasks.compaction` writing the summary and no falling back to the main model
 without it. Both are off by default: an app that already calls `preselect` or compacts in
-`beforeStep` is not sent a second request.
+`beforeTurn` is not sent a second request.
 
 The preselector falls back to the main model. With neither `tasks.toolSelect` nor
 `toolSelectModel` naming one, `preselect: true` asks `config.model` on the agent's own model server at
@@ -2224,7 +2231,7 @@ nothing in them for one tenant to learn about another.
   emits at every optional argument — and a strict validator rejects the tool.
 - `tool-loading` — theirs, plus `min-agent`'s `carryOver`/`MAX_CARRIED`, which bounds the tool
   array across the exchanges of a conversation. Both suites' assertions are kept.
-- `events` — `kanban_server`'s `usage` totals **and** `task_server`'s `step` grouping, including
+- `events` — `kanban_server`'s `usage` totals **and** `task_server`'s exchange grouping, including
   its `fold` fix: two blocks in different stages are not one block.
 - `retry` — `kanban_server`'s, which is the only one of the three with the `ContextOverflow`
   guard. `min-agent` had no retry layer at all.

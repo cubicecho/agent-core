@@ -140,7 +140,7 @@ Which slot of a multi-slot llama.cpp server each session is on, so concurrent ex
 
 The points in a session a hook can be bound to, apart from everything that runs one.
 
-- `HOOK_EVENTS` — Every event a hook can be bound to, in the order a session meets them.
+- `HOOK_EVENTS` — Every event a hook can be bound to, each once, in the order a session meets them.
 - `HookEvent` — The points in a session a hook can be bound to, in the order a session meets them.
 - `INJECT_EVENTS` — The events whose hooks run before a request, and so the only ones whose output can reach it.
 
@@ -178,7 +178,8 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first turn like any other.
 - `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first turn the shortlist alone.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per turn, the tools it asks for between them, until a reply asks for none or a call's answer ends the exchange.
-- `StepWindow` (type) — How full the context window is as a turn is about to be sent, as `beforeStep` is told it.
+- `StepWindow` (type) — The old name of `TurnWindow`.
+- `TurnWindow` (type) — How full the context window is as a turn is about to be sent, as `beforeTurn` is told it.
 - `WrittenMessage` (type) — What `onMessage` is handed beside an assistant message the model wrote: that message as the model produced it.
 
 ### artifacts

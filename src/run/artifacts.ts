@@ -85,7 +85,7 @@ export interface ArtifactDraft {
 }
 
 /** The call an artifact is put down to: the one that linked it, wrote it, or touched it. */
-export type ArtifactFrom = Pick<RunArtifact, 'callId' | 'tool' | 'step'>;
+export type ArtifactFrom = Pick<RunArtifact, 'callId' | 'tool' | 'turn'>;
 
 /** A verb at the front of a tool name that means something was written somewhere. */
 const WRITE_VERB = /^(write|create|save|upload|put|append|edit|move|rename|copy|publish|delete|remove)(_|$)/;
@@ -288,7 +288,7 @@ function linkOf(draft: ArtifactDraft): ResourceLink {
  * @param from - The call.
  * @returns Its turn and id as one string.
  */
-const callKey = ({ callId, step }: ArtifactFrom) => `${step}\0${callId}`;
+const callKey = ({ callId, turn }: ArtifactFrom) => `${turn}\0${callId}`;
 
 /**
  * An exchange's artifacts, one per location, and what its calls touched for a declaration to be

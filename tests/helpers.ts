@@ -285,7 +285,7 @@ export const outcome = (given: Partial<HookOutcome> = {}): HookOutcome => ({
   serverId: 'mem',
   label: 'Memory',
   hookId: 'recall',
-  event: HookEvent.BeforeTurn,
+  event: HookEvent.BeforeExchange,
   ok: true,
   ms: 1,
   inject: false,

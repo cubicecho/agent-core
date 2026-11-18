@@ -126,9 +126,10 @@ export function configureEvents(options: EventBusOptions = {}): Required<EventBu
 /** Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it. */
 export const RunEventKind = {
   /**
-   * One of the app's own exchanges began, such as a task's stage. `name` names it, `text` its kind.
+   * An exchange began: one of the app's own, such as a task's stage. `name` names it, `text` its
+   * kind.
    */
-  Step: 'step',
+  Exchange: 'exchange',
   /** A deciding exchange chose an arm. `text` is the arm it took. */
   Decision: 'decision',
   /** A new turn of the agent loop began, inside whichever exchange is running. */
@@ -293,11 +294,11 @@ export interface RunEvent {
    */
   id?: string;
   /**
-   * The app's own exchange this happened inside, such as a task's stage, so a watcher can group a
+   * Which exchange this belongs to: the app's own, such as a task's stage, so a watcher can group a
    * run the way the work is written. Empty for events that belong to the run rather than to any one
-   * exchange, and empty throughout for an app that sends no `step` events.
+   * exchange, and empty throughout for an app that sends no `exchange` events.
    */
-  step: string;
+  exchange: string;
   /** Outcome on `tool-result` and `done`, otherwise null. */
   ok: boolean | null;
   /** Running totals on `usage`, otherwise null. */
@@ -348,13 +349,46 @@ export const stamp = (input: RunEventInput, runId: string, seq: number, at: numb
   at,
   text: '',
   name: '',
-  step: '',
+  exchange: '',
   ok: null,
   usage: null,
   ...input,
   runId,
   seq,
 });
+
+/** What `RunEventKind.Exchange` and `RunEvent.exchange` were called before 5.0.0. */
+export const LEGACY_EXCHANGE = 'step' as const;
+
+/**
+ * A run event as an app stored or a server relayed it before 5.0.0, when an exchange was a step.
+ *
+ * @remarks
+ * Its kind may be `step` for an exchange beginning, and the exchange it belongs to is under `step`.
+ * task_server and ai-router keep and relay events, so these are read for as long as one is kept.
+ */
+export interface LegacyRunEvent extends Omit<RunEvent, 'kind' | 'exchange'> {
+  kind: RunEventKind | typeof LEGACY_EXCHANGE;
+  /** Which exchange it belongs to, under the field's old name. */
+  step: string;
+  /** Where an event carries both names, the new one, which wins unless it is empty. */
+  exchange?: string;
+}
+
+/**
+ * An event under the names it has since 5.0.0, where it was stored or relayed under the old ones.
+ *
+ * @param event - An event as it was read: current, or a `LegacyRunEvent`.
+ * @returns `event` itself where it says nothing old. Otherwise a copy, with a `step` kind read as
+ * `exchange` and the `step` field moved to `exchange`, unless the event names an exchange already.
+ */
+export function renamedEvent(event: RunEvent | LegacyRunEvent): RunEvent {
+  if ('step' in event) {
+    const { step, kind, exchange, ...rest } = event;
+    return { ...rest, kind: kind === LEGACY_EXCHANGE ? RunEventKind.Exchange : kind, exchange: exchange || step };
+  }
+  return event;
+}
 
 /** Where a stream's run stands, as its events so far say, which sets how long the sweep keeps it. */
 const StreamPhase = {
@@ -568,7 +602,7 @@ const gapNotice = (runId: string, gap: number, next: RunEvent): RunEvent =>
     {
       kind: RunEventKind.Notice,
       text: `${gap} event(s) dropped: this watcher fell too far behind`,
-      step: next.step,
+      exchange: next.exchange,
     },
     runId,
     next.seq - 1,
@@ -722,6 +756,7 @@ export const resetEvents = () => {
  * reader that takes a run in snapshots.
  *
  * @param events - Events in `seq` order, from `history` or collected from `watch`. Not written to.
+ * Events stored before 5.0.0 are read under their new names (`renamedEvent`).
  * @returns One event per block, every one a copy. A stretch of `thinking` or of `output` within
  * one exchange is a single block with the texts joined; anything else is a block to itself.
  *
@@ -749,10 +784,12 @@ export function fold(events: RunEvent[]): RunEvent[] {
     parts = [];
   };
 
-  for (const event of events) {
+  for (const stored of events) {
+    // A store may hold events from before 5.0.0, which group by `step`.
+    const event = renamedEvent(stored);
     const last = blocks[blocks.length - 1];
     const mergeable = event.kind === RunEventKind.Thinking || event.kind === RunEventKind.Output;
-    const continuesLast = last && last.kind === event.kind && last.step === event.step;
+    const continuesLast = last && last.kind === event.kind && last.exchange === event.exchange;
     if (mergeable && continuesLast) {
       last.seq = event.seq;
       last.at = event.at;
@@ -782,8 +819,8 @@ export function fold(events: RunEvent[]): RunEvent[] {
  * a mean of a number a server never sent would be a number nobody measured.
  */
 export interface RunMetrics {
-  /** The caller's own `step` events. */
-  steps: number;
+  /** The caller's own `exchange` events. */
+  exchanges: number;
   /** Turns of the agent loop, one per `usage` report. */
   turns: number;
   /** Model requests, which is turns plus the continuations joined onto them. */
@@ -961,7 +998,8 @@ export interface RunMetricsOptions {
  * A run's totals, timings and cache findings, derived from the events it emitted.
  *
  * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
- * that has lost its oldest events to the cap sums what it still has.
+ * that has lost its oldest events to the cap sums what it still has. Events stored before 5.0.0
+ * are read under their new names (`renamedEvent`).
  * @param [options] - The served context window, for how full the run came to it.
  * @returns A summary of the caller's own. The counts are zero for an empty list, and `outcome` is
  * absent for a run that has not reported `done`.
@@ -977,7 +1015,7 @@ export interface RunMetricsOptions {
  */
 export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOptions = {}): RunMetrics {
   const metrics: RunMetrics = {
-    steps: 0,
+    exchanges: 0,
     turns: 0,
     requests: 0,
     toolCalls: 0,
@@ -1010,9 +1048,11 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   // Whether the run's latest stretch stopped on a `wait`; the next turn is the run going on.
   let waits = false;
 
-  for (const event of events) {
-    if (event.kind === RunEventKind.Step) {
-      metrics.steps++;
+  for (const stored of events) {
+    // A store may hold events from before 5.0.0, whose exchanges are `step` events.
+    const event = renamedEvent(stored);
+    if (event.kind === RunEventKind.Exchange) {
+      metrics.exchanges++;
     } else if (event.kind === RunEventKind.Turn) {
       waits = false;
     } else if (event.kind === RunEventKind.Wait) {

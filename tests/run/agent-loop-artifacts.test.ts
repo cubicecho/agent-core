@@ -80,7 +80,7 @@ describe('artifacts', () => {
           link: { uri: 'work/plan.md', name: 'plan.md', mimeType: 'text/markdown' },
           callId: 'c0',
           tool: 'fs__write_file',
-          step: 0,
+          turn: 0,
           count: 2,
           source: 'detected',
           action: 'updated',
@@ -127,7 +127,7 @@ describe('artifacts', () => {
           link: { uri: 'work/plan.md', name: 'plan', title: 'Plan', mimeType: 'text/markdown' },
           callId: 'c0',
           tool: 'fs__write_file',
-          step: 0,
+          turn: 0,
           count: 1,
           action: 'created',
           sizeBytes: 6,
@@ -137,7 +137,7 @@ describe('artifacts', () => {
   });
 
   describe('declare', () => {
-    it('declares record_artifact after the host tools on every step, and never dispatches it', async () => {
+    it('declares record_artifact after the host tools on every turn, and never dispatches it', async () => {
       create
         .mockReturnValueOnce(calls(['fs__write_file', write]))
         .mockReturnValueOnce(calls([RECORD_ARTIFACT, { location: '/work/plan.md', title: 'Plan' }]))
@@ -171,7 +171,7 @@ describe('artifacts', () => {
           link: { uri: '/work/plan.md', name: 'plan.md', title: 'Plan', mimeType: 'text/markdown' },
           callId: 'c0',
           tool: 'fs__write_file',
-          step: 0,
+          turn: 0,
           count: 1,
           source: 'declared',
         },
@@ -258,7 +258,7 @@ describe('artifacts', () => {
           link: { uri: 'work/plan.md', name: 'plan.md', title: 'Plan', description: 'It.', mimeType: 'text/markdown' },
           callId: 'c0',
           tool: 'fs__edit_file',
-          step: 0,
+          turn: 0,
           count: 1,
           source: 'declared',
           action: 'updated',

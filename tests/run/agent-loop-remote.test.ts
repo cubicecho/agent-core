@@ -156,8 +156,8 @@ async function ask(config: AgentLoopOptions['config'], more: Partial<AgentLoopOp
   return { result, events, dispatched };
 }
 
-/** The kinds the server says of its own steps. */
-const stepKinds: string[] = [
+/** The kinds the server says of its own turns. */
+const turnKinds: string[] = [
   RunEventKind.Turn,
   RunEventKind.Thinking,
   RunEventKind.Output,
@@ -169,7 +169,7 @@ const stepKinds: string[] = [
 beforeEach(() => resetAll());
 
 describe('a run on a remote agent', () => {
-  it("forwards the server's events as it numbered them, and says none of its steps a second time", async () => {
+  it("forwards the server's events as it numbered them, and says none of its turns a second time", async () => {
     const { fetch } = remoteAgent([asking, answering]);
     const { result, events } = await ask(remoteConfig(fetch));
 
@@ -180,15 +180,15 @@ describe('a run on a remote agent', () => {
         .map((event, at) => [RUN, at + 1, event.kind])
         .filter(([, , kind]) => kind !== RunEventKind.Done),
     );
-    // Nothing of the steps' own kinds came from the loop: the handed-back call is told once each way.
-    expect(events.filter((event) => stepKinds.includes(event.kind) && 'seq' in event === false)).toEqual([]);
+    // Nothing of the turns' own kinds came from the loop: the handed-back call is told once each way.
+    expect(events.filter((event) => turnKinds.includes(event.kind) && 'seq' in event === false)).toEqual([]);
     expect(events.filter((event) => event.name === 'ask_user').map((event) => [event.kind, event.id])).toEqual([
       [RunEventKind.ToolCall, HANDED],
       [RunEventKind.ToolResult, HANDED],
     ]);
     expect(result.remoteRunId).toBe(RUN);
     expect(result.turn.content).toBe('Blue it is.');
-    // The run's metrics are the server's steps: the search and the app's answer.
+    // The run's metrics are the server's turns: the search and the app's answer.
     expect(result.metrics.toolCalls).toBe(2);
   });
 
