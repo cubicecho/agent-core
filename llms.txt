@@ -174,7 +174,6 @@ The loop above a turn: send, run the tools the model asked for, send again, unti
 - `AgentLoopResult` (type) — What a finished loop hands back.
 - `PRESELECT_APPEND` — The `preselectRouting` that loads the shortlist after what was carried, and sends the first step like any other.
 - `PRESELECT_EXCLUSIVE` — The `preselectRouting` that sends the first step the shortlist alone.
-- `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
 - `runAgentLoop` — Runs a question to its answer: one `runTurn` per step, the tools it asks for between them, until a turn asks for none or a call's answer ends the run.
 - `StepWindow` (type) — How full the window is as a step is about to be sent, as `beforeStep` is told it.
 - `WrittenMessage` (type) — What `onMessage` is handed beside an assistant message the model wrote: that message as the model produced it.
@@ -343,6 +342,12 @@ A JSON document that defines an agent, and the rules for reading one.
 The contract between whatever holds the tools and the loop that offers them to a model.
 
 - `CatalogServer` (type) — One server's tools, without their JSON schemas — the cheap half of a tool definition.
+
+### discovery
+
+How a run finds its tools: every definition each time, loaded from the catalogue when asked for, or loaded and called through two fixed tools; and the shortlist it opens with.
+
+- `PRESELECTED_NOTICE` — What opens the notice naming the loop's own picks, ahead of the names.
 
 ### instructions
 

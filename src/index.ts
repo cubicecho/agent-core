@@ -136,7 +136,6 @@ export {
   type AgentLoopResult,
   PRESELECT_APPEND,
   PRESELECT_EXCLUSIVE,
-  PRESELECTED_NOTICE,
   runAgentLoop,
   type StepWindow,
   type WrittenMessage,
@@ -264,6 +263,7 @@ export {
   type ToolsSpec,
 } from './spec/spec.ts';
 export type { CatalogServer } from './tools/catalog.ts';
+export { PRESELECTED_NOTICE } from './tools/discovery.ts';
 export {
   SERVER_INSTRUCTION_TOKENS,
   type ServerInstructionsOptions,

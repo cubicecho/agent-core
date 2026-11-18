@@ -20,7 +20,7 @@ import {
   type TokenLedger,
 } from '../context/ledger.ts';
 import type { Endpoint, ModelParams, RemoteAgentParams, RetryPolicy, ToolPolicy } from '../core/config.ts';
-import { ReasoningReplay, ToolDiscovery } from '../core/config.ts';
+import { ReasoningReplay } from '../core/config.ts';
 import { counted } from '../core/guards.ts';
 import { charsPerTokenFor } from '../endpoint/calibration.ts';
 import {
@@ -47,8 +47,9 @@ import {
   withContext,
 } from '../hooks/hooks.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
+import { discovery } from '../tools/discovery.ts';
 import { type ServerInstructionsOptions, serverInstructionsPrompt } from '../tools/instructions.ts';
-import { type KeywordPreselectOptions, preselect } from '../tools/preselect.ts';
+import type { KeywordPreselectOptions } from '../tools/preselect.ts';
 import {
   CALL_TOOL,
   catalogPrompt,
@@ -81,7 +82,7 @@ import {
 import { textOf } from '../wire/text.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
 import { recoverToolCalls, type ToolCall } from '../wire/tool-calls.ts';
-import { FinishReason, PARALLEL_TOOL_CALLS, PartType, Role } from '../wire/wire.ts';
+import { FinishReason, PARALLEL_TOOL_CALLS, Role } from '../wire/wire.ts';
 import { type ArtifactOptions, RECORD_ARTIFACT_TOOL, RunArtifacts } from './artifacts.ts';
 import type { EndedBy, RunArtifact, ToolCallOutcome, ToolCallRequest, ToolCallResult } from './dispatch.ts';
 import {
@@ -980,58 +981,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 }
 
 /**
- * A message's words, as the preselector is asked about them: its string, or its text parts.
- *
- * @param message - The message to read. Absent, or with content that is neither a string nor
- * parts, reads as empty.
- * @returns The string as it is, or the text parts joined by newlines with parts of any other kind
- * left out. Not trimmed.
- */
-const userText = (message: OpenAI.ChatCompletionMessageParam | undefined): string => {
-  const content = message?.content;
-  if (typeof content === 'string') {
-    return content;
-  }
-  if (!Array.isArray(content)) {
-    return '';
-  }
-  return content.flatMap((part) => (part.type === PartType.Text ? part.text : [])).join('\n');
-};
-
-/**
- * The loop's own preselection: by the task where the config carries one, and by the flattened
- * name on its own endpoint where it does not.
- *
- * @param options - The run's options. Read for the config, the catalogue, the signal, what
- * `preselect` passes through, and `preselectQuery` or else the last user message, whose text is
- * what is asked about.
- * @param notice - Hears the preselector's notices, a failure among them.
- * @returns The names picked. Empty where the query is blank or there is no user message — nothing
- * is asked — and where the preselection picked nothing or failed. An aborted request still rejects.
- *
- * @remarks
- * With no preselector named the main model is asked, on the config's own endpoint.
- */
-async function chooseTools(options: AgentLoopOptions, notice: OnNotice): Promise<string[]> {
-  const { config, catalog = [], signal } = options;
-  const prompt = options.preselectQuery ?? userText(options.messages.findLast((message) => message.role === Role.User));
-  if (!prompt.trim()) {
-    return [];
-  }
-  const asked = {
-    ...(typeof options.preselect === 'object' ? options.preselect : {}),
-    signal,
-    onNotice: notice,
-  };
-  const selector = config.tasks?.toolSelect;
-  if (!selector?.model) {
-    return preselect(config, config.toolSelectModel || config.model, catalog, prompt, asked);
-  }
-  const call = taskCall(selector, asked, config);
-  return preselect(call.endpoint, call.model, catalog, prompt, call.options);
-}
-
-/**
  * The loop's own summariser, which is the compaction task's or nothing: a summary the main model
  * writes is a second full-price request the operator did not ask for.
  *
@@ -1291,48 +1240,6 @@ function withRecordTool(options: AgentLoopOptions): AgentLoopOptions {
     return options;
   }
   return { ...options, hostTools: loadedTools([RECORD_ARTIFACT_TOOL], options.hostTools ?? []) };
-}
-
-/** What opens the notice naming the loop's own picks, ahead of the names. */
-export const PRESELECTED_NOTICE = 'tools picked before the run: ';
-
-/**
- * How this run finds its tools, and what it starts with in hand: the loop's own preselection
- * where it was asked for and the host has not already decided, and what an earlier question
- * carried over.
- *
- * @param options - The run's options. Read for the discovery mode, the catalogue, `loaded`,
- * `preselected` and `preselect`.
- * @param notice - Hears what the loop's own preselection has to say, and then what it picked,
- * by name. A shortlist the host gave is not told back to it.
- * @returns `proxied` and `onDemand`, the second true of both modes and both false where `catalog`
- * is empty; `preselected`, the shortlist, empty in eager mode; and `loaded`, a new set of what was
- * carried and then the shortlist — empty when eager or proxied.
- */
-async function discovery(options: AgentLoopOptions, notice: OnNotice) {
-  const { config, catalog = [] } = options;
-  // On demand, but with a tool array that never changes: definitions come back as `load_tools`
-  // results and run through `call_tool`. `onDemand` is true of both.
-  const proxied = config.toolDiscovery === ToolDiscovery.Proxy && catalog.length > 0;
-  const onDemand = proxied || (config.toolDiscovery === ToolDiscovery.OnDemand && catalog.length > 0);
-  // Proxied, `loaded` is what this run has put a definition in the history for, and starts empty.
-  const loaded = new Set(onDemand && !proxied ? (options.loaded ?? []) : []);
-  const chooses = options.preselect && options.preselected === undefined;
-  let preselected: string[] = [];
-  if (onDemand && chooses) {
-    preselected = await chooseTools(options, notice);
-    if (preselected.length > 0) {
-      notice(`${PRESELECTED_NOTICE}${preselected.join(', ')}`);
-    }
-  } else if (onDemand) {
-    preselected = [...(options.preselected ?? [])];
-  }
-  if (!proxied) {
-    for (const name of preselected) {
-      loaded.add(name);
-    }
-  }
-  return { proxied, onDemand, loaded, preselected };
 }
 
 /**

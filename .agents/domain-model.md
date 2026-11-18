@@ -407,7 +407,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   Owner: `CatalogServer` (`src/tools/catalog.ts`).
 - **Tool discovery:** how definitions reach the model: all of them every time (eager), loaded
   from the catalogue when asked for (on-demand), or loaded and called through two fixed tools
-  (proxied). Owner: `ToolDiscovery` (`src/core/config.ts`).
+  (proxied). Owner: `ToolDiscovery` (`src/core/config.ts`); chosen for an exchange by `discovery`
+  (`src/tools/discovery.ts`).
 - **`load_tools`:** the tool the model calls to load definitions by name or wildcard. Owner:
   `LOAD_TOOLS`, `expandNames` (`src/tools/tool-loading.ts`).
 - **`call_tool`:** the proxied tool that runs a catalogued tool by name. Owner: `CALL_TOOL`,
@@ -418,7 +419,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   Owner: `carryOver`.
 - **Used tools:** the tools the model actually called. Owner: `AgentLoopResult.used`.
 - **Preselection (shortlist):** choosing an exchange's tools before it starts, by a small model or
-  by keywords. Owner: `preselect`, `preselectByKeywords` (`src/tools/preselect.ts`).
+  by keywords. Owner: `preselect`, `preselectByKeywords` (`src/tools/preselect.ts`); the loop's own
+  is `chooseTools`, `PRESELECTED_NOTICE` (`src/tools/discovery.ts`).
 - **Tool order:** sorting the tool array by name so the same set always reads the same to the
   prompt cache. Owner: `orderTools`.
 - **Server instructions:** the guidance an MCP server sends on connect, added to the system
