@@ -57,7 +57,8 @@ the app's tools and callbacks ───────┼→ exchange: ask the mode
 
 The folders stack from general to specific, and a folder only uses those below it, so the basic
 pieces never depend on the loop built from them. From the bottom: `core`, `wire`, `endpoint`,
-`turn`, then `tools`, `hooks` and `context` side by side, then `run`, then `runtime`. `spec`, the
+`turn`, then `tools` and `hooks` side by side, then `context` (which uses both), then `run`, then
+`runtime`. `spec`, the
 agent document, stands apart and uses only a few small pieces, so it also loads in a browser.
 
 ## Actors
@@ -69,7 +70,7 @@ agent document, stands apart and uses only a few small pieces, so it also loads 
 | Model server | the server the model runs on | its answers and errors | which request features are used from then on (a refused feature is not sent again), how big requests are estimated to be, and whether a reply was cut short or filtered |
 | Remote agent's server | a server that runs its own agent loop | progress reports streamed with its replies | what watchers see of its own turns, the ids of the calls it hands back, and the id of its own run |
 | Tool runner | the app's function that runs one tool call | one call in, its result out | what the model is told that call returned, and whether that answer ends the exchange. It never sees the rest of the conversation |
-| Hook runner | the app's function that runs agent hooks | the package asking at fixed moments | extra context added to the question, short notes about what the hooks did, and whether a planned summary of the conversation goes ahead. Never the conversation itself |
+| Hook runner | the app's function that runs agent hooks | the package asking at fixed moments | extra context added to the question, short notes about what the hooks did, and whether a planned summary goes ahead, when the app asks for its veto (the loop's own summaries never do). Never the conversation itself |
 | Watcher | anything reading a run's events | the event stream | nothing; it only reads |
 | Operator | a person writing an agent document | the document's layers, or stored settings rows | the agent's settings, prompt, side tasks, hooks and which tool servers it may use. Never a password or key: exporting a document strips them |
 
@@ -101,8 +102,8 @@ One round of asking the model and running what it asked for:
 - Asking: send the request; if the reply was cut off at the length limit, ask the model to go on.
 - After the reply: give each tool call a unique id, set aside those handed back to the app, and
   add the model's message.
-- Running the calls: in groups, or one at a time for models that take one call per message;
-  results go in the order asked.
+- Running the calls: one at a time, or in groups where `parallel` allows (never for models that
+  take one call per message); results go in the order asked.
 
 ### A tool call
 
@@ -153,7 +154,8 @@ How a long exchange stays small enough for the model to read.
 
 - Trimming: once the window is full enough, old tool results before a cut-off become one-line
   stubs; the cut-off only moves forward
-- Summarising: the oldest stretch is picked → hooks are told and may veto → a summary is written
+- Summarising: the oldest stretch is picked → hooks are told, and may veto it when the app asks
+  for that (`honourVeto`; the loop's own summaries are never vetoed) → a summary is written
   and stored as a record → applying it puts the summary in that stretch's place, keeping the
   question and the rest (`compactTranscript` does both)
 
@@ -185,7 +187,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A reply that has produced anything is never sent again | `Produced`, checked in `negotiate` and `runTurn` |
 | The caller's abort is never reported as `EndpointSilent`, and an aborted stream never returns a reply | `streamTurn` |
 | One refusal gets at most one answer, and negotiation ends | `negotiate` over `ANSWERS`, `flagsOf` |
-| Capability flags only latch off while their entry lives | `endpointAnswer`, `latchModel`, `latchFields` |
+| Capability flags only latch off while their entry lives, except the no-thinking hints, which `resetHints` offers again | `endpointAnswer`, `latchModel`, `latchFields` |
 | An effort is only stepped up the ladder, never down | `nextEffort`, `planEffortStep` |
 | A refused field is latched only if the caller offered it as droppable | `droppedFieldsAnswer` |
 | `extraBody` never sets `model`, `messages`, `stream` or `tools` | `extraFields`, `parseExtraBody` |
@@ -218,7 +220,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | A remote agent's turn events are not said twice, and its `done` is not forwarded | `remoteRun` |
 | A remote agent's turn sends one idempotency key across its retries | `remoteRun.turnHeaders`, once per turn |
 | Each runtime has its own copy of module state | `scoped`, `currentScope` |
-| An absent or `null` spec field inherits; `0`, `""` and `[]` are values | `isAbsent`, `mergeLayers`, `resolveAgentSpec` |
+| An absent or `null` spec field inherits; `0`, `""` and `[]` are values | `isAbsent` in `parseSpec` and `toLayer` (a `null` becomes absent), then `mergeLayers`, `mergeModel` and `resolveAgentSpec` |
 
 ## Glossary
 
@@ -337,6 +339,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `TurnUsage`; an exchange's totals are `LoopUsage` / `UsageTotals`.
 - **Token estimate:** a rough count, characters over a calibrated ratio (four until learned).
   Owner: `estimateTokens`, `requestTokens` (`src/wire/tokens.ts`), `charsPerTokenFor`, `calibrate`.
+- **Untrusted fence:** a wrapper marking text as data, not instructions; hooks and server
+  instructions fence what nobody vouched for with it. Owner: `untrusted`, `UNTRUSTED_PREFACE`
+  (`src/wire/text.ts`).
 
 ### Side tasks
 
@@ -445,8 +450,6 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `HookNote`.
 - **Gather, notify, consult:** firing hooks to collect context, to tell and move on, or to wait
   for a veto. Owner: `gather`, `notify`, `consult`.
-- **Untrusted fence:** a wrapper marking text as data, not instructions. Owner: `untrusted`,
-  `UNTRUSTED_PREFACE` (`src/wire/text.ts`).
 
 ### Keeping an exchange inside its window
 
@@ -489,8 +492,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 ### A remote agent
 
 - **Remote agent:** a model that runs a whole agent loop of its own on the server and hands the
-  app's tools back as calls. Owner: `RemoteAgentParams`, `remoteAgent: true`, `asRemoteAgent`,
-  `remoteRun` (`src/run/remote.ts`).
+  app's tools back as calls. Owner: `RemoteAgentParams`, `remoteAgent: true` (`src/core/config.ts`);
+  `asRemoteAgent`, `remoteRun` (`src/run/remote.ts`).
 - **Progress:** the server's own events, carried beside the reply under one body field. Owner:
   `PROGRESS_FIELD` (`ai_router`), `RemoteAgentParams.progressField`; encoded and read by
   `progressChunk`, `withProgress`, `progressEvent`, `progressEvents`.
@@ -505,7 +508,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Layer:** one document in an ordered stack, weakest first, such as settings, agent, task and
   stage. Owner: `resolveAgentSpec`.
 - **Inherit:** an absent or `null` field takes the layer below's value; `0`, `""` and `[]` are
-  values. Owner: `isAbsent`, `mergeLayers`, `resolveAgentSpec`.
+  values. Owner: `isAbsent` (a `null` is read as absent when a layer is parsed), `mergeLayers`,
+  `resolveAgentSpec`.
 - **Parse:** checking any input into a document, dropping bad fields with warnings and refusing
   only what cannot be identified. Owner: `parseSpec`.
 - **Resolved agent:** the flat config the layers come to, plus prompt parts, tasks, hooks and
@@ -569,17 +573,21 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 ## Explain test
 
 An app gives the loop a model server, a model and a transcript ending in a question, and that
-starts an exchange. Each turn, the loop sends one request: it builds the request body from what
+starts an exchange. Each turn, the loop sends one request (continued if the length limit cut it
+off): it builds the request body from what
 the model server's and model's capabilities allow, negotiates past refusals (latching each one),
 retries what was lost, and streams the reply back, scratchpad apart. If the reply asks for tools,
-the dispatcher answers each tool call, in parallel batches, deduped, one call per message where
-the model needs it, and the results go into the transcript in the order asked. The next turn
+the dispatcher answers each call the package does not answer itself or hand back, one at a time
+or in batches where `parallel` allows, deduped, one call per message where the model needs it, and
+the results go into the transcript in the order asked. The next turn
 follows, until the model answers, a tool's answer ends the exchange, calls are handed back and the
 exchange waits for the app to resume it, or the turn budget runs out and it fails. Tools reach the
 model eagerly, or from a catalogue through `load_tools` (or `call_tool` when proxied), after an
 optional preselection. Hooks add injected context to the question's request. Before a turn,
-pruning and compaction keep the exchange inside its context window, measured by the token ledger.
-Side tasks name, choose and summarise without risking the exchange. Every turn emits events to the
+pruning and compaction keep the exchange inside its context window, sized from the last reported
+prompt; the token ledger records each request's size, so an app can price stretches of the
+transcript.
+Side tasks name, choose and summarise without risking the exchange. Every turn reports events through `onEvent`, which the app files on the
 bus under the run they belong to, which may hold several exchanges, and watchers read them and
 metrics are built from them; a remote agent's server can supply those events in the loop's place.
 A session is the conversation around many runs. An operator can write the agent as a document

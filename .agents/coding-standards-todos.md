@@ -112,6 +112,7 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | B34 | Bug (question) | The remote-agent notice does not name `callIds` or `recoverToolCalls`, which it also sets aside. | The notice says everything it ignores | — | open |
 | B35 | Bug (question) | An app can still put spelled or reserved fields into `ResolvedAgent.extraBody` after resolving; only `buildBody`'s reserved filter guards the request. | #222 holds past resolution | A8 | open |
 | B36 | Bug (question) | After B20 a side task still retries once without the hints and the effort, so an effort the retry got past is sent again next time. Should the effort-only retry go? | One rule for a refused effort | — | open |
+| B37 | Bug (question) | A hook's veto is never honoured inside the loop: its own compaction does not pass `honourVeto` (`agent-loop.ts` ~1087), and `AgentLoopHooks` has no option for it. Should the loop honour a veto? | Hooks that can stop a summary do, wherever it runs | — | after this pass |
 | R47 | Refactor [pattern] | Have `importCapabilities` latch through `latchModel`/`latchFields`, the last writer M10 left. | One writer for the latches | — | open |
 | R48 | Refactor [simplify] | Stop exporting `StepCalls`, which only `run-calls.ts` reads (R37's list missed it). | The module surface | — | open |
 | T13 | Test [readability] | Narrow the SDK unions in tests without casts (`as OpenAI.ChatCompletionFunctionTool`, `.content as string`). | P17 in tests | — | open |
