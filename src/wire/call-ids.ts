@@ -163,12 +163,15 @@ export function distinctCallIds(
   ids: CallIds = CallIds.Kept,
 ): ToolCall[] {
   const taken = callIdsIn(messages);
-  return calls.map((call) => {
+  const distinct: ToolCall[] = [];
+  for (const call of calls) {
     const isFree = ids === CallIds.Kept && call.id !== '' && taken.has(call.id) === false;
     if (isFree) {
       taken.add(call.id);
-      return call;
+      distinct.push(call);
+      continue;
     }
-    return { ...call, id: freshCallId(taken, mint) };
-  });
+    distinct.push({ ...call, id: freshCallId(taken, mint) });
+  }
+  return distinct;
 }

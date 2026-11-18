@@ -368,9 +368,13 @@ export class RunArtifacts {
       if (typeof value === 'string') {
         this.#witnessed.push({ text: bare(value), from });
       } else if (Array.isArray(value)) {
-        value.forEach(strings);
+        for (const item of value) {
+          strings(item);
+        }
       } else if (value && typeof value === 'object') {
-        Object.values(value).forEach(strings);
+        for (const held of Object.values(value)) {
+          strings(held);
+        }
       }
     };
     strings(args);
