@@ -25,7 +25,8 @@ const { preselect } = await import('../../src/tools/preselect.ts');
 const { capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { NO_KEY } = await import('../../src/endpoint/client.ts');
 const { SUMMARY_LEAD, summariser } = await import('../../src/context/compaction.ts');
-const { ask, askJson, resetHints, taskCall } = await import('../../src/turn/side-task.ts');
+const { ask, askJson, taskCall } = await import('../../src/turn/side-task.ts');
+const { resetHints } = await import('../../src/index.ts');
 const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../../src/spec/spec.ts');
 
 type AgentSpec = import('../../src/spec/spec.ts').AgentSpec;

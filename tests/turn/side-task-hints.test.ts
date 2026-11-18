@@ -13,7 +13,8 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
   getClient: () => ({ chat: { completions: { create } } }),
 }));
 
-const { ask, resetHints } = await import('../../src/turn/side-task.ts');
+const { ask } = await import('../../src/turn/side-task.ts');
+const { resetHints } = await import('../../src/index.ts');
 const { modelCapabilitiesFor, capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 
 const endpoint = (baseUrl: string) => ({ baseUrl, apiKey: '', requestTimeoutSeconds: 60 });
