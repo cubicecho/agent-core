@@ -23,7 +23,8 @@ const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts'
 const { configureHooks, resetHooks, turnMessages, withContext } = await import('../../src/hooks/hooks.ts');
 const { SUMMARY_ACK, SUMMARY_LEAD } = await import('../../src/context/compaction.ts');
 const { tokensBetween } = await import('../../src/context/ledger.ts');
-const { errorMessage, failedRun } = await import('../../src/wire/errors.ts');
+const { errorMessage } = await import('../../src/wire/errors.ts');
+const { failedRun } = await import('../../src/run/failure.ts');
 
 type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;

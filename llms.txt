@@ -216,6 +216,14 @@ What a run is doing, while it is doing it.
 - `TurnReport` (type) — One turn's usage and measurements as a `usage` event carries them.
 - `watch` — Everything that has happened on a run, then everything that happens next, until it ends.
 
+### failure
+
+- `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
+- `AgentLoopFailure` (type) — A run as it stood when `runAgentLoop` gave up on it.
+- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the run as it stood.
+- `failedRun` — The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
+- `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
+
 ### remote
 
 Running against a remote agent: a model that runs a whole agent loop of its own behind the chat completions API, and hands the host's tools back to it with `finish_reason: "tool_calls"`.
@@ -411,12 +419,7 @@ The ids of tool calls the loop makes up itself, and keeping every id in a transc
 
 ### errors
 
-- `AgentLoopError` — What `runAgentLoop` throws, carrying the run as it stood and what was caught as `cause`.
-- `AgentLoopFailure` (type) — A run as it stood when `runAgentLoop` gave up on it.
-- `AgentLoopOverflow` — A `ContextOverflow` out of `runAgentLoop`, carrying the run as it stood.
 - `errorMessage` — What went wrong, as a string.
-- `failedRun` — The run a failed `runAgentLoop` left behind, read off whatever it threw, or nothing.
-- `ToolIterationLimit` — `maxToolIterations` was spent with the model still asking for tools.
 
 ### retry
 

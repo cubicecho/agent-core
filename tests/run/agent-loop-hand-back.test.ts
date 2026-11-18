@@ -19,7 +19,7 @@ const { oneCallPerMessage } = await import('../../src/run/run-calls.ts');
 const { runMetrics, stamp } = await import('../../src/run/events.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
-const { failedRun } = await import('../../src/wire/errors.ts');
+const { failedRun } = await import('../../src/run/failure.ts');
 
 type ToolCallRequest = import('../../src/wire/tool-calls.ts').ToolCallRequest;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;

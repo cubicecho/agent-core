@@ -19,7 +19,7 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
 }));
 
 const { PRESELECTED_NOTICE, runAgentLoop } = await import('../../src/run/agent-loop.ts');
-const { failedRun } = await import('../../src/wire/errors.ts');
+const { failedRun } = await import('../../src/run/failure.ts');
 const { preselect } = await import('../../src/tools/preselect.ts');
 const { capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { NO_KEY } = await import('../../src/endpoint/client.ts');

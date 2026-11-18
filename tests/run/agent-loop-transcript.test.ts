@@ -26,7 +26,7 @@ vi.mock('../../src/endpoint/client.ts', async (importOriginal) => ({
 }));
 
 const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
-const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = await import('../../src/wire/errors.ts');
+const { AgentLoopError, AgentLoopOverflow, failedRun, ToolIterationLimit } = await import('../../src/run/failure.ts');
 const { ContextOverflow } = await import('../../src/wire/retry.ts');
 const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');

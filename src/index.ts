@@ -173,6 +173,13 @@ export {
   watch,
 } from './run/events.ts';
 export {
+  AgentLoopError,
+  type AgentLoopFailure,
+  AgentLoopOverflow,
+  failedRun,
+  ToolIterationLimit,
+} from './run/failure.ts';
+export {
   IDEMPOTENCY_HEADER,
   PROGRESS_FIELD,
   type ProgressChunk,
@@ -313,14 +320,7 @@ export {
   freshCallId,
   mintCallId,
 } from './wire/call-ids.ts';
-export {
-  AgentLoopError,
-  type AgentLoopFailure,
-  AgentLoopOverflow,
-  errorMessage,
-  failedRun,
-  ToolIterationLimit,
-} from './wire/errors.ts';
+export { errorMessage } from './wire/errors.ts';
 export {
   backoffMs,
   ContextOverflow,

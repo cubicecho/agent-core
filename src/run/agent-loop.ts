@@ -67,13 +67,7 @@ import { continueTurn } from '../turn/continuation.ts';
 import { runTurn } from '../turn/run-turn.ts';
 import { type SideTask, taskCall, tryAsk } from '../turn/side-task.ts';
 import { type CallIdMinter, CallIds, mintCallId as defaultMinter, distinctCallIds } from '../wire/call-ids.ts';
-import {
-  AgentLoopError,
-  type AgentLoopFailure,
-  AgentLoopOverflow,
-  errorMessage,
-  ToolIterationLimit,
-} from '../wire/errors.ts';
+import { errorMessage } from '../wire/errors.ts';
 import { ContextOverflow } from '../wire/retry.ts';
 import {
   addCounts,
@@ -108,6 +102,7 @@ import {
   runMetrics,
   stamp,
 } from './events.ts';
+import { AgentLoopError, type AgentLoopFailure, AgentLoopOverflow, ToolIterationLimit } from './failure.ts';
 import { asRemoteAgent, remoteRun, remoteRunOf } from './remote.ts';
 import { buildBody, singleCalls, singleSystem } from './request-body.ts';
 import {
