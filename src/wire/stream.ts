@@ -23,8 +23,7 @@ import {
  * reading of the answer is the same everywhere, and it is fiddly in ways the API does not
  * advertise: tool calls arrive in pieces, an aborted stream ends rather than throws, reasoning
  * has two spellings and is in no published type, and an endpoint that stops answering mid-stream
- * hangs the turn until somebody presses stop. `EndpointSilent` and `timeoutMs` were exported for
- * this loop long before the loop itself was.
+ * hangs the turn until somebody presses stop.
  */
 
 /**

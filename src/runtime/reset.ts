@@ -22,7 +22,7 @@ import { resetEvents } from '../run/events.ts';
  * refusals* — a fact one test taught the process about an endpoint, still true as far as the
  * next test can tell. Miss one and the suite becomes order-dependent in the way that passes
  * locally and fails in CI on a different shard: the test that latched it still passes, and the
- * one that reads the latch fails only when it happens to run second. `tests/side-task-hints.test.ts`
+ * one that reads the latch fails only when it happens to run second. `tests/turn/side-task-hints.test.ts`
  * was written that way and only passed because every case had been handed a hostname of its own.
  *
  * It is also the seam that does not need finding again. A seventh module with a cache is a seventh

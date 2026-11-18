@@ -248,7 +248,7 @@ export const MAX_PER_LOAD = 12;
  *
  * @remarks
  * Only a multi-turn caller needs this — a run that starts from nothing each time has nothing to
- * carry. See `carryOver`, which takes another number if this one is not yours.
+ * carry. Not exported: `carryOver` takes a cap of its own as `max`.
  */
 export const MAX_CARRIED = 16;
 

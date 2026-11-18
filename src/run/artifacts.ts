@@ -280,7 +280,8 @@ function linkOf(draft: ArtifactDraft): ResourceLink {
 }
 
 /**
- * What tells one call from another across a run: an id is distinct only within its step.
+ * What tells one call from another across a run: its step and its id, since a remote agent's ids
+ * are kept as sent and may repeat in a later step.
  *
  * @param from - The call.
  * @returns Its step and id as one string.

@@ -625,7 +625,8 @@ text the model reads. A repeat gets a result of its own under its own id, carryi
 shares. Neither is awaited. The `tool-call` and `tool-result` events carry the same `id`, with
 `text` still cut by `preview`, and so does each entry of the result's `toolCalls` — which is what
 tells two calls to one tool apart when `parallel` lands their results out of order. An id is
-distinct within a step, and a server is free to use it again in a later one.
+distinct across the transcript (`distinctCallIds`), except on a remote agent, whose ids are kept as
+sent.
 
 ```ts
 await runAgentLoop({

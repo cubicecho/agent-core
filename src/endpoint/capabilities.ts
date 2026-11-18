@@ -882,7 +882,7 @@ export interface NegotiateOptions {
    * @remarks
    * Each message opens with the thing that refused, so a reader tells the two levels apart
    * without parsing: `server` for the endpoint's own, and the model's own name — as `model` was
-   * given it — for the three that are the model's. That matters because these latch for the
+   * given it — for the ones that are the model's. That matters because these latch for the
    * life of the process and this line is the only announcement that one did: on a consumer
    * where the model is a per-turn setting, "model does not take a reasoning effort" is the same
    * line for every model on the endpoint, and the operator who later asks why the setting still
@@ -1074,7 +1074,8 @@ const ANSWERS: readonly Answer[] = [
  * have arrived. Its third argument is what the named model has refused, absent when no model
  * was named.
  * @param [options] - `produced` for a caller with its own retry budget, `onNotice` for a watcher,
- * `model` to negotiate the model's refusals alongside the endpoint's.
+ * `model` to negotiate the model's refusals alongside the endpoint's, `droppable` for the fields a
+ * refusal may take away.
  * @returns What the first `send` to succeed resolved. A rejection is `send`'s own error, rethrown
  * as it was caught.
  *

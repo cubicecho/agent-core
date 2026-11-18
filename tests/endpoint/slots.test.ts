@@ -57,7 +57,7 @@ describe('slotAllocator', () => {
     expect(slotAllocator(endpoint, 'other', 1).acquire('b')).toBe(0);
   });
 
-  it('drops the slots a smaller count no longer has, and a holder of one releases into nothing', () => {
+  it('hands out only what a smaller count leaves, even once a slot held past it is released', () => {
     const before = slotAllocator(endpoint, 'm', 2);
     before.acquire('a');
     before.acquire('b');

@@ -172,8 +172,9 @@ export const RunEventKind = {
    */
   Wait: 'wait',
   /**
-   * The run ended. Always last, and always sent. A run a tool call ended carries that call: `id`
-   * the call's, `name` the tool, and `text` the reason, as `AgentLoopResult.ended` has them.
+   * The run ended, as the app announces it: `runAgentLoop` never sends it, and `endRun` sends one
+   * only to a run still watched. Last where it is sent. A run a tool call ended carries that call:
+   * `id` the call's, `name` the tool, and `text` the reason, as `AgentLoopResult.ended` has them.
    */
   Done: 'done',
 } as const;

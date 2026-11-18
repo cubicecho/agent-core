@@ -84,10 +84,10 @@ export interface ToolCallRequest {
 /** What one tool call did, in the order the model asked. */
 export interface ToolCallOutcome {
   /**
-   * The id the model's reply gave the call, which is what tells two calls to one tool apart.
-   * Distinct within a step — `streamTurn` mints one where the server sent none or repeated one —
-   * but nothing stops a server using the same id again in a later step. `runAgentLoop` always
-   * sets it; optional so an outcome built before it existed still compiles.
+   * The call's id, which is what tells two calls to one tool apart: the one the model's reply
+   * gave it, or one minted in its place, distinct from every other call in the transcript
+   * (`distinctCallIds`). A remote agent's are kept as sent. `runAgentLoop` always sets it;
+   * optional so an outcome built before it existed still compiles.
    */
   id?: string;
   /** The tool that was called. For a `call_tool`, the tool it named. */

@@ -99,7 +99,8 @@ export interface RuntimeOptions {
  * Each method is the top-level function of the same name, with the same signature and doc
  * comment, run against this runtime's state instead of the process's: its pooled clients and
  * model listings, latched capabilities, measured characters per token, no-thinking hints, event
- * bus, and hook settings. `resetAll` and the six narrower resets clear this runtime alone.
+ * bus, hook settings and slot holders. `resetAll` and the seven narrower resets clear this runtime
+ * alone.
  */
 export type Runtime = typeof STATEFUL & {
   /**
@@ -140,8 +141,9 @@ function bind(scope: Scope): Runtime {
 }
 
 /**
- * A runtime of its own: separate clients, listings, capability latches, hints, event bus and hook
- * settings from the process's and from every other runtime's.
+ * A runtime of its own: separate clients, listings, capability latches, hints, measured
+ * characters per token, event bus, hook settings and slots from the process's and every other
+ * runtime's.
  *
  * @param [options] - What to configure it with before first use. A part left out keeps the
  * defaults — not the default runtime's settings, which a new runtime does not inherit.

@@ -26,11 +26,9 @@ export const CHARS_PER_TOKEN = 4;
  * guessing high is a run refused that would have worked, and the cost of guessing low is the
  * endpoint's own refusal, which is where we were before the guard existed.
  *
- * Its own module because it is the one number several of these agree on. It was extracted from
- * `side-task` to break a cycle with `retry`; neither reads it now, but `hooks` does to cap a
- * context block, as does any consumer sizing its own prompt. Everything else that sizes a request
- * is below it — a message's characters, a tool block's, a request's, and the breakdown of a
- * window — so the module imports nothing but the SDK's types and anything may read it.
+ * Everything else here that sizes a request is built on the same ratio — a message's characters,
+ * a tool block's, a request's, and the breakdown of a window. `hooks` and `instructions` read this
+ * to cap the block each adds, as can an app sizing its own prompt.
  */
 export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
 
@@ -218,7 +216,7 @@ export function messageChars(message: OpenAI.ChatCompletionMessageParam): number
  * a turn built through `sanitizeTools` or `relaxTools` does — both are a `map`, so each build
  * allocates a fresh array however stable the tools inside it are, and those builds miss here every
  * time. It is not free to change: keying on the tools instead would hit for them, at the cost of
- * the array-level memoisation `tests/retry.test.ts` pins, which deliberately holds a mutated array
+ * the array-level memoisation `tests/wire/tokens.test.ts` pins, which deliberately holds a mutated array
  * to its first reading. Sizing happens once per turn either way, so the miss costs one walk of the
  * schemas rather than a walk per attempt.
  *

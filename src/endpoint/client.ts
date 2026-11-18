@@ -403,7 +403,8 @@ const misses = perFetch(() => new Map<string, number>());
 
 /**
  * What counts as one endpoint, everywhere in this package that has to remember something about
- * one — the model listings, `capabilities`, and the no-thinking hints in `side-task`.
+ * one — the model listings directly, and `capabilities`, the no-thinking hints among them, through
+ * its digest `endpointId`.
  *
  * @param config - Read for `baseUrl` and `apiKey` alone, and the key is optional here where
  * `Endpoint` requires it — `capabilitiesFor` is handed a URL and maybe a key rather than a whole
@@ -424,8 +425,8 @@ const misses = perFetch(() => new Map<string, number>());
  * keeping its own per-endpoint state keys it on this rather than on a copy of it, so the two
  * cannot drift apart. It holds the key in the clear; `endpointId` is the one to write down.
  *
- * The capability latches and the no-thinking hints stay on this alone, whatever `fetch` an endpoint
- * sends through: they are what a snapshot carries to the next process, where no function is the
+ * The capability latches and the no-thinking hints stay on this alone, by way of `endpointId`,
+ * whatever `fetch` an endpoint sends through: they are what a snapshot carries to the next process, where no function is the
  * same one, and what a model refused is a fact about the model behind the URL.
  */
 export const endpointKey = (config: EndpointIdentity) =>
@@ -1063,8 +1064,12 @@ export async function contextLimitFor(
 }
 
 /**
- * Forgets every cached client and listing, and puts `configureClients` back to the defaults. For
- * tests, and for a settings change under test.
+ * Forgets every cached client, model listing and answer from a server's own routes, and puts
+ * `configureClients` back to the defaults.
+ *
+ * @remarks
+ * The answers are the served windows, the slot counts, and the routes that failed or are not
+ * there. For tests, and for a settings change under test.
  */
 export function resetClients() {
   poolLimits.reset();

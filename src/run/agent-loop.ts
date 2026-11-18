@@ -119,11 +119,8 @@ import {
  * The loop above a turn: send, run the tools the model asked for, send again, until it stops
  * asking.
  *
- * Three servers wrote this loop separately after `runTurn` had already been pulled in here, and
- * the copies drifted the way the turn's own had — one noticed a turn cut off at the ceiling and
- * two did not, one tested the ceiling's spelling the other way round, one sent a reasoning effort
- * and two never did. What is here is the part that does not know what the run is for; the
- * prompts, the tools and what a run means stay with the caller.
+ * What is here is the part of an exchange that does not know what it is for; the prompts, the
+ * tools and what a run means stay with the app.
  */
 
 /**

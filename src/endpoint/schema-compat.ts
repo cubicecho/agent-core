@@ -12,7 +12,8 @@ import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
  *
  *   1. Normalise the structurally hostile shapes up front, on every request.
  *   2. If the server still reports a grammar failure, strip the advisory `pattern` and
- *      `format` keywords and retry once.
+ *      `format` keywords and send it again. The strip latches for the endpoint, so every later
+ *      request goes without them.
  *
  * Cloud providers accept all of this, so step 2 never fires against them — with one edge worth
  * knowing about, which is that `nullable` is OpenAPI's spelling rather than JSON Schema's.
