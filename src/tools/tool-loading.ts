@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
+import { TOOL_CALL_DEFAULTS } from '../core/defaults.ts';
 import { byCodeUnit, isRecord } from '../core/guards.ts';
-import { ARGUMENT_PREVIEW_CHARS } from '../wire/tool-calls.ts';
 import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
 import type { CatalogServer } from './catalog.ts';
 
@@ -688,7 +688,7 @@ export function proxiedCall(
       input = text.trim() ? JSON.parse(text) : {};
     } catch {
       throw new Error(
-        `${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
+        `${CALL_TOOL} arguments for ${name} are not valid JSON: ${text.slice(0, TOOL_CALL_DEFAULTS.argumentPreviewChars)}`,
       );
     }
   }

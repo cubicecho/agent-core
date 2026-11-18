@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { TOOL_CALL_DEFAULTS } from '../core/defaults.ts';
 import { isAbsent, isRecord } from '../core/guards.ts';
 import { type CallIdMinter, mintCallId as defaultMinter, freshCallId } from './call-ids.ts';
 import { DEFAULT_FENCES } from './thinking.ts';
@@ -13,9 +14,6 @@ import { FinishReason, FUNCTION_TOOL } from './wire.ts';
  * but as text, in the model's own template, because the server's tool-call parser was written for
  * a different one. Both were being handled in every consumer, differently, or not at all.
  */
-
-/** How much of a call's unreadable arguments an error quotes back. */
-export const ARGUMENT_PREVIEW_CHARS = 200;
 
 /** The `ToolArgumentsError` kind for a call cut off at the reply ceiling. */
 export const ARGUMENTS_TRUNCATED = 'truncated' as const;
@@ -190,14 +188,14 @@ export function parseToolArguments(
   if (finishReason === FinishReason.Length) {
     throw new ToolArgumentsError(
       ARGUMENTS_TRUNCATED,
-      `the tool call was cut off at the reply ceiling before its arguments were complete; raise maxTokens: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
+      `the tool call was cut off at the reply ceiling before its arguments were complete; raise maxTokens: ${text.slice(0, TOOL_CALL_DEFAULTS.argumentPreviewChars)}`,
     );
   }
   throw new ToolArgumentsError(
     ARGUMENTS_MALFORMED,
     parsed === undefined
-      ? `model produced invalid tool arguments: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`
-      : `model produced tool arguments that are not an object: ${text.slice(0, ARGUMENT_PREVIEW_CHARS)}`,
+      ? `model produced invalid tool arguments: ${text.slice(0, TOOL_CALL_DEFAULTS.argumentPreviewChars)}`
+      : `model produced tool arguments that are not an object: ${text.slice(0, TOOL_CALL_DEFAULTS.argumentPreviewChars)}`,
   );
 }
 

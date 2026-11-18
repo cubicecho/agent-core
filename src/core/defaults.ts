@@ -88,6 +88,26 @@ export const CONTINUATION_DEFAULTS: Readonly<ContinuationSettings> = Object.free
   restartMinChars: 12,
 });
 
+/** Reading a model's tool calls, and reporting them to a watcher. */
+export interface ToolCallSettings {
+  /** How much of a call's unreadable arguments, in characters, an error quotes back. */
+  argumentPreviewChars: number;
+  /**
+   * How much of a long tool argument or result, in characters, `preview` keeps for an event. The
+   * transcript always carries the whole of it.
+   */
+  eventPreviewChars: number;
+  /** How many times a minter is asked for an id not already taken before it is given up on. */
+  mintAttempts: number;
+}
+
+/** How much of a call is quoted back, and how hard an unused id is looked for. */
+export const TOOL_CALL_DEFAULTS: Readonly<ToolCallSettings> = Object.freeze({
+  argumentPreviewChars: 200,
+  eventPreviewChars: 2000,
+  mintAttempts: 32,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

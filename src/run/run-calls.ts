@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { ReasoningReplay } from '../core/config.ts';
+import { TOOL_CALL_DEFAULTS } from '../core/defaults.ts';
 import { isRecord } from '../core/guards.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
 import {
@@ -66,7 +67,7 @@ import { RunEventKind } from './events.ts';
  * @remarks
  * For events, never for the transcript: the model reads the whole of what a tool returned.
  */
-export const preview = (text: string, limit = 2000) =>
+export const preview = (text: string, limit = TOOL_CALL_DEFAULTS.eventPreviewChars) =>
   text.length > limit ? `${text.slice(0, limit)}… (${text.length} chars)` : text;
 
 /** What a tool call the exchange was stopped during is answered with, in place of a result. */
