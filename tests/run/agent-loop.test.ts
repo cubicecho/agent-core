@@ -117,6 +117,12 @@ describe('runAgentLoop', () => {
     expect(contents[3]).toEqual(expect.stringContaining('invalid tool'));
     expect(contents[3]).not.toMatch(/^Error: /);
     expect(answered.map(({ ok }) => ok)).toEqual([false, false, true, false]);
+    // The host is told the same text the model reads, and the next request replays it as written.
+    expect(answered.map(({ content }) => content)).toEqual(contents);
+    const replayed = (create.mock.calls[1][0] as Body).messages.flatMap((m) =>
+      m.role === Role.Tool ? [m.content] : [],
+    );
+    expect(replayed).toEqual(contents);
   });
 
   it('words a failed call with the host formatToolError', async () => {
