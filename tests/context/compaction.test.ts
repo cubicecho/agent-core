@@ -13,8 +13,9 @@ import {
   summaryInput,
 } from '../../src/context/compaction.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
-import { type HookRunner, textOf, turnMessages } from '../../src/hooks/hooks.ts';
+import { type HookRunner, turnMessages } from '../../src/hooks/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../../src/tools/tool-loading.ts';
+import { textOf } from '../../src/wire/text.ts';
 import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
 import { assistant, type Message, outcome, result, summarised, templateRefusal, user } from '../helpers.ts';
 

@@ -127,8 +127,6 @@ export {
   resetHooks,
   turnIndex,
   turnMessages,
-  UNTRUSTED_PREFACE,
-  untrusted,
   withContext,
 } from './hooks/hooks.ts';
 export {
@@ -348,6 +346,7 @@ export {
   type TurnUsage,
   type UsageTotals,
 } from './wire/stream.ts';
+export { UNTRUSTED_PREFACE, untrusted } from './wire/text.ts';
 export {
   ALL_FENCES,
   DEFAULT_FENCES,

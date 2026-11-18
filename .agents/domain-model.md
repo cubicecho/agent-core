@@ -439,7 +439,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `HookNote`.
 - **Gather, notify, consult:** firing hooks to collect context, to tell and move on, or to wait
   for a veto. Owner: `gather`, `notify`, `consult`.
-- **Untrusted fence:** a wrapper marking text as data, not instructions. Owner: `untrusted`.
+- **Untrusted fence:** a wrapper marking text as data, not instructions. Owner: `untrusted`,
+  `UNTRUSTED_PREFACE` (`src/wire/text.ts`).
 
 ### Keeping an exchange inside its window
 

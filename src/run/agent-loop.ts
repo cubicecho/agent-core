@@ -42,7 +42,6 @@ import {
   type HookRunner,
   notify,
   type OnNote,
-  textOf,
   turnIndex,
   turnMessages,
   withContext,
@@ -86,6 +85,7 @@ import {
   type Turn,
   type TurnUsage,
 } from '../wire/stream.ts';
+import { textOf } from '../wire/text.ts';
 import { contextTokens, toolsChars } from '../wire/tokens.ts';
 import {
   type EndedBy,

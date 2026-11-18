@@ -1,17 +1,10 @@
 import type OpenAI from 'openai';
 import type { Endpoint } from '../core/config.ts';
 import { HookEvent } from '../hooks/hook-events.ts';
-import {
-  consult,
-  type HookContext,
-  type HookRunner,
-  notify,
-  type OnNote,
-  textOf,
-  turnMessages,
-} from '../hooks/hooks.ts';
+import { consult, type HookContext, type HookRunner, notify, type OnNote, turnMessages } from '../hooks/hooks.ts';
 import { holdsDefinitions } from '../tools/tool-loading.ts';
 import { ask, type SideTaskOptions } from '../turn/side-task.ts';
+import { textOf } from '../wire/text.ts';
 import { messageTokens } from '../wire/tokens.ts';
 import { FUNCTION_TOOL, Role } from '../wire/wire.ts';
 

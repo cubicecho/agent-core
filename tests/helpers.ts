@@ -2,8 +2,9 @@ import OpenAI from 'openai';
 import { vi } from 'vitest';
 import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
-import { type HookOutcome, textOf } from '../src/hooks/hooks.ts';
+import type { HookOutcome } from '../src/hooks/hooks.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
+import { textOf } from '../src/wire/text.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire/wire.ts';
 
 /**

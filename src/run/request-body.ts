@@ -8,8 +8,8 @@ import {
   type ModelCapabilities,
 } from '../endpoint/capabilities.ts';
 import { relaxTools, sanitizeTools } from '../endpoint/schema-compat.ts';
-import { textOf } from '../hooks/hooks.ts';
 import { orderTools, type ToolOrder } from '../tools/tool-loading.ts';
+import { textOf } from '../wire/text.ts';
 import { PARALLEL_TOOL_CALLS, Role } from '../wire/wire.ts';
 import { dropReasoning, oneCallPerMessage } from './run-calls.ts';
 

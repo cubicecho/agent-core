@@ -5,7 +5,7 @@
  * tools, the things a tool description has no room for. This is where that text is put in front
  * of a model, attributed and fenced, so every host says it the same way.
  */
-import { untrusted } from '../hooks/hooks.ts';
+import { untrusted } from '../wire/text.ts';
 import { CHARS_PER_TOKEN, estimateTokens } from '../wire/tokens.ts';
 import type { CatalogServer } from './catalog.ts';
 

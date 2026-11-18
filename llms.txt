@@ -162,8 +162,6 @@ Lifecycle hooks, from the host's side: what a session looks like to them, where 
 - `resetHooks` — Test seam: puts `configureHooks` back to the defaults, so one test's budget or preface is not the next's.
 - `turnIndex` — Which turn of a session begins at a point, from 0: the user messages ahead of it.
 - `turnMessages` — A stretch of a transcript as a hook reads it: what the user and the assistant said, and nothing else.
-- `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
-- `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 - `withContext` — The request, with the hooks' context added to this turn's question.
 
 ### agent-loop
@@ -450,6 +448,13 @@ Reading one streamed turn back into a message.
 - `Turn` (type) — One streamed turn, put back together into the shape a loop and a transcript work with.
 - `TurnUsage` (type) — What a turn cost, and how it went.
 - `UsageTotals` (type) — A run's token totals, in the spelling every run-level usage shares.
+
+### text
+
+Text helpers over the message vocabulary: reading a message's text, and fencing text nobody trusted.
+
+- `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
+- `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 
 ### thinking
 
