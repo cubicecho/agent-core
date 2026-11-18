@@ -262,9 +262,10 @@ export interface ResolvedAgent extends AgentConfig {
   /** The tri-state preserved: absent is every server the host offers, empty is none. */
   servers?: readonly string[];
   /**
-   * The merged prompt parts, in order. `systemPrompt` is the join of their texts, so a part that
-   * is only a `ref` contributes nothing to it — the host resolves the reference and re-resolves,
-   * or reads it from here and does what it likes.
+   * The merged prompt parts, in order, without the ones a layer deleted with an empty text.
+   * `systemPrompt` is the join of their texts, so a part that is only a `ref` contributes nothing
+   * to it — the host resolves the reference and re-resolves, or reads it from here and does what
+   * it likes.
    */
   prompt: readonly PromptPart[];
   /** Only the tasks a layer configured and none declined. `toolSelect` also flattens to `toolSelectModel`. */
@@ -1094,20 +1095,27 @@ function mergeModel(layers: readonly AgentSpec[]) {
  *
  * @param items - Every layer's items in one list, weakest first. None is written to.
  * @param idOf - What an item merges on. `""` is an id like any other.
+ * @param [deletes] - Whether an item deletes its id rather than merging into it.
  * @returns A new array of new objects, each the shallow merge of the items that shared its id.
  *
  * @remarks
- * An item `idOf` gives no id for is left out.
+ * An item `idOf` gives no id for is left out. A deleted id is left out too, with nothing below the
+ * deletion kept: an item above it starts afresh, in the place the id first had.
  */
-function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => string | undefined) {
-  const merged = new Map<string, T>();
+function mergeById<T extends object>(
+  items: readonly T[],
+  idOf: (item: T) => string | undefined,
+  deletes: (item: T) => boolean = () => false,
+) {
+  // A deleted id keeps its key, holding nothing, so an item above it takes the same place.
+  const merged = new Map<string, T | undefined>();
   for (const item of items) {
     const id = idOf(item);
     if (id !== undefined) {
-      merged.set(id, { ...merged.get(id), ...item });
+      merged.set(id, deletes(item) ? undefined : { ...merged.get(id), ...item });
     }
   }
-  return [...merged.values()];
+  return [...merged.values()].filter((item) => item !== undefined);
 }
 
 /**
@@ -1193,6 +1201,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const prompt = mergeById(
     layers.flatMap((layer) => layer.prompt ?? []),
     (part) => part.id,
+    (part) => part.text === '',
   );
   const hooks = mergeById(
     layers.flatMap((layer) => layer.hooks ?? []),

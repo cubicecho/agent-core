@@ -8,6 +8,8 @@ import {
   exportSpec,
   findSpecSecrets,
   parseSpec,
+  REF_FILE,
+  REF_URL,
   type ResolvedAgent,
   resolveAgentSpec,
   SecretSign,
@@ -535,7 +537,28 @@ describe('resolveAgentSpec', () => {
   it('lets an empty text delete a part a layer below contributed', () => {
     const base = parsed(doc({ prompt: [{ id: 'lane', text: 'Only the card.' }] }));
     const over = parsed(doc({ prompt: [{ id: 'lane', text: '' }] }));
-    expect(resolveAgentSpec([base, over]).systemPrompt).toBe('');
+    const resolved = resolveAgentSpec([base, over]);
+    expect(resolved.systemPrompt).toBe('');
+    expect(resolved.prompt).toEqual([]);
+  });
+
+  it('deletes a referenced part whole, so a host resolving refs cannot bring it back', () => {
+    const base = parsed(
+      doc({
+        prompt: [
+          { id: 'role', ref: { type: REF_FILE, value: 'role.md' } },
+          { id: 'identity', text: 'You are X.' },
+        ],
+      }),
+    );
+    const over = parsed(doc({ prompt: [{ id: 'role', text: '' }] }));
+    expect(resolveAgentSpec([base, over]).prompt).toEqual([{ id: 'identity', text: 'You are X.' }]);
+    // A layer above the deletion starts the part afresh, in the place the id first had.
+    const back = parsed(doc({ prompt: [{ id: 'role', ref: { type: REF_URL, value: 'https://x/role.md' } }] }));
+    expect(resolveAgentSpec([base, over, back]).prompt).toEqual([
+      { id: 'role', ref: { type: REF_URL, value: 'https://x/role.md' } },
+      { id: 'identity', text: 'You are X.' },
+    ]);
   });
 
   it('validates a prompt reference without ever resolving it', () => {
