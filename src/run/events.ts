@@ -780,7 +780,8 @@ export interface RunMetrics {
   predictedMs?: number;
   /**
    * Time from each tool call to its result, summed per call — so calls run in parallel can add up
-   * to more than the wall time they took.
+   * to more than the wall time they took. A call with no result here, such as one handed back,
+   * adds nothing.
    */
   toolMs?: number;
   /** The longest any one turn took, retries and continuations in. */
@@ -938,7 +939,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   let reportedPrompt = 0;
   let reportedCached = 0;
   let firstTokens = 0;
-  // Calls waiting for their results, by tool name, oldest first.
+  // Calls waiting for their results, by call id, oldest first. An event built without an id is
+  // paired by its tool's name, which is all it carries.
   const pending = new Map<string, number[]>();
   let last: TurnReport | undefined;
   // Whether the run's latest stretch stopped on a `wait`; the next turn is the run going on.
@@ -955,7 +957,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
       if (event.name === LOAD_TOOLS) {
         metrics.loadCalls++;
       }
-      getOrCreate(pending, event.name, () => []).push(event.at);
+      getOrCreate(pending, event.id ?? event.name, () => []).push(event.at);
     } else if (event.kind === RunEventKind.ToolResult) {
       metrics.toolCalls++;
       if (event.ok === false) {
@@ -966,7 +968,7 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
         add('redundantLoads', event.loads.redundantLoads);
         add('unknownToolNames', event.loads.unknownToolNames);
       }
-      const called = pending.get(event.name)?.shift();
+      const called = pending.get(event.id ?? event.name)?.shift();
       if (called !== undefined) {
         add('toolMs', event.at - called);
       }

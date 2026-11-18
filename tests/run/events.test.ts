@@ -664,6 +664,17 @@ describe('runMetrics', () => {
     expect(metrics).not.toHaveProperty('largestPromptShare');
   });
 
+  it('times each tool result against its own call, and adds nothing for a call with no result', () => {
+    const call = (id: string, at: number) => stamp({ kind: RunEventKind.ToolCall, id, name: 'fetch' }, 'r', 0, at);
+    const result = (id: string, at: number) =>
+      stamp({ kind: RunEventKind.ToolResult, id, name: 'fetch', ok: true }, 'r', 0, at);
+    // A call handed back gets no result on the bus; the next call of the same tool is answered.
+    const handedBack = [call('h', 0), stamp({ kind: RunEventKind.Wait }, 'r', 0, 1), call('k', 60_000)];
+    expect(runMetrics([...handedBack, result('k', 60_010)]).toolMs).toBe(10);
+    // A result for a call this log does not hold is timed against nothing.
+    expect(runMetrics([call('a', 0), result('z', 5), result('a', 50)]).toolMs).toBe(50);
+  });
+
   it("reads the outcome off the last turn and the run's end", () => {
     const turn = (finishReason: string) => ({
       kind: RunEventKind.Usage,
