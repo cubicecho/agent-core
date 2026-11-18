@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import type { Endpoint, EndpointIdentity } from '../core/config.ts';
+import { SIDE_TASK_DEFAULTS } from '../core/defaults.ts';
 import {
   type Capabilities,
   capabilitiesFor,
@@ -41,15 +42,6 @@ import { type RequestBuilder, runTurn } from './run-turn.ts';
  * is latched under `ModelCapabilities.reasoningEffort`, as every exchange's is.
  */
 const NO_THINKING = { [CHAT_TEMPLATE_KWARGS]: { enable_thinking: false } };
-
-/**
- * How many times a side task sends a lost request again, where its caller does not say.
- *
- * @remarks
- * Not the exchange's `maxRetries`, which defaults to none: a side task is small, and a lost one
- * that is not sent again costs the exchange a title or a shortlist for one dropped connection.
- */
-const SIDE_TASK_RETRIES = 2;
 
 /**
  * The input a side task applies its instruction to: text, or the content parts a vision model
@@ -237,11 +229,11 @@ async function complete(
   system: string,
   user: SideTaskInput,
   {
-    maxTokens = 512,
-    temperature = 0.3,
+    maxTokens = SIDE_TASK_DEFAULTS.maxTokens,
+    temperature = SIDE_TASK_DEFAULTS.temperature,
     reasoningEffort,
     extraBody,
-    maxRetries = SIDE_TASK_RETRIES,
+    maxRetries = SIDE_TASK_DEFAULTS.maxRetries,
     signal,
     onNotice,
   }: SideTaskOptions,

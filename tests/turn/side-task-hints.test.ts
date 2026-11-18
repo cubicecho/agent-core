@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SIDE_TASK_DEFAULTS } from '../../src/core/defaults.ts';
 import { ContextOverflow } from '../../src/wire/retry.ts';
 import { answer, apiError, type Create, reply } from '../helpers.ts';
 import { NO_EFFORT, NO_HINTS, OWN_TEMPERATURE, WANTS_COMPLETION_LIMIT } from '../refusals.ts';
@@ -216,8 +217,8 @@ describe('what the model refuses', () => {
     // the same way, and `tryAsk` turned that into a session with no title.
     create.mockRejectedValueOnce(WANTS_COMPLETION_LIMIT).mockResolvedValue(reply);
     await expect(call(endpoint('https://api.openai.com/v1'), 'o3')).resolves.toBe('ok');
-    expect(body(0).max_tokens).toBe(512);
-    expect(body(1).max_completion_tokens).toBe(512);
+    expect(body(0).max_tokens).toBe(SIDE_TASK_DEFAULTS.maxTokens);
+    expect(body(1).max_completion_tokens).toBe(SIDE_TASK_DEFAULTS.maxTokens);
     expect(body(1)).not.toHaveProperty('max_tokens');
     // And the run on the same model does not have to find this out for itself.
     const supports = capabilitiesFor({ baseUrl: 'https://api.openai.com/v1' });
@@ -227,7 +228,7 @@ describe('what the model refuses', () => {
   it('lets the model keep the temperature it was built with', async () => {
     create.mockRejectedValueOnce(OWN_TEMPERATURE).mockResolvedValue(reply);
     await expect(call(endpoint('https://api.openai.com/v1'), 'o3')).resolves.toBe('ok');
-    expect(body(0).temperature).toBe(0.3);
+    expect(body(0).temperature).toBe(SIDE_TASK_DEFAULTS.temperature);
     expect(body(1)).not.toHaveProperty('temperature');
   });
 
@@ -271,7 +272,7 @@ describe('what the model refuses', () => {
     create.mockResolvedValue(reply);
     await call(endpoint('https://api.openai.com/v1'), 'o3');
     expect(create).toHaveBeenCalledTimes(1);
-    expect(body(0).max_completion_tokens).toBe(512);
+    expect(body(0).max_completion_tokens).toBe(SIDE_TASK_DEFAULTS.maxTokens);
   });
 
   it('sends the effort a caller chose in place of the hints', async () => {

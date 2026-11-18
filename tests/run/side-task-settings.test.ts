@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
+import { SIDE_TASK_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookNote, HookRunner } from '../../src/hooks/hooks.ts';
 import type { AgentLoopHooks } from '../../src/run/agent-loop.ts';
@@ -185,15 +186,19 @@ describe("a side task's own settings", () => {
 
     const title = taskCall(resolved.tasks.title, {}, resolved);
     await ask(title.endpoint, title.model, 'Name it.', 'a chat', title.options);
-    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 512 });
+    expect(body(0)).toMatchObject({
+      model: 'tiny',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: SIDE_TASK_DEFAULTS.maxTokens,
+    });
 
     const compaction = taskCall(resolved.tasks.compaction, {}, resolved);
     await summariser(compaction.endpoint, compaction.model, compaction.options)('a transcript');
-    expect(body(1)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 1024 });
+    expect(body(1)).toMatchObject({ model: 'tiny', temperature: SIDE_TASK_DEFAULTS.temperature, max_tokens: 1024 });
 
     const select = taskCall(resolved.tasks.toolSelect, {}, resolved);
     await preselect(select.endpoint, select.model, catalog, 'read it', select.options);
-    expect(body(2)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 256 });
+    expect(body(2)).toMatchObject({ model: 'tiny', temperature: SIDE_TASK_DEFAULTS.temperature, max_tokens: 256 });
 
     for (const nth of [0, 1, 2]) {
       // No effort was chosen for the task, so it is told not to think, whatever the agent does.
@@ -233,13 +238,13 @@ describe("a side task's own settings", () => {
     }
   });
 
-  it('lets preselect be given a temperature, and keeps 0.3 without one', async () => {
+  it('lets preselect be given a temperature, and keeps the side task one without it', async () => {
     create.mockResolvedValue(answer('["s__read"]'));
     const config = { baseUrl: 'http://local/v1', apiKey: '' };
     await preselect(config, 'small', catalog, 'read it', { temperature: 0 });
     await preselect(config, 'small', catalog, 'read it');
     expect(body(0).temperature).toBe(0);
-    expect(body(1).temperature).toBe(0.3);
+    expect(body(1).temperature).toBe(SIDE_TASK_DEFAULTS.temperature);
   });
 });
 
@@ -346,7 +351,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   it("gives a preselector on the agent's endpoint the agent's key and its own defaults", async () => {
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     await run(onDemand({ toolSelect: { model: 'tiny' } }), { preselect: true });
-    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0.3, max_tokens: 256 });
+    expect(body(0)).toMatchObject({ model: 'tiny', temperature: SIDE_TASK_DEFAULTS.temperature, max_tokens: 256 });
     expect(new Set(reached.map((endpoint) => JSON.stringify(endpoint)))).toEqual(
       new Set([JSON.stringify({ baseUrl: 'http://main/v1', apiKey: 'sk-main' })]),
     );
@@ -365,7 +370,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     };
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     await run(config, { preselect: true });
-    expect(body(0)).toMatchObject({ model: 'small', temperature: 0.3, max_tokens: 256 });
+    expect(body(0)).toMatchObject({ model: 'small', temperature: SIDE_TASK_DEFAULTS.temperature, max_tokens: 256 });
     expect(declared(1)).toEqual(['s__read']);
   });
 
@@ -386,7 +391,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     const result = await run(onDemand({}), { preselect: true });
     // The preselector's defaults rather than the agent's temperature and ceiling.
-    expect(body(0)).toMatchObject({ model: 'big', temperature: 0.3, max_tokens: 256 });
+    expect(body(0)).toMatchObject({ model: 'big', temperature: SIDE_TASK_DEFAULTS.temperature, max_tokens: 256 });
     // The preselection, not the exchange's first turn: it is the one that asks for a schema.
     expect(body(0)).toHaveProperty('response_format');
     expect(new Set(reached.map((endpoint) => JSON.stringify(endpoint)))).toEqual(
@@ -466,7 +471,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     };
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     expect((await run(settings, { preselect: true })).preselected).toEqual(['s__read']);
-    expect(body(0)).toMatchObject({ model: 'm', temperature: 0.3 });
+    expect(body(0)).toMatchObject({ model: 'm', temperature: SIDE_TASK_DEFAULTS.temperature });
 
     create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
     const named = { ...settings, toolSelectModel: settings.toolSelectModel || settings.model };
@@ -789,7 +794,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       compact: { target: 0.5 },
     });
     expect(create).toHaveBeenCalledTimes(3);
-    expect(body(1)).toMatchObject({ model: 'tiny', temperature: 0.3 });
+    expect(body(1)).toMatchObject({ model: 'tiny', temperature: SIDE_TASK_DEFAULTS.temperature });
     expect(body(2).messages.slice(0, 2)).toEqual(summarised('what was said'));
   });
 

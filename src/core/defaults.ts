@@ -108,6 +108,32 @@ export const TOOL_CALL_DEFAULTS: Readonly<ToolCallSettings> = Object.freeze({
   mintAttempts: 32,
 });
 
+/** A side task: one short call that supports an exchange without being one. */
+export interface SideTaskSettings {
+  /** The reply's ceiling, in tokens. These answers are meant to be short. */
+  maxTokens: number;
+  /**
+   * Sampling temperature. Naming and classifying want the same answer twice, so it is the side
+   * task's own and never the agent's.
+   */
+  temperature: number;
+  /**
+   * How many times a lost request is sent again.
+   *
+   * @remarks
+   * Not the exchange's `maxRetries`, which defaults to none: a side task is small, and a lost one
+   * that is not sent again costs the exchange a title or a shortlist for one dropped connection.
+   */
+  maxRetries: number;
+}
+
+/** What `ask`, `askJson` and the side tasks built on them send where their caller does not say. */
+export const SIDE_TASK_DEFAULTS: Readonly<SideTaskSettings> = Object.freeze({
+  maxTokens: 512,
+  temperature: 0.3,
+  maxRetries: 2,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */

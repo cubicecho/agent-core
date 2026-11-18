@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SIDE_TASK_DEFAULTS } from '../../src/core/defaults.ts';
 import { resetAll } from '../../src/runtime/reset.ts';
 import { ask, askJson, askReply, tryAsk } from '../../src/turn/side-task.ts';
 import { HttpStatus, SchemaType } from '../../src/wire/wire.ts';
@@ -91,14 +92,17 @@ afterEach(() => {
 });
 
 describe('a side task told nothing', () => {
-  it('asks for 512 tokens at 0.3 through every entry point', async () => {
+  it('asks for the side task ceiling and temperature through every entry point', async () => {
     const { config, bodies } = answering('{"name": "x"}');
     await ask(config, 'm', 'system', 'user');
     await askReply(config, 'm', 'system', 'user');
     await askJson(config, 'm', 'system', 'user', schema);
     expect(bodies).toHaveLength(3);
     for (const body of bodies) {
-      expect(body).toMatchObject({ max_tokens: 512, temperature: 0.3 });
+      expect(body).toMatchObject({
+        max_tokens: SIDE_TASK_DEFAULTS.maxTokens,
+        temperature: SIDE_TASK_DEFAULTS.temperature,
+      });
     }
   });
 
