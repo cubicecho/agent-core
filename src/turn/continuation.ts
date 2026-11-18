@@ -39,9 +39,10 @@ export interface ContinueTurnOptions extends RunTurnOptions {
    */
   maxContinuations?: number;
   /**
-   * Whether the prefill carries the reasoning the cut-off turn produced, under the field it arrived
-   * in. A Qwen3.5+ template renders a think block on that message either way, empty without it, so
-   * leaving it off tells the model it had no thoughts and misses the cache of what it generated.
+   * Whether the prefill carries the scratchpad the cut-off reply produced, under the field it
+   * arrived in. A Qwen3.5+ template renders a think block on that message either way, empty without
+   * it, so leaving it off tells the model it had no thoughts and misses the cache of what
+   * it generated.
    *
    * @defaultValue `true`
    */
@@ -190,7 +191,8 @@ function joinUsage(first: TurnUsage, next: TurnUsage): TurnUsage {
 }
 
 /**
- * The reasoning blocks of a turn and its continuation, as the `reasoningDetails` of the two joined.
+ * The scratchpad blocks of a reply and its continuation, as the `reasoningDetails` of the
+ * two joined.
  *
  * @param joined - The turn so far.
  * @param next - The continuation's turn.
@@ -207,7 +209,7 @@ function joinedDetails(joined: Turn, next: Turn): Pick<Turn, 'reasoningDetails'>
  *
  * @param sofar - The turn being continued, which may itself be a joined one. Not written to.
  * @param [piece] - What the continuation had said. Absent adds nothing.
- * @returns The two joined as `continueTurn` joins turns: content and reasoning in order, and the
+ * @returns The two joined as `continueTurn` joins turns: content and scratchpad in order, and the
  * continuation's own calls. `reasoning` and `toolCalls` are left out where empty.
  */
 function joinPartial(sofar: Turn, piece: PartialTurn | undefined): PartialTurn {
@@ -223,8 +225,8 @@ function joinPartial(sofar: Turn, piece: PartialTurn | undefined): PartialTurn {
  * Carries on an answer the token ceiling cut off, by sending the transcript again with the answer
  * so far as a trailing assistant message, and joins the pieces into one turn.
  *
- * @param client - The pooled client for this endpoint.
- * @param supports - What the endpoint has already refused.
+ * @param client - The pooled client for this model server.
+ * @param supports - What the model server has already refused.
  * @param request - Builds the body the cut-off turn was sent, exactly as `runTurn` was given it. The
  * prefill is appended to what it builds.
  * @param turn - The turn that came back cut off.
@@ -235,11 +237,11 @@ function joinPartial(sofar: Turn, piece: PartialTurn | undefined): PartialTurn {
  *
  * @remarks
  * Only a turn cut off at the ceiling, with an answer begun and no tool call in it, is continued;
- * any other comes back as it was. Content and reasoning are joined in order, the tool calls a continuation makes are kept, and usage is summed
- * across the requests with `continuations` counting them. The continuation is read as starting in
- * the answer, whatever `startInReasoning` says: a template that opens a fence for a fresh reply
- * does not open one for a prefill. Its tokens reach `onOutput` as they arrive, so a watcher sees
- * one answer carry on rather than two.
+ * any other comes back as it was. Content and scratchpad are joined in order, the tool calls a
+ * continuation makes are kept, and usage is summed across the requests with `continuations`
+ * counting them. The continuation is read as starting in the answer, whatever `startInReasoning`
+ * says: a template that opens a fence for a fresh reply does not open one for a prefill. Its tokens
+ * reach `onOutput` as they arrive, so a watcher sees one answer carry on rather than two.
  *
  * The request also says `continue_final_message: true` and `add_generation_prompt: false`, without
  * which vLLM answers afresh. They are this request's rather than the conversation's, so they win

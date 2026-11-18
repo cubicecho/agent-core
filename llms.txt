@@ -11,26 +11,26 @@ Full prose, worked examples and the reasoning behind each seam are in README.md;
 
 ### compaction
 
-Keeping a long run inside its window: stale tool results cleared, and the oldest stretch folded into a summary the model writes itself.
+Keeping a long exchange inside its context window: stale tool results cleared, and the oldest stretch compacted into a summary the model writes itself.
 
-- `applyCompaction` — The transcript as the server should see it: the folded head replaced by its summary.
-- `COMPACT_AT` — The fraction of the window in use before a summary is worth its own round trip.
+- `applyCompaction` — The transcript as the model server should see it: the compacted head replaced by its summary.
+- `COMPACT_AT` — The fraction of the context window in use before a summary is worth its own round trip.
 - `CompactionOptions` (type) — What `planCompaction` takes.
 - `CompactionPlan` (type) — Where to cut, as `compactTranscript` takes it.
-- `CompactionRecord` (type) — One fold, as a host that keeps its transcript append-only stores it.
+- `CompactionRecord` (type) — One compaction, as an app that keeps its transcript append-only stores it.
 - `CompactionRunOptions` (type) — What `runCompaction` and `compactTranscript` take beside the plan.
 - `compactTranscript` — The transcript with the plan's stretch replaced by its summary, as `applyCompaction` writes it.
-- `KEEP_RATIO` — The fraction of the window the kept tail may fill, leaving room for the run to grow again.
-- `PRUNE_SHARE` — The share of the window a prune has to win back on its own before it is worth the prompt cache it costs.
+- `KEEP_RATIO` — The fraction of the context window the kept tail may fill, leaving room for the exchange to grow again.
+- `PRUNE_SHARE` — The share of the context window a prune has to win back on its own before it is worth the prompt cache it costs.
 - `PruneOptions` (type) — What `pruneToolResults` takes.
 - `PrunePlan` (type) — Where `planPrune` puts the boundary, and what moving it there clears.
-- `PrunePlanOptions` (type) — What `planPrune` takes beside the transcript and the window.
-- `planCompaction` — Where to fold a transcript that has grown into its window, or `undefined` when it should not be.
+- `PrunePlanOptions` (type) — What `planPrune` takes beside the transcript and the context window.
+- `planCompaction` — Where to compact a transcript that has grown into its context window, or `undefined` when it should not be.
 - `planPrune` — Where to move the prune boundary, or `undefined` when it should stay where it is.
-- `pruneNotice` — What a host says when a plan is applied, so every host says it the same way.
+- `pruneNotice` — What an app says when a plan is applied, so every app says it the same way.
 - `pruneThrough` — The transcript with every tool result before `through` replaced by a stub.
 - `pruneToolResults` — The transcript with every tool result but the latest few replaced by a one-line stub.
-- `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a fold has shifted everything after it.
+- `requestIndex` — Where a stored index sits in the request `applyCompaction` builds, once a compaction has shifted everything after it.
 - `runCompaction` — The hooks and the summariser for a plan, as a record to store rather than a transcript to send.
 - `SUMMARY_ACK` — The assistant's reply to a summary, which closes the pair `applyCompaction` writes.
 - `SUMMARY_LEAD` — How a summary message opens, which is also how `planCompaction` knows one from the conversation.
@@ -39,7 +39,7 @@ Keeping a long run inside its window: stale tool results cleared, and the oldest
 
 ### ledger
 
-What stretches of a transcript cost, read off the prompt counts the server already reported.
+What stretches of a transcript cost, read off the prompt counts the model server already reported.
 
 - `estimateFrom` — A per-message cost for `planCompaction`'s `estimate`: the measured share where the ledger covers the message, the calibrated estimate where it does not.
 - `LedgerEntry` (type) — One request's reported prompt, and how far into the transcript that request reached.
@@ -48,7 +48,7 @@ What stretches of a transcript cost, read off the prompt counts the server alrea
 - `rebaseLedger` — The ledger for a transcript that has been rewritten, keeping the boundaries the rewrite left standing.
 - `recordRequest` — The ledger with one more request on it, in the epoch the request before it says it belongs to.
 - `TokenLedger` (type) — A transcript's entries in the order their requests were sent, which is also by `through`.
-- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the window, measured where the ledger can say and estimated where it cannot.
+- `tokensBetween` — What the messages from `from` up to, not including, `to` cost the context window, measured where the ledger can say and estimated where it cannot.
 
 ### config
 
@@ -408,17 +408,17 @@ Picking up an answer the token ceiling cut off, instead of keeping half of it.
 
 ### run-turn
 
-One turn, given as many attempts as the caller allows.
+One request, given as many attempts as the caller allows.
 
 - `RunTurnOptions` (type) — What `runTurn` takes besides the client, the capabilities and the request.
-- `runTurn` — One turn seen through to an answer: negotiated with the endpoint, retried where the failure is transient, and waited for where the model is still loading.
+- `runTurn` — One request seen through to an answer: negotiated with the model server, retried where the failure is transient, and waited for where the model is still loading.
 
 ### side-task
 
-One-shot calls that support a run without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
+One-shot calls that support an exchange without being one: picking tools, naming a session, summarising a transcript, proposing follow-ups.
 
 - `AskJsonOptions` (type) — What `askJson` takes besides a side task's options.
-- `ask` — Runs a side task and returns the reply text, thinking stripped.
+- `ask` — Runs a side task and returns the reply text, scratchpad stripped.
 - `askJson` — A side task whose answer is JSON matching a schema, parsed.
 - `askReply` — Runs a side task as `ask` does, and says why the reply ended as well as what it said.
 - `clean` — Strips the quoting and list punctuation models decorate short answers with.
@@ -428,7 +428,7 @@ One-shot calls that support a run without being one: picking tools, naming a ses
 - `SideTaskInput` (type) — The input a side task applies its instruction to: text, or the content parts a vision model reads.
 - `SideTaskOptions` (type) — What a side task may be given.
 - `SideTaskReply` (type) — A side task's reply, with why the model stopped writing it.
-- `taskCall` — A side task's settings as the call that honours them: its endpoint, its model, and the options `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
+- `taskCall` — A side task's settings as the call that honours them: its model server, its model, and the options `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
 - `tryAsk` — Runs a side task and answers `undefined` where it fails, so the work it supports carries on.
 
 ### call-ids

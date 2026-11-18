@@ -19,19 +19,19 @@ import { type Produced, type StreamTurnOptions, streamTurn, type Turn } from '..
 import { compact, requestTokens } from '../wire/tokens.ts';
 
 /**
- * One turn, given as many attempts as the caller allows.
+ * One request, given as many attempts as the caller allows.
  *
- * Two different things are being recovered from here, and they nest. The inner one is a
- * capability the endpoint turns out not to have — `stream_options`, a grammar keyword — or that
- * the model does not, given `model` below. Either is a refusal: it is answered by sending a
- * lesser request, and it latches for the life of the process against the endpoint or against
- * that one model on it, so it costs one failed call rather than one a run.
- * The outer one is the endpoint being unreachable, busy or silent, which is not about this
- * request at all and is worth simply waiting out.
+ * Two different things are being recovered from here, and they nest. The inner one is a capability
+ * the model server turns out not to have — `stream_options`, a grammar keyword — or that the model
+ * does not, given `model` below. Either is a refusal: it is answered by sending a lesser request,
+ * and it latches for the life of the process against the model server or against that one model on
+ * it, so it costs one failed call rather than one an exchange. The outer one is the model server
+ * being unreachable, busy or silent, which is not about this request at all and is worth simply
+ * waiting out.
  *
- * A request too big for the window is neither, and comes out of here as `ContextOverflow`
+ * A request too big for the context window is neither, and comes out of here as `ContextOverflow`
  * however it was found out about — by the `contextLimit` guard below before a round trip was
- * spent, or by the endpoint's own refusal after one. The option decides how early the caller
+ * spent, or by the model server's own refusal after one. The option decides how early the caller
  * hears, not what it hears.
  *
  * Both are bounded by the same rule: nothing is sent again once the model has started
@@ -65,20 +65,20 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    * @defaultValue `0`
    *
    * @remarks
-   * With a limit, the request is sized before it is sent — the prompt plus the reply ceiling
-   * the body carries, since that is what the endpoint weighs — and a `ContextOverflow` is raised
-   * here rather than by the endpoint one round trip later. It is opt-in because the number is the
-   * caller's to find: `contextLimitFor` asks the endpoint, an operator's own setting overrides
-   * it, and neither is something a turn should be doing network I/O to discover. A limit below
-   * `SMALLEST_LIKELY_WINDOW` is not believed — a model with a window that small is rare enough
-   * that the number is far more likely a caller threading a placeholder through, and refusing a
-   * run over one would be the guard failing exactly the callers it was meant to help.
+   * Given one, the request is sized before it is sent — the prompt plus the reply ceiling the body
+   * carries, since that is what the model server weighs — and a `ContextOverflow` is raised here
+   * rather than by the model server one round trip later. It is opt-in because the number is the
+   * caller's to find: `contextLimitFor` asks the model server, an operator's own setting overrides
+   * it, and neither is something a turn should be doing network I/O to discover. A context window
+   * below `SMALLEST_LIKELY_WINDOW` is not believed — a model with one that small is rare enough
+   * that the number is far more likely a caller threading a placeholder through, and refusing an
+   * exchange over one would be the guard failing exactly the callers it was meant to help.
    */
   contextLimit?: number;
   /**
    * Which model the body names, so the refusals that are about the model rather than the server
    * are negotiated too — a reasoning effort it does not take, a token ceiling it spells the
-   * other way, a temperature that is not ours to pick. Left out, only the endpoint's own are.
+   * other way, a temperature that is not ours to pick. Left out, only the model server's own are.
    *
    * @remarks
    * It is given here rather than read off the body because the body is built from the answer:
@@ -86,8 +86,8 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
    */
   model?: string;
   /**
-   * The body fields a refusal may take away when the endpoint has never heard of them — the keys
-   * of `extraBody`, ordinarily. See `NegotiateOptions.droppable`; it needs `model` too.
+   * The body fields a refusal may take away when the model server has never heard of them — the
+   * keys of `extraBody`, ordinarily. See `NegotiateOptions.droppable`; it needs `model` too.
    */
   droppable?: Iterable<string>;
   /**
@@ -113,7 +113,7 @@ export interface RunTurnOptions extends Omit<StreamTurnOptions, 'produced'> {
 export const modelLabel = (model: string | undefined) => model ?? 'the model';
 
 /**
- * Builds a turn's request body from what the endpoint and the model have refused so far.
+ * Builds a turn's request body from what the model server and the model have refused so far.
  *
  * @remarks
  * A function rather than a body because a downgrade changes what is sent, so it is called again
@@ -125,20 +125,20 @@ export type RequestBuilder = (
 ) => OpenAI.ChatCompletionCreateParamsStreaming;
 
 /**
- * Throws `ContextOverflow` for a request that will not fit its window, before it is sent.
+ * Throws `ContextOverflow` for a request that will not fit its context window, before it is sent.
  *
  * @param body - The request about to go out. Its prompt is estimated, and its reply ceiling read
  * from `max_completion_tokens`, or failing that `max_tokens`.
- * @param contextLimit - The model's window, in tokens. A request of exactly that many is let
- * through.
+ * @param contextLimit - The model's context window, in tokens. A request of exactly that many is
+ * let through.
  * @param charsPerToken - The ratio the prompt is estimated at.
  *
  * @remarks
- * The endpoint refuses on the prompt plus the reply — llama.cpp sizes the slot with `n_predict`
- * in, OpenAI with the ceiling — so a prompt that fits the window but not the window less the
- * ceiling was let through here to be refused one round trip later, which is the trip this guard
- * exists to save. The reserve is read off the body under whichever spelling was chosen, and no
- * ceiling reserves nothing: the server then gives the reply what is left.
+ * The model server refuses on the prompt plus the reply — llama.cpp sizes the slot with `n_predict`
+ * in, OpenAI with the ceiling — so a prompt that fits the context window but not what the ceiling
+ * leaves of it was let through here to be refused one round trip later, which is the trip this
+ * guard exists to save. The reserve is read off the body under whichever spelling was chosen, and
+ * no ceiling reserves nothing: the server then gives the reply what is left.
  */
 function refuseOversized(
   body: OpenAI.ChatCompletionCreateParamsStreaming,
@@ -169,16 +169,16 @@ function refuseOversized(
 const shownDelay = (ms: number) => (ms < MS_PER_SECOND ? `${Math.round(ms)}ms` : `${Math.round(ms / MS_PER_SECOND)}s`);
 
 /**
- * One turn seen through to an answer: negotiated with the endpoint, retried where the failure is
- * transient, and waited for where the model is still loading.
+ * One request seen through to an answer: negotiated with the model server, retried where the
+ * failure is transient, and waited for where the model is still loading.
  *
- * @param client - The pooled client for this endpoint.
- * @param supports - What the endpoint has already refused, threaded through the negotiation.
+ * @param client - The pooled client for this model server.
+ * @param supports - What the model server has already refused, threaded through the negotiation.
  * @param request - Builds the body. Called again per attempt, since a downgrade changes it. Its
  * second argument is what the model named in `options.model` has refused, absent when none was.
- * @param [options] - Retry budget, context limit, the model to negotiate for, notices, and the
+ * @param [options] - Retry budget, context window, the model to negotiate for, notices, and the
  * stream's own callbacks.
- * @returns The turn the attempt that got through produced, its usage carrying what every attempt
+ * @returns The reply the attempt that got through produced, its usage carrying what every attempt
  * together cost: `wallMs`, `retries` and `timeouts`.
  *
  * @remarks
@@ -239,20 +239,20 @@ export async function runTurn(
       Object.assign(turn.usage, { wallMs: Date.now() - started, retries, timeouts });
       return turn;
     } catch (error) {
-      // The abort is read before the classification, not after. A run stopped by its operator
-      // can trip the idle watchdog on the way out, and `EndpointSilent` is transient by the
-      // rules in `retry.ts` — so classifying first brings a cancelled run back from the dead.
+      // The abort is read before the classification, not after. An exchange stopped by its operator
+      // can trip the idle watchdog on the way out, and `EndpointSilent` is transient by the rules
+      // in `retry.ts` — so classifying first brings a cancelled exchange back from the dead.
       if (produced.any || stream.signal?.aborted) {
         throw error;
       }
-      // The endpoint's own refusal, classified here rather than left to the caller. One failure
+      // The model server's own refusal, classified here rather than left to the caller. One failure
       // had two error types depending on an option about something else: a caller that gave a
       // `contextLimit` got `ContextOverflow` from the guard above, and one that did not — the
       // default — got a raw SDK error and had to know to run `isOverflow` over its message
       // itself. `runTurn` is offered as the whole loop, so the classification this package
       // already knows how to do belongs inside it.
       //
-      // The original is kept as `cause`, because the endpoint's wording is the half that names
+      // The original is kept as `cause`, because the model server's wording is the half that names
       // the number. A rate limit borrows the same words and is not one of these — `isOverflow`
       // rules it out, and it goes on to be retried below as the 429 it is.
       if (!(error instanceof ContextOverflow) && isOverflow(errorMessage(error))) {

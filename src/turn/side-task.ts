@@ -22,9 +22,9 @@ import { CODE_FENCE, looseJson } from '../wire/tool-calls.ts';
 import { JSON_SCHEMA_FORMAT, Role } from '../wire/wire.ts';
 
 /**
- * One-shot calls that support a run without being one: picking tools, naming a session,
+ * One-shot calls that support an exchange without being one: picking tools, naming a session,
  * summarising a transcript, proposing follow-ups. They share a shape — small prompt, short
- * answer, no tools, no streaming — and none is ever worth failing the run it supports.
+ * answer, no tools, no streaming — and none is ever worth failing the exchange it supports.
  */
 
 /**
@@ -38,7 +38,7 @@ import { JSON_SCHEMA_FORMAT, Role } from '../wire/wire.ts';
  * The second half is latched as `ModelCapabilities.thinkingHints`. `reasoning_effort` is a field
  * `negotiate` already knows how to be refused, so it is sent under
  * `ModelCapabilities.reasoningEffort` instead, which narrows the fallback below to the field it is
- * really about and shares the answer with the runs on that model.
+ * really about and shares the answer with the exchanges on that model.
  */
 const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
 
@@ -88,17 +88,18 @@ export interface SideTaskOptions {
    * @remarks
    * Merged in after the ceiling, temperature and thinking fields, so it may override them, and
    * before `askJson`'s `response_format`. `model`, `messages`, `stream` and `tools` are dropped. A
-   * field the endpoint refuses by name is latched for the model and the request sent again without it.
+   * field the model server refuses by name is latched for the model and the request sent again
+   * without it.
    */
   extraBody?: Record<string, unknown>;
-  /** Abandons the call, usually because the run it supports has gone away. */
+  /** Abandons the call, usually because the exchange it supports has gone away. */
   signal?: AbortSignal;
   /**
    * Told what was given up on, the same way `runTurn` and `negotiate` tell a caller.
    *
    * @remarks
    * The one notice `ask` raises itself opens with the model's name, as `negotiate`'s do for the
-   * refusals that are the model's: what it announces is latched on the (endpoint, model) pair,
+   * refusals that are the model's: what it announces is latched on the (model server, model) pair,
    * so on a consumer reaching several models through one base URL the name is the only thing
    * separating one announcement from the next.
    *
@@ -114,7 +115,7 @@ export interface SideTaskOptions {
  *
  * @remarks
  * Declared here rather than imported from `spec.ts`, whose `ResolvedTask` it matches field for
- * field: the spec module is one nothing else in `src/` imports, and a host that is not on the spec
+ * field: the spec module is one nothing else in `src/` imports, and an app that is not on the spec
  * can write one of these by hand. An absent setting is the side task's own default — 0.3, the
  * entry point's ceiling, thinking off — and never the main model's, so raising the agent's
  * temperature for the chat does not make its titler creative. See `taskCall`.
@@ -139,14 +140,14 @@ export interface SideTask {
 }
 
 /**
- * Runs a side task and returns the reply text, thinking stripped. Throws like any request.
+ * Runs a side task and returns the reply text, scratchpad stripped. Throws like any request.
  *
  * @param config - Where to send it and how long to wait.
  * @param model - The model to ask, usually smaller than the one running the work.
  * @param system - The instruction.
  * @param user - The input it applies to. Content parts where the model is being shown an image.
  * @param [options] - Reply ceiling, temperature, a reasoning effort, extra fields, cancellation, notices.
- * @returns The reply's content, trimmed. Where that is empty once the thinking is stripped, a
+ * @returns The reply's content, trimmed. Where that is empty once the scratchpad is stripped, a
  * `reasoning_content` the server sent beside it, stripped the same way, or an empty string.
  */
 export async function ask(
@@ -162,7 +163,7 @@ export async function ask(
 
 /** A side task's reply, with why the model stopped writing it. */
 export interface SideTaskReply {
-  /** The reply's content as `ask` returns it: trimmed, thinking stripped. */
+  /** The reply's content as `ask` returns it: trimmed, scratchpad stripped. */
   text: string;
   /**
    * The first choice's `finish_reason` as the server sent it, compared with `FinishReason`.
@@ -199,7 +200,7 @@ export function askReply(
 
 /**
  * The request `ask` and `askJson` share, with `format` deciding the extra body fields from what
- * the model and the endpoint have refused, rebuilt on every re-send.
+ * the model and the model server have refused, rebuilt on every re-send.
  *
  * @param config - Where to send it. Its `baseUrl` and key also pick the capabilities the request is
  * negotiated against, and with `model` the pair a refusal of the hints is latched on.
@@ -209,7 +210,8 @@ export function askReply(
  * @param options - A side task's options. A `reasoningEffort` that is a level leaves the
  * no-thinking hints out; absent, `""` or `"off"` sends them unless this pair has refused them.
  * An `extraBody` goes out less the fields this model has refused by name.
- * @param [format] - Builds the extra body fields from the endpoint's capabilities and the model's.
+ * @param [format] - Builds the extra body fields from the model server's capabilities and
+ * the model's.
  * Called on every send, so a re-send is built from what has been latched since. Absent adds none.
  * @returns The first choice's message as `answerOf` reads it, empty when there was no answer, and
  * its `finish_reason`. Throws what the request throws, except that a 400 or 422 `negotiate` did not answer, on a
@@ -258,9 +260,9 @@ async function complete(
     );
   };
 
-  // The endpoint's own object, not one of this module's: what a model refuses is the same fact
-  // whether a run or a side task found it out, and the point of latching it is that only one of
-  // them has to pay for it. Nothing here sends tools or `stream_options`; the grammar flag is in
+  // The model server's own object, not one of this module's: what a model refuses is the same fact
+  // whether an exchange or a side task found it out, and the point of latching it is that only one
+  // of them has to pay for it. Nothing here sends tools or `stream_options`; the grammar flag is in
   // play only for `askJson`, whose schema a llama.cpp server compiles the way it does a tool's.
   const supports = capabilitiesFor(config.baseUrl, config.apiKey);
   const attempt = (hints: boolean, effort: boolean) =>
@@ -306,24 +308,24 @@ async function complete(
 }
 
 /**
- * A reply's answer, thinking stripped, or its scratchpad where the answer is nothing else.
+ * A reply's answer, scratchpad stripped, or the scratchpad itself where the answer is nothing else.
  *
  * @param message - The first choice's message. Absent, as when the reply held no choices, reads as
  * an empty one.
- * @returns The content, trimmed, with its thinking fences stripped. Where that leaves nothing, a
+ * @returns The content, trimmed, with its fenced scratchpad stripped. Where that leaves nothing, a
  * string `reasoning_content` read the same way, and an empty string where there is none.
  *
  * @remarks
  * Reasoning models that ignore the hints still fence their scratchpad. A side task answers under
  * a small ceiling, so the fence often never closes, and a template that opened it in the prompt
- * leaves only the close; either way the deliberation used to come back as the answer.
+ * leaves only the close; either way the scratchpad used to come back as the answer.
  */
 function answerOf(message: OpenAI.ChatCompletionMessage | undefined): string {
   const answer = stripThinking(message?.content ?? '').trim();
   if (answer) {
     return answer;
   }
-  // Nothing but scratchpad. Some servers put the deliberation in its own field and leave the
+  // Nothing but scratchpad. Some servers put the scratchpad in its own field and leave the
   // content genuinely empty, in which case there is no answer to find anywhere else.
   const reasoning = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
   return typeof reasoning === 'string' ? stripThinking(reasoning).trim() : '';
@@ -363,9 +365,9 @@ export interface AskJsonOptions extends SideTaskOptions {
  * @remarks
  * Sends `response_format` with the schema, which a llama.cpp server compiles into a grammar and
  * vLLM, LM Studio, Ollama and OpenAI each hold the reply to, so a small model that wraps JSON in
- * prose cannot. The schema is normalised as a tool's parameters are, and relaxed where the endpoint
- * could not build a grammar, since the same converter reads both. A model that refuses the field
- * latches it off and is asked in words: the schema rides on the system prompt either way, and
+ * prose cannot. The schema is normalised as a tool's parameters are, and relaxed where the model
+ * server could not build a grammar, since the same converter reads both. A model that refuses the
+ * field latches it off and is asked in words: the schema rides on the system prompt either way, and
  * the reply goes through `parseJson`, which finds the JSON in whatever came back.
  */
 export async function askJson<T>(
@@ -417,7 +419,7 @@ export async function tryAsk<T>(
   try {
     return await run();
   } catch (error) {
-    // A cancelled run is not a failed side task. Swallowing the abort made the two
+    // A cancelled exchange is not a failed side task. Swallowing the abort made the two
     // indistinguishable and left the cancellation with nowhere to go. The signal is asked first:
     // an abort with a reason of the caller's own rejects with that reason, which no class names.
     const wasCancelled = signal?.aborted === true || isAbort(error);
@@ -444,7 +446,7 @@ export async function tryAsk<T>(
  * What is pulled out is read the way a tool call's arguments are: as written where that parses,
  * and otherwise with the almost-JSON a local model writes repaired — single quotes, `True` and
  * `None`, bare keys, a trailing comma. A small model asked for a list gets these wrong as often in
- * a reply as in a call, and a side task that fails over one costs the run a second request.
+ * a reply as in a call, and a side task that fails over one costs the exchange a second request.
  */
 export function parseJson<T>(text: string): T | undefined {
   const [fenced] = text.matchAll(CODE_FENCE);
@@ -493,35 +495,35 @@ export const listLines = (text: string, max: number, maxChars: number) =>
     .slice(0, max);
 
 /**
- * A side task's settings as the call that honours them: its endpoint, its model, and the options
- * `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
+ * A side task's settings as the call that honours them: its model server, its model, and the
+ * options `ask`, `askReply`, `askJson`, `summariser` and `preselect` take last.
  *
  * @param task - The task, ordinarily `resolved.tasks.<key>`.
- * @param [options] - What the host adds — cancellation, notices, `keywords` — and its own defaults
+ * @param [options] - What the app adds — cancellation, notices, `keywords` — and its own defaults
  * for the settings a task may leave out.
- * @param [agent] - The endpoint the main turn uses, key and `fetch` included. Absent sends the
- * task's endpoint as it stands.
+ * @param [agent] - The model server the main turn uses, key and `fetch` included. Absent sends the
+ * task's model server as it stands.
  * @returns The three arguments a side-task entry point takes. `options` is a new object, and
  * `endpoint` is the task's own object when no `agent` was given, a copy otherwise.
  *
  * @remarks
  * A helper rather than a second signature on each entry point, so a setting added to a task later
- * arrives through `options` without a host's call changing. What the task states wins over the
- * same field in `options`: the host's code is written once and the task is what an operator
- * configured over it, so a host passes its own ceiling as the value for a task that names none.
+ * arrives through `options` without an app's call changing. What the task states wins over the
+ * same field in `options`: the app's code is written once and the task is what an operator
+ * configured over it, so an app passes its own ceiling as the value for a task that names none.
  * `extraBody` is merged key by key, the task's keys winning, as layers merge it.
  * A setting the task leaves out and `options` does too is absent from the result, which is what
  * leaves it to the entry point's own default — 0.3, not the agent's temperature.
  *
- * A resolved spec carries no key, so a task on the agent's own endpoint would otherwise go out
+ * A resolved spec carries no key, so a task on the agent's own model server would otherwise go out
  * unkeyed, and be remembered under a second capability entry beside the agent's. Given `agent`,
  * such a task is sent the agent's `baseUrl` as the agent spells it and, having no key of its own,
- * the agent's key, so `capabilitiesFor` answers both with one object; a task on another endpoint
- * is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
+ * the agent's key, so `capabilitiesFor` answers both with one object; a task on another model
+ * server is sent only a key of its own, as `resolveApiKey` has it. The environment is not read: the
  * agent's key is whatever the main turn is sent.
  *
- * The agent's `fetch` goes where its key would, to a task on the agent's endpoint with none of its
- * own, and never to another endpoint, whose task sends through its own `endpoint.fetch`.
+ * The agent's `fetch` goes where its key would, to a task on the agent's model server with none of
+ * its own, and never to another model server, whose task sends through its own `endpoint.fetch`.
  */
 export function taskCall<Options extends SideTaskOptions = SideTaskOptions>(
   task: SideTask,
