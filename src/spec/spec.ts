@@ -11,19 +11,11 @@ import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 /**
  * A JSON document that defines an agent, and the rules for reading one.
  *
- * Four applications sit on this package and each one spells "an agent" differently: a singleton
- * settings row, a deliberately jobless agent table whose job comes from three other rows, an
- * override profile that resolves into a whole synthesised settings object. None of them can read
- * another's agents, and `maxTokens: 0` means *no ceiling* in one, *inherit* in the next and *a
- * real ceiling of zero* in the third. This is the shape they can all write and all read, argued
- * out in `docs/agent-spec.md` before any of it was code.
- *
- * Nothing outside `src/spec/` imports this module, and this module imports nothing that needs
- * Node: types, and leaves with no imports of their own. That is the same seam `config.ts` draws — the
- * loop takes the parts it reads, not a config object — and it is what lets the document travel
- * between apps without the loop growing an opinion about where an agent comes from. It is also
- * why this is importable in a browser, where `client.ts` and `hooks.ts` are not: an app validating
- * a pasted document in a form needs no `node:crypto`.
+ * The apps on this package each spelled "an agent" differently, to the point that `maxTokens: 0`
+ * meant three different things; this is the shape they can all write and read, argued out in
+ * `docs/agent-spec.md`. Nothing outside `src/spec/` imports this module, and it imports nothing that
+ * needs Node, so the loop has no opinion on where an agent comes from and an app can validate a
+ * pasted document in a browser.
  */
 
 /** The token a document declares itself with. A loader refuses anything else. */
@@ -982,21 +974,13 @@ const KNOWN = new Set([
  * where `errors` holds anything. `warnings` is filled either way.
  *
  * @remarks
- * Every problem is reported at once, in the `path: what is wrong` shape `validateHooks` already
- * uses, because an app showing an operator one error at a time makes them fix a document one
- * round trip at a time.
- *
- * The hard errors are all about the document rather than a value: it is not an object; the
- * `spec` token is missing or of another major; a container of the wrong kind; a `requires` entry
- * that is not a string, or that this app does not understand. Everything else drops the offending
- * field and warns — the lesson a consumer learned the hard way when one stored out-of-range value
- * stopped its server booting. Out-of-range values are dropped rather than clamped, because a
- * clamp invents a number the author did not write while dropping falls back to one somebody did.
- *
- * Version handling is the deliberate opposite of `importCapabilities`, which shrugs at a foreign
- * version and returns false: degrade where the loss is performance, refuse where the loss is
- * identity. A snapshot of the wrong version costs a few refused requests; an agent of the wrong
- * version is not the agent its author described.
+ * Every problem is reported at once, in `validateHooks`'s `path: what is wrong` shape, so an
+ * operator fixes a document in one round trip. The hard errors are about the document itself — not
+ * an object, a missing or foreign `spec` token, a container of the wrong kind, a `requires` entry
+ * that is not a string or not understood — and anything else drops the field with a warning, an
+ * out-of-range value dropped rather than clamped. A foreign version is refused where
+ * `importCapabilities` shrugs, because an agent of the wrong version is not the agent its author
+ * described (`docs/agent-spec.md`).
  */
 export function parseSpec(document: unknown, options: ParseSpecOptions = {}): ParsedSpec {
   const report = new Report();
@@ -1238,19 +1222,11 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  *
  * @remarks
  * Absent inherits, and nothing else does: `0`, `-1`, `""` and `[]` are values that mean what they
- * say, which is the whole reason the format exists — `maxTokens: 0` means three different things
- * across the three applications this was extracted from, and `temperature: 0` is unsayable in one
- * of them. Scalars take the last layer that has the key. `extraBody` and `extensions` merge by
- * top-level key. `prompt`, `hooks` and `tasks` merge by id, ordered by first appearance, which is
- * one rule expressing two behaviours that look unrelated: different ids stack, and the same id
- * replaces. `tools.servers` replaces whole, because a tri-state cannot be unioned. `requires`
- * unions, so a layer above cannot quietly drop a requirement below it.
- *
- * No layer is ever fetched. There is no `extends` field and no URL resolution; which documents
- * layer is the app's call, the same answer `resolveApiKey` gives about keys. `apiKey` comes back
- * empty for the same reason: a document naming somebody else's model server must not be able to
- * make this app send its own provider key there. An app that wants inheritance applies
- * `resolveApiKey` afterwards.
+ * say. Scalars take the last layer that has the key, `extraBody` and `extensions` merge by top-level
+ * key, `prompt`, `hooks` and `tasks` merge by id (different ids stack, the same id replaces),
+ * `tools.servers` replaces whole and `requires` unions. No layer is ever fetched, and `apiKey` comes
+ * back empty so that a document naming somebody else's model server cannot make this app send its
+ * own key there; an app that wants inheritance applies `resolveApiKey` afterwards.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));

@@ -150,20 +150,12 @@ function bind(scope: Scope): Runtime {
  * @returns A runtime whose state starts empty, with whatever `options` gave already applied.
  *
  * @remarks
- * For an app that must not share them — one that mints a key per tenant, where a shared pool has
- * tenants evicting each other's clients and a shared bus has one tenant's run id readable by
- * another — and for tests, where a runtime per case needs no `resetAll` between them and can run
- * in parallel. An app with one deployment's worth of model servers does not need one: the top-level
- * functions are the default runtime's methods.
- *
- * The runtime is carried by async context rather than by argument, so `runAgentLoop` called as a
- * method uses this runtime all the way down, and so does a top-level function the app calls from
- * inside it — from `dispatch`, a hook, `onEvent`. Outside a method or `run`, a top-level function
- * is the default runtime's again; a request handler that emits to a run a runtime started calls
- * `runtime.emit`.
- *
- * Nothing needs closing. A runtime is garbage once nothing holds it; its one timer, the event
- * bus's sweep, is unreferenced and stops rescheduling when its last run has been swept.
+ * For an app that must not share them, such as one minting a key per tenant, and for tests, where a
+ * runtime per case needs no `resetAll` and can run in parallel. It is carried by async context, so
+ * `runAgentLoop` called as a method uses it all the way down, top-level functions called from
+ * `dispatch`, a hook or `onEvent` included; outside a method or `run` they are the default runtime's
+ * again. Nothing needs closing: its one timer, the event bus's sweep, is unreferenced and stops once
+ * its last run has been swept.
  */
 export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const runtime = bind(new Map());
