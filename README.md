@@ -914,7 +914,7 @@ An app that finds the waiting exchange by the id an answer comes back with, acro
 - **`dedupeToolCalls`.** Never asked of a handed-back call. Two identical ones are both pending,
   each under its own id: only the app knows whether asking twice means twice.
 - **A call that ends the exchange.** The end wins. The calls that would have been handed back are
-  answered `Not run: the run ended first.`, nothing is pending, and the result has `ended`.
+  answered `Not needed: the task finished first.`, nothing is pending, and the result has `ended`.
 - **Arguments that do not parse.** Answered by the loop with the parse error, as always, so the
   model fixes them: a call is handed back only where it would have been dispatched.
 
@@ -1296,7 +1296,7 @@ still recognised by the signal the app aborted.
 
 A failure while a turn's tools are running leaves a transcript that can be sent again. The results
 that came back are kept, a call the exchange was stopped during is answered `Stopped before this call
-finished.`, and one the loop never reached `Not run: the run stopped first.` — a call with no
+finished.`, and one the loop never reached `Not run: stopped before this call started.` — a call with no
 result is a transcript a model server refuses. Those are announced through `onMessage` like any other
 result. The reply of a request that was in flight when the exchange stopped or failed — a stop, the
 model server going silent, a stream that broke after its first token — is not in `messages`, because it
@@ -1509,7 +1509,7 @@ before it with only its tail added.
 const plan = planPrune(messages, config.contextLength ?? 0, { through: stored, used: lastPromptTokens });
 if (plan) {
   stored = plan.through;
-  notice(pruneNotice(plan)); // cleared 4 old tool results (~9,120 tokens) as the window filled
+  notice(pruneNotice(plan)); // cleared 4 old tool results (~9,120 tokens) as the context window filled
 }
 const sent = pruneThrough(messages, stored);
 ```

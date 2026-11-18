@@ -193,7 +193,7 @@ describe('artifacts', () => {
         dispatch: async () => 'contents',
       });
       expect(results(result.messages).slice(1)).toEqual([
-        'No tool call in this run touched answer.md, so it was not recorded. Record only what one of your tools stored, after the call that stored it.',
+        'No tool call so far touched answer.md, so it was not recorded. Record only what one of your tools stored, after the call that stored it.',
         'record_artifact needs a location.',
       ]);
       expect(result.toolCalls.map(({ ok }) => ok)).toEqual([true, false, false]);

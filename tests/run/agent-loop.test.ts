@@ -879,7 +879,7 @@ describe('runAgentLoop', () => {
       expect(answers).toEqual([
         ['c0', 'ok'],
         ['c1', 'Stopped before this call finished.'],
-        ['c2', 'Not run: the run stopped first.'],
+        ['c2', 'Not run: stopped before this call started.'],
       ]);
     });
   });

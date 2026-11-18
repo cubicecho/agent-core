@@ -73,10 +73,10 @@ export const preview = (text: string, limit = 2000) =>
 const STOPPED_CALL = 'Stopped before this call finished.';
 
 /** The same for a call of that turn the loop never got to. */
-const UNRUN_CALL = 'Not run: the run stopped first.';
+const UNRUN_CALL = 'Not run: stopped before this call started.';
 
 /** What a call that would have been handed back is answered with, where a call of its turn ended the exchange. */
-const ENDED_CALL = 'Not run: the run ended first.';
+const ENDED_CALL = 'Not needed: the task finished first.';
 
 /**
  * What a tool's answer reads as where it said nothing: the words agent-mcp-pool uses for an MCP
@@ -687,7 +687,7 @@ function answerRecord(run: Calling, args: Record<string, unknown>): string {
   const from = run.artifacts.seen(draft.location);
   if (from === undefined) {
     throw new Error(
-      `No tool call in this run touched ${draft.location}, so it was not recorded. ` +
+      `No tool call so far touched ${draft.location}, so it was not recorded. ` +
         'Record only what one of your tools stored, after the call that stored it.',
     );
   }

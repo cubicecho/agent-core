@@ -456,12 +456,12 @@ export function planPrune(
  * @param plan - The plan that was applied.
  * @param [compacted] - Whether it was made alongside a compaction rather than because the context
  * window filled.
- * @returns One line with the counts: `cleared 3 old tool results (~12,345 tokens) as the window
- * filled`.
+ * @returns One line with the counts: `cleared 3 old tool results (~12,345 tokens) as the context
+ * window filled`.
  */
 export function pruneNotice({ cleared, tokens }: PrunePlan, compacted = false): string {
   const results = cleared === 1 ? 'result' : 'results';
-  const why = compacted ? 'alongside a fold' : 'as the window filled';
+  const why = compacted ? 'alongside a compaction' : 'as the context window filled';
   return `cleared ${cleared} old tool ${results} (~${tokens.toLocaleString(COUNT_LOCALE)} tokens) ${why}`;
 }
 

@@ -311,7 +311,7 @@ export async function continueTurn(
         throw error;
       }
       if (error instanceof ContextOverflow) {
-        options.onNotice?.('no room left in the window to continue the cut-off reply');
+        options.onNotice?.('no room left in the context window to continue the cut-off reply');
       } else if (refused && refusesRequest(error) && refusePrefillFields(refused, errorMessage(error))) {
         // The fields were what it refused, not the trailing message: the attempt is not spent.
         options.onNotice?.(`${who} does not take ${PREFILL_KEYS.join(', ')}; continuing without them`);

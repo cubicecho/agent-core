@@ -251,7 +251,7 @@ describe('onMessage', () => {
       'user: hi',
       'assistant: null',
       'tool c0: ok',
-      'tool c1: Not run: the run stopped first.',
+      'tool c1: Not run: stopped before this call started.',
     ]);
   });
 });
@@ -566,7 +566,7 @@ describe('a stop while the tools run', () => {
       'assistant: null',
       'tool c0: a ran',
       'tool c1: Stopped before this call finished.',
-      'tool c2: Not run: the run stopped first.',
+      'tool c2: Not run: stopped before this call started.',
     ]);
     // Announced like any other, so a host that stores per message stores a transcript that can
     // be replayed.
@@ -653,7 +653,7 @@ describe('a stop while the tools run', () => {
       'user: hi',
       'assistant: null',
       'tool c0: ok',
-      'tool c1: Not run: the run stopped first.',
+      'tool c1: Not run: stopped before this call started.',
     ]);
     expect(failedRun(error)?.toolCalls).toEqual([{ id: 'c0', name: 'a', ok: true }]);
   });
@@ -815,8 +815,8 @@ describe('prune', () => {
     // Moves before the fifth and seventh requests, each clearing the two results behind the kept two.
     expect(extensions).toEqual([true, true, true, false, true, false, true]);
     expect(notices.filter((text) => text.startsWith('cleared'))).toEqual([
-      expect.stringMatching(/^cleared 2 old tool results \(~\d[\d,]* tokens\) as the window filled$/),
-      expect.stringMatching(/^cleared 2 old tool results \(~\d[\d,]* tokens\) as the window filled$/),
+      expect.stringMatching(/^cleared 2 old tool results \(~\d[\d,]* tokens\) as the context window filled$/),
+      expect.stringMatching(/^cleared 2 old tool results \(~\d[\d,]* tokens\) as the context window filled$/),
     ]);
     // The stubs are in what the run hands back, as a fold would be.
     const cleared = result.messages.filter((m) => m.role === Role.Tool && String(m.content).startsWith('[result'));

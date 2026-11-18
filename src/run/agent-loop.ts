@@ -1859,7 +1859,7 @@ async function runTurns(
     }
     const isWaiting = pending.length > 0;
     if (isWaiting) {
-      onEvent({ kind: RunEventKind.Wait, text: `waiting for the host to answer ${counted(pending.length, 'call')}` });
+      onEvent({ kind: RunEventKind.Wait, text: `waiting for the app to answer ${counted(pending.length, 'call')}` });
     }
     // Written while the model was answering, it is answered too, while a turn is left to do it in.
     const hasTurnLeft = turn + 1 < config.maxToolIterations;

@@ -225,10 +225,10 @@ describe('pruneThrough', () => {
 describe('pruneNotice', () => {
   it('says the counts, and why the boundary moved', () => {
     expect(pruneNotice({ through: 3, cleared: 2, tokens: 12_345 })).toBe(
-      'cleared 2 old tool results (~12,345 tokens) as the window filled',
+      'cleared 2 old tool results (~12,345 tokens) as the context window filled',
     );
     expect(pruneNotice({ through: 3, cleared: 1, tokens: 900 }, true)).toBe(
-      'cleared 1 old tool result (~900 tokens) alongside a fold',
+      'cleared 1 old tool result (~900 tokens) alongside a compaction',
     );
   });
 });

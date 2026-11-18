@@ -131,7 +131,7 @@ describe('handBack', () => {
       'tool-call c1',
       'tool-result c1',
       'tool-call c0',
-      'wait waiting for the host to answer 1 call',
+      'wait waiting for the app to answer 1 call',
     ]);
     expect(heard).toEqual(['call c1', 'result c1', 'call c0']);
     const notices = events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text);
@@ -314,7 +314,7 @@ describe('handBack', () => {
       expect(result).not.toHaveProperty('pending');
       expect(result.metrics.outcome).toBe(RunOutcome.Ended);
       expect(answered(result.messages)).toEqual(['c1', 'c0']);
-      expect(result.messages.at(-1)).toMatchObject({ content: 'Not run: the run ended first.' });
+      expect(result.messages.at(-1)).toMatchObject({ content: 'Not needed: the task finished first.' });
       expect(pairsByPosition(result.messages)).toBe(true);
       expect(events.some((event) => event.kind === RunEventKind.Wait)).toBe(false);
     });
@@ -341,7 +341,7 @@ describe('handBack', () => {
       }).catch((error: unknown) => error);
       const messages = failedRun(failure)?.messages ?? [];
       expect(answered(messages)).toEqual(['c0', 'c1']);
-      expect(messages.at(-1)).toMatchObject({ content: 'Not run: the run stopped first.' });
+      expect(messages.at(-1)).toMatchObject({ content: 'Not run: stopped before this call started.' });
     });
 
     it('writes the handed-back calls together after the pairs, for a model sent one call a message', async () => {
