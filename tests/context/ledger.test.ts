@@ -16,7 +16,7 @@ import { assistant, type Message, result, user } from '../helpers.ts';
 const estimate = () => 7;
 
 /**
- * A question, two steps of tools, the answer, and the next question. Requests ended at 0, 2 and 5,
+ * A question, two turns of tools, the answer, and the next question. Requests ended at 0, 2 and 5,
  * so the measured groups are [1, 2] and [3, 4, 5]; 6 and 7 have not been sent.
  */
 const transcript: Message[] = [
@@ -213,7 +213,7 @@ describe('rebaseLedger', () => {
       { through: 3, prompt: 150, epoch: 1 },
       { through: 5, prompt: 230, epoch: 1 },
     ]);
-    // What the two steps cost is still a subtraction, at their new indexes.
+    // What the two turns cost is still a subtraction, at their new indexes.
     expect(tokensBetween(moved, 2, 4, after, { estimate })).toBe(50);
     expect(tokensBetween(moved, 4, 6, after, { estimate })).toBe(80);
   });

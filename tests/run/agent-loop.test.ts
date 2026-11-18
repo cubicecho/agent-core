@@ -290,7 +290,7 @@ describe('runAgentLoop', () => {
   });
 
   it('names what broke the cache: a rewritten history, or nothing it knows of', async () => {
-    const reasons = async (beforeStep?: (m: readonly Message[], step: number) => Message[] | undefined) => {
+    const reasons = async (beforeTurn?: (m: readonly Message[], turn: number) => Message[] | undefined) => {
       create
         .mockReset()
         .mockReturnValueOnce(reportedCall(100, 0, 'a'))
@@ -301,7 +301,7 @@ describe('runAgentLoop', () => {
         messages: question,
         tools: [tool('a')],
         dispatch: async () => 'ok',
-        beforeStep,
+        beforeTurn,
         onEvent: (event) => event.kind === RunEventKind.Usage && turns.push(event.usage?.turn),
       });
       expect(result.metrics.cacheBreaks).toBe(1);
@@ -310,8 +310,8 @@ describe('runAgentLoop', () => {
     };
     expect(await reasons()).toBe('none-known');
     expect(
-      await reasons((messages, step) =>
-        step === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
+      await reasons((messages, turn) =>
+        turn === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
       ),
     ).toBe('history-rewritten');
   });
@@ -572,7 +572,7 @@ describe('runAgentLoop', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it("runs a step's calls together, and an identical call once", async () => {
+  it("runs a turn's calls together, and an identical call once", async () => {
     create.mockReturnValueOnce(calls(['a', '{}'], ['a', '{}'], ['a', '{"n":1}'])).mockReturnValueOnce(says('done'));
     let running = 0;
     let most = 0;
@@ -608,7 +608,7 @@ describe('runAgentLoop', () => {
       parallel: true,
     });
     expect(dispatch).toHaveBeenCalledTimes(2);
-    // The server reused `c0` on the second step, which is given an id of its own.
+    // The server reused `c0` on the second turn, which is given an id of its own.
     expect(result.toolCalls).toEqual([
       { id: 'c0', name: 'a', ok: false },
       { id: expect.stringMatching(MINTED_ID), name: 'a', ok: true },
@@ -646,7 +646,7 @@ describe('runAgentLoop', () => {
     expect(result.messages.filter((m) => m.role === Role.Tool)).toHaveLength(3);
   });
 
-  it('asks again in a later step, where the tools between may have moved the world', async () => {
+  it('asks again in a later turn, where the tools between may have moved the world', async () => {
     create
       .mockReturnValueOnce(calls(['a', '{}']))
       .mockReturnValueOnce(calls(['a', '{}']))
@@ -859,7 +859,7 @@ describe('runAgentLoop', () => {
       expect(log.slice(0, 4)).toEqual(['start read 1', 'start read 2', 'end read 1', 'end read 2']);
     });
 
-    it('answers every call of the step when a write is stopped part-way', async () => {
+    it('answers every call of the turn when a write is stopped part-way', async () => {
       create.mockReturnValueOnce(calls(['read', '{"n":1}'], ['write', '{"n":2}'], ['read', '{"n":3}']));
       const controller = new AbortController();
       const dispatch = vi.fn(async ({ name }: ToolCallRequest, signal?: AbortSignal) => {
@@ -963,8 +963,8 @@ describe('runAgentLoop', () => {
         onEvent: (event) => events.push(event),
       });
       expect(result.artifacts).toEqual([
-        { link: link('doc://a'), callId: 'c0', tool: 'write', step: 0, count: 3 },
-        { link: link('doc://b', 'Bee'), callId: 'c1', tool: 'write', step: 0, count: 1 },
+        { link: link('doc://a'), callId: 'c0', tool: 'write', turn: 0, count: 3 },
+        { link: link('doc://b', 'Bee'), callId: 'c1', tool: 'write', turn: 0, count: 1 },
       ]);
       expect(
         events
@@ -1024,7 +1024,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => ({ text: 'saved', links: [link('doc://a')] }),
       }).catch((caught: unknown) => caught);
       expect(failedRun(error)?.artifacts).toEqual([
-        { link: link('doc://a'), callId: 'c0', tool: 'write', step: 0, count: 1 },
+        { link: link('doc://a'), callId: 'c0', tool: 'write', turn: 0, count: 1 },
       ]);
     });
   });
@@ -1036,7 +1036,7 @@ describe('runAgentLoop', () => {
         name === 'done' ? { text: 'handed off', end: { reason: 'handed to review' } } : `${name} ran`,
       );
 
-    it('resolves with the call that ended it, sending nothing after its step', async () => {
+    it('resolves with the call that ended it, sending nothing after its turn', async () => {
       create.mockReturnValueOnce(reportedCall(100, 0, 'a')).mockReturnValueOnce(reportedCall(130, 0, 'done'));
       const events: RunEventInput[] = [];
       const result = await runAgentLoop({
@@ -1047,7 +1047,7 @@ describe('runAgentLoop', () => {
         onEvent: (event) => events.push(event),
       });
       expect(create).toHaveBeenCalledTimes(2);
-      // Both steps' calls came as `c0`, so the second is under an id of its own.
+      // Both turns' calls came as `c0`, so the second is under an id of its own.
       const callId = result.toolCalls[1]?.id;
       expect(callId).toMatch(MINTED_ID);
       expect(result.ended).toEqual({ callId, name: 'done', reason: 'handed to review' });
@@ -1164,7 +1164,7 @@ describe('runAgentLoop', () => {
       expect(result.metrics.outcome).toBe(RunOutcome.Answered);
     });
 
-    it('resolves rather than throwing when the end comes in the last step the budget allows', async () => {
+    it('resolves rather than throwing when the end comes in the last turn the budget allows', async () => {
       create.mockReturnValueOnce(calls(['done', '{}']));
       const result = await runAgentLoop({
         config: { ...config, maxToolIterations: 1 },
@@ -1177,17 +1177,17 @@ describe('runAgentLoop', () => {
 
     it('names the tool a call_tool reached, and folds nothing after the end', async () => {
       create.mockReturnValueOnce(calls([CALL_TOOL, '{"name":"done","arguments":{}}']));
-      const beforeStep = vi.fn(async () => undefined);
+      const beforeTurn = vi.fn(async () => undefined);
       const result = await runAgentLoop({
         config: { ...config, toolDiscovery: ToolDiscovery.Proxy },
         messages: question,
         tools: [tool('done')],
         catalog: [{ id: 's', label: 's', tools: [{ name: 'done', description: 'hands off' }] }],
         dispatch: endingAt(),
-        beforeStep,
+        beforeTurn,
       });
       expect(result.ended).toMatchObject({ callId: 'c0', name: 'done' });
-      expect(beforeStep).toHaveBeenCalledTimes(1);
+      expect(beforeTurn).toHaveBeenCalledTimes(1);
     });
 
     it('tells the hooks afterTurn with what the ending turn said', async () => {
@@ -1346,7 +1346,7 @@ describe('runAgentLoop', () => {
     const tools = [tool('s__read'), tool('s__write')];
     const onDemand = { ...config, toolDiscovery: ToolDiscovery.OnDemand };
 
-    it('loads what the model asks for and declares it on the next step', async () => {
+    it('loads what the model asks for and declares it on the next turn', async () => {
       create
         .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
         .mockReturnValueOnce(calls(['s__read', '{}']))
@@ -1547,7 +1547,7 @@ describe('runAgentLoop', () => {
       const all = [tool('s__list'), tool('s__read'), tool('s__write')];
       const bodies = () => create.mock.calls.map(([body]) => body);
 
-      it('sends the first step the head of every other step', async () => {
+      it('sends the first turn the head of every other turn', async () => {
         create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}'])).mockReturnValueOnce(says('done'));
         const result = await runAgentLoop({
           config: onDemand,
@@ -1564,7 +1564,7 @@ describe('runAgentLoop', () => {
         expect(first.messages[0].content).toContain('Tool catalogue');
         expect(first.messages[0]).toEqual(second.messages[0]);
         expect(declared()[0]).toEqual([LOAD_TOOLS, 's__list']);
-        // What step 0 declared is the start of what step 1 declares, definition for definition.
+        // What turn 0 declared is the start of what turn 1 declares, definition for definition.
         expect(second.tools?.slice(0, first.tools?.length)).toEqual(first.tools);
         expect(declared()[1]).toEqual([LOAD_TOOLS, 's__list', 's__write']);
         expect(result.loaded).toEqual(['s__list', 's__write']);
@@ -1612,7 +1612,7 @@ describe('runAgentLoop', () => {
         expect(first.tools).toEqual(second.tools);
       });
 
-      it("leaves the second step's head as the first's, where exclusive moves the tools", async () => {
+      it("leaves the second turn's head as the first's, where exclusive moves the tools", async () => {
         const run = async (preselectRouting?: 'exclusive' | 'append') => {
           create
             .mockReturnValueOnce(reportedCall(100, 0, 's__read'))
@@ -1632,7 +1632,7 @@ describe('runAgentLoop', () => {
         // The server reports the same miss both times; the loop's own comparison of the two
         // requests finds nothing that moved when appended, and the tool array when not.
         expect(await run(PRESELECT_APPEND)).toMatchObject({ cacheBreakReasons: { 'none-known': 1 } });
-        // Absent is exclusive: the first step's tools are not the second's.
+        // Absent is exclusive: the first turn's tools are not the second's.
         expect(await run()).toMatchObject({
           cacheBreaks: 1,
           cacheBreakReasons: { 'tools-changed': 1 },
@@ -1734,7 +1734,7 @@ describe('runAgentLoop', () => {
     const results = (messages: Message[]) =>
       messages.flatMap((message) => (message.role === Role.Tool ? [String(message.content)] : []));
 
-    it('declares `load_tools` and `call_tool` on every step, whatever is loaded', async () => {
+    it('declares `load_tools` and `call_tool` on every turn, whatever is loaded', async () => {
       create
         .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
         .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
@@ -1767,7 +1767,7 @@ describe('runAgentLoop', () => {
       expect(results(result.messages)).toEqual([definition, 'contents']);
       // The dispatcher is handed the tool the model meant, exactly as a native call would be.
       expect(dispatch).toHaveBeenCalledTimes(1);
-      // The server named this step's call `c0` again, so it is under an id of its own.
+      // The server named this turn's call `c0` again, so it is under an id of its own.
       const { id } = dispatch.mock.calls[0][0];
       expect(id).toMatch(MINTED_ID);
       expect(dispatch.mock.calls[0][0]).toEqual({
@@ -1907,7 +1907,7 @@ describe('runAgentLoop', () => {
         catalog,
         dispatch: async () => 'ok',
         // A fold that took the first load with it: only the question is left.
-        beforeStep: (messages, step) => (step === 1 ? messages.slice(0, 1) : undefined),
+        beforeTurn: (messages, turn) => (turn === 1 ? messages.slice(0, 1) : undefined),
       });
       expect(results(result.messages)).toEqual([definition]);
     });
@@ -1924,8 +1924,8 @@ describe('runAgentLoop', () => {
         catalog,
         dispatch: async () => 'ok',
         // A new array, and new message objects, with nothing taken out: a host rebuilding its
-        // transcript from a store each step.
-        beforeStep: (messages, step) => (step === 1 ? messages.map((message) => ({ ...message })) : undefined),
+        // transcript from a store each turn.
+        beforeTurn: (messages, turn) => (turn === 1 ? messages.map((message) => ({ ...message })) : undefined),
       });
       const [first, second] = results(result.messages);
       expect(first).toBe(definition);
@@ -1946,7 +1946,7 @@ describe('runAgentLoop', () => {
         catalog,
         dispatch: async () => 'ok',
         // Drops the first load's exchange and keeps the second's.
-        beforeStep: (messages, step) => (step === 2 ? [messages[0], ...messages.slice(3)] : undefined),
+        beforeTurn: (messages, turn) => (turn === 2 ? [messages[0], ...messages.slice(3)] : undefined),
       });
       const third = results(result.messages).at(-1) ?? '';
       expect(third).toContain('"name":"s__read"');
@@ -1999,7 +1999,7 @@ describe('runAgentLoop', () => {
       // The caller's array is not written to.
       expect(history).toHaveLength(3);
 
-      // The first request already carries it: same head as every later step, no step of its own.
+      // The first request already carries it: same head as every later turn, no turn of its own.
       const first = create.mock.calls[0][0];
       expect(first.messages).toEqual([
         { role: Role.System, content: expect.stringContaining('# Tool catalogue') },
@@ -2386,7 +2386,7 @@ describe('runAgentLoop', () => {
       expect(toldAfter(run)).toMatchObject({ prompt: 'as stored', turn: { messages: [{ text: 'as typed' }, {}] } });
     });
 
-    it('finds the question by role once beforeStep has handed over new objects', async () => {
+    it('finds the question by role once beforeTurn has handed over new objects', async () => {
       create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('the answer'));
       const run = remembering();
       const result = await runAgentLoop({
@@ -2400,7 +2400,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: { run, context: { session: { id: 's1' } } },
         // Rebuilt from a store: every message a copy.
-        beforeStep: (messages, step) => (step === 1 ? messages.map((message) => ({ ...message })) : undefined),
+        beforeTurn: (messages, turn) => (turn === 1 ? messages.map((message) => ({ ...message })) : undefined),
       });
       await result.afterTurn;
       // The recall is still on the question the second request sends.
@@ -2595,19 +2595,19 @@ describe('runAgentLoop', () => {
     });
   });
 
-  it('lets beforeStep replace the transcript', async () => {
+  it('lets beforeTurn replace the transcript', async () => {
     create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
-    const beforeStep = vi.fn((messages: readonly Message[], step: number) =>
-      step === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
+    const beforeTurn = vi.fn((messages: readonly Message[], turn: number) =>
+      turn === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
     );
     const result = await runAgentLoop({
       config,
       messages: question,
       tools: [tool('a')],
       dispatch: async () => 'ok',
-      beforeStep,
+      beforeTurn,
     });
-    expect(beforeStep).toHaveBeenCalledTimes(2);
+    expect(beforeTurn).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[1][0].messages[0]).toEqual({
       role: Role.User,
       content: 'shorter',
@@ -2615,7 +2615,20 @@ describe('runAgentLoop', () => {
     expect(result.messages[0]).toEqual({ role: Role.User, content: 'shorter' });
   });
 
-  it("keeps a ledger of each step's reported prompt, and tells beforeStep how full the window is", async () => {
+  it('calls the deprecated beforeStep only where beforeTurn is not given', async () => {
+    create.mockReturnValueOnce(says('done')).mockReturnValueOnce(says('done'));
+    const beforeStep = vi.fn(() => undefined);
+    await runAgentLoop({ config, messages: question, dispatch: async () => 'ok', beforeStep });
+    expect(beforeStep).toHaveBeenCalledExactlyOnceWith(expect.any(Array), 0, expect.objectContaining({ limit: 0 }));
+
+    const beforeTurn = vi.fn(() => undefined);
+    beforeStep.mockClear();
+    await runAgentLoop({ config, messages: question, dispatch: async () => 'ok', beforeTurn, beforeStep });
+    expect(beforeTurn).toHaveBeenCalledOnce();
+    expect(beforeStep).not.toHaveBeenCalled();
+  });
+
+  it("keeps a ledger of each turn's reported prompt, and tells beforeTurn how full the window is", async () => {
     create
       .mockReturnValueOnce(reportedCall(100, 0, 'a'))
       .mockReturnValueOnce(reportedCall(160, 100, 'a'))
@@ -2629,14 +2642,14 @@ describe('runAgentLoop', () => {
       tools: [tool('a')],
       dispatch: async () => 'ok',
       ledger: earlier,
-      beforeStep: (_messages, _step, window) => {
+      beforeTurn: (_messages, _turn, window) => {
         windows.push(window);
         return undefined;
       },
       onEvent: (event) => event.kind === RunEventKind.Usage && ledgers.push(event.usage?.ledger),
     });
     // The earlier run's entry stays, and this run's requests are an epoch of their own: one
-    // through the question, then one through each step's tool result.
+    // through the question, then one through each turn's tool result.
     expect(result.ledger).toEqual([
       { through: 0, prompt: 40, epoch: 3 },
       { through: 2, prompt: 100, epoch: 4 },
@@ -2645,12 +2658,12 @@ describe('runAgentLoop', () => {
     ]);
     expect(earlier).toHaveLength(1);
     expect(ledgers).toEqual([result.ledger.slice(0, 2), result.ledger.slice(0, 3), result.ledger]);
-    // Each step's call and result, read back as a subtraction — and nothing across the runs.
+    // Each turn's call and result, read back as a subtraction — and nothing across the runs.
     const estimate = () => 7;
     expect(tokensBetween(result.ledger, 3, 5, result.messages, { estimate })).toBe(60);
     expect(tokensBetween(result.ledger, 5, 7, result.messages, { estimate })).toBe(100);
     expect(tokensBetween(result.ledger, 1, 3, result.messages, { estimate })).toBe(14);
-    // No request of this run's has reported before its first step.
+    // No request of this run's has reported before its first turn.
     expect(windows).toEqual([
       { limit: 8000, ledger: earlier },
       { used: 100, limit: 8000, ledger: result.ledger.slice(0, 2) },
@@ -2679,7 +2692,7 @@ describe('runAgentLoop', () => {
     ]);
   });
 
-  it('hands a failure in the last step the same run fields the finished run returns', async () => {
+  it('hands a failure in the last turn the same run fields the finished run returns', async () => {
     const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__write', description: 'writes' }] }];
     const script = () =>
       create
@@ -2693,7 +2706,7 @@ describe('runAgentLoop', () => {
         tools: [tool('s__write')],
         catalog,
         dispatch: async () => ({ text: 'saved', links: [{ uri: 'doc://a', name: 'a' }] }),
-        // The second step's `c0` is taken, so it is minted: the same id in both runs.
+        // The second turn's `c0` is taken, so it is minted: the same id in both runs.
         mintCallId: callIdMinter(7),
         ...(onMessage ? { onMessage } : {}),
       });
@@ -2730,7 +2743,7 @@ describe('runAgentLoop', () => {
     expect(result.ledger).toHaveLength(3);
   });
 
-  it('hands a failure before any step the ledger it was given', async () => {
+  it('hands a failure before any turn the ledger it was given', async () => {
     const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
     // A failing hook is a note, and a host that throws on the note rejects the gather, which the
     // loop reads before its first request.
@@ -2754,7 +2767,7 @@ describe('runAgentLoop', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('starts a new epoch when beforeStep rewrites the history, and records nothing unreported', async () => {
+  it('starts a new epoch when beforeTurn rewrites the history, and records nothing unreported', async () => {
     create
       .mockReturnValueOnce(reportedCall(100, 0, 'a'))
       .mockReturnValueOnce(reportedCall(90, 0, 'a'))
@@ -2765,8 +2778,8 @@ describe('runAgentLoop', () => {
       messages: question,
       tools: [tool('a')],
       dispatch: async () => 'ok',
-      beforeStep: (messages, step) =>
-        step === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
+      beforeTurn: (messages, turn) =>
+        turn === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
     });
     // The rewrite moved the first boundary to a later epoch and put the next request in another,
     // so 90 is not read against 100. The third request reported nothing and has no entry; the
@@ -2790,7 +2803,7 @@ describe('runAgentLoop', () => {
     expect(result.ledger).toEqual([{ through: 0, prompt: 100, epoch: 0 }]);
   });
 
-  it("hands the host each step's request, as the client is about to be sent it", async () => {
+  it("hands the host each turn's request, as the client is about to be sent it", async () => {
     const order: string[] = [];
     const replies = [calls([LOAD_TOOLS, '{"names":["s__read"]}']), says('done')];
     create.mockImplementation(() => {
@@ -2811,7 +2824,7 @@ describe('runAgentLoop', () => {
       },
     });
     expect(order).toEqual(['told', 'sent', 'told', 'sent']);
-    expect(requests.map((request) => request.step)).toEqual([0, 1]);
+    expect(requests.map((request) => request.turn)).toEqual([0, 1]);
     for (const [at, [body]] of create.mock.calls.entries()) {
       // The array itself, catalogue and tool result and all, not a copy of it.
       expect(requests[at].messages).toBe(body.messages);
@@ -2826,7 +2839,7 @@ describe('runAgentLoop', () => {
     create.mockReturnValueOnce(says('done'));
     const onRequest = vi.fn();
     await runAgentLoop({ config, messages: question, dispatch: async () => '', onRequest });
-    expect(onRequest).toHaveBeenCalledExactlyOnceWith({ messages: question, tools: [], step: 0 });
+    expect(onRequest).toHaveBeenCalledExactlyOnceWith({ messages: question, tools: [], turn: 0 });
     expect(create.mock.calls[0][0]).not.toHaveProperty('tools');
   });
 
@@ -2851,7 +2864,7 @@ describe('runAgentLoop', () => {
       maxContinuations: 1,
       onRequest: (request) => requests.push(request),
     });
-    // Three requests went out for the one step: the refused one, the relaxed one, the continuation.
+    // Three requests went out for the one turn: the refused one, the relaxed one, the continuation.
     expect(create).toHaveBeenCalledTimes(3);
     expect(requests).toHaveLength(1);
     const [refused, relaxed, continued] = create.mock.calls.map(([body]) => body);
@@ -2901,7 +2914,7 @@ describe('runAgentLoop', () => {
     expect(first.system).toBeGreaterThan(0);
     expect(first.tools).toBeGreaterThan(0);
     expect(first.toolResults).toBe(0);
-    // The second step carries the result, which is most of it. Its total is the first request's
+    // The second turn carries the result, which is most of it. Its total is the first request's
     // ten, though the continuation's ten were added to the turn's prompt.
     expect(turns[1]?.prompt).toBe(20);
     expect(second.total).toBe(10);
@@ -2968,7 +2981,7 @@ describe('runAgentLoop', () => {
       expect(prompt).not.toContain('Tool catalogue');
     });
 
-    it('sit before the catalogue on demand, the same text on every step, a toolless server included', async () => {
+    it('sit before the catalogue on demand, the same text on every turn, a toolless server included', async () => {
       create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}'])).mockReturnValueOnce(says('done'));
       await run({ config: { ...config, toolDiscovery: ToolDiscovery.OnDemand } });
       const [first, second] = systems();
@@ -2986,7 +2999,7 @@ describe('runAgentLoop', () => {
       expect(prompt).toMatch(/^sys\n\n# MCP server instructions\n[\s\S]*\n\n# Tool catalogue\n/);
     });
 
-    it('stay on a preselected first step, leaving it the head of the next', async () => {
+    it('stay on a preselected first turn, leaving it the head of the next', async () => {
       create.mockReturnValueOnce(calls(['s__read', '{}'])).mockReturnValueOnce(says('done'));
       await run({ config: { ...config, toolDiscovery: ToolDiscovery.OnDemand }, preselected: ['s__read'] });
       const [first, second] = systems();

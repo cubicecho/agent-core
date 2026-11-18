@@ -189,19 +189,19 @@ describe('pruneThrough', () => {
     expect(pruneThrough(run(2), 99).map(chars)).toEqual([1, 29, 29]);
   });
 
-  it('the prefix is byte-identical across steps until the boundary moves', () => {
+  it('the prefix is byte-identical across turns until the boundary moves', () => {
     const gate = { estimate: chars, minShare: 0.19 };
     const window = 10_000;
     let messages = run(5);
     let through = 0;
     const sent: string[][] = [];
     const moves: number[] = [];
-    for (let step = 0; step < 8; step++) {
+    for (let turn = 0; turn < 8; turn++) {
       messages = [...messages, big()];
       const plan = planPrune(messages, window, { ...gate, through, at: 0 });
       if (plan) {
         through = plan.through;
-        moves.push(step);
+        moves.push(turn);
       }
       sent.push(pruneThrough(messages, through).map((message) => JSON.stringify(message)));
     }
@@ -212,7 +212,7 @@ describe('pruneThrough', () => {
       const extendsPrevious = request.slice(0, previous.length).every((message, at) => message === previous[at]);
       expect(extendsPrevious).toBe(moves.includes(index + 1) === false);
     });
-    // What the sliding window sends instead: every step rewrites a message in the middle.
+    // What the sliding window sends instead: every turn rewrites a message in the middle.
     const sliding = Array.from({ length: 4 }, (_, extra) =>
       pruneToolResults(run(6 + extra)).map((message) => JSON.stringify(message)),
     );
@@ -741,12 +741,12 @@ describe('a fold inside one question', () => {
    * @returns The message.
    */
   const answer = (id: string): Message => ({ role: Role.Tool, tool_call_id: id, content: `contents of ${id}` });
-  /** The steps of a tool loop, a call and its result each. */
-  const steps = (count: number, first = 0) =>
+  /** The turns of a tool loop, a call and its result each. */
+  const turns = (count: number, first = 0) =>
     Array.from({ length: count }, (_, at) => [call(`c${at + first}`), answer(`c${at + first}`)]).flat();
   const prompt: Message = { role: Role.System, content: 'prompt' };
-  /** System, one question, then four steps: ten messages of ten each on a window of 100. */
-  const loop: Message[] = [prompt, user('task'), ...steps(4)];
+  /** System, one question, then four turns: ten messages of ten each on a window of 100. */
+  const loop: Message[] = [prompt, user('task'), ...turns(4)];
 
   it('keeps the question and cuts at a call once there is no user message to cut at', () => {
     // The tail may fill 35: three messages, moved forward onto the call at eight.
@@ -756,7 +756,7 @@ describe('a fold inside one question', () => {
   });
 
   it('folds the least that reaches a target, the question not counted as folded', () => {
-    // At the call at eight: 100, less the six step messages before it (the question is kept, so
+    // At the call at eight: 100, less the six turn messages before it (the question is kept, so
     // not counted), plus 10 for the summary, is 50. The call at six leaves 70, over the 60.
     const plan = planCompaction(loop, { limit: 100, estimate, summaryTokens: 10, target: 0.6 });
     expect(plan).toMatchObject({ cut: 8, question: 1, after: 50 });
@@ -779,7 +779,7 @@ describe('a fold inside one question', () => {
   });
 
   it('plans as before wherever a user message can be cut at', () => {
-    const twoQuestions = [prompt, user('first'), ...steps(2), user('second'), ...steps(2, 2)];
+    const twoQuestions = [prompt, user('first'), ...turns(2), user('second'), ...turns(2, 2)];
     // A tail of 60 reaches back past the second question, so the cut moves onto it.
     const plan = planCompaction(twoQuestions, { limit: 100, estimate, keepRatio: 0.6 });
     expect(plan).toMatchObject({ from: 1, cut: 6 });
@@ -788,7 +788,7 @@ describe('a fold inside one question', () => {
 
   it('plans nothing for a loop too short to fold, or a transcript with no question', () => {
     expect(planCompaction([user('task'), call('c0'), answer('c0')], { limit: 10, estimate })).toBeUndefined();
-    expect(planCompaction(steps(5), { limit: 100, estimate })).toBeUndefined();
+    expect(planCompaction(turns(5), { limit: 100, estimate })).toBeUndefined();
   });
 
   it('sends the question after the summary, and the next fold continues the notes', async () => {
@@ -800,8 +800,8 @@ describe('a fold inside one question', () => {
     expect(folded).toEqual([prompt, ...summarised('read c0 to c2'), user('task'), ...loop.slice(8)]);
     expect(templateRefusal(folded)).toBeUndefined();
 
-    // Five more steps later the window is full again, and the only real question is the task.
-    const grown = [...folded, ...steps(5, 4)];
+    // Five more turns later the window is full again, and the only real question is the task.
+    const grown = [...folded, ...turns(5, 4)];
     const again = planCompaction(grown, { limit: 100, used: 100, estimate });
     expect(again).toMatchObject({ from: 3, question: 3, previous: 'read c0 to c2' });
     expect(again?.toSummarise).not.toContain(grown[3]);
@@ -824,8 +824,8 @@ describe('a fold inside one question', () => {
   });
 
   describe('stored rather than applied', () => {
-    /** A host with its system prompt kept apart: the question at zero, then five steps. */
-    const stored: Message[] = [user('task'), ...steps(5)];
+    /** A host with its system prompt kept apart: the question at zero, then five turns. */
+    const stored: Message[] = [user('task'), ...turns(5)];
     const window = { limit: 100, used: 100, estimate };
 
     it('records the question, and rebuilds the request with it after the summary', async () => {
@@ -840,7 +840,7 @@ describe('a fold inside one question', () => {
     });
 
     it('folds again from where the last fold ended, keeping the same question', () => {
-      const grown = [...stored, ...steps(4, 5)];
+      const grown = [...stored, ...turns(4, 5)];
       const plan = planCompaction(grown, { ...window, from: 9, previous: 'notes' });
       expect(plan).toMatchObject({ from: 9, question: 0, previous: 'notes' });
       expect(plan?.toSummarise).toEqual(grown.slice(9, plan?.cut));

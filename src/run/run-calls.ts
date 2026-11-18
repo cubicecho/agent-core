@@ -365,7 +365,7 @@ export function oneCallPerMessage(messages: OpenAI.ChatCompletionMessageParam[])
  * The handed-back calls share a message because no result can sit between them until the app
  * answers. `oneCallPerMessage` splits it when it is sent, once the answers follow it.
  */
-export function stepMessages(message: ReasonedMessage, handedBack: number, single: boolean): ReasonedMessage[] {
+export function replyMessages(message: ReasonedMessage, handedBack: number, single: boolean): ReasonedMessage[] {
   if (single === false) {
     return [message];
   }
@@ -544,7 +544,7 @@ export interface Calling {
   onToolCall: ((call: ToolCallRequest) => void) | undefined;
   onToolResult: ((result: ToolCallResult) => void) | undefined;
   /** Offers a message just written into the transcript to the app. */
-  announce: (message: OpenAI.ChatCompletionMessageParam, step: number) => Promise<void>;
+  announce: (message: OpenAI.ChatCompletionMessageParam, turn: number) => Promise<void>;
   /** Where the id of a call the loop writes itself comes from. */
   mintCallId: CallIdMinter;
 }
@@ -784,7 +784,7 @@ interface HandedBack {
 }
 
 /** A turn's calls by who answers them: the loop, through `dispatch`, or the app, after the exchange. */
-export interface StepCalls {
+export interface TurnCalls {
   /** The calls the loop runs, in the order asked. */
   run: ReadCall[];
   /** The calls handed back, in the order asked. */
@@ -799,7 +799,7 @@ export interface StepCalls {
  * @returns Every call under `run` where nothing is handed back. A call is handed back only where it
  * would reach `dispatch` and `handsBack` passes it.
  */
-export function splitHandedBack(run: Calling, parsed: ReadCall[]): StepCalls {
+export function splitHandedBack(run: Calling, parsed: ReadCall[]): TurnCalls {
   const { handsBack } = run;
   if (!handsBack) {
     return { run: parsed, back: [] };
@@ -927,7 +927,7 @@ interface Ran {
  * @param run - The exchange the call belongs to.
  * @param prepared - The call, with its request built.
  * @param answered - The turn's calls already made, by tool and arguments, for `dedupeToolCalls`.
- * @param step - Which turn this is, for the artifacts the call's links become.
+ * @param turn - Which turn this is, for the artifacts the call's links become.
  * @returns The result — the call's id, the name it was shown under, whether it worked, the whole
  * of what the model reads, and the links its answer carried, where it carried any — and whether
  * the answer ended the exchange. Rejects where the exchange was stopped or an app callback threw.
@@ -936,7 +936,7 @@ async function runCall(
   run: Calling,
   prepared: Prepared,
   answered: Map<string, Promise<string | ToolAnswer>>,
-  step: number,
+  turn: number,
 ): Promise<Ran> {
   const { signal } = run;
   const { entry, request, load, record, refused, dedupable, key } = prepared;
@@ -998,7 +998,7 @@ async function runCall(
   // Only what `dispatch` answered made anything, and a repeat made nothing the first did not.
   const isMade = ok && load === false && record === false && shared === false;
   if (isMade) {
-    collect(run, request, content, links, { callId: call.id, tool: name, step });
+    collect(run, request, content, links, { callId: call.id, tool: name, turn });
   }
   const result: ToolCallResult = { id: call.id, name, ok, content, ...(links.length ? { links } : {}) };
   run.onToolResult?.(result);
@@ -1006,7 +1006,7 @@ async function runCall(
 }
 
 /** How a turn's calls came out: the call that ended the exchange, or the calls left for the app. */
-export interface StepOutcome {
+export interface TurnOutcome {
   /** The first call, in the order asked, whose answer ended the exchange. */
   ended?: EndedBy;
   /** The calls handed back and still unanswered. Empty where none were, or where the exchange ended. */
@@ -1021,7 +1021,7 @@ export interface StepOutcome {
  * @param calls - The turn's calls, as `splitHandedBack` split them. The transcript holds them in
  * that order: the calls the loop runs, then the ones it hands back.
  * @param messages - The transcript the results are written into.
- * @param step - Which turn this is, for the app told of each result.
+ * @param turn - Which turn this is, for the app told of each result.
  * @param [opens] - Writes the single-call assistant message that call `at` is made under, for each
  * call after the first, whose message is written already; the handed-back calls share the last.
  * Given, the calls run one at a time, each after its message and before the next.
@@ -1038,11 +1038,11 @@ export interface StepOutcome {
  */
 export async function runCalls(
   run: Calling,
-  calls: StepCalls,
+  calls: TurnCalls,
   messages: OpenAI.ChatCompletionMessageParam[],
-  step: number,
+  turn: number,
   opens?: (at: number) => Promise<void>,
-): Promise<StepOutcome> {
+): Promise<TurnOutcome> {
   const { signal, toolCalls } = run;
   const { back } = calls;
   const ran = calls.run;
@@ -1068,7 +1068,7 @@ export async function runCalls(
     };
     messages.push(result);
     kept++;
-    await run.announce(result, step);
+    await run.announce(result, turn);
   };
   // Prepared when first asked for, so a predicate is put only calls the turn got to.
   const prepared: Prepared[] = [];
@@ -1092,7 +1092,7 @@ export async function runCalls(
       }
       begun = to;
       const runAt = async (at: number) => {
-        const { result, end } = await runCall(run, ready(at), answered, step);
+        const { result, end } = await runCall(run, ready(at), answered, turn);
         outcomes[at] = result;
         ends[at] = end;
       };

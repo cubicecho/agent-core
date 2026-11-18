@@ -130,7 +130,7 @@ describe('hostTools', () => {
     expect(result.metrics).toMatchObject({ toolsLoaded: 0, unknownToolNames: 1 });
   });
 
-  it('are declared after `PROXY_TOOLS` on every step proxied, the same array each time', async () => {
+  it('are declared after `PROXY_TOOLS` on every turn proxied, the same array each time', async () => {
     create
       .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
       .mockReturnValueOnce(calls(['ask_person', '{}'], [CALL_TOOL, '{"name":"s__read","arguments":{}}']))
@@ -159,7 +159,7 @@ describe('hostTools', () => {
     expect(String(first.messages[0].content)).not.toContain('ask_person');
   });
 
-  it('are sorted in with `PROXY_TOOLS` under toolOrder, and stay put from step to step', async () => {
+  it('are sorted in with `PROXY_TOOLS` under toolOrder, and stay put from turn to turn', async () => {
     create.mockReturnValueOnce(calls(['ask_person', '{}'])).mockReturnValueOnce(says('done'));
     await runAgentLoop({
       config: proxied,
@@ -212,7 +212,7 @@ describe('hostTools', () => {
     expect(result.metrics).toMatchObject({ toolsLoaded: 1 });
   });
 
-  it('go beside the shortlist on a preselected first step', async () => {
+  it('go beside the shortlist on a preselected first turn', async () => {
     create.mockReturnValueOnce(says('done'));
     await runAgentLoop({
       config: onDemand,

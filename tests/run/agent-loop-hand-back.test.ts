@@ -66,7 +66,7 @@ beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
 describe('handBack', () => {
-  it("runs the loop's own calls, then stops after the step with the host's calls pending", async () => {
+  it("runs the loop's own calls, then stops after the turn with the host's calls pending", async () => {
     create.mockReturnValueOnce(
       calls([
         ['s__read', '{"path":"a"}'],
@@ -195,7 +195,7 @@ describe('handBack', () => {
     expect(events.some((event) => event.kind === RunEventKind.Wait)).toBe(false);
   });
 
-  it('waits in the last step `maxToolIterations` allows, rather than throwing', async () => {
+  it('waits in the last turn `maxToolIterations` allows, rather than throwing', async () => {
     create.mockReturnValueOnce(calls([['ask_person', '{}']]));
     const result = await runAgentLoop({
       config: { ...config, maxToolIterations: 1 },
@@ -412,7 +412,7 @@ describe('handBack', () => {
         loaded: first.loaded,
         ledger: first.ledger,
         dispatch: named(),
-        beforeStep: (_messages, _step, window) => {
+        beforeTurn: (_messages, _turn, window) => {
           windows.push({ ...window, ledger: [...window.ledger] });
           return undefined;
         },
@@ -430,7 +430,7 @@ describe('handBack', () => {
       expect(second.ledger[1].through).toBe(3);
     });
 
-    it('carries what was loaded on demand, so the resumed step declares it', async () => {
+    it('carries what was loaded on demand, so the resumed turn declares it', async () => {
       const catalog = [
         {
           id: 's',

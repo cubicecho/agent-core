@@ -141,6 +141,7 @@ export {
   PRESELECT_EXCLUSIVE,
   runAgentLoop,
   type StepWindow,
+  type TurnWindow,
   type WrittenMessage,
 } from './run/agent-loop.ts';
 export {

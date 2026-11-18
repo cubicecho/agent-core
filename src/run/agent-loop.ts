@@ -107,11 +107,11 @@ import {
   loadShortlist,
   readCalls,
   replaysReasoning,
+  replyMessages,
   runCalls,
-  type StepOutcome,
   splitHandedBack,
-  stepMessages,
   type ToolDispatch,
+  type TurnOutcome,
   writtenMessage,
 } from './run-calls.ts';
 
@@ -157,8 +157,8 @@ export interface AgentLoopRequest {
    * The tools as sent: ordered, sanitised, relaxed where the model server needs it. Empty for none.
    */
   tools: readonly OpenAI.ChatCompletionTool[];
-  /** Which turn of the exchange this is, from zero, as `beforeStep` and `onTurn` count them. */
-  step: number;
+  /** Which turn of the exchange this is, from zero, as `beforeTurn` and `onTurn` count them. */
+  turn: number;
 }
 
 /**
@@ -252,8 +252,8 @@ export interface AgentLoopHooks {
   turnBase?: number;
 }
 
-/** How full the context window is as a turn is about to be sent, as `beforeStep` is told it. */
-export interface StepWindow {
+/** How full the context window is as a turn is about to be sent, as `beforeTurn` is told it. */
+export interface TurnWindow {
   /**
    * The prompt tokens this exchange's last request reported. Absent before the first turn — an
    * earlier exchange's figure is the app's to vouch for, since the transcript may have been
@@ -266,9 +266,16 @@ export interface StepWindow {
    * remote agent.
    */
   limit: number;
-  /** The exchange's ledger so far, indexed into the transcript `beforeStep` is handed beside it. */
+  /** The exchange's ledger so far, indexed into the transcript `beforeTurn` is handed beside it. */
   ledger: TokenLedger;
 }
+
+/**
+ * The old name of `TurnWindow`.
+ *
+ * @deprecated Use `TurnWindow`.
+ */
+export type StepWindow = TurnWindow;
 
 /** The `preselectRouting` that sends the first turn the shortlist alone. */
 export const PRESELECT_EXCLUSIVE = 'exclusive' as const;
@@ -440,9 +447,9 @@ export interface AgentLoopOptions {
    * to the main model — or without a `config.contextLength` to plan against.
    *
    * @remarks
-   * It runs after `beforeStep`, on what that returned, and is `compactTranscript` and nothing
+   * It runs after `beforeTurn`, on what that returned, and is `compactTranscript` and nothing
    * more: the plan is made from the last request's reported prompt, or an estimate before the
-   * first turn and after a `beforeStep` rewrite; `hooks`, when given, are told `beforeCompact`
+   * first turn and after a `beforeTurn` rewrite; `hooks`, when given, are told `beforeCompact`
    * beside the summary; and a compaction is said as a `notice` event. A summary that fails is a
    * notice too and compacts nothing. Tool results are not pruned by this — `prune` is.
    *
@@ -457,14 +464,14 @@ export interface AgentLoopOptions {
    * nothing moves without a `config.contextLength` — except alongside a compaction.
    *
    * @remarks
-   * It runs after `beforeStep`, on what that returned, and before `compact`, which then plans from
+   * It runs after `beforeTurn`, on what that returned, and before `compact`, which then plans from
    * what is left: a prune that brings the exchange back under the line spares it the summary's
    * round trip. Where it compacts anyway, the boundary is moved again after it with `compacted`,
    * since the cache is already lost. Each move is said as a `notice` event, with
    * `pruneNotice`'s counts.
    *
    * The stubs are in the result's `messages`, as a summary is, so an app that keeps its transcript
-   * whole calls `planPrune` and `pruneThrough` in its own `beforeStep` and stores the boundary
+   * whole calls `planPrune` and `pruneThrough` in its own `beforeTurn` and stores the boundary
    * instead. `true` plans by `planPrune`'s defaults — past `COMPACT_AT` of the context window, and
    * only for at least `PRUNE_SHARE` of it; an object moves the gate and what is kept.
    */
@@ -614,11 +621,17 @@ export interface AgentLoopOptions {
    * it. `window` is what `planCompaction` wants to know, so an app need not track usage itself to
    * compact mid-exchange.
    */
-  beforeStep?: (
+  beforeTurn?: (
     messages: readonly OpenAI.ChatCompletionMessageParam[],
-    step: number,
-    window: StepWindow,
+    turn: number,
+    window: TurnWindow,
   ) => OpenAI.ChatCompletionMessageParam[] | undefined | Promise<OpenAI.ChatCompletionMessageParam[] | undefined>;
+  /**
+   * The old name of `beforeTurn`, called only where `beforeTurn` is not given.
+   *
+   * @deprecated Use `beforeTurn`, which is handed the same arguments.
+   */
+  beforeStep?: AgentLoopOptions['beforeTurn'];
   /**
    * Asked for input that arrived while the exchange was going — a person steering it — which the
    * exchange then goes on with as a user message.
@@ -627,7 +640,7 @@ export interface AgentLoopOptions {
    * Asked at the top of every turn, once the last turn's calls have all answered, and once more
    * when the model answers without calls, where input keeps the exchange going for another turn if
    * one is left. What it returns is appended, told to `onMessage` and as an `input` event, before
-   * `beforeStep` is handed the transcript. Input it still holds when the exchange returns is
+   * `beforeTurn` is handed the transcript. Input it still holds when the exchange returns is
    * the app's.
    */
   takeInput?: () =>
@@ -710,7 +723,7 @@ export interface AgentLoopOptions {
   callIds?: CallIds;
   /**
    * Each turn's request as first built, before it goes out — for measuring what was sent, not for
-   * changing it, which is `beforeStep`'s.
+   * changing it, which is `beforeTurn`'s.
    *
    * @remarks
    * Called once a turn, synchronously, and what it throws ends the exchange. It is not called again
@@ -720,7 +733,7 @@ export interface AgentLoopOptions {
    */
   onRequest?: (request: AgentLoopRequest) => void;
   /** Each reply as it comes back, before its tools run. Recovered calls are in it as calls. */
-  onTurn?: (turn: Turn, step: number) => void;
+  onTurn?: (reply: Turn, turn: number) => void;
   /**
    * Each message as the loop appends it to the transcript, in transcript order, and awaited before
    * the loop goes on — so an app that stores its transcript has written the assistant message
@@ -729,11 +742,11 @@ export interface AgentLoopOptions {
    * @remarks
    * The assistant message is the one replayed on later requests — arguments repaired, recovered
    * calls folded in, the scratchpad on it where `reasoningReplay` says — and comes with its
-   * `turn`, as `onTurn` was handed it. Under `tool-loop` the result's `messages` drop that field
+   * `reply`, as `onTurn` was handed it. Under `tool-loop` the result's `messages` drop that field
    * once the answer is written, so an app storing these rows drops it too (`dropReasoning`).
    * A tool result comes without one, and so do the two messages
    * a proxied exchange writes for its `preselected` shortlist, told as turn zero's before any
-   * request. What it returns is ignored: `beforeStep` is the one way to rewrite the transcript.
+   * request. What it returns is ignored: `beforeTurn` is the one way to rewrite the transcript.
    * What it throws ends the exchange, and it is not called again for that exchange.
    *
    * Beside an assistant message the model wrote comes `written`, whose `raw` is the message as the
@@ -742,8 +755,8 @@ export interface AgentLoopOptions {
    */
   onMessage?: (
     message: OpenAI.ChatCompletionMessageParam,
-    step: number,
-    turn?: Turn,
+    turn: number,
+    reply?: Turn,
     written?: WrittenMessage,
   ) => void | Promise<void>;
   /**
@@ -776,7 +789,7 @@ export interface AgentLoopResult {
    * @remarks
    * Every other field is as a finished exchange has it: `messages` close on the turn's tool results
    * with no assistant message after them, the hooks are told `afterTurn` with `turn.content`, and
-   * `metrics.outcome` is `ended`. No `beforeStep` or `compact` runs after the end, since no request
+   * `metrics.outcome` is `ended`. No `beforeTurn` or `compact` runs after the end, since no request
    * follows it. An app saying `done` passes the call on it — `id` the call, `name` the tool, `text`
    * the reason — which is how `runMetrics` reads the same outcome off the events.
    */
@@ -929,7 +942,7 @@ interface Standing {
  * `runMetrics`.
  *
  * Each turn's reported prompt goes on a token ledger, in the same epoch as the turn before where
- * the request only appended to it and in a new one where it did not — a `beforeStep` that rewrote
+ * the request only appended to it and in a new one where it did not — a `beforeTurn` that rewrote
  * the transcript, a tool array a load grew — so that what the messages between two turns cost can
  * be read back as a subtraction. The prompt recorded is the first request's, before any
  * continuation, and a turn that reported none, or reported a cache count above its prompt, is not
@@ -982,7 +995,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       serverPins: apart.config.remoteAgent === true,
       onNotice: (text) => apart.onEvent?.({ kind: RunEventKind.Notice, text }),
     });
-    result = await runSteps(apart, standing, pin);
+    result = await runTurns(apart, standing, pin);
   } catch (error) {
     // Wrapped rather than annotated: an abort's reason is one object shared by every exchange under
     // the signal, so the exchange cannot be hung on the error itself. An overflow keeps its class,
@@ -1032,7 +1045,7 @@ function ownSummariser(options: AgentLoopOptions, notice: OnNotice) {
  * @returns `transcript` itself and the boundary unmoved where nothing was due, otherwise the
  * stubbed array, the new boundary and what it won back.
  */
-function pruneBeforeStep(
+function pruneBeforeTurn(
   transcript: OpenAI.ChatCompletionMessageParam[],
   through: number,
   {
@@ -1066,7 +1079,7 @@ function pruneBeforeStep(
  * A turn's transcript after the loop's own compaction: compacted where compaction was due and its
  * summary came back, and otherwise the array it was given.
  *
- * @param transcript - The turn's messages, after `beforeStep`. Not written to.
+ * @param transcript - The turn's messages, after `beforeTurn`. Not written to.
  * @param reported - The last request's prompt tokens as `used`, where they still describe this
  * transcript. Empty plans from an estimate instead.
  * @param summarise - Writes the summary. Not called where no compaction is due.
@@ -1076,7 +1089,7 @@ function pruneBeforeStep(
  * @returns `transcript` itself where nothing was compacted, otherwise a new array with the
  * compacted stretch replaced by its summary.
  */
-async function foldBeforeStep(
+async function foldBeforeTurn(
   transcript: OpenAI.ChatCompletionMessageParam[],
   reported: { used?: number },
   summarise: (text: string) => Promise<string>,
@@ -1267,7 +1280,7 @@ function withRecordTool(options: AgentLoopOptions): AgentLoopOptions {
  *
  * @param loaded - What the exchange has put a definition in the history for. Written to: a name
  * with no definition left in `messages` is taken out.
- * @param messages - The transcript a `beforeStep`, a prune or compaction has just handed the turn.
+ * @param messages - The transcript a `beforeTurn`, a prune or compaction has just handed the turn.
  *
  * @remarks
  * Read from the tool results' text rather than from which array or message objects survived, so an
@@ -1315,12 +1328,12 @@ function definitionsByName(tools: OpenAI.ChatCompletionTool[]) {
  */
 function announcer(onMessage: AgentLoopOptions['onMessage']) {
   let heard = true;
-  return async (message: OpenAI.ChatCompletionMessageParam, step: number, turn?: Turn, written?: WrittenMessage) => {
+  return async (message: OpenAI.ChatCompletionMessageParam, turn: number, reply?: Turn, written?: WrittenMessage) => {
     if (!onMessage || !heard) {
       return;
     }
     try {
-      await onMessage(message, step, turn, written);
+      await onMessage(message, turn, reply, written);
     } catch (error) {
       heard = false;
       throw error;
@@ -1403,19 +1416,19 @@ function handsBackFor(
 /**
  * How an exchange that stops after this turn ended.
  *
- * @param turn - The turn's reply, read for its finish reason.
+ * @param reply - The turn's reply, read for its finish reason.
  * @param settled - What its calls came to.
  * @returns `ended` where a call ended it, `waiting` where calls were handed back, and otherwise
  * what the finish reason says.
  */
-function exchangeOutcome(turn: Turn, { ended, pending }: StepOutcome): RunOutcome {
+function exchangeOutcome(reply: Turn, { ended, pending }: TurnOutcome): RunOutcome {
   if (ended) {
     return RunOutcome.Ended;
   }
   if (pending.length > 0) {
     return RunOutcome.Waiting;
   }
-  return endingOf(turn.finishReason);
+  return endingOf(reply.finishReason);
 }
 
 /**
@@ -1428,7 +1441,7 @@ function exchangeOutcome(turn: Turn, { ended, pending }: StepOutcome): RunOutcom
  * @returns The result of the turn that asked for no tools, whose calls ended the exchange, or whose
  * calls were handed back, or `undefined` when `maxToolIterations` is spent.
  */
-async function runSteps(
+async function runTurns(
   options: AgentLoopOptions,
   standing: Standing,
   pin?: SessionPin,
@@ -1440,7 +1453,8 @@ async function runSteps(
     onMessage,
     onToolCall,
     onToolResult,
-    beforeStep,
+    // The deprecated name is read only where the new one is not given.
+    beforeTurn = options.beforeStep,
     takeInput,
     parallel = false,
     formatToolError = defaultToolError,
@@ -1544,13 +1558,13 @@ async function runSteps(
   const admitted: OpenAI.ChatCompletionMessageParam[] = [];
   const isAdmitted = (message: OpenAI.ChatCompletionMessageParam) =>
     admitted.some((input) => sameMessage(input, message));
-  const admit = async (input: OpenAI.ChatCompletionUserMessageParam, step: number) => {
+  const admit = async (input: OpenAI.ChatCompletionUserMessageParam, turn: number) => {
     messages.push(input);
     admitted.push(input);
     onEvent({ kind: RunEventKind.Input, text: textOf(input.content) });
-    await announce(input, step);
+    await announce(input, turn);
   };
-  // Held by reference, so a `beforeStep` that compacts the head into a summary moves the question
+  // Held by reference, so a `beforeTurn` that compacts the head into a summary moves the question
   // without losing it, and found again by role where an app rebuilt the transcript and the object
   // went with it: the only user messages the loop writes are its input, so the question is the
   // last other one that is not a summary. One that summarises the question away took every user
@@ -1618,17 +1632,17 @@ async function runSteps(
   // Whether the turn before this one said it was calling tools and sent none, and was asked again.
   let askedAgain = false;
 
-  for (let step = 0; step < config.maxToolIterations; step++) {
+  for (let turn = 0; turn < config.maxToolIterations; turn++) {
     // A stop aborts the request in flight, but a tool call already handed off runs to its own
     // end — so the signal is read between turns as well.
     signal?.throwIfAborted();
     const input = await takeInput?.();
     if (input) {
-      await admit(input, step);
+      await admit(input, turn);
     }
     const before = messages;
     const reported = previous && previous.prompt > 0 ? { used: previous.prompt } : {};
-    const rewritten = await beforeStep?.(messages, step, {
+    const rewritten = await beforeTurn?.(messages, turn, {
       ...reported,
       limit: config.contextLength ?? 0,
       ledger,
@@ -1644,15 +1658,15 @@ async function runSteps(
     // and less what a prune has just won back of it.
     const ownUsed = isOwn ? reported.used : undefined;
     const trimmed = options.prune
-      ? pruneBeforeStep(given, pruneBoundary, { options, used: ownUsed, charsPerToken: planRatio, notice })
+      ? pruneBeforeTurn(given, pruneBoundary, { options, used: ownUsed, charsPerToken: planRatio, notice })
       : { messages: given, through: pruneBoundary, tokens: 0 };
     pruneBoundary = trimmed.through;
     const foldUsed = ownUsed === undefined ? {} : { used: Math.max(0, ownUsed - trimmed.tokens) };
     let next = summarise
-      ? await foldBeforeStep(trimmed.messages, foldUsed, summarise, { options, charsPerToken: planRatio, notice })
+      ? await foldBeforeTurn(trimmed.messages, foldUsed, summarise, { options, charsPerToken: planRatio, notice })
       : trimmed.messages;
     if (options.prune && next !== trimmed.messages) {
-      const after = pruneBeforeStep(next, 0, { options, charsPerToken: planRatio, compacted: true, notice });
+      const after = pruneBeforeTurn(next, 0, { options, charsPerToken: planRatio, compacted: true, notice });
       next = after.messages;
       pruneBoundary = after.through;
     }
@@ -1664,11 +1678,11 @@ async function runSteps(
     }
     messages = next;
     ledger = rebaseLedger(ledger, before, messages);
-    onEvent({ kind: RunEventKind.Turn, text: `turn ${step + 1}` });
+    onEvent({ kind: RunEventKind.Turn, text: `turn ${turn + 1}` });
 
     // Appended, the shortlist is already in `loaded` — after what was carried, and once — so the
     // first turn needs nothing of its own. Proxied, it is in the history.
-    const routed = !proxied && preselectRouting !== PRESELECT_APPEND && preselected.length > 0 && step === 0;
+    const routed = !proxied && preselectRouting !== PRESELECT_APPEND && preselected.length > 0 && turn === 0;
     // Ordered here rather than left to `buildBody`, so `names` below is what the request actually
     // declared — a diagnosis reading an order the server never saw calls an untouched tool array
     // `tools-changed`.
@@ -1721,7 +1735,7 @@ async function runSteps(
     // model's refusals — so what the app is told is what is sent unless something is refused.
     if (onRequest) {
       const opening = build(supports, modelCapabilitiesFor(supports, config.model));
-      onRequest({ messages: opening.messages, tools: opening.tools ?? [], step });
+      onRequest({ messages: opening.messages, tools: opening.tools ?? [], turn });
     }
     const first = await runTurn(client, supports, build, turnOptions);
     const names = declared.map((tool) => toolName(tool) ?? '');
@@ -1759,7 +1773,7 @@ async function runSteps(
       measured = sent;
     }
     ledger = entered;
-    const turn =
+    const reply =
       maxContinuations > 0
         ? await continueTurn(client, supports, build, first, {
             ...turnOptions,
@@ -1772,42 +1786,42 @@ async function runSteps(
       messages: request,
       tools: names,
       prompt: firstPrompt,
-      completion: turn.usage.completion,
+      completion: reply.usage.completion,
     };
-    usage = addCounts(usage, turn.usage);
-    cacheReported ||= reportsCache(turn.usage);
-    onEvent(usageEvent(loopUsage(usage, cacheReported), turn, ledger, config.contextLength));
-    if (turn.finishReason === FinishReason.Length) {
+    usage = addCounts(usage, reply.usage);
+    cacheReported ||= reportsCache(reply.usage);
+    onEvent(usageEvent(loopUsage(usage, cacheReported), reply, ledger, config.contextLength));
+    if (reply.finishReason === FinishReason.Length) {
       const ceiling = config.maxTokens === undefined ? '' : ` (${config.maxTokens})`;
       notice(`the model stopped at maxTokens${ceiling}; this turn is cut short`);
-    } else if (turn.finishReason === FinishReason.ContentFilter) {
+    } else if (reply.finishReason === FinishReason.ContentFilter) {
       notice("the provider's content filter withheld the reply");
     }
     const canRecover = recover && (tools.length > 0 || hostTools.length > 0 || onDemand);
-    const read = turnCalls(turn, canRecover ? recoverable : undefined, notice, mintCallId);
+    const read = turnCalls(reply, canRecover ? recoverable : undefined, notice, mintCallId);
     const { content, recovered } = read;
     // Once, before the message is stored: every later request replays these ids, and each tool
     // result answers one of them. A remote agent's are kept as sent, since it resumes by them,
     // whatever `callIds` says.
     const calls = remote ? read.calls : distinctCallIds(read.calls, messages, mintCallId, callIds);
-    const shown: Turn = { ...turn, content, toolCalls: calls };
-    onTurn?.(shown, step);
+    const shown: Turn = { ...reply, content, toolCalls: calls };
+    onTurn?.(shown, turn);
 
     // Calls are run from their presence, never from the finish reason. A `tool_calls` finish with
     // none assembled is a reply that went wrong on the way — a parser that missed the model's
     // template, a stream cut between the reason and the calls — and not an answer, so with nothing
     // said either the same request is sent once more, unwritten, while a turn is left to send it.
-    const isCallless = turn.finishReason === FinishReason.ToolCalls && calls.length === 0;
+    const isCallless = reply.finishReason === FinishReason.ToolCalls && calls.length === 0;
     const isSilent = content.trim() === '';
     if (isCallless) {
-      const canAskAgain = isSilent && askedAgain === false && step + 1 < config.maxToolIterations;
+      const canAskAgain = isSilent && askedAgain === false && turn + 1 < config.maxToolIterations;
       if (canAskAgain) {
         notice('the model said it was calling tools but sent none; asking again');
         askedAgain = true;
         continue;
       }
       notice('the model said it was calling tools but sent none; taking its reply as the answer');
-    } else if (isSilent && calls.length === 0 && turn.finishReason !== FinishReason.ContentFilter) {
+    } else if (isSilent && calls.length === 0 && reply.finishReason !== FinishReason.ContentFilter) {
       // Kept as the answer, written as `""`, so a stored transcript stays sendable: the app
       // is told.
       notice('the model ended its turn with no answer');
@@ -1816,10 +1830,10 @@ async function runSteps(
 
     // Read before the assistant message is written, so what is replayed on every later request
     // is the repaired JSON.
-    const parsed = readCalls(calls, turn.finishReason, recovered);
+    const parsed = readCalls(calls, reply.finishReason, recovered);
     const isAnswer = calls.length === 0;
     const replayed = replaysReasoning(reasoningReplay, !isAnswer)
-      ? { reasoning: turn.reasoning, field: turn.reasoningField, details: turn.reasoningDetails }
+      ? { reasoning: reply.reasoning, field: reply.reasoningField, details: reply.reasoningDetails }
       : undefined;
     // The handed-back calls go last, so the answers an app appends follow the results in
     // call order.
@@ -1829,21 +1843,21 @@ async function runSteps(
     // app's stored rows are a transcript the model can be sent, and every later request replays
     // the same messages byte for byte. Read per turn: the latch may have flipped on this request.
     const isSingle = singleCalls(config, modelCapabilitiesFor(supports, config.model));
-    const pieces = stepMessages(assistant, split.back.length, isSingle);
+    const pieces = replyMessages(assistant, split.back.length, isSingle);
     messages.push(pieces[0]);
     // Recovered calls were never calls on the wire: what the model said is the text they came from.
-    await announce(pieces[0], step, shown, { raw: writtenMessage(turn.content, recovered ? [] : calls, replayed) });
+    await announce(pieces[0], turn, shown, { raw: writtenMessage(reply.content, recovered ? [] : calls, replayed) });
     // The rest are the loop's rewriting of that one reply, so they come without the reply, whose
     // whole message the first piece's `raw` already is.
     const opens =
       pieces.length > 1
         ? async (at: number) => {
             messages.push(pieces[at]);
-            await announce(pieces[at], step);
+            await announce(pieces[at], turn);
           }
         : undefined;
 
-    const settled: StepOutcome = isAnswer ? { pending: [] } : await runCalls(calling, split, messages, step, opens);
+    const settled: TurnOutcome = isAnswer ? { pending: [] } : await runCalls(calling, split, messages, turn, opens);
     const { ended, pending } = settled;
     if (ended) {
       const by = ended.reason ? `: ${ended.reason}` : '';
@@ -1854,10 +1868,10 @@ async function runSteps(
       onEvent({ kind: RunEventKind.Wait, text: `waiting for the host to answer ${counted(pending.length, 'call')}` });
     }
     // Written while the model was answering, it is answered too, while a turn is left to do it in.
-    const hasStepLeft = step + 1 < config.maxToolIterations;
-    const late = isAnswer && hasStepLeft ? await takeInput?.() : undefined;
+    const hasTurnLeft = turn + 1 < config.maxToolIterations;
+    const late = isAnswer && hasTurnLeft ? await takeInput?.() : undefined;
     if (late) {
-      await admit(late, step + 1);
+      await admit(late, turn + 1);
       continue;
     }
     if (isAnswer || ended || isWaiting) {
@@ -1872,7 +1886,7 @@ async function runSteps(
       // Handed back instead, for an app that wants its notes.
       const afterTurn =
         hooks && fired?.afterTurn && isOver
-          ? tellAfterTurn(hooks, messages, questionAt(), turn.content)
+          ? tellAfterTurn(hooks, messages, questionAt(), reply.content)
           : Promise.resolve([]);
       const metrics = runMetrics(recorded, { contextLength: config.contextLength });
       return {
@@ -1888,7 +1902,7 @@ async function runSteps(
           ...metrics,
           ...(onDemand ? loads : {}),
           wallMs: Date.now() - started,
-          outcome: exchangeOutcome(turn, settled),
+          outcome: exchangeOutcome(reply, settled),
         },
       };
     }

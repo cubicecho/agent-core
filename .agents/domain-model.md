@@ -208,13 +208,13 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | App tools are never catalogued, loaded or reached through `call_tool` | `hostToolsApart`, `lookThrough` |
 | `call_tool` reaches only catalogued tools | `proxiedCall` |
 | One `load_tools` call or preselection brings in at most `maxPerLoad` definitions | `expandNames`, `preselection` |
-| Hook context goes on the request, never into the transcript or the system prompt | `withContext` on the request in `runSteps` |
+| Hook context goes on the request, never into the transcript or the system prompt | `withContext` on the request in `runTurns` |
 | Only `sessionStart` and `beforeTurn` hook output can reach the model | `assembleContext` (`INJECT_EVENTS`) |
 | A declaration is believed only where a call in the exchange touched the location; one artifact per location | `answerRecord`, `RunArtifacts` |
 | The ledger indexes into the current transcript | `rebaseLedger`, each turn |
 | A prune boundary only moves forward | `planPrune` |
 | A failure carries the exchange as it stood | `standing.read`, `runAgentLoop` |
-| At most `maxToolIterations` turns | `runSteps`, `ToolIterationLimit` |
+| At most `maxToolIterations` turns | `runTurns`, `ToolIterationLimit` |
 | Event `seq` and `runId` are the bus's to give | `stamp` |
 | A bus listener that throws never reaches the emitter | `emit` |
 | A remote agent's turn events are not said twice, and its `done` is not forwarded | `remoteRun` |
@@ -239,10 +239,11 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `runAgentLoop` (`src/run/agent-loop.ts`); the code still calls it a run (`RunOutcome`,
   `AgentLoopResult`, "the run ended", "the run waits"), and the renames are pending `A` items.
 - **Turn:** one model reply, plus running any tools it asked for; usually one request, more when a
-  reply cut off at the length limit is continued. Owner: the loop in `runSteps`; the `Turn` type
+  reply cut off at the length limit is continued. Owner: the loop in `runTurns`; the `Turn` type
   (`src/wire/stream.ts`) is the reply part, run by `runTurn`, and the `turn` event and
-  `RunMetrics.turns` count them. The code calls a turn's number and the moment before it a step
-  (`beforeStep`, `StepWindow`, the `step` parameters, `runSteps`), with renames pending `A` items.
+  `RunMetrics.turns` count them. A turn's number, from zero, is `turn`: on `AgentLoopRequest` and
+  `RunArtifact`, and the number `beforeTurn`, `onTurn` and `onMessage` are handed. `beforeStep`
+  and `StepWindow` are deprecated aliases of `beforeTurn` and `TurnWindow`.
 - **Exchange events:** what an app emits when one run holds several exchanges, such as a task's
   stages: an exchange began, which exchange each event belongs to, and which arm a deciding
   exchange chose. Owner: `RunEventKind.Step`, `RunEvent.step`, `RunMetrics.steps` and
@@ -369,7 +370,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Input (mid-exchange input):** a message a person sent while the exchange was going, which it
   takes between turns. Owner: `AgentLoopOptions.takeInput`, `RunEventKind.Input`.
 - **Before-turn rewrite:** the app's chance to replace the transcript before a turn. Owner:
-  `AgentLoopOptions.beforeStep`, `StepWindow`.
+  `AgentLoopOptions.beforeTurn`, `TurnWindow`.
 - **Result:** what an exchange that did not throw hands back. Owner: `AgentLoopResult`.
 - **Outcome:** how an exchange ended: answered, cut short, filtered, ended, waiting, or (as events
   tell it) failed. Owner: `RunOutcome` (`src/run/events.ts`), decided by `exchangeOutcome`.
@@ -555,7 +556,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Read and prepared call:** a call with its arguments parsed, then resolved to who answers it
   and its dedupe key. Owner: `ReadCall`, `Prepared`, `prepare`, `lookThrough`.
 - **Turn outcome:** what a turn's calls came to: the call that ended the exchange, or the pending
-  calls. Owner: `StepOutcome`.
+  calls. Owner: `TurnOutcome`.
 - **Standing:** a live view of the exchange, read when a failure is built. Owner: `Standing`.
 - **Recorder:** the loop's own copy of the events it emitted, for its metrics. Owner: `recorder`.
 - **Placeholder results:** what a call gets when the exchange stops during it, before it, or ends

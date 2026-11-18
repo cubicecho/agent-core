@@ -80,7 +80,7 @@ beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
 describe('onMessage', () => {
-  it("hears each message in transcript order, the assistant's with its turn", async () => {
+  it("hears each message in transcript order, the assistant's with its reply", async () => {
     create
       .mockReturnValueOnce(
         calls(
@@ -92,20 +92,20 @@ describe('onMessage', () => {
         ),
       )
       .mockReturnValueOnce(says('done'));
-    const heard: { message: Message; step: number; turn?: Turn }[] = [];
+    const heard: { message: Message; turn: number; reply?: Turn }[] = [];
     const result = await runAgentLoop({
       config,
       messages: question,
       tools: [tool('a'), tool('b')],
       dispatch: async ({ name }) => `${name} ran`,
-      onMessage: (message, step, turn) => {
-        heard.push({ message, step, turn });
+      onMessage: (message, turn, reply) => {
+        heard.push({ message, turn, reply });
       },
     });
     // Everything the run added, and nothing it was handed.
     expect(heard[0].message).toHaveProperty('reasoning_content', 'hmm');
     expect(heard.map((entry) => entry.message)).toEqual(result.messages.slice(1));
-    expect(heard.map((entry) => entry.step)).toEqual([0, 0, 0, 1]);
+    expect(heard.map((entry) => entry.turn)).toEqual([0, 0, 0, 1]);
     expect(outline(heard.map((entry) => entry.message))).toEqual([
       'assistant: null',
       'tool c0: a ran',
@@ -114,11 +114,11 @@ describe('onMessage', () => {
     ]);
     // The message as it is replayed, not as the model wrote it.
     expect(JSON.stringify(heard[0].message)).toContain('"arguments":"{\\"x\\":1}"');
-    expect(heard[0].turn?.reasoning).toBe('hmm');
-    expect(heard[0].turn?.toolCalls).toHaveLength(2);
-    expect(heard[1].turn).toBeUndefined();
-    expect(heard[2].turn).toBeUndefined();
-    expect(heard[3].turn).toBe(result.turn);
+    expect(heard[0].reply?.reasoning).toBe('hmm');
+    expect(heard[0].reply?.toolCalls).toHaveLength(2);
+    expect(heard[1].reply).toBeUndefined();
+    expect(heard[2].reply).toBeUndefined();
+    expect(heard[3].reply).toBe(result.turn);
   });
 
   it('hands the message as the model wrote it beside the one replayed, and each call says if it was repaired', async () => {
@@ -141,7 +141,7 @@ describe('onMessage', () => {
       tools: [tool('a')],
       dispatch: async () => 'ok',
       onToolCall: (call) => asked.push(call),
-      onMessage: (message, _step, _turn, written) => {
+      onMessage: (message, _turn, _reply, written) => {
         heard.push({ message, written });
       },
     });
@@ -178,7 +178,7 @@ describe('onMessage', () => {
       tools: [tool('a')],
       dispatch: async () => 'ok',
       onToolCall: (call) => asked.push(call),
-      onMessage: (message, _step, _turn, written) => {
+      onMessage: (message, _turn, _reply, written) => {
         heard.push({ message, written });
       },
     });
@@ -273,7 +273,7 @@ describe('a run that throws', () => {
     expect(limit.name).toBe('ToolIterationLimit');
     expect(limit.message).toBe('Stopped after 2 tool iterations.');
     expect(limit.cause).toBeUndefined();
-    // The server named both steps' calls `c0`; the second is given an id of its own.
+    // The server named both turns' calls `c0`; the second is given an id of its own.
     expect(outline(limit.messages)).toEqual([
       'user: hi',
       'assistant: null',
@@ -297,7 +297,7 @@ describe('a run that throws', () => {
     expect(question).toHaveLength(1);
   });
 
-  it('wraps what a request threw, keeping its message and the steps before it', async () => {
+  it('wraps what a request threw, keeping its message and the turns before it', async () => {
     const refused = apiError(401, 'no such key');
     create.mockReturnValueOnce(calls([['a', '{}']])).mockRejectedValueOnce(refused);
     const error = await thrown(
@@ -702,7 +702,7 @@ describe('a proxied run', () => {
 
   it('tells onMessage of the load it writes for a preselection, before any request', async () => {
     create.mockReturnValueOnce(says('done'));
-    const heard: { message: Message; step: number; turn?: Turn; written?: WrittenMessage; sent: number }[] = [];
+    const heard: { message: Message; turn: number; reply?: Turn; written?: WrittenMessage; sent: number }[] = [];
     const result = await runAgentLoop({
       config: proxied,
       messages: question,
@@ -710,18 +710,18 @@ describe('a proxied run', () => {
       catalog,
       preselected: ['s__read'],
       dispatch: async () => 'contents',
-      onMessage: (message, step, turn, written) => {
-        heard.push({ message, step, turn, written, sent: create.mock.calls.length });
+      onMessage: (message, turn, reply, written) => {
+        heard.push({ message, turn, reply, written, sent: create.mock.calls.length });
       },
     });
     expect(heard.map(({ message }) => message)).toEqual(result.messages.slice(1));
     expect(heard.map(({ message }) => message.role)).toEqual([Role.Assistant, Role.Tool, Role.Assistant]);
-    // The pair no model wrote: step zero's, with no turn, and heard before the request went out.
-    expect(heard.slice(0, 2).map(({ step, turn, written, sent }) => ({ step, turn, written, sent }))).toEqual([
-      { step: 0, turn: undefined, written: undefined, sent: 0 },
-      { step: 0, turn: undefined, written: undefined, sent: 0 },
+    // The pair no model wrote: turn zero's, with no reply, and heard before the request went out.
+    expect(heard.slice(0, 2).map(({ turn, reply, written, sent }) => ({ turn, reply, written, sent }))).toEqual([
+      { turn: 0, reply: undefined, written: undefined, sent: 0 },
+      { turn: 0, reply: undefined, written: undefined, sent: 0 },
     ]);
-    expect(heard[2].turn?.content).toBe('done');
+    expect(heard[2].reply?.content).toBe('done');
   });
 
   it("leaves the preselection's call with its result when onMessage throws on it", async () => {
@@ -783,9 +783,9 @@ describe('prune', () => {
   const long = 'x'.repeat(4000);
   /** Every request's messages, as they were sent. */
   const sentMessages = () => create.mock.calls.map(([body]) => body.messages.map((m) => JSON.stringify(m)));
-  /** A run of `steps` calls, each answered with a long result, then an answer. */
-  const toolRun = (steps: number) => {
-    for (let step = 0; step < steps; step++) {
+  /** A run of `turns` calls, each answered with a long result, then an answer. */
+  const toolRun = (turns: number) => {
+    for (let turn = 0; turn < turns; turn++) {
       create.mockReturnValueOnce(calls([['read', '{}']]));
     }
     create.mockReturnValueOnce(says('done'));
@@ -846,7 +846,7 @@ describe('prune', () => {
     ).toBe(false);
   });
 
-  it('runs after `beforeStep`, on what that returned, and starts the boundary again after a rewrite', async () => {
+  it('runs after `beforeTurn`, on what that returned, and starts the boundary again after a rewrite', async () => {
     toolRun(3);
     const handed: number[] = [];
     await runAgentLoop({
@@ -855,12 +855,12 @@ describe('prune', () => {
       tools: [tool('read')],
       dispatch: async () => long,
       prune: { at: 0, minShare: 0, keepLast: 1 },
-      beforeStep: (messages) => {
+      beforeTurn: (messages) => {
         handed.push(messages.filter((m) => String(m.content).startsWith('[result')).length);
         return [...messages];
       },
     });
-    // The first move is on the third step, after its `beforeStep`; the fourth is handed its stub.
+    // The first move is on the third turn, after its `beforeTurn`; the fourth is handed its stub.
     expect(handed).toEqual([0, 0, 0, 1]);
   });
 });
@@ -882,7 +882,7 @@ describe('reasoning replay', () => {
       .map((message) => (message as { reasoning_content?: string }).reasoning_content);
 
   /** Runs a call, then an answer, each thought through, and keeps what each request carried. */
-  const twoSteps = async (reasoningReplay?: 'tool-loop' | 'all' | 'none', history: Message[] = []) => {
+  const twoTurns = async (reasoningReplay?: 'tool-loop' | 'all' | 'none', history: Message[] = []) => {
     create
       .mockReturnValueOnce(calls([['a', '{}']], 'look it up'))
       .mockReturnValueOnce(thinksThenSays('that settles it', 'done'));
@@ -892,7 +892,7 @@ describe('reasoning replay', () => {
       messages: [...history, ...question],
       tools: [tool('a')],
       dispatch: async () => 'found',
-      onMessage: (message, _step, _turn, raw) => {
+      onMessage: (message, _turn, _reply, raw) => {
         if (message.role === Role.Assistant) {
           written.push(raw);
         }
@@ -902,7 +902,7 @@ describe('reasoning replay', () => {
   };
 
   it('keeps it on every assistant message by default, the answer included', async () => {
-    const { sent, result, written } = await twoSteps();
+    const { sent, result, written } = await twoTurns();
     expect(scratchpads(sent[1])).toEqual(['look it up']);
     expect(written.map((raw) => raw && scratchpads([raw.raw])[0])).toEqual(['look it up', 'that settles it']);
     expect(scratchpads(result.messages)).toEqual(['look it up', 'that settles it']);
@@ -910,7 +910,7 @@ describe('reasoning replay', () => {
   });
 
   it('replays the tool loop under tool-loop, and drops it once the answer is written', async () => {
-    const { sent, result, written } = await twoSteps('tool-loop');
+    const { sent, result, written } = await twoTurns('tool-loop');
     expect(scratchpads(sent[1])).toEqual(['look it up']);
     expect(written.map((raw) => raw && scratchpads([raw.raw])[0])).toEqual(['look it up', undefined]);
     expect(scratchpads(result.messages)).toEqual([undefined, undefined]);
@@ -946,7 +946,7 @@ describe('reasoning replay', () => {
   });
 
   it('writes none under none, as every run did before', async () => {
-    const { sent, result, written } = await twoSteps('none');
+    const { sent, result, written } = await twoTurns('none');
     expect(scratchpads(sent[1])).toEqual([undefined]);
     expect(written.map((raw) => raw && scratchpads([raw.raw])[0])).toEqual([undefined, undefined]);
     expect(scratchpads(result.messages)).toEqual([undefined, undefined]);
@@ -954,7 +954,7 @@ describe('reasoning replay', () => {
 
   it("leaves what came before the question as the host gave it, and the host's own objects alone", async () => {
     const earlier = { role: Role.Assistant, content: 'hello', reasoning_content: 'greet them' } as Message;
-    const { sent, result } = await twoSteps('tool-loop', [user('hey'), earlier]);
+    const { sent, result } = await twoTurns('tool-loop', [user('hey'), earlier]);
     expect(scratchpads(sent[1])).toEqual(['greet them', 'look it up']);
     expect(scratchpads(result.messages)).toEqual(['greet them', undefined, undefined]);
     expect(result.messages[1]).toBe(earlier);
@@ -1085,7 +1085,7 @@ describe('reasoning replay', () => {
         messages: question,
         tools: [tool('a')],
         dispatch: async () => 'found',
-        onMessage: (message, _step, _turn, raw) => {
+        onMessage: (message, _turn, _reply, raw) => {
           if (message.role === Role.Assistant) {
             written.push(raw);
           }
@@ -1127,7 +1127,7 @@ describe('one call per message', () => {
       )
       .mockReturnValueOnce(says('done'));
     const order: string[] = [];
-    const heard: { message: Message; turn?: Turn; written?: WrittenMessage }[] = [];
+    const heard: { message: Message; reply?: Turn; written?: WrittenMessage }[] = [];
     const result = await runAgentLoop({
       config: { ...config, singleCallMessages: true },
       messages: question,
@@ -1139,8 +1139,8 @@ describe('one call per message', () => {
         order.push(`${name} ends`);
         return `${name} ran`;
       },
-      onMessage: (message, _step, turn, written) => {
-        heard.push({ message, turn, written });
+      onMessage: (message, _turn, reply, written) => {
+        heard.push({ message, reply, written });
       },
     });
     expect(shape(result.messages)).toEqual(['user', 'assistant c0', 'tool c0', 'assistant c1', 'tool c1', 'assistant']);
@@ -1149,10 +1149,10 @@ describe('one call per message', () => {
     // In the order asked, each after the one before, whatever `parallel` says.
     expect(order).toEqual(['a starts', 'a ends', 'b starts', 'b ends']);
     expect(heard.map((entry) => entry.message)).toEqual(result.messages.slice(1));
-    // The first piece is the turn's, and its `raw` is still the whole reply.
-    expect(heard[0].turn?.toolCalls).toHaveLength(2);
+    // The first piece comes with the reply, and its `raw` is still the whole of it.
+    expect(heard[0].reply?.toolCalls).toHaveLength(2);
     expect(heard[0].written?.raw.tool_calls).toHaveLength(2);
-    expect(heard[2].turn).toBeUndefined();
+    expect(heard[2].reply).toBeUndefined();
     expect(heard[2].written).toBeUndefined();
     const [first, second] = sentBodies();
     expect(first).toHaveProperty('parallel_tool_calls', false);
@@ -1207,14 +1207,14 @@ describe('one call per message', () => {
     expect(singleCallRefusal(refused.messages)).toBe(LLAMA_ONE_CALL);
     expect(singleCallRefusal(retried.messages)).toBeUndefined();
     expect(retried).toHaveProperty('parallel_tool_calls', false);
-    // The step before the latch stays as it was written; the one after is written split.
+    // The turn before the latch stays as it was written; the one after is written split.
     expect(shape(result.messages).slice(1, 4)).toEqual(['assistant c0 c1', 'tool c0', 'tool c1']);
     expect(singleCallRefusal(result.messages.slice(4))).toBeUndefined();
     expect(singleCallRefusal(last.messages)).toBeUndefined();
     expect(pairsByPosition(last.messages)).toBe(true);
   });
 
-  it('ends a stopped step at the last pair, and never writes the call it did not reach', async () => {
+  it('ends a stopped turn at the last pair, and never writes the call it did not reach', async () => {
     const controller = new AbortController();
     create.mockReturnValueOnce(
       calls([
@@ -1269,10 +1269,10 @@ describe('call ids', () => {
   const resultIds = (messages: readonly Message[]) =>
     messages.flatMap((message) => (message.role === Role.Tool ? [message.tool_call_id] : []));
 
-  it('are Mistral-shaped and unique across every step and the host history, and never minted twice', async () => {
-    const steps = 24;
-    for (let step = 0; step < steps; step++) {
-      create.mockReturnValueOnce(step % 2 ? written() : unnamed());
+  it('are Mistral-shaped and unique across every turn and the host history, and never minted twice', async () => {
+    const turns = 24;
+    for (let turn = 0; turn < turns; turn++) {
+      create.mockReturnValueOnce(turn % 2 ? written() : unnamed());
     }
     create.mockReturnValueOnce(says('done'));
     // The first id drawn is one the host's history already holds, so it has to be stepped over.
@@ -1289,14 +1289,14 @@ describe('call ids', () => {
       user('again'),
     ];
     const result = await runAgentLoop({
-      config: { ...config, maxToolIterations: steps + 1 },
+      config: { ...config, maxToolIterations: turns + 1 },
       messages: history,
       tools: [tool('a')],
       dispatch: async () => 'ok',
       mintCallId: () => draws.shift() ?? seeded(),
     });
     const minted = callIds(result.messages.slice(history.length));
-    expect(minted).toHaveLength((steps / 2) * 2 + steps / 2);
+    expect(minted).toHaveLength((turns / 2) * 2 + turns / 2);
     expect(minted.every((id) => MINTED_ID.test(id))).toBe(true);
     expect(new Set([...minted, 'kept00001']).size).toBe(minted.length + 1);
     // Every request replays the ids the one before it sent, so none is ever made up again.
@@ -1410,7 +1410,7 @@ describe('a turn with nothing to say', () => {
     ]);
   });
 
-  it('is not asked for again where it said something, or where no step is left to ask in', async () => {
+  it('is not asked for again where it said something, or where no turn is left to ask in', async () => {
     create.mockReturnValueOnce(ends(FinishReason.ToolCalls, { content: 'here it is' }));
     const said = await run();
     expect(create).toHaveBeenCalledTimes(1);
