@@ -12,6 +12,7 @@ import {
   SUMMARY_LEAD,
   summaryInput,
 } from '../../src/context/compaction.ts';
+import { COMPACTION_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import { type HookRunner, turnMessages } from '../../src/hooks/hooks.ts';
 import { expandNames, loadResult, proxyLoadResult } from '../../src/tools/tool-loading.ts';
@@ -317,7 +318,7 @@ describe('planCompaction', () => {
 
     it("assumes the summariser's own ceiling for the summary unless told", () => {
       const plan = planCompaction(long, { limit: 10000, used: 9000, estimate, target: 0.5 });
-      expect(plan).toMatchObject({ cut: 7, after: 9000 - 60 + 1024 });
+      expect(plan).toMatchObject({ cut: 7, after: 9000 - 60 + COMPACTION_DEFAULTS.summaryTokens });
     });
 
     it('leaves a plan made by keepRatio as it was', () => {
@@ -334,7 +335,7 @@ describe('summaryInput', () => {
       from: 0,
       cut: 2,
       toSummarise: [
-        user('y'.repeat(5000)),
+        user('y'.repeat(COMPACTION_DEFAULTS.summaryMessageChars + 1)),
         {
           role: Role.Assistant,
           content: null,
@@ -342,7 +343,7 @@ describe('summaryInput', () => {
         },
       ],
     });
-    expect(text).toBe(`user: ${'y'.repeat(4000)}\n\nassistant: read({})`);
+    expect(text).toBe(`user: ${'y'.repeat(COMPACTION_DEFAULTS.summaryMessageChars)}\n\nassistant: read({})`);
   });
 });
 

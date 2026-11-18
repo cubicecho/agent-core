@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import type { Endpoint } from '../core/config.ts';
+import { COMPACTION_DEFAULTS } from '../core/defaults.ts';
 import { isPositive } from '../core/guards.ts';
 import { HookEvent } from '../hooks/hook-events.ts';
 import { consult, type HookContext, type HookRunner, notify, type OnNote, turnMessages } from '../hooks/hooks.ts';
@@ -30,15 +31,6 @@ export const COMPACT_AT = 0.75;
  * grow again.
  */
 export const KEEP_RATIO = 0.35;
-
-/** The ceiling `summariser` gives a summary, and what `planCompaction` assumes one will cost. */
-const SUMMARY_TOKENS = 1024;
-
-/** How much of any one message the summariser is shown. A pasted file is not worth it whole. */
-const SUMMARY_SLICE = 4000;
-
-/** The fewest messages worth compacting: a summary of one costs a round trip and saves nothing. */
-const FEWEST_FOLDED = 2;
 
 /** How many of the latest tool results a prune leaves whole when the caller does not say. */
 const KEEP_LAST = 5;
@@ -657,7 +649,7 @@ export function planCompaction(
     compactAt = COMPACT_AT,
     keepRatio = KEEP_RATIO,
     target,
-    summaryTokens = SUMMARY_TOKENS,
+    summaryTokens = COMPACTION_DEFAULTS.summaryTokens,
     charsPerToken,
     estimate = (message) => messageTokens(message, { charsPerToken }),
     from: givenFrom,
@@ -679,7 +671,7 @@ export function planCompaction(
 
   const search = { from, cost, limit, keepRatio, target, summaryTokens, estimate };
   const atUser = findCut(messages, { ...search, isCut: (at) => messages[at].role === Role.User });
-  const foldsAtUser = atUser.cut < messages.length && atUser.cut - from >= FEWEST_FOLDED;
+  const foldsAtUser = atUser.cut < messages.length && atUser.cut - from >= COMPACTION_DEFAULTS.fewestCompactedMessages;
   if (foldsAtUser) {
     return planFor(messages, from, atUser.cut, previous, atUser.after);
   }
@@ -703,7 +695,7 @@ export function planCompaction(
     return undefined;
   }
   const folded = planFor(messages, from, inLoop.cut, previous, inLoop.after, question);
-  return folded.toSummarise.length >= FEWEST_FOLDED ? folded : undefined;
+  return folded.toSummarise.length >= COMPACTION_DEFAULTS.fewestCompactedMessages ? folded : undefined;
 }
 
 /**
@@ -746,7 +738,7 @@ export function summaryInput(plan: CompactionPlan): string {
   const transcript = plan.toSummarise
     .map((message) => {
       const text = messageText(message);
-      return text ? `${message.role}: ${text.slice(0, SUMMARY_SLICE)}` : '';
+      return text ? `${message.role}: ${text.slice(0, COMPACTION_DEFAULTS.summaryMessageChars)}` : '';
     })
     .filter(Boolean)
     .join('\n\n');
@@ -769,7 +761,11 @@ export const summariser =
   (
     config: Endpoint,
     model: string,
-    { system = SUMMARY_PROMPT, maxTokens = SUMMARY_TOKENS, ...options }: SideTaskOptions & { system?: string } = {},
+    {
+      system = SUMMARY_PROMPT,
+      maxTokens = COMPACTION_DEFAULTS.summaryTokens,
+      ...options
+    }: SideTaskOptions & { system?: string } = {},
   ) =>
   (text: string) =>
     ask(config, model, system, text, { maxTokens, ...options });

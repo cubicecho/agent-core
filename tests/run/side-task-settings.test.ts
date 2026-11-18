@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
-import { PRESELECT_DEFAULTS, SIDE_TASK_DEFAULTS } from '../../src/core/defaults.ts';
+import { COMPACTION_DEFAULTS, PRESELECT_DEFAULTS, SIDE_TASK_DEFAULTS } from '../../src/core/defaults.ts';
 import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookNote, HookRunner } from '../../src/hooks/hooks.ts';
 import type { AgentLoopHooks } from '../../src/run/agent-loop.ts';
@@ -194,7 +194,11 @@ describe("a side task's own settings", () => {
 
     const compaction = taskCall(resolved.tasks.compaction, {}, resolved);
     await summariser(compaction.endpoint, compaction.model, compaction.options)('a transcript');
-    expect(body(1)).toMatchObject({ model: 'tiny', temperature: SIDE_TASK_DEFAULTS.temperature, max_tokens: 1024 });
+    expect(body(1)).toMatchObject({
+      model: 'tiny',
+      temperature: SIDE_TASK_DEFAULTS.temperature,
+      max_tokens: COMPACTION_DEFAULTS.summaryTokens,
+    });
 
     const select = taskCall(resolved.tasks.toolSelect, {}, resolved);
     await preselect(select.endpoint, select.model, catalog, 'read it', select.options);
@@ -613,7 +617,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       onEvent: (event) => events.push(event),
     });
     // The summary first: the task's model and temperature, and the summariser's own ceiling.
-    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0, max_tokens: 1024 });
+    expect(body(0)).toMatchObject({ model: 'tiny', temperature: 0, max_tokens: COMPACTION_DEFAULTS.summaryTokens });
     expect(reached).toContainEqual({ baseUrl: 'http://side/v1', apiKey: NO_KEY });
     // Then the turn, on the folded transcript.
     expect(body(1)).toMatchObject({ model: 'big', temperature: 1 });

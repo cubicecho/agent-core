@@ -219,6 +219,26 @@ export const TOOL_DISCOVERY_DEFAULTS: Readonly<ToolDiscoverySettings> = Object.f
   maxCarried: 16,
 });
 
+/** Compaction: the oldest stretch of a transcript folded into a summary the model writes itself. */
+export interface CompactionSettings {
+  /**
+   * The summary's ceiling, in tokens, as `summariser` asks for it, and what `planCompaction`
+   * assumes a summary will cost when it plans to a `target`.
+   */
+  summaryTokens: number;
+  /** How much of any one message, in characters, the summariser is shown. A pasted file is not worth it whole. */
+  summaryMessageChars: number;
+  /** The fewest messages worth compacting: a summary of one costs a round trip and saves nothing. */
+  fewestCompactedMessages: number;
+}
+
+/** When and how far a transcript is compacted, where the caller does not say. */
+export const COMPACTION_DEFAULTS: Readonly<CompactionSettings> = Object.freeze({
+  summaryTokens: 1024,
+  summaryMessageChars: 4000,
+  fewestCompactedMessages: 2,
+});
+
 /** Resending a request that was lost: how long to wait between attempts. */
 export interface RetrySettings {
   /** The first backoff, in milliseconds, before jitter. */
