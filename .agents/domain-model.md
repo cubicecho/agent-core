@@ -292,7 +292,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **First-token timeout:** how long to wait for a reply's first token. Owner:
   `Endpoint.firstTokenSeconds`; also `firstTokenLimitMs(config)`, `firstChunkMs`. `TurnUsage.firstTokenMs`
   is the wait measured, not the limit.
-- **Model listing:** the models a model server says it serves. Owner: `listModels`, `ModelInfo`.
+- **Model listing:** the models a model server says it serves, with each one's context window and,
+  where the entry states them, its display name, its description, and whether it is a remote agent
+  and which prompt parts that agent lists. Owner: `listModels`, `ModelInfo`, `ModelPromptPart`;
+  both listings read an entry through `readModelRow`.
 - **Model server probe (endpoint probe):** a one-off listing of a model server a person is still
   typing into a form. Owner: `probeEndpoint`, `EndpointProbeError`.
 - **Context window (window, context length, context limit):** how many tokens a model reads: the
@@ -536,7 +539,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 
 - **Remote agent:** a model that runs a whole agent loop of its own on the server and hands the
   app's tools back as calls. Owner: `RemoteAgentParams`, `remoteAgent: true` (`src/core/config.ts`);
-  `asRemoteAgent`, `remoteRun` (`src/run/remote.ts`).
+  `asRemoteAgent`, `remoteRun` (`src/run/remote.ts`). A model listing marks one with
+  `"agent_core": { "kind": "agent" }`, read as `ModelInfo.remoteAgent`.
 - **Progress:** the server's own events, carried beside the reply under one body field. Owner:
   `PROGRESS_FIELD` (`agent_core`), `RemoteAgentParams.progressField`; encoded and read by
   `progressChunk`, `withProgress`, `progressEvent`, `progressEvents`. The warnings the server

@@ -9,8 +9,10 @@ import {
 import { MS_PER_SECOND } from '../core/consts.ts';
 import { CLIENT_POOL_DEFAULTS, type ClientPoolSettings, MODEL_SERVER_DEFAULTS } from '../core/defaults.ts';
 import { digestOf } from '../core/digest.ts';
-import { byCodeUnit, getOrCreate, isPositive } from '../core/guards.ts';
+import { byCodeUnit, getOrCreate, isPositive, isRecord } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
+import { PROGRESS_FIELD } from '../run/remote.ts';
+import { PROMPT_MODES, type PromptMode } from '../spec/parts.ts';
 import { HttpStatus } from '../wire/wire.ts';
 
 /**
@@ -325,10 +327,131 @@ function contextLengthOf(model: object): { contextLength: number; trained: boole
  * @remarks
  * The number is whatever the listing carried, which from llama.cpp is the trained context window
  * rather than the served one; `contextLimitFor` is the lookup that knows the difference.
+ *
+ * The other fields are there only where the entry states them. `remoteAgent` and `promptParts` come
+ * from the entry's `PROGRESS_FIELD` object, as ai-router lists an agent, so an app can copy
+ * `remoteAgent` into its config.
  */
 export interface ModelInfo {
   id: string;
   contextLength: number;
+  /** The listing's display name, where it states one that is not the id. */
+  name?: string;
+  /** The listing's description, where it states a non-empty one. */
+  description?: string;
+  /** Present and true where the entry marks the model as a remote agent: `agent_core.kind === "agent"`. */
+  remoteAgent?: true;
+  /** A remote agent's prompt parts as its entry lists them (names and allowedModes, never text). Absent otherwise. */
+  promptParts?: readonly ModelPromptPart[];
+}
+
+/**
+ * One prompt part a remote agent's listing entry names, so an app can see what it may extend or replace.
+ *
+ * @remarks
+ * `allowedModes` reads as `StackedPart.allowedModes` does: absent is `["extend"]`, and `[]` locks
+ * the part.
+ */
+export interface ModelPromptPart {
+  name: string;
+  allowedModes?: readonly PromptMode[];
+}
+
+/** The `kind` an entry's `PROGRESS_FIELD` object has where the model is a remote agent. */
+const AGENT_KIND = 'agent';
+
+/** The modes a listed part may allow. */
+const MODES: readonly PromptMode[] = Object.values(PROMPT_MODES);
+
+/**
+ * Whether a value is one of `PROMPT_MODES`.
+ *
+ * @param value - An entry of a listed part's `allowedModes`.
+ * @returns True for `extend` and `replace` only.
+ */
+const isPromptMode = (value: unknown): value is PromptMode => MODES.some((mode) => mode === value);
+
+/**
+ * A string with something in it as itself, and anything else as `undefined`.
+ *
+ * @param value - Whatever a listing put under a key.
+ * @returns The string, or `undefined` for an empty one or a value of another type.
+ */
+const statedText = (value: unknown) => (typeof value === 'string' && value !== '' ? value : undefined);
+
+/**
+ * One prompt part as a remote agent's entry lists it.
+ *
+ * @param listed - An entry of the `prompt` array under `PROGRESS_FIELD`.
+ * @returns The part, or `undefined` where it is not an object or has no name.
+ *
+ * @remarks
+ * An `allowedModes` that is not an array is left out; one that is keeps only its modes, so a list
+ * that loses every entry locks the part, as `parseAgentSpec` reads it.
+ */
+function promptPartOf(listed: unknown): ModelPromptPart | undefined {
+  if (!isRecord(listed)) {
+    return undefined;
+  }
+  const name = statedText(listed.name);
+  if (name === undefined) {
+    return undefined;
+  }
+  const { allowedModes } = listed;
+  return Array.isArray(allowedModes) ? { name, allowedModes: allowedModes.filter(isPromptMode) } : { name };
+}
+
+/**
+ * What a listing entry's `PROGRESS_FIELD` object says of the model: whether it is a remote agent,
+ * and that agent's prompt parts.
+ *
+ * @param card - Whatever the entry held under `PROGRESS_FIELD`.
+ * @returns `remoteAgent` and `promptParts` where `kind` is `"agent"`, and nothing otherwise.
+ */
+function remoteAgentOf(card: unknown): Pick<ModelInfo, 'remoteAgent' | 'promptParts'> {
+  const isAgent = isRecord(card) && card.kind === AGENT_KIND;
+  if (isAgent === false) {
+    return {};
+  }
+  const { prompt } = card;
+  if (Array.isArray(prompt) === false) {
+    return { remoteAgent: true };
+  }
+  const promptParts = prompt.map(promptPartOf).filter((part) => part !== undefined);
+  return { remoteAgent: true, promptParts };
+}
+
+/**
+ * Reads one entry of a model listing, in either shape `probeEndpoint` takes.
+ *
+ * @param row - One entry of OpenAI's `data` or Ollama's native `models`.
+ * @returns The model and whether its context window is only the trained one, or `undefined`
+ * where the entry is not an object or names no model.
+ *
+ * @remarks
+ * The id is `id`, or `name` where there is no `id` (Ollama's native shape), so `name` is the display
+ * name only where it differs from the id. Values of the wrong type are read as absent.
+ */
+function readModelRow(row: unknown): { model: ModelInfo; trained: boolean } | undefined {
+  if (!isRecord(row)) {
+    return undefined;
+  }
+  const name = statedText(row.name);
+  const id = statedText(row.id) ?? name;
+  if (id === undefined) {
+    return undefined;
+  }
+  const { contextLength, trained } = contextLengthOf(row);
+  const description = statedText(row.description);
+  const model: ModelInfo = { id, contextLength, ...remoteAgentOf(row[PROGRESS_FIELD]) };
+  const hasDisplayName = name !== undefined && name !== id;
+  if (hasDisplayName) {
+    model.name = name;
+  }
+  if (description !== undefined) {
+    model.description = description;
+  }
+  return { model, trained };
 }
 
 /**
@@ -745,12 +868,15 @@ async function readListing(config: Endpoint, within: AbortSignal): Promise<Model
     });
   const trained = new Set<string>();
   const models: ModelInfo[] = [];
-  for (const model of data) {
-    const window = contextLengthOf(model);
-    if (window.trained) {
-      trained.add(model.id);
+  for (const row of data) {
+    const read = readModelRow(row);
+    if (read === undefined) {
+      continue;
     }
-    models.push({ id: model.id, contextLength: window.contextLength });
+    if (read.trained) {
+      trained.add(read.model.id);
+    }
+    models.push(read.model);
   }
   models.sort((a, b) => byCodeUnit(a.id, b.id));
   const key = endpointKey(config);
@@ -839,7 +965,8 @@ const REDIRECT_MAX = 399;
  * Redirects are not followed, so a typed key is never carried on to a host nobody typed. Both
  * listing shapes are read: OpenAI's `{ data: [...] }` by `id`, and Ollama's native
  * `{ models: [...] }` by `name` where an entry has no `id`. A context window is read from the keys
- * `contextLimitFor` reads, and an id listed twice keeps the one of its entries stated.
+ * `contextLimitFor` reads, and an id listed twice keeps the one of its entries stated, as it does
+ * each field `ModelInfo` may leave out.
  */
 export async function probeEndpoint(
   endpoint: EndpointIdentity & Pick<Endpoint, 'requestTimeoutSeconds' | 'fetch'>,
@@ -919,16 +1046,13 @@ export async function probeEndpoint(
 
   const found = new Map<string, ModelInfo>();
   for (const row of rows) {
-    if (row === null || typeof row !== 'object') {
+    const model = readModelRow(row)?.model;
+    if (model === undefined) {
       continue;
     }
-    const entry = row as { id?: unknown; name?: unknown };
-    const id = typeof entry.id === 'string' ? entry.id : typeof entry.name === 'string' ? entry.name : '';
-    if (id === '') {
-      continue;
-    }
-    const { contextLength } = contextLengthOf(row);
-    found.set(id, { id, contextLength: contextLength || (found.get(id)?.contextLength ?? 0) });
+    // A field an entry leaves out is absent from it, so the spread keeps what an earlier one stated.
+    const earlier = found.get(model.id);
+    found.set(model.id, { ...earlier, ...model, contextLength: model.contextLength || (earlier?.contextLength ?? 0) });
   }
   return [...found.values()].sort((a, b) => byCodeUnit(a.id, b.id)).slice(0, limit);
 }

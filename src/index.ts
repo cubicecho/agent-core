@@ -116,6 +116,7 @@ export {
   type LookupOptions,
   listModels,
   type ModelInfo,
+  type ModelPromptPart,
   NO_KEY,
   ProbeFailure,
   type ProbeOptions,
