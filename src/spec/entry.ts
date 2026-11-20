@@ -9,6 +9,7 @@
  */
 
 export { AGENT_DEFAULTS, type AgentSettings } from '../core/defaults.ts';
+export * from './layout.ts';
 export * from './parts.ts';
 export * from './spec.ts';
 export { type AppPart, plainPrompt, type StackedPrompt, stackAppParts } from './stack.ts';
