@@ -1,3 +1,48 @@
+# [7.0.0](https://github.com/cubicecho/agent-core/compare/v6.0.1...v7.0.0) (2026-11-20)
+
+
+* feat(run)!: carry remote runs' fields under agent_core (A17) ([3948bd5](https://github.com/cubicecho/agent-core/commit/3948bd5001e1f11f7a1f81f61b3d573d42fb4b64))
+* feat(run)!: name the loop's prompt option systemPrompt (A15) ([7311813](https://github.com/cubicecho/agent-core/commit/731181397370dec9466dfee95c602360fc9dd41d))
+* feat(spec)!: extend or replace a part with a part of its own, by its mode (F1) ([d14b243](https://github.com/cubicecho/agent-core/commit/d14b243c56078ed6d837a0aeae0206bc3797d091))
+* feat(spec)!: write parts like chat messages, in version 2 of the document (A16) ([e1cee2c](https://github.com/cubicecho/agent-core/commit/e1cee2ca3cf7f263dd3d5fa0231140aade93485b))
+
+
+### Bug Fixes
+
+* **hooks:** fence the text of hook context blocks (B41) ([4365dc4](https://github.com/cubicecho/agent-core/commit/4365dc469605530115b27bcdf95bb29da5343575))
+* **hooks:** write hook context as hook_context blocks (B42) ([81256ff](https://github.com/cubicecho/agent-core/commit/81256fff6e189c2f6ab29d4234b76fd1acbf276e))
+* **spec:** close a code block a part's content leaves open (F3) ([0c2cafa](https://github.com/cubicecho/agent-core/commit/0c2cafa248c38d599f8ed7ff1221786052dec080))
+
+
+### Features
+
+* **run:** stack and lay out the prompt in the loop (F2, F4, F5) ([732c390](https://github.com/cubicecho/agent-core/commit/732c39052d5051bd3ea509caecb4d164e34971f6))
+* **spec:** name the prompt's modes, layouts, owners and stacked parts ([f37de3d](https://github.com/cubicecho/agent-core/commit/f37de3d883f85c4cff44d3c70fa56f8840b4e52a))
+* **spec:** serve the layout writers on the ./spec subpath ([91d84a5](https://github.com/cubicecho/agent-core/commit/91d84a5fa3517c0c98bc18de98d983ed98cc7e24))
+* **spec:** stack an app's parts on an agent's with stackAppParts (F2) ([ca9c644](https://github.com/cubicecho/agent-core/commit/ca9c64497e170d47c781994757004c930ec32b83))
+* **spec:** write prompt parts in the xml and markdown layouts (F3) ([ab54e29](https://github.com/cubicecho/agent-core/commit/ab54e299c2dab24d98f4aa6981c80cad0de05325))
+* **tools:** write server instructions and the catalogue in each layout (F4) ([0bfbb3c](https://github.com/cubicecho/agent-core/commit/0bfbb3c9c674fabd8358f36cb84a51c8792c98f7))
+* **wire:** fence every tag the prompt's layout writes (R50) ([28bb7eb](https://github.com/cubicecho/agent-core/commit/28bb7eb804faf18a4e69829cbcd0442a5372e4db))
+
+
+### BREAKING CHANGES
+
+* ResolvedAgent.prompt is readonly StackedPart[]: each part
+carries owner "agent", and a part added by a mode carries its mark.
+* AGENT_SPEC is cubicecho.agent/2, and a version 1 document is
+refused; run it through upgradeSpec first. PromptPart is { role, name,
+content, mode?, allowedModes? } in place of { id, text?, ref? }, and REF_FILE
+and REF_URL are removed. ResolvedAgent gains promptLayout. A column's
+prompt.<name> path writes { role: "system", name, content }.
+* `PROGRESS_FIELD` is now `"agent_core"`, and remote mode
+writes and reads `agent_core` instead of `ai_router`. Move an app's own
+`extraBody.ai_router` fields to `extraBody.agent_core`, and upgrade the
+agent server in the same release; nothing reads the old name. A server
+that still uses `ai_router` can be named with `progressField`.
+* `AgentLoopOptions.system` is now `systemPrompt`. Rename
+the option where `runAgentLoop` is called; the text it takes and what the
+loop sends are unchanged.
+
 ## [6.0.1](https://github.com/cubicecho/agent-core/compare/v6.0.0...v6.0.1) (2026-11-18)
 
 
