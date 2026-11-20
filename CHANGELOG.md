@@ -1,3 +1,10 @@
+# [7.1.0](https://github.com/cubicecho/agent-core/compare/v7.0.0...v7.1.0) (2026-11-20)
+
+
+### Features
+
+* **endpoint:** read a listing entry's name, description and agent card ([84c0bbe](https://github.com/cubicecho/agent-core/commit/84c0bbe5ae5e620acb88a59553b7285d1ce67fe8))
+
 # [7.0.0](https://github.com/cubicecho/agent-core/compare/v6.0.1...v7.0.0) (2026-11-20)
 
 
