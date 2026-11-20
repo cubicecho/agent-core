@@ -462,6 +462,15 @@ key is never carried on to a host nobody typed), reads both OpenAI's `{ data: [.
 Ollama's native `{ models: [...] }` (by `name` where an entry has no `id`), and hands back each id
 once, sorted, at most `limit` of them (500 unless told). It is bounded as a lookup is.
 
+Each `ModelInfo` is `{ id, contextLength }`, plus what the entry states of the rest, from
+`probeEndpoint` and `listModels` alike: `name` where it is a display name other than the id,
+`description` where it is not empty, and, for an entry ai-router lists as an agent
+(`"agent_core": { "kind": "agent", "prompt": [...] }`), `remoteAgent: true` and `promptParts`, the
+agent's prompt parts by `name` and `allowedModes` (`ModelPromptPart`). A field of the wrong type is
+left out, and so is a mode that is not `extend` or `replace`, so an `allowedModes` that loses every
+entry locks the part. An id listed twice keeps each field one of its entries stated. A model with
+`remoteAgent` is run with `remoteAgent: true` in its config ("Running against a remote agent").
+
 A top-level listing key is trusted without a second opinion, so on a server that puts a trained context
 window there, pass `contextLength`. Ollama reports no context window on any route this reads, and truncates
 an over-long prompt rather than refusing it, so on Ollama pass `contextLength` or there is no guard
@@ -1371,7 +1380,7 @@ ai-router serves one per agent name — and hands the app's own tools back with
 `tools`, `hostTools`, `dispatch` and `onEvent` as they are, once the config says so:
 
 ```ts
-// `isAgent` from the model entry: ai-router marks its agents `"agent_core": { "kind": "agent" }`.
+// ai-router marks its agents `"agent_core": { "kind": "agent" }`, read as `ModelInfo.remoteAgent`.
 const result = await runAgentLoop({
   config: {
     baseUrl, apiKey, model: "helper", maxToolIterations: 20,

@@ -41,6 +41,28 @@ const routes = (answers: Record<string, unknown>) =>
       : new Response('not found', { status: HttpStatus.NotFound });
   });
 
+/** An agent as ai-router's `GET /v1/models` lists it. */
+const AI_ROUTER_ENTRY = {
+  id: 'triage',
+  object: 'model',
+  created: 0,
+  owned_by: 'ai-router',
+  name: 'Triage',
+  description: 'Sorts new issues',
+  context_length: 32768,
+  agent_core: { kind: 'agent', prompt: [{ name: 'persona' }, { name: 'rules', allowedModes: [] }] },
+};
+
+/** What `AI_ROUTER_ENTRY` is read as. */
+const AI_ROUTER_MODEL = {
+  id: 'triage',
+  contextLength: 32768,
+  name: 'Triage',
+  description: 'Sorts new issues',
+  remoteAgent: true,
+  promptParts: [{ name: 'persona' }, { name: 'rules', allowedModes: [] }],
+};
+
 /** The bounds `configureClients` starts from. A miss expires *at* `listingMissMs`, not after it. */
 const { maxClients, listingMissMs, lookupTimeoutMs } = CLIENT_POOL_DEFAULTS;
 
@@ -532,6 +554,11 @@ describe('listModels', () => {
     // A locale's order would put `alpha` first; which locale is the host's to say.
     expect(models.map((model) => model.id)).toEqual(['Zeta', 'alpha', 'beta']);
   });
+
+  it('reads an ai-router entry as a remote agent, and a plain one as before', async () => {
+    list.mockResolvedValue(listing(AI_ROUTER_ENTRY, { id: 'qwen', object: 'model', owned_by: 'local' }));
+    await expect(listModels(endpoint)).resolves.toEqual([{ id: 'qwen', contextLength: 0 }, AI_ROUTER_MODEL]);
+  });
 });
 
 describe('getClient', () => {
@@ -760,6 +787,87 @@ describe('probeEndpoint', () => {
     await expect(probeEndpoint({ baseUrl: 'http://ollama:11434/v1' })).resolves.toEqual([
       { id: 'llama3:8b', contextLength: 0 },
       { id: 'qwen3:4b', contextLength: 0 },
+    ]);
+  });
+
+  it("reads an ai-router entry's name, description and agent card", async () => {
+    answering(JSON.stringify({ data: [AI_ROUTER_ENTRY] }));
+    await expect(probeEndpoint({ baseUrl: 'http://router/v1' })).resolves.toEqual([AI_ROUTER_MODEL]);
+  });
+
+  it('adds nothing to a plain OpenAI entry', async () => {
+    answering(JSON.stringify({ data: [{ id: 'gpt-4o', object: 'model', created: 1715367049, owned_by: 'openai' }] }));
+    await expect(probeEndpoint({ baseUrl: 'http://local/v1' })).resolves.toEqual([{ id: 'gpt-4o', contextLength: 0 }]);
+  });
+
+  it("does not take an Ollama entry's name for a display name, since it is the id", async () => {
+    answering(
+      JSON.stringify({
+        models: [
+          { name: 'llama3:8b', model: 'llama3:8b', details: { family: 'llama' } },
+          { id: 'qwen3:4b', name: 'qwen3:4b' },
+          { id: 'qwen3:8b', name: 'Qwen 3 8B', description: '' },
+        ],
+      }),
+    );
+    await expect(probeEndpoint({ baseUrl: 'http://ollama:11434/v1' })).resolves.toEqual([
+      { id: 'llama3:8b', contextLength: 0 },
+      { id: 'qwen3:4b', contextLength: 0 },
+      { id: 'qwen3:8b', contextLength: 0, name: 'Qwen 3 8B' },
+    ]);
+  });
+
+  it('reads a malformed agent_core defensively', async () => {
+    answering(
+      JSON.stringify({
+        data: [
+          { id: 'a', agent_core: 'agent' },
+          { id: 'b', agent_core: { kind: 'tool', prompt: [{ name: 'persona' }] } },
+          { id: 'c', agent_core: { kind: 'agent', prompt: 'persona' } },
+          {
+            id: 'd',
+            name: 7,
+            description: ['x'],
+            agent_core: {
+              kind: 'agent',
+              prompt: [
+                { name: 'persona', allowedModes: ['extend', 'rewrite', 3, 'replace'] },
+                { name: 'rules', allowedModes: ['rewrite'] },
+                { name: 'tone', allowedModes: 'extend' },
+                { name: 4 },
+                { allowedModes: [] },
+                'persona',
+                null,
+              ],
+            },
+          },
+          { id: 'e', agent_core: null },
+        ],
+      }),
+    );
+    await expect(probeEndpoint({ baseUrl: 'http://router/v1' })).resolves.toEqual([
+      { id: 'a', contextLength: 0 },
+      { id: 'b', contextLength: 0 },
+      { id: 'c', contextLength: 0, remoteAgent: true },
+      {
+        id: 'd',
+        contextLength: 0,
+        remoteAgent: true,
+        promptParts: [
+          { name: 'persona', allowedModes: ['extend', 'replace'] },
+          // Every mode dropped leaves the part locked, as an agent document reads it.
+          { name: 'rules', allowedModes: [] },
+          { name: 'tone' },
+        ],
+      },
+      { id: 'e', contextLength: 0 },
+    ]);
+  });
+
+  it('keeps, for an id listed twice, each field an entry stated', async () => {
+    answering(JSON.stringify({ data: [AI_ROUTER_ENTRY, { id: 'triage', description: 'Sorts issues' }] }));
+    await expect(probeEndpoint({ baseUrl: 'http://router/v1' })).resolves.toEqual([
+      { ...AI_ROUTER_MODEL, description: 'Sorts issues' },
     ]);
   });
 

@@ -138,6 +138,7 @@ What a model server turned out not to support, and answering it when it says so.
 - `LookupOptions` (type) — What a lookup takes besides the server: `listModels`, `servedWindow` and `contextLimitFor`.
 - `listModels` — Asks a model server what it serves, and remembers the answer.
 - `ModelInfo` (type) — A model a server lists, and what it says the model will read.
+- `ModelPromptPart` (type) — One prompt part a remote agent's listing entry names, so an app can see what it may extend or replace.
 - `NO_KEY` — The SDK insists on a non-empty key even where the server will not look at it.
 - `ProbeFailure` — Why `probeEndpoint` could not list a model server's models, in words a form can branch on.
 - `ProbeOptions` (type) — What `probeEndpoint` takes besides the model server.
