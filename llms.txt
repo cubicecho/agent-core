@@ -345,6 +345,7 @@ An app's stored agent, read as a spec layer and written back: one table of colum
 
 - `LAYOUT_HEADINGS` — The headings of the loop's own sections in the markdown layout.
 - `LAYOUT_RULES` — Why a layout wrote a part's name differently from how it was given.
+- `LayoutOptions` (type) — What a writer of one of the loop's own sections is told beside its own options: the layout.
 - `LayoutRule` (type) — One of `LAYOUT_RULES`.
 - `LayoutWarning` (type) — A part whose tag or heading is not plainly its name, in the same shape as a `StackWarning`.
 - `LoopSection` (type) — One of the loop's own sections: a key of `LAYOUT_HEADINGS`, and of `LAYOUT_TAGS`.

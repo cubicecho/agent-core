@@ -267,6 +267,7 @@ export {
 export {
   LAYOUT_HEADINGS,
   LAYOUT_RULES,
+  type LayoutOptions,
   type LayoutRule,
   type LayoutWarning,
   type LoopSection,

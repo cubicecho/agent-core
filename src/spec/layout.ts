@@ -24,6 +24,16 @@ export const LAYOUT_HEADINGS = Object.freeze({
 /** One of the loop's own sections: a key of `LAYOUT_HEADINGS`, and of `LAYOUT_TAGS`. */
 export type LoopSection = keyof typeof LAYOUT_HEADINGS;
 
+/** What a writer of one of the loop's own sections is told beside its own options: the layout. */
+export interface LayoutOptions {
+  /**
+   * Under its `##` heading, inside its tag, or as the section has always been written.
+   *
+   * @defaultValue `PROMPT_LAYOUTS.plain`
+   */
+  layout?: PromptLayout;
+}
+
 /**
  * The standing sentence the loop writes between the agent's parts and the app's, in each layout's
  * words: the agent's parts win, except where the app replaced one.
