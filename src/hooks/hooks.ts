@@ -4,7 +4,7 @@ import { digestOf } from '../core/digest.ts';
 import { isPositive } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
-import { attribute, LAYOUT_TAGS, textOf } from '../wire/text.ts';
+import { attribute, fence, LAYOUT_TAGS, textOf } from '../wire/text.ts';
 import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
 import { PartType, Role } from '../wire/wire.ts';
 import { type HookEvent, INJECT_EVENTS } from './hook-events.ts';
@@ -255,6 +255,9 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
  * what its `contextBlocks` builds from the same outcomes, character for character, so an app
  * moving between the two sends the same request; the pool moves to `hook_context` in step.
  *
+ * The text is fenced (`fence`), so a hook's text that writes `</hook_context>`, or any other tag
+ * of the prompt's own, cannot end its block or open another; the note keeps the text unfenced.
+ *
  * The note keeps each hook's text as it was cut, so an app can show exactly what the model was
  * given without re-deriving the caps or parsing the wrapper back off.
  */
@@ -284,7 +287,7 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
     const tokens = estimateTokens(text);
     remaining -= tokens;
     const tag = LAYOUT_TAGS.hookContext;
-    blocks.push(`<${tag} source="${attribute(outcome.label)}">\n${text}\n</${tag}>`);
+    blocks.push(`<${tag} source="${attribute(outcome.label)}">\n${fence(text)}\n</${tag}>`);
     notes.push({ ...noteOf(outcome), tokens, text });
   }
   return { context: blocks.join('\n\n'), notes };
