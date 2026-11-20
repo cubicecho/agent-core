@@ -20,6 +20,9 @@ only, Node >=22.
 
 ## What is here
 
+How the pieces fit, in diagrams — prompt parts to system prompt, an exchange turn by turn, one
+request — is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
+
 | Module | What it does |
 | --- | --- |
 | `schema-compat` | Makes an MCP tool schema something a strict or grammar-constrained server will accept. `sanitizeTools`, `relaxTools`, `isGrammarError`, and `sanitizeSchema` and `relaxSchema` for a schema that is not a tool's. |
