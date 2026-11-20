@@ -338,6 +338,8 @@ function claim(wanted: string, taken: Set<string>, separator: string): string {
  * @remarks
  * A setext heading's text is every paragraph line above its underline, as markdown reads it, so a
  * heading of several lines becomes one. A `---` with no paragraph above it is a rule, not a heading.
+ * A code block the content opens and never closes is closed at its end, so it cannot run on into
+ * the sections after it with a heading left unmoved inside.
  */
 function shiftHeadings(text: string): string {
   const lines: string[] = [];
@@ -367,6 +369,11 @@ function shiftHeadings(text: string): string {
       paragraphLines = isParagraphLine ? paragraphLines + 1 : 0;
       lines.push(line);
     }
+  }
+  // A fence the content leaves open would hold every section after it, and the headings inside it
+  // were not moved: closed here, it ends with the part.
+  if (codeFence !== '') {
+    lines.push(codeFence);
   }
   return lines.join('\n');
 }
