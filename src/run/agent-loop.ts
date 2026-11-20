@@ -299,9 +299,9 @@ export interface AgentLoopOptions {
   /**
    * The standing instruction, sent as the first message. On-demand and proxied modes append the
    * catalogue, each in its own wording, and `serverInstructions` puts the servers' own guidance
-   * between the two.
+   * between the two. A resolved agent's `systemPrompt` is passed here as it is.
    */
-  system?: string;
+  systemPrompt?: string;
   /** The transcript so far, ending in the question. Not written to; see the result's `messages`. */
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
@@ -332,7 +332,7 @@ export interface AgentLoopOptions {
    */
   catalog?: CatalogServer[];
   /**
-   * Puts the catalogue's `instructions` in the system prompt, after `system` and before the
+   * Puts the catalogue's `instructions` in the system prompt, after `systemPrompt` and before the
    * catalogue, as `serverInstructionsPrompt` writes them. Off by default, so no app's prompt
    * changes on upgrade.
    *
@@ -1408,7 +1408,7 @@ async function runTurns(
   { recorded, onEvent: told }: Recorder,
   pin?: SessionPin,
 ): Promise<AgentLoopResult | undefined> {
-  const { config, system = '', tools = [], catalog = [], dispatch, hooks, signal } = options;
+  const { config, systemPrompt = '', tools = [], catalog = [], dispatch, hooks, signal } = options;
   const {
     onRequest,
     onTurn,
@@ -1657,9 +1657,9 @@ async function runTurns(
     const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
     const catalogued = onDemand && !routed;
     const sections = [instructions, catalogued ? catalogue : ''].filter((text) => text !== '');
-    // `system` as it was given when nothing is added, so an app with neither sees no change.
+    // `systemPrompt` as it was given when nothing is added, so an app with neither sees no change.
     const isBare = catalogued === false && sections.length === 0;
-    const prompt = isBare ? system : [system, ...sections].join('\n\n').trim();
+    const prompt = isBare ? systemPrompt : [systemPrompt, ...sections].join('\n\n').trim();
     const request = singleSystem([
       ...(prompt ? [{ role: Role.System, content: prompt }] : []),
       ...withContext(messages, questionAt(), gathered.context, preface),

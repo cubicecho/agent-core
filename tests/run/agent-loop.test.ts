@@ -191,7 +191,7 @@ describe('runAgentLoop', () => {
     const events: { kind: string }[] = [];
     const result = await runAgentLoop({
       config,
-      system: 'be brief',
+      systemPrompt: 'be brief',
       messages: question,
       tools: [tool('a'), tool('b')],
       dispatch,
@@ -1360,7 +1360,7 @@ describe('runAgentLoop', () => {
       const dispatch = vi.fn(async () => 'contents');
       const result = await runAgentLoop({
         config: onDemand,
-        system: 'sys',
+        systemPrompt: 'sys',
         messages: question,
         tools,
         catalog,
@@ -1530,7 +1530,7 @@ describe('runAgentLoop', () => {
       create.mockReturnValueOnce(calls(['s__read', '{}'])).mockReturnValueOnce(says('done'));
       await runAgentLoop({
         config: onDemand,
-        system: 'sys',
+        systemPrompt: 'sys',
         messages: question,
         tools,
         catalog,
@@ -1557,7 +1557,7 @@ describe('runAgentLoop', () => {
         create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}'])).mockReturnValueOnce(says('done'));
         const result = await runAgentLoop({
           config: onDemand,
-          system: 'sys',
+          systemPrompt: 'sys',
           messages: question,
           tools: all,
           catalog: wide,
@@ -1599,7 +1599,7 @@ describe('runAgentLoop', () => {
         create.mockReturnValueOnce(calls(['s__list', '{}'])).mockReturnValueOnce(says('done'));
         await runAgentLoop({
           config: onDemand,
-          system: 'sys',
+          systemPrompt: 'sys',
           messages: question,
           tools: all,
           catalog: wide,
@@ -1625,7 +1625,7 @@ describe('runAgentLoop', () => {
             .mockReturnValueOnce(reported(130, 0, { content: 'done' }));
           const { metrics } = await runAgentLoop({
             config: onDemand,
-            system: 'sys',
+            systemPrompt: 'sys',
             messages: question,
             tools: all,
             catalog: wide,
@@ -1748,7 +1748,7 @@ describe('runAgentLoop', () => {
       const dispatch = vi.fn(async (_call: ToolCallRequest) => 'contents');
       const result = await runAgentLoop({
         config: proxied,
-        system: 'sys',
+        systemPrompt: 'sys',
         messages: question,
         tools,
         catalog,
@@ -1972,7 +1972,7 @@ describe('runAgentLoop', () => {
       const events: { kind: string; name?: string; text?: string; ok?: boolean | null }[] = [];
       const result = await runAgentLoop({
         config: proxied,
-        system: 'sys',
+        systemPrompt: 'sys',
         messages: history,
         tools,
         catalog,
@@ -2453,7 +2453,7 @@ describe('runAgentLoop', () => {
         .mockReturnValueOnce(says('toast'));
       const first = await runAgentLoop({
         config,
-        system: 'sys',
+        systemPrompt: 'sys',
         messages: [{ role: Role.User, content: 'what do I like?' }],
         tools: [tool('a')],
         dispatch: async () => 'ok',
@@ -2467,7 +2467,7 @@ describe('runAgentLoop', () => {
 
       await runAgentLoop({
         config,
-        system: 'sys',
+        systemPrompt: 'sys',
         messages: withContext(history, stored.at, stored.context, stored.preface),
         tools: [tool('a')],
         dispatch: async () => 'ok',
@@ -2800,7 +2800,7 @@ describe('runAgentLoop', () => {
     const requests: AgentLoopRequest[] = [];
     await runAgentLoop({
       config: { ...config, toolDiscovery: ToolDiscovery.OnDemand },
-      system: 'sys',
+      systemPrompt: 'sys',
       messages: question,
       tools: [tool('s__read')],
       catalog: [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }],
@@ -2882,7 +2882,7 @@ describe('runAgentLoop', () => {
     const turns: RunUsage['turn'][] = [];
     await runAgentLoop({
       config,
-      system: 'sys',
+      systemPrompt: 'sys',
       messages: question,
       tools: [tool('a')],
       dispatch: async () => 'a long result '.repeat(20),
@@ -2913,7 +2913,7 @@ describe('runAgentLoop', () => {
     const turns: RunUsage['turn'][] = [];
     await runAgentLoop({
       config,
-      system: 'sys',
+      systemPrompt: 'sys',
       messages: question,
       tools: [tool('a')],
       dispatch: async () => 'ok',
@@ -2943,7 +2943,7 @@ describe('runAgentLoop', () => {
     const run = (overrides: Partial<Parameters<typeof runAgentLoop>[0]>) =>
       runAgentLoop({
         config,
-        system: 'sys',
+        systemPrompt: 'sys',
         messages: question,
         tools,
         catalog,
@@ -3061,7 +3061,7 @@ describe('runAgentLoop', () => {
       create.mockReturnValueOnce(says('done'));
       await runAgentLoop({
         config,
-        system: text,
+        systemPrompt: text,
         messages: question,
         tools,
         catalog,

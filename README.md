@@ -563,12 +563,12 @@ import { runAgentLoop, emit } from "@cubicecho/agent-core";
 
 const { turn, messages, usage, loaded } = await runAgentLoop({
   config,                         // Endpoint & ModelParams & { maxToolIterations, toolDiscovery?, maxRetries?, loadingTimeoutSeconds?, contextLength? }
-  system,                         // sent as the first message; on-demand and proxied modes append the catalogue
+  systemPrompt,                   // sent as the first message; on-demand and proxied modes append the catalogue
   messages: history,              // ending in the question; not written to
   tools,                          // every tool the run may reach
   catalog,                        // the same, name-only, for on-demand and proxied loading
   hostTools,                      // the host's own, declared in every mode and never catalogued
-  serverInstructions: true,       // the catalogue's `instructions` after `system`; off by default
+  serverInstructions: true,       // the catalogue's `instructions` after `systemPrompt`; off by default
   preselected,                    // from `preselect`, if a small model chose
   dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
   hooks: { run, context: { session: { id } } },
@@ -1050,7 +1050,7 @@ is next — grows there without `dispatch` changing again.
 
 An MCP server may send `instructions` when it connects — "resolve the library id before querying
 docs" — and agent-mcp-pool puts them on each `catalog()` entry. `serverInstructions: true` writes
-them into the system prompt after `system` and before the catalogue, as `serverInstructionsPrompt`
+them into the system prompt after `systemPrompt` and before the catalogue, as `serverInstructionsPrompt`
 builds them: a heading, one sentence saying what the block is, and a section per server that said
 anything, under its label, with the text inside an `untrusted` fence. The text is a third party's,
 in the one place a model most takes literally, so it is named rather than folded into the
@@ -1963,7 +1963,8 @@ const { spec, errors, warnings } = parseSpec(JSON.parse(text));
 if (!spec) throw new Error(errors.join("\n"));
 
 const config = resolveAgentSpec([settingsSpec, spec]); // weakest layer first
-const result = await runAgentLoop({ config, ... });    // already the shape the loop takes
+const { systemPrompt } = config;                       // the loop's option of the same name
+const result = await runAgentLoop({ config, systemPrompt, ... }); // already the shape the loop takes
 ```
 
 **Absent inherits, and nothing else does.** There is no inherit sentinel at any depth: `0`, `-1`,
