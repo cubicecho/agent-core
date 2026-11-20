@@ -1371,7 +1371,7 @@ ai-router serves one per agent name — and hands the app's own tools back with
 `tools`, `hostTools`, `dispatch` and `onEvent` as they are, once the config says so:
 
 ```ts
-// `isAgent` from the model entry: ai-router marks its agents `"ai_router": { "kind": "agent" }`.
+// `isAgent` from the model entry: ai-router marks its agents `"agent_core": { "kind": "agent" }`.
 const result = await runAgentLoop({
   config: {
     baseUrl, apiKey, model: "helper", maxToolIterations: 20,
@@ -1398,9 +1398,9 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   the flag comes from the model entry and the options from the app's code, so a refusal would have
   every app branch on it. A session still sends its header, but no llama.cpp slot is probed or
   pinned.
-- **Progress is asked for**, as `ai_router: { progress: true }` laid under the app's own
-  `extraBody.ai_router` (its `task`, `servers`), and an app's `progress: false` turns it off.
-  `ai_router` is `PROGRESS_FIELD`, the default; a server that reads another names it as
+- **Progress is asked for**, as `agent_core: { progress: true }` laid under the app's own
+  `extraBody.agent_core` (such as its `servers`), and an app's `progress: false` turns it off.
+  `agent_core` is `PROGRESS_FIELD`, the default; a server that reads another names it as
   `progressField`, and the loop asks and reads under that instead.
 - **The server says its own turns.** Each progress chunk's event goes to `onEvent` whole, under the
   server's `runId` and `seq` (`'seq' in event` tells one from the loop's), and the loop then says no
@@ -1421,9 +1421,9 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   progress there are none; an app that wants `X-Run-Id` reads it in its endpoint's `fetch`.
 
 The wire shape is one codec, here, so a server and the loop cannot drift: `progressChunk(event,
-head)` writes an event as a chunk with empty `choices` and `ai_router: { event }`, which a standard
+head)` writes an event as a chunk with empty `choices` and `agent_core: { event }`, which a standard
 client skips as it skips a usage chunk; `withProgress(completion, runId, events)` puts
-`ai_router: { runId, events }` beside the `choices` of an answer that is not streamed; and
+`agent_core: { runId, events }` beside the `choices` of an answer that is not streamed; and
 `progressEvent` and `progressEvents` read them back, dropping an event that is malformed or of a
 kind this version does not know. Each takes the field as its last argument, `PROGRESS_FIELD` where
 it is left out. A server numbering its own events makes each with `stamp`.
