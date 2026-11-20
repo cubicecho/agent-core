@@ -307,12 +307,12 @@ export {
   exportSpec,
   findSpecSecrets,
   type ModelSpec,
+  type ParsedAppParts,
   type ParsedSpec,
   type ParseSpecOptions,
   type PromptPart,
+  parseAppParts,
   parseSpec,
-  REF_FILE,
-  REF_URL,
   type ResolvedAgent,
   type ResolvedTask,
   type RetrySpec,
@@ -324,7 +324,10 @@ export {
   type SpecServer,
   type TaskSpec,
   type ToolsSpec,
+  type UpgradedSpec,
+  upgradeSpec,
 } from './spec/spec.ts';
+export { type AppPart, plainPrompt, type StackedPrompt, stackAppParts } from './spec/stack.ts';
 export type { CatalogServer } from './tools/catalog.ts';
 export { PRESELECTED_NOTICE } from './tools/discovery.ts';
 export { type ServerInstructionsOptions, serverInstructionsPrompt } from './tools/instructions.ts';

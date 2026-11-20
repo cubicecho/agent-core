@@ -391,12 +391,12 @@ A JSON document that defines an agent, and the rules for reading one.
 - `exportSpec` — A document fit to leave the app: the same agent, with the secrets of its bundled servers gone.
 - `findSpecSecrets` — Where a document's bundled servers may still carry a credential after `exportSpec`.
 - `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
+- `ParsedAppParts` (type) — What `parseAppParts` hands back.
 - `ParsedSpec` (type) — What `parseSpec` hands back.
 - `ParseSpecOptions` (type) — What `parseSpec` takes besides the document.
-- `PromptPart` (type) — One layer of system prompt, named so a layer above can stack beside it or replace it.
+- `PromptPart` (type) — One named piece of the system prompt, written as a chat message is, so a layer above can change it.
+- `parseAppParts` — Reads the parts an app sent in a request's `agent_core.prompt`, dropping what it cannot use.
 - `parseSpec` — Reads a document, dropping what it cannot use and refusing only what it cannot identify.
-- `REF_FILE` — The `ref.type` of a prompt part whose text is in a file.
-- `REF_URL` — The `ref.type` of a prompt part whose text is behind a URL.
 - `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the app's to act on.
 - `ResolvedTask` (type) — One side task, resolved: a model, and the model server it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
@@ -408,6 +408,17 @@ A JSON document that defines an agent, and the rules for reading one.
 - `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
 - `TaskSpec` (type) — One side task, which may run on a different model — and a different machine — than the agent.
 - `ToolsSpec` (type) — How tools reach the model, and which servers this agent may reach at all.
+- `UpgradedSpec` (type) — What `upgradeSpec` hands back.
+- `upgradeSpec` — Converts a version 1 agent document into version 2, for `parseSpec` to read.
+
+### stack
+
+Stacked prompt parts: an app's put on top of an agent's, how a part extending or replacing another is named, and how the plain layout writes them.
+
+- `AppPart` (type) — One part an app sends in a request's `agent_core.prompt`, for stacking on top of the agent's.
+- `plainPrompt` — Writes stacked parts as the plain layout does: their contents, trimmed, joined by blank lines.
+- `StackedPrompt` (type) — What `stackAppParts` hands back.
+- `stackAppParts` — Puts an app's parts on top of an agent's, holding them to what each of the agent's parts allows.
 
 ### catalog
 

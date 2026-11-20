@@ -2,23 +2,34 @@ import { describe, expect, it } from 'vitest';
 import { ReasoningReplay, ToolDiscovery } from '../../src/core/config.ts';
 import { HOOK_EVENTS, HookEvent } from '../../src/hooks/hook-events.ts';
 import type { AgentLoopOptions } from '../../src/run/agent-loop.ts';
+import { PART_OWNERS, PROMPT_LAYOUTS, PROMPT_MODES, PROMPT_ROLES } from '../../src/spec/parts.ts';
 import {
   AGENT_SPEC,
   type AgentSpec,
   exportSpec,
   findSpecSecrets,
+  parseAppParts,
   parseSpec,
-  REF_FILE,
-  REF_URL,
   type ResolvedAgent,
   resolveAgentSpec,
   SecretSign,
   SPEC_EVENTS,
+  upgradeSpec,
 } from '../../src/spec/spec.ts';
-import { PartType } from '../../src/wire/wire.ts';
 
 /** A document that parses cleanly, which each test then bends in one direction. */
 const doc = (extra: Record<string, unknown> = {}) => ({ spec: AGENT_SPEC, ...extra });
+
+/** The token of version 1, which this build refuses. */
+const SPEC_V1 = 'cubicecho.agent/1';
+
+/** A system part, as a document writes one. */
+const part = (name: string, content: string, extra: Record<string, unknown> = {}) => ({
+  role: PROMPT_ROLES.system,
+  name,
+  content,
+  ...extra,
+});
 
 /** The parsed spec, insisting the document survived so a test never asserts against null. */
 function parsed(document: unknown, options?: Parameters<typeof parseSpec>[1]): AgentSpec {
@@ -37,8 +48,11 @@ describe('parseSpec', () => {
     expect(parseSpec('{}').errors).toEqual(['spec: must be an object']);
     expect(parseSpec({}).errors).toEqual([`spec: must be "${AGENT_SPEC}"`]);
     expect(parseSpec({ spec: 'openai.assistant/1' }).errors).toEqual([`spec: must be "${AGENT_SPEC}"`]);
-    expect(parseSpec({ spec: 'cubicecho.agent/2' }).errors).toEqual([
-      'spec: is version 2, and this build reads version 1',
+    expect(parseSpec({ spec: 'cubicecho.agent/3' }).errors).toEqual([
+      'spec: is version 3, and this build reads version 2',
+    ]);
+    expect(parseSpec({ spec: SPEC_V1 }).errors).toEqual([
+      'spec: is version 1, and this build reads version 2, which upgradeSpec converts it to',
     ]);
     expect(parseSpec(doc({ prompt: {} })).errors).toEqual(['prompt: must be an array']);
     expect(parseSpec(doc({ tasks: [] })).errors).toEqual(['tasks: must be an object']);
@@ -176,7 +190,7 @@ describe('parseSpec', () => {
     ]);
   });
 
-  it('carries a key from a later 1.x rather than erasing it', () => {
+  it('carries a key from a later 2.x rather than erasing it', () => {
     const result = parseSpec(doc({ id: 'a', memory: { store: 'vector' } }));
     expect(result.spec?.memory).toEqual({ store: 'vector' });
     expect(result.warnings).toEqual(['memory: is not a key this version names, and was carried through unread']);
@@ -200,6 +214,157 @@ describe('parseSpec', () => {
         understands: ['com.example.sandbox'],
       }).errors,
     ).toEqual([]);
+  });
+});
+
+describe('parseSpec prompt', () => {
+  it('reads a part written as a chat message, with its mode and the modes an app may use', () => {
+    const prompt = [
+      part('identity', 'You are Task Reviewer.', { allowedModes: [PROMPT_MODES.extend, PROMPT_MODES.replace] }),
+      { role: PROMPT_ROLES.developer, name: 'rules', content: 'Judge the work.', mode: PROMPT_MODES.extend },
+      part('format', 'PASS or FAIL.', { allowedModes: [] }),
+    ];
+    const result = parseSpec(doc({ prompt }));
+    expect(result.warnings).toEqual([]);
+    expect(result.spec?.prompt).toEqual(prompt);
+  });
+
+  it('reads a missing or unknown role as system, and says so', () => {
+    const result = parseSpec(
+      doc({
+        prompt: [
+          { name: 'a', content: 'A.' },
+          { role: 'user', name: 'b', content: 'B.' },
+        ],
+      }),
+    );
+    expect(result.spec?.prompt).toEqual([part('a', 'A.'), part('b', 'B.')]);
+    expect(result.warnings).toEqual([
+      'prompt[0].role: is missing, and was read as "system"',
+      'prompt[1].role: must be "system" or "developer", and was read as "system"',
+    ]);
+  });
+
+  it('drops a mode it has not heard of, and an allowed mode, keeping the list', () => {
+    const result = parseSpec(
+      doc({
+        prompt: [
+          part('a', 'A.', { mode: 'append' }),
+          part('b', 'B.', { allowedModes: ['Replace', PROMPT_MODES.extend] }),
+          part('c', 'C.', { allowedModes: ['overwrite'] }),
+          part('d', 'D.', { allowedModes: 'extend' }),
+        ],
+      }),
+    );
+    expect(result.spec?.prompt).toEqual([
+      part('a', 'A.'),
+      part('b', 'B.', { allowedModes: [PROMPT_MODES.extend] }),
+      // A list that loses every entry locks the part: a mistake lets an app do less, never more.
+      part('c', 'C.', { allowedModes: [] }),
+      part('d', 'D.'),
+    ]);
+    expect(result.warnings).toEqual([
+      'prompt[0].mode: must be "extend" or "replace", and was dropped',
+      'prompt[1].allowedModes[0]: must be "extend" or "replace", and was dropped',
+      'prompt[2].allowedModes[0]: must be "extend" or "replace", and was dropped',
+      'prompt[3].allowedModes: must be an array of modes, and was dropped',
+    ]);
+  });
+
+  it('drops a part with no name or no content, and keeps an empty content, which deletes', () => {
+    const result = parseSpec(
+      doc({
+        prompt: [
+          'text',
+          part('', 'A.'),
+          { role: PROMPT_ROLES.system, name: 'b' },
+          part('c', ''),
+          part('d', '', { mode: 'extend' }),
+        ],
+      }),
+    );
+    expect(result.spec?.prompt).toEqual([part('c', ''), part('d', '')]);
+    expect(result.warnings).toEqual([
+      'prompt[0]: must be an object, and was dropped',
+      'prompt[1]: has no name, and merging happens on the name, and was dropped',
+      'prompt[2]: has no content, and was dropped',
+      'prompt[4].mode: means nothing beside an empty content, which deletes the part, and was dropped',
+    ]);
+  });
+
+  it('refuses a part name whose first word is app, whatever joins it to the next', () => {
+    for (const name of ['app', 'app_lane', 'app-lane', 'App lane', 'APP_system', '_app_lane']) {
+      expect(parseSpec(doc({ prompt: [part(name, 'X.')] })).errors).toEqual([
+        `prompt[0].name: "${name}" has "app" as its first word, which only an app's parts may`,
+      ]);
+    }
+    const names = ['apple', 'application', 'lane_app', 'apps'];
+    expect(parsed(doc({ prompt: names.map((name) => part(name, 'X.')) })).prompt?.map((held) => held.name)).toEqual(
+      names,
+    );
+  });
+
+  it('takes each layout, drops one it has not heard of, and resolves the last layer', () => {
+    for (const promptLayout of Object.values(PROMPT_LAYOUTS)) {
+      expect(parsed(doc({ promptLayout })).promptLayout).toBe(promptLayout);
+    }
+    const result = parseSpec(doc({ promptLayout: 'html' }));
+    expect(result.spec).not.toHaveProperty('promptLayout');
+    expect(result.warnings).toEqual(['promptLayout: must be "plain", "markdown" or "xml", and was dropped']);
+    const base = parsed(doc({ promptLayout: PROMPT_LAYOUTS.xml }));
+    const over = parsed(doc({ promptLayout: PROMPT_LAYOUTS.markdown }));
+    expect(resolveAgentSpec([base, over]).promptLayout).toBe(PROMPT_LAYOUTS.markdown);
+    expect(resolveAgentSpec([base, parsed(doc())]).promptLayout).toBe(PROMPT_LAYOUTS.xml);
+    expect(resolveAgentSpec([]).promptLayout).toBe(PROMPT_LAYOUTS.plain);
+  });
+});
+
+describe('upgradeSpec', () => {
+  it('writes each version 1 part as a version 2 one, which parseSpec then reads', () => {
+    const v1 = {
+      spec: SPEC_V1,
+      id: 'reviewer',
+      prompt: [
+        { id: 'identity', text: 'You are a careful code reviewer.' },
+        { id: 'role', ref: { type: 'file', value: 'role.md' } },
+        { id: 'lane', text: '', ref: { type: 'url', value: 'https://x/lane.md' } },
+      ],
+      tools: { servers: ['git'] },
+    };
+    const before = structuredClone(v1);
+    const { document, upgraded, warnings } = upgradeSpec(v1);
+    expect(upgraded).toBe(true);
+    expect(document).toEqual({
+      spec: AGENT_SPEC,
+      id: 'reviewer',
+      prompt: [part('identity', 'You are a careful code reviewer.'), part('lane', '')],
+      tools: { servers: ['git'] },
+    });
+    expect(warnings).toEqual([
+      'prompt[1]: had only a reference, which version 2 does not read, and was dropped',
+      'prompt[2].ref: is a reference, which version 2 does not read, and was dropped',
+    ]);
+    // The document handed in is left as it was.
+    expect(v1).toEqual(before);
+    expect(parseSpec(document)).toMatchObject({ errors: [], warnings: [] });
+  });
+
+  it('hands back anything that is not a version 1 document untouched', () => {
+    const v2 = doc({ prompt: [part('identity', 'X.')] });
+    for (const document of [v2, { spec: 'cubicecho.agent/3' }, null, 'text', { prompt: [] }]) {
+      const result = upgradeSpec(document);
+      expect(result).toEqual({ document, upgraded: false, warnings: [] });
+      expect(result.document).toBe(document);
+    }
+  });
+
+  it('leaves what it cannot convert to parseSpec to report', () => {
+    const { document } = upgradeSpec({ spec: SPEC_V1, prompt: ['text', { text: 'No id.' }] });
+    expect(document).toEqual({ spec: AGENT_SPEC, prompt: ['text', { role: PROMPT_ROLES.system, content: 'No id.' }] });
+    expect(parseSpec(document).warnings).toEqual([
+      'prompt[0]: must be an object, and was dropped',
+      'prompt[1]: has no name, and merging happens on the name, and was dropped',
+    ]);
   });
 });
 
@@ -489,30 +654,6 @@ describe('findSpecSecrets', () => {
 });
 
 describe('resolveAgentSpec', () => {
-  it('replaces a lower layer text with an upper reference, and the other way round (B39)', () => {
-    const ref = { type: REF_FILE, value: './p.md' };
-    const lower = parsed(
-      doc({
-        prompt: [
-          { id: 'a', text: 'Inline.' },
-          { id: 'b', ref },
-        ],
-      }),
-    );
-    const upper = parsed(
-      doc({
-        prompt: [
-          { id: 'a', ref },
-          { id: 'b', text: 'Now inline.' },
-        ],
-      }),
-    );
-    expect(resolveAgentSpec([lower, upper]).prompt).toEqual([
-      { id: 'a', ref },
-      { id: 'b', text: 'Now inline.' },
-    ]);
-  });
-
   it('is the flat shape the loop already takes', () => {
     const resolved = resolveAgentSpec([parsed(doc({ model: { model: 'm' } }))]);
     // The type-level claim the whole design rests on: no adapter between here and the loop.
@@ -536,7 +677,7 @@ describe('resolveAgentSpec', () => {
         name: 'Reviewer',
         endpoint: { baseUrl: 'http://localhost:8080/v1' },
         model: { model: 'qwen3-coder:30b', temperature: 0 },
-        prompt: [{ id: 'identity', text: 'You are a careful code reviewer.' }],
+        prompt: [part('identity', 'You are a careful code reviewer.')],
         tools: { servers: ['git', 'fs'] },
       }),
     );
@@ -562,82 +703,197 @@ describe('resolveAgentSpec', () => {
     });
   });
 
-  it('stacks different prompt ids and replaces a repeated one', () => {
+  it('stacks different prompt names and overwrites a repeated one in its place', () => {
     const base = parsed(
       doc({
-        prompt: [
-          { id: 'project', text: 'This is the agent-core library.' },
-          { id: 'identity', text: 'You research thoroughly.' },
-        ],
+        prompt: [part('project', 'This is the agent-core library.'), part('identity', 'You research thoroughly.')],
       }),
     );
-    const task = parsed(doc({ prompt: [{ id: 'identity', text: 'You audit licences.' }] }));
-    const step = parsed(doc({ prompt: [{ id: 'lane', text: 'Only the files on the card.' }] }));
+    const task = parsed(doc({ prompt: [part('identity', 'You audit licences.')] }));
+    const step = parsed(doc({ prompt: [part('lane', 'Only the files on the card.')] }));
 
     const resolved = resolveAgentSpec([base, task, step]);
     expect(resolved.systemPrompt).toBe(
       'This is the agent-core library.\n\nYou audit licences.\n\nOnly the files on the card.',
     );
-    expect(resolved.prompt.map((part) => part.id)).toEqual(['project', 'identity', 'lane']);
+    expect(resolved.prompt.map((held) => held.name)).toEqual(['project', 'identity', 'lane']);
   });
 
-  it('lets an empty text delete a part a layer below contributed', () => {
-    const base = parsed(doc({ prompt: [{ id: 'lane', text: 'Only the card.' }] }));
-    const over = parsed(doc({ prompt: [{ id: 'lane', text: '' }] }));
+  it('lets an empty content delete a part a layer below contributed', () => {
+    const base = parsed(doc({ prompt: [part('lane', 'Only the card.')] }));
+    const over = parsed(doc({ prompt: [part('lane', '')] }));
     const resolved = resolveAgentSpec([base, over]);
     expect(resolved.systemPrompt).toBe('');
     expect(resolved.prompt).toEqual([]);
   });
 
-  it('deletes a referenced part whole, so a host resolving refs cannot bring it back', () => {
-    const base = parsed(
-      doc({
-        prompt: [
-          { id: 'role', ref: { type: REF_FILE, value: 'role.md' } },
-          { id: 'identity', text: 'You are X.' },
-        ],
-      }),
-    );
-    const over = parsed(doc({ prompt: [{ id: 'role', text: '' }] }));
-    expect(resolveAgentSpec([base, over]).prompt).toEqual([{ id: 'identity', text: 'You are X.' }]);
-    // A layer above the deletion starts the part afresh, in the place the id first had.
-    const back = parsed(doc({ prompt: [{ id: 'role', ref: { type: REF_URL, value: 'https://x/role.md' } }] }));
-    expect(resolveAgentSpec([base, over, back]).prompt).toEqual([
-      { id: 'role', ref: { type: REF_URL, value: 'https://x/role.md' } },
-      { id: 'identity', text: 'You are X.' },
-    ]);
+  it('starts a deleted part afresh in the place its name first had', () => {
+    const base = parsed(doc({ prompt: [part('role', 'Review.'), part('identity', 'You are X.')] }));
+    const over = parsed(doc({ prompt: [part('role', '')] }));
+    const back = parsed(doc({ prompt: [part('role', 'Audit.')] }));
+    expect(resolveAgentSpec([base, over, back]).prompt.map((held) => held.content)).toEqual(['Audit.', 'You are X.']);
   });
 
-  it('validates a prompt reference without ever resolving it', () => {
-    const spec = parsed(doc({ prompt: [{ id: 'identity', ref: { type: PartType.File, value: './p.md' } }] }));
-    const resolved = resolveAgentSpec([spec]);
-    expect(resolved.prompt[0]?.ref).toEqual({ type: PartType.File, value: './p.md' });
-    // Nothing was read, so it contributes no text — the host resolves it and re-resolves.
-    expect(resolved.systemPrompt).toBe('');
-    expect(parseSpec(doc({ prompt: [{ id: 'i', ref: { type: 'http', value: 'x' } }] })).warnings).toEqual([
-      'prompt[0].ref: must be { type: "file" | "url", value }, and was dropped',
-      'prompt[0]: has neither text nor a reference, and was dropped',
-    ]);
-  });
+  describe('prompt modes', () => {
+    /** A resolved part as the agent's, as the resolver stacks one. */
+    const agentPart = (name: string, content: string, extra: Record<string, unknown> = {}) => ({
+      ...part(name, content),
+      owner: PART_OWNERS.agent,
+      ...extra,
+    });
 
-  it('keeps the text of a prompt part that also has a reference, and drops the reference', () => {
-    const ref = { type: REF_FILE, value: './p.md' };
-    const result = parseSpec(
-      doc({
-        prompt: [
-          { id: 'identity', text: 'You are X.', ref },
-          { id: 'role', text: '', ref },
-          { id: 'lane', text: 'Review.', ref: { type: 'http', value: 'x' } },
-        ],
-      }),
-    );
-    expect(result.spec?.prompt).toEqual([
-      { id: 'identity', text: 'You are X.' },
-      { id: 'role', text: '' },
-      { id: 'lane', text: 'Review.' },
-    ]);
-    expect(result.warnings).toHaveLength(3);
-    expect(result.warnings.every((warning) => /^prompt\[\d\]\.ref: .*text/.test(warning))).toBe(true);
+    it("resolves the prompt spec's three layers as its section 2 shows", () => {
+      const settings = parsed(
+        doc({
+          prompt: [part('identity', 'You are a helpful assistant.'), part('format', 'Answer in full sentences.')],
+        }),
+      );
+      const agent = parsed(
+        doc({
+          prompt: [
+            part('identity', 'You are Task Reviewer. You decide whether work is actually done.'),
+            part('rules', 'Judge the work itself, not reports about it.'),
+          ],
+        }),
+      );
+      const task = parsed(
+        doc({
+          prompt: [
+            part('identity', 'Here you review the output of one workflow step.', { mode: PROMPT_MODES.extend }),
+            part('format', 'Start with PASS or FAIL on its own line.', { mode: PROMPT_MODES.replace }),
+            part('checklist', 'Check the tests, the changelog and the licence.'),
+          ],
+        }),
+      );
+      const resolved = resolveAgentSpec([settings, agent, task]);
+      expect(resolved.prompt).toEqual([
+        agentPart('identity', 'You are Task Reviewer. You decide whether work is actually done.'),
+        agentPart('format', 'Answer in full sentences.'),
+        agentPart('rules', 'Judge the work itself, not reports about it.'),
+        agentPart('identity_2', 'Here you review the output of one workflow step.', {
+          mark: { mode: PROMPT_MODES.extend, target: 'identity' },
+        }),
+        agentPart('format_2', 'Start with PASS or FAIL on its own line.', {
+          mark: { mode: PROMPT_MODES.replace, target: 'format' },
+        }),
+        agentPart('checklist', 'Check the tests, the changelog and the licence.'),
+      ]);
+      // The plain layout writes a replace as an overwrite, in the replaced part's place.
+      expect(resolved.systemPrompt).toBe(
+        [
+          'You are Task Reviewer. You decide whether work is actually done.',
+          'Start with PASS or FAIL on its own line.',
+          'Judge the work itself, not reports about it.',
+          'Here you review the output of one workflow step.',
+          'Check the tests, the changelog and the licence.',
+        ].join('\n\n'),
+      );
+    });
+
+    it('keeps an extension attached when its target is overwritten, and deletes it with the target', () => {
+      const base = parsed(doc({ prompt: [part('identity', 'You are X.'), part('rules', 'Be careful.')] }));
+      const extend = parsed(doc({ prompt: [part('identity', 'Here, review.', { mode: PROMPT_MODES.extend })] }));
+      const overwrite = parsed(doc({ prompt: [part('identity', 'You are Y.')] }));
+      const extendAgain = parsed(doc({ prompt: [part('identity_2', 'And audit.', { mode: PROMPT_MODES.extend })] }));
+      const remove = parsed(doc({ prompt: [part('identity', '')] }));
+
+      expect(resolveAgentSpec([base, extend, overwrite]).prompt).toEqual([
+        agentPart('identity', 'You are Y.'),
+        agentPart('rules', 'Be careful.'),
+        agentPart('identity_2', 'Here, review.', { mark: { mode: PROMPT_MODES.extend, target: 'identity' } }),
+      ]);
+      // A part marked against `identity_2` goes with it, and it with `identity`.
+      const chained = resolveAgentSpec([base, extend, extendAgain]);
+      expect(chained.prompt.map((held) => held.name)).toEqual(['identity', 'rules', 'identity_2', 'identity_2_2']);
+      expect(resolveAgentSpec([base, extend, extendAgain, remove]).prompt).toEqual([agentPart('rules', 'Be careful.')]);
+    });
+
+    it('lets a later layer overwrite or delete an added part by its own name', () => {
+      const base = parsed(doc({ prompt: [part('identity', 'You are X.')] }));
+      const extend = parsed(doc({ prompt: [part('identity', 'Here, review.', { mode: PROMPT_MODES.extend })] }));
+      const overwrite = parsed(doc({ prompt: [part('identity_2', 'Here, audit.')] }));
+      const remove = parsed(doc({ prompt: [part('identity_2', '')] }));
+      expect(resolveAgentSpec([base, extend, overwrite]).prompt).toEqual([
+        agentPart('identity', 'You are X.'),
+        agentPart('identity_2', 'Here, audit.', { mark: { mode: PROMPT_MODES.extend, target: 'identity' } }),
+      ]);
+      expect(resolveAgentSpec([base, extend, remove]).prompt).toEqual([agentPart('identity', 'You are X.')]);
+    });
+
+    it('numbers an added part with the first number no name has taken, a deleted one included', () => {
+      const base = parsed(doc({ prompt: [part('identity', 'You are X.'), part('identity_2', 'Mine.')] }));
+      const extend = parsed(
+        doc({
+          prompt: [
+            part('identity', 'One.', { mode: PROMPT_MODES.extend }),
+            part('identity', 'Two.', { mode: PROMPT_MODES.replace }),
+          ],
+        }),
+      );
+      expect(resolveAgentSpec([base, extend]).prompt.map((held) => held.name)).toEqual([
+        'identity',
+        'identity_2',
+        'identity_3',
+        'identity_4',
+      ]);
+      const removeMine = parsed(doc({ prompt: [part('identity_2', '')] }));
+      expect(resolveAgentSpec([base, removeMine, extend]).prompt.map((held) => held.name)).toEqual([
+        'identity',
+        'identity_3',
+        'identity_4',
+      ]);
+    });
+
+    it('adds a part with a mode as an ordinary one where no layer below has its name', () => {
+      const base = parsed(doc({ prompt: [part('identity', 'You are X.')] }));
+      const over = parsed(doc({ prompt: [part('format', 'PASS or FAIL.', { mode: PROMPT_MODES.replace })] }));
+      expect(resolveAgentSpec([base, over]).prompt).toEqual([
+        agentPart('identity', 'You are X.'),
+        agentPart('format', 'PASS or FAIL.'),
+      ]);
+      // So does one whose name was deleted below it.
+      const remove = parsed(doc({ prompt: [part('identity', '')] }));
+      const extend = parsed(doc({ prompt: [part('identity', 'You are Y.', { mode: PROMPT_MODES.extend })] }));
+      expect(resolveAgentSpec([base, remove, extend]).prompt).toEqual([agentPart('identity', 'You are Y.')]);
+    });
+
+    it('carries the modes an app may use, an overwrite without them keeping the ones below', () => {
+      const modes = [PROMPT_MODES.extend, PROMPT_MODES.replace];
+      const base = parsed(doc({ prompt: [part('format', 'Prose.', { allowedModes: modes })] }));
+      const overwrite = parsed(doc({ prompt: [part('format', 'PASS or FAIL.')] }));
+      const lock = parsed(doc({ prompt: [part('format', 'PASS or FAIL.', { allowedModes: [] })] }));
+      expect(resolveAgentSpec([base, overwrite]).prompt).toEqual([
+        agentPart('format', 'PASS or FAIL.', { allowedModes: modes }),
+      ]);
+      expect(resolveAgentSpec([base, lock]).prompt).toEqual([
+        agentPart('format', 'PASS or FAIL.', { allowedModes: [] }),
+      ]);
+      // An added part's modes are its own, not its target's.
+      const extend = parsed(doc({ prompt: [part('format', 'In English.', { mode: PROMPT_MODES.extend })] }));
+      expect(resolveAgentSpec([base, extend]).prompt[1]).not.toHaveProperty('allowedModes');
+    });
+
+    it('never moves a part: what a layer below wrote keeps its order, and what is added follows it', () => {
+      const base = parsed(doc({ prompt: ['a', 'b', 'c', 'd', 'e'].map((name) => part(name, `${name}.`)) }));
+      const layers = [
+        parsed(doc({ prompt: [part('d', 'D.'), part('b', 'B.', { mode: PROMPT_MODES.extend }), part('z', 'Z.')] })),
+        parsed(doc({ prompt: [part('c', ''), part('a', 'A.', { mode: PROMPT_MODES.replace }), part('y', 'Y.')] })),
+        parsed(doc({ prompt: [part('e', 'E.'), part('c', 'C again.'), part('b_2', 'B, later.')] })),
+      ];
+      const names = resolveAgentSpec([base, ...layers]).prompt.map((held) => held.name);
+      // `c` was deleted and named again, so it is back in the place it first had.
+      expect(names).toEqual(['a', 'b', 'c', 'd', 'e', 'b_2', 'z', 'a_2', 'y']);
+    });
+
+    it('writes exactly the joined texts where no part uses a mode', () => {
+      const texts = ['  This is the agent-core library.  ', 'You are a reviewer.\n', '', 'Only the card.'];
+      const spec = parsed(doc({ prompt: texts.map((content, index) => part(`p${index}`, content || ' ')) }));
+      const joined = texts
+        .map((text) => text.trim())
+        .filter(Boolean)
+        .join('\n\n');
+      expect(resolveAgentSpec([spec]).systemPrompt).toBe(joined);
+    });
   });
 
   it('replaces a server list whole rather than unioning it', () => {
@@ -817,5 +1073,48 @@ describe('resolveAgentSpec', () => {
     expect(resolved.requestTimeoutSeconds).toBeUndefined();
     expect(resolved.servers).toBeUndefined();
     expect(resolved.name).toBe('');
+  });
+});
+
+describe('parseAppParts', () => {
+  it("reads a request's parts as a document's, in the order sent", () => {
+    const prompt = [
+      part('identity', 'Here you review one workflow step.', { mode: PROMPT_MODES.extend }),
+      { role: PROMPT_ROLES.developer, name: 'lane', content: 'This is the Review lane.' },
+    ];
+    expect(parseAppParts(prompt)).toEqual({ parts: prompt, warnings: [] });
+    expect(parseAppParts(undefined)).toEqual({ parts: [], warnings: [] });
+    expect(parseAppParts(null)).toEqual({ parts: [], warnings: [] });
+  });
+
+  it('drops what it cannot use, reading a missing role as system, and never refuses', () => {
+    const result = parseAppParts([
+      { name: 'lane', content: 'Review.' },
+      part('format', 'JSON.', { mode: 'append' }),
+      part('rules', 'Be quick.', { allowedModes: [PROMPT_MODES.replace] }),
+      part('', 'No name.'),
+      { role: PROMPT_ROLES.system, name: 'project' },
+      7,
+    ]);
+    expect(result.parts).toEqual([part('lane', 'Review.'), part('format', 'JSON.'), part('rules', 'Be quick.')]);
+    expect(result.warnings).toEqual([
+      'prompt[0].role: is missing, and was read as "system"',
+      'prompt[1].mode: must be "extend" or "replace", and was dropped',
+      "prompt[2].allowedModes: is the agent's to set, and was dropped",
+      'prompt[3]: has no name, and merging happens on the name, and was dropped',
+      'prompt[4]: has no content, and was dropped',
+      'prompt[5]: must be an object, and was dropped',
+    ]);
+    expect(parseAppParts({ identity: 'x' })).toEqual({
+      parts: [],
+      warnings: ['prompt: must be an array, and was dropped'],
+    });
+  });
+
+  it("leaves the app's names to stacking, which prefixes them", () => {
+    // `app_lane` is refused in a document; from an app it is only a name, which becomes `app_app_lane`.
+    const { parts, warnings } = parseAppParts([part('app_lane', 'Review.'), part('system', 'Today.')]);
+    expect(warnings).toEqual([]);
+    expect(parts.map((held) => held.name)).toEqual(['app_lane', 'system']);
   });
 });

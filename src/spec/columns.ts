@@ -1,4 +1,5 @@
 import { isAbsent, isRecord } from '../core/guards.ts';
+import { PROMPT_ROLES } from './parts.ts';
 import {
   AGENT_SPEC,
   type AgentSpec,
@@ -30,8 +31,8 @@ import {
  * typecheck.
  *
  * @remarks
- * `prompt.<id>` is the text of the prompt part with that id, since a row holds a prompt as one
- * string and a spec holds it as named layers. A task name is everything between `tasks.` and the
+ * `prompt.<name>` is the content of the prompt part with that name, since a row holds a prompt as
+ * one string and a spec holds it as named parts. A task name is everything between `tasks.` and the
  * next dot, so a task whose name has a dot in it cannot be addressed — nor can an extension's
  * reverse-domain key, which is what `ExtensionPath` is for.
  */
@@ -42,6 +43,7 @@ export type SpecPath =
   | `endpoint.${keyof EndpointSpec}`
   | `model.${keyof ModelSpec}`
   | `prompt.${string}`
+  | 'promptLayout'
   | `tools.${keyof ToolsSpec}`
   | `retry.${keyof RetrySpec}`
   | `tasks.${string}.endpoint.${keyof EndpointSpec}`
@@ -62,6 +64,7 @@ export type SpecSection =
   | 'endpoint'
   | 'model'
   | 'prompt'
+  | 'promptLayout'
   | 'tools'
   | 'retry'
   | 'tasks'
@@ -171,7 +174,8 @@ export interface SpecColumnMapping<Row> {
    * @remarks
    * A field this format names is reported at its own path, a section with nothing mapped in it
    * whole beneath that: an `extraBody` no column takes is one entry, not one per key. A prompt
-   * part is a column's when its id is, and its `ref` is reported, since a column holds a text.
+   * part is a column's when its name is, and since a column holds only the content, a `mode`, an
+   * `allowedModes` or a role other than `system` is reported.
    */
   dropped(spec: AgentSpec): SpecDrop<Row>[];
 }
@@ -191,7 +195,7 @@ interface Entry<Row> {
  */
 const STRUCTURAL = ['endpoint', 'model', 'tools', 'retry', 'tasks', 'extensions'];
 
-/** The section whose entries are named layers of text, addressed by `prompt.<id>`. */
+/** The section whose entries are named parts of text, addressed by `prompt.<name>`. */
 const PROMPT = 'prompt';
 
 /** The section whose entries are hooks, which `dropped` reports one by one. */
@@ -204,8 +208,8 @@ const TOKEN = 'spec';
  * A path as segments.
  *
  * @param path - A dotted path or an extension's segments.
- * @returns The segments: a prompt id is one segment whatever it holds, and a task name the text up
- * to the next dot.
+ * @returns The segments: a prompt part's name is one segment whatever it holds, and a task name the
+ * text up to the next dot.
  */
 function segmentsOf(path: SpecPath | ExtensionPath | SpecSection | `tasks.${string}`): readonly string[] {
   if (typeof path !== 'string') {
@@ -241,12 +245,12 @@ const samePath = (a: readonly string[], b: readonly string[]) => a.length === b.
  * The value at a path in a layer.
  *
  * @param layer - The layer.
- * @param segments - Where to look. `['prompt', id]` reads that part's text.
+ * @param segments - Where to look. `['prompt', name]` reads that part's content.
  * @returns What is there, or `undefined`.
  */
 function read(layer: AgentSpec, segments: readonly string[]): unknown {
   if (segments[0] === PROMPT) {
-    return layer.prompt?.find((part) => part.id === segments[1])?.text;
+    return layer.prompt?.find((part) => part.name === segments[1])?.content;
   }
   let held: unknown = layer;
   for (const segment of segments) {
@@ -262,13 +266,13 @@ function read(layer: AgentSpec, segments: readonly string[]): unknown {
  * Puts a value at a path in a layer being built, making the sections on the way.
  *
  * @param layer - The layer, as a plain object.
- * @param segments - Where it goes. `['prompt', id]` appends a part.
+ * @param segments - Where it goes. `['prompt', name]` appends a `system` part.
  * @param value - What goes there.
  */
 function write(layer: Record<string, unknown>, segments: readonly string[], value: unknown) {
   if (segments[0] === PROMPT) {
     const parts = Array.isArray(layer.prompt) ? layer.prompt : [];
-    layer.prompt = [...parts, { id: segments[1], text: value }];
+    layer.prompt = [...parts, { role: PROMPT_ROLES.system, name: segments[1], content: value }];
     return;
   }
   let section = layer;
@@ -409,26 +413,30 @@ export function defineSpecColumns<Row>(
       };
 
       /**
-       * Reports every part of a prompt no column takes, and every reference one does.
+       * Reports every part of a prompt no column takes, and what a column cannot hold of one it does.
        *
        * @param parts - The layer's prompt.
        */
       const walkPrompt = (parts: NonNullable<AgentSpec['prompt']>) => {
         for (const [index, part] of parts.entries()) {
-          const path = [PROMPT, part.id];
+          const path = [PROMPT, part.name];
           if (isHandled(path)) {
             continue;
           }
+          const at = `${PROMPT}[${index}]`;
           const entry = columnAt(path);
           if (entry === undefined) {
-            drops.push({ path: `${PROMPT}[${index}]`, value: part });
+            drops.push({ path: at, value: part });
             continue;
           }
-          if (isAbsent(part.text) === false) {
-            offer(entry, `${PROMPT}[${index}].text`, part.text);
-          }
-          if (part.ref) {
-            drops.push({ path: `${PROMPT}[${index}].ref`, value: part.ref });
+          offer(entry, `${at}.content`, part.content);
+          // `toLayer` writes a part as its name and content alone, so these would not come back.
+          const isSystem = part.role === PROMPT_ROLES.system;
+          const unheld = { role: isSystem ? undefined : part.role, mode: part.mode, allowedModes: part.allowedModes };
+          for (const [field, value] of Object.entries(unheld)) {
+            if (isAbsent(value) === false) {
+              drops.push({ path: `${at}.${field}`, value });
+            }
           }
         }
       };

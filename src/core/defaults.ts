@@ -463,9 +463,9 @@ export const EVENT_BUS_DEFAULTS: Readonly<EventBusSettings> = Object.freeze({
  * `resolveAgentSpec` resolves it.
  *
  * @remarks
- * Not sentinels, and not invented: `toolDiscovery`, `maxRetries` and `contextLength` are the
- * "absent everywhere" column of the document's own table, and `temperature` and
- * `maxToolIterations` are what all three consumers store as their defaults. A field left out here
+ * Not sentinels, and not invented: `toolDiscovery`, `maxRetries`, `contextLength` and
+ * `promptLayout` are the "absent everywhere" column of the document's own table, and `temperature`
+ * and `maxToolIterations` are what all three consumers store as their defaults. A field left out here
  * is left out of the resolved object too, which is how `requestTimeoutSeconds` keeps meaning "no
  * opinion".
  */
@@ -485,6 +485,11 @@ export interface AgentSettings {
   maxToolIterations: number;
   /** Re-sends of a request lost before the model produced anything. Zero is none. */
   maxRetries: number;
+  /**
+   * How the prompt parts are written for the model: one of `PROMPT_LAYOUTS`, spelled out here
+   * because this module imports nothing.
+   */
+  promptLayout: 'plain' | 'markdown' | 'xml';
 }
 
 /** What `resolveAgentSpec` gives a field no layer set. */
@@ -495,4 +500,5 @@ export const AGENT_DEFAULTS: Readonly<AgentSettings> = Object.freeze({
   toolDiscovery: 'eager',
   maxToolIterations: 20,
   maxRetries: 0,
+  promptLayout: 'plain',
 });
