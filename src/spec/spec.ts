@@ -14,7 +14,7 @@ import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
  *
  * The apps on this package each spelled "an agent" differently, to the point that `maxTokens: 0`
  * meant three different things; this is the shape they can all write and read, argued out in
- * `docs/agent-spec.md`. Nothing outside `src/spec/` imports this module, and it imports nothing that
+ * `docs/agent-spec-v1.md`. Nothing outside `src/spec/` imports this module, and it imports nothing that
  * needs Node, so the loop has no opinion on where an agent comes from and an app can validate a
  * pasted document in a browser.
  */
@@ -967,7 +967,7 @@ const KNOWN = new Set([
  * that is not a string or not understood — and anything else drops the field with a warning, an
  * out-of-range value dropped rather than clamped. A foreign version is refused where
  * `importCapabilities` shrugs, because an agent of the wrong version is not the agent its author
- * described (`docs/agent-spec.md`).
+ * described (`docs/agent-spec-v1.md`).
  */
 export function parseSpec(document: unknown, options: ParseSpecOptions = {}): ParsedSpec {
   const report = new Report();

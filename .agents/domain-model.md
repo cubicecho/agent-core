@@ -362,9 +362,11 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Token estimate:** a rough count, characters over a calibrated ratio (four until learned).
   Owner: `estimateTokens`, `requestTokens` (`src/wire/tokens.ts`), `charsPerTokenFor`, `calibrate`;
   a count is printed by `formatTokens`.
-- **Untrusted fence:** a wrapper marking text as data, not instructions; hooks and server
-  instructions fence what nobody vouched for with it. Owner: `untrusted`, `UNTRUSTED_PREFACE`
-  (`src/wire/text.ts`).
+- **Untrusted fence:** a wrapper marking text as data, not instructions, whose own tags are
+  escaped inside it so the text cannot close it. Server instructions are fenced with it, and an
+  app fences what nobody vouched for (a fetched page, a tool result) with it. Hook context is not:
+  it has `<context>` blocks of its own, which escape nothing (B41). Owner: `untrusted`,
+  `UNTRUSTED_PREFACE` (`src/wire/text.ts`).
 
 ### Side tasks
 
@@ -602,8 +604,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Per-fetch cache:** a cache kept once for the global fetch and once per app function, which can
   be walked while the function is held. Owner: `perFetch`.
 - **Merge rules:** how layers combine: scalars by last layer, `extraBody` by key, prompt parts and
-  hooks by id, tasks field by field, server scope whole. Owner: `mergeLayers`, `mergeModel`,
-  `mergeById`, `resolveTasks`.
+  hooks by id, tasks field by field, server scope whole. A prompt part's text or reference
+  replaces the one below it, since a part has one or the other. Owner: `mergeLayers`,
+  `mergeModel`, `mergeById`, `overPart`, `resolveTasks`.
 - **Report:** the errors and warnings a parse collects. Owner: `Report` (`src/spec/spec.ts`).
 
 ## Explain test
