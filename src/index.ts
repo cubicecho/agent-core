@@ -265,6 +265,22 @@ export {
   type SpecSection,
 } from './spec/columns.ts';
 export {
+  APP_PART_PREFIX,
+  APP_SYSTEM_PART,
+  PART_OWNERS,
+  type PartOwner,
+  PROMPT_LAYOUTS,
+  PROMPT_MODES,
+  PROMPT_ROLES,
+  type PromptLayout,
+  type PromptMode,
+  type PromptRole,
+  STACK_RULES,
+  type StackedPart,
+  type StackRule,
+  type StackWarning,
+} from './spec/parts.ts';
+export {
   AGENT_SPEC,
   AGENT_SPEC_VERSION,
   AGENT_TASKS,

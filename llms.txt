@@ -341,6 +341,25 @@ An app's stored agent, read as a spec layer and written back: one table of colum
 - `SpecPath` (type) — Where in a spec a column lives, as a dotted path.
 - `SpecSection` (type) — The top-level keys of a spec, for naming a whole section an app reads by hand.
 
+### parts
+
+The words an agent's prompt parts are described in: the modes a part changes another by, the layouts parts are written in, who wrote a part, and the shape stacking leaves parts in.
+
+- `APP_PART_PREFIX` — What stacking puts in front of every name an app sends: `lane` becomes `app_lane`.
+- `APP_SYSTEM_PART` — The part a request's leading system messages become, after the app's other parts.
+- `PART_OWNERS` — Who wrote a part: the agent's author, or the app using the agent.
+- `PartOwner` (type) — One of `PART_OWNERS`.
+- `PROMPT_LAYOUTS` — How the parts are written into the text the model reads.
+- `PROMPT_MODES` — How a part changes the part with its name in a layer below: adds to it, or takes its place.
+- `PROMPT_ROLES` — The roles a part may have, as a chat message's.
+- `PromptLayout` (type) — One of `PROMPT_LAYOUTS`.
+- `PromptMode` (type) — One of `PROMPT_MODES`.
+- `PromptRole` (type) — One of `PROMPT_ROLES`.
+- `STACK_RULES` — Why stacking dropped an app's part.
+- `StackedPart` (type) — A part as stacking leaves it, ready for a layout to write.
+- `StackRule` (type) — One of `STACK_RULES`.
+- `StackWarning` (type) — A part stacking dropped, and why: what a reply's `agent_core.warnings` carries.
+
 ### spec
 
 A JSON document that defines an agent, and the rules for reading one.
