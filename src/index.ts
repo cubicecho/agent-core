@@ -265,6 +265,22 @@ export {
   type SpecSection,
 } from './spec/columns.ts';
 export {
+  LAYOUT_HEADINGS,
+  LAYOUT_RULES,
+  type LayoutOptions,
+  type LayoutRule,
+  type LayoutWarning,
+  type LoopSection,
+  loopSection,
+  PRECEDENCE_TEXT,
+  partHeadings,
+  partTags,
+  type SectionLayout,
+  type WrittenNames,
+  type WrittenParts,
+  writeParts,
+} from './spec/layout.ts';
+export {
   APP_PART_PREFIX,
   APP_SYSTEM_PART,
   PART_OWNERS,

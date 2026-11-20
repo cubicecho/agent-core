@@ -1,6 +1,9 @@
 import type OpenAI from 'openai';
 import { TOOL_CALL_DEFAULTS, TOOL_DISCOVERY_DEFAULTS } from '../core/defaults.ts';
 import { byCodeUnit, isRecord } from '../core/guards.ts';
+import { type LayoutOptions, loopSection } from '../spec/layout.ts';
+import { PROMPT_LAYOUTS, type PromptLayout } from '../spec/parts.ts';
+import { fence } from '../wire/text.ts';
 import { FUNCTION_TOOL, SchemaType } from '../wire/wire.ts';
 import type { CatalogServer } from './catalog.ts';
 
@@ -95,12 +98,38 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
     .join('\n');
 }
 
+/** What the on-demand catalogue tells the model about loading, above the listing. */
+const CATALOG_PREAMBLE = [
+  'These tools exist but are not loaded. Call `load_tools` with the names you need, then call',
+  'them on the step after. Names are descriptive; load a tool to see its parameters. A tool',
+  'already in your tool list is loaded — call it directly, do not load it again. Do not load',
+  'tools the task does not need, and do not mention this mechanism in your answer.',
+].join('\n');
+
+/** What the proxied catalogue tells the model about loading and `call_tool`, above the listing. */
+const PROXY_CATALOG_PREAMBLE = [
+  'These tools exist. Call `load_tools` with the names you need to get their definitions, then',
+  'run them with `call_tool`. Names are descriptive; load a tool to see its parameters. A tool',
+  'whose definition is already in this conversation does not need loading again. Do not load',
+  'tools the task does not need, and do not mention this mechanism in your answer.',
+].join('\n');
+
+/** How each layout writes the catalogue's preamble and listing as one section. */
+const CATALOG_BLOCKS: Readonly<Record<PromptLayout, (preamble: string, list: string) => string>> = Object.freeze({
+  plain: (preamble: string, list: string) => ['# Tool catalogue', '', preamble, '', list].join('\n'),
+  markdown: (preamble: string, list: string) =>
+    loopSection(PROMPT_LAYOUTS.markdown, 'toolCatalogue', `${preamble}\n\n${fence(list)}`),
+  xml: (preamble: string, list: string) =>
+    loopSection(PROMPT_LAYOUTS.xml, 'toolCatalogue', `${preamble}\n\n${fence(list)}`),
+});
+
 /**
  * The catalogue block appended to the system prompt. Names only — descriptions arrive on load.
  *
  * @param catalog - The connected servers. A catalogue with no tools in it produces an empty string.
  * @param [loaded] - Names to mark `(loaded)`, for a caller that rebuilds its prompt per load and does
  * not mind the cache. Absent marks nothing.
+ * @param [options] - The layout the block is written in.
  * @returns The heading, the instructions and the listing, with no blank line before or after — the
  * caller separates it from its own prompt. Empty where there is nothing to list.
  *
@@ -111,23 +140,18 @@ export function catalogList(catalog: CatalogServer[], loaded?: ReadonlySet<strin
  * hoisted into a section of their own, since a model reads either as the tool vanishing and loads
  * it again or picks a sibling.
  */
-export function catalogPrompt(catalog: CatalogServer[], loaded?: ReadonlySet<string>): string {
+export function catalogPrompt(
+  catalog: CatalogServer[],
+  loaded?: ReadonlySet<string>,
+  { layout = PROMPT_LAYOUTS.plain }: LayoutOptions = {},
+): string {
   const list = catalogList(catalog, loaded);
   // Not `catalog.length`: a catalogue of nothing but empty servers has no names to offer, and
-  // the preamble below would then explain a mechanism against an empty list.
+  // the preamble would then explain a mechanism against an empty list.
   if (!list) {
     return '';
   }
-  return [
-    '# Tool catalogue',
-    '',
-    'These tools exist but are not loaded. Call `load_tools` with the names you need, then call',
-    'them on the step after. Names are descriptive; load a tool to see its parameters. A tool',
-    'already in your tool list is loaded — call it directly, do not load it again. Do not load',
-    'tools the task does not need, and do not mention this mechanism in your answer.',
-    '',
-    list,
-  ].join('\n');
+  return CATALOG_BLOCKS[layout](CATALOG_PREAMBLE, list);
 }
 
 /**
@@ -503,6 +527,7 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
  * for a tool list.
  *
  * @param catalog - The connected servers. A catalogue with no tools in it produces an empty string.
+ * @param [options] - The layout the block is written in.
  * @returns The heading, the instructions and the listing, with no blank line before or after.
  *
  * @remarks
@@ -510,21 +535,15 @@ export const PROXY_TOOLS: readonly OpenAI.ChatCompletionTool[] = deepFreeze([
  * a model told so looks for it there and calls it natively. The listing itself is the same, and
  * like that one it is never marked, so the head of the prompt is one text for the whole session.
  */
-export function proxyCatalogPrompt(catalog: CatalogServer[]): string {
+export function proxyCatalogPrompt(
+  catalog: CatalogServer[],
+  { layout = PROMPT_LAYOUTS.plain }: LayoutOptions = {},
+): string {
   const list = catalogList(catalog);
   if (!list) {
     return '';
   }
-  return [
-    '# Tool catalogue',
-    '',
-    'These tools exist. Call `load_tools` with the names you need to get their definitions, then',
-    'run them with `call_tool`. Names are descriptive; load a tool to see its parameters. A tool',
-    'whose definition is already in this conversation does not need loading again. Do not load',
-    'tools the task does not need, and do not mention this mechanism in your answer.',
-    '',
-    list,
-  ].join('\n');
+  return CATALOG_BLOCKS[layout](PROXY_CATALOG_PREAMBLE, list);
 }
 
 /** How a proxied load result that carries definitions opens, before its count. */

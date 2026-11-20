@@ -341,6 +341,23 @@ An app's stored agent, read as a spec layer and written back: one table of colum
 - `SpecPath` (type) — Where in a spec a column lives, as a dotted path.
 - `SpecSection` (type) — The top-level keys of a spec, for naming a whole section an app reads by hand.
 
+### layout
+
+- `LAYOUT_HEADINGS` — The headings of the loop's own sections in the markdown layout.
+- `LAYOUT_RULES` — Why a layout wrote a part's name differently from how it was given.
+- `LayoutOptions` (type) — What a writer of one of the loop's own sections is told beside its own options: the layout.
+- `LayoutRule` (type) — One of `LAYOUT_RULES`.
+- `LayoutWarning` (type) — A part whose tag or heading is not plainly its name, in the same shape as a `StackWarning`.
+- `LoopSection` (type) — One of the loop's own sections: a key of `LAYOUT_HEADINGS`, and of `LAYOUT_TAGS`.
+- `loopSection` — One of the loop's own sections, in a layout: under its `##` heading, or inside its tag.
+- `PRECEDENCE_TEXT` — The standing sentence the loop writes between the agent's parts and the app's, in each layout's words: the agent's parts win, except where the app replaced one.
+- `partHeadings` — The heading each part is written under in the markdown layout.
+- `partTags` — The tag each part is written as in the XML layout.
+- `SectionLayout` (type) — A layout the model can tell the parts apart in: each part under a heading, or inside a tag.
+- `WrittenNames` (type) — The tags or headings a list of names is written as, in the names' order, and the warnings.
+- `WrittenParts` (type) — The text a layout wrote for some parts, and what it had to change to write them.
+- `writeParts` — Stacked parts as the text of the system prompt, in the markdown or XML layout.
+
 ### parts
 
 The words an agent's prompt parts are described in: the modes a part changes another by, the layouts parts are written in, who wrote a part, and the shape stacking leaves parts in.
