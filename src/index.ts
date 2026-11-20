@@ -229,6 +229,7 @@ export {
   progressChunk,
   progressEvent,
   progressEvents,
+  progressWarnings,
   REMOTE_AGENT_NOTICE,
   type RunProgress,
   withProgress,
@@ -243,6 +244,7 @@ export {
   type Scratchpad,
   type ToolDispatch,
 } from './run/run-calls.ts';
+export { type StackedRequest, stackRequest, writeSystemPrompt } from './run/system-prompt.ts';
 export { resetAll } from './runtime/reset.ts';
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from './runtime/runtime.ts';
 export {
@@ -265,6 +267,38 @@ export {
   type SpecSection,
 } from './spec/columns.ts';
 export {
+  LAYOUT_HEADINGS,
+  LAYOUT_RULES,
+  type LayoutOptions,
+  type LayoutRule,
+  type LayoutWarning,
+  type LoopSection,
+  loopSection,
+  PRECEDENCE_TEXT,
+  partHeadings,
+  partTags,
+  type SectionLayout,
+  type WrittenNames,
+  type WrittenParts,
+  writeParts,
+} from './spec/layout.ts';
+export {
+  APP_PART_PREFIX,
+  APP_SYSTEM_PART,
+  PART_OWNERS,
+  type PartOwner,
+  PROMPT_LAYOUTS,
+  PROMPT_MODES,
+  PROMPT_ROLES,
+  type PromptLayout,
+  type PromptMode,
+  type PromptRole,
+  STACK_RULES,
+  type StackedPart,
+  type StackRule,
+  type StackWarning,
+} from './spec/parts.ts';
+export {
   AGENT_SPEC,
   AGENT_SPEC_VERSION,
   AGENT_TASKS,
@@ -275,12 +309,12 @@ export {
   exportSpec,
   findSpecSecrets,
   type ModelSpec,
+  type ParsedAppParts,
   type ParsedSpec,
   type ParseSpecOptions,
   type PromptPart,
+  parseAppParts,
   parseSpec,
-  REF_FILE,
-  REF_URL,
   type ResolvedAgent,
   type ResolvedTask,
   type RetrySpec,
@@ -292,7 +326,10 @@ export {
   type SpecServer,
   type TaskSpec,
   type ToolsSpec,
+  type UpgradedSpec,
+  upgradeSpec,
 } from './spec/spec.ts';
+export { type AppPart, plainPrompt, type StackedPrompt, stackAppParts } from './spec/stack.ts';
 export type { CatalogServer } from './tools/catalog.ts';
 export { PRESELECTED_NOTICE } from './tools/discovery.ts';
 export { type ServerInstructionsOptions, serverInstructionsPrompt } from './tools/instructions.ts';
@@ -383,7 +420,7 @@ export {
   type TurnUsage,
   type UsageTotals,
 } from './wire/stream.ts';
-export { UNTRUSTED_PREFACE, untrusted } from './wire/text.ts';
+export { fence, LAYOUT_TAGS, type LayoutTag, PROMPT_TAG_PREFIX, UNTRUSTED_PREFACE, untrusted } from './wire/text.ts';
 export {
   ALL_FENCES,
   DEFAULT_FENCES,

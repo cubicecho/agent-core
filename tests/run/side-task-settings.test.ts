@@ -675,7 +675,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     await runAgentLoop({
       config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
-      system: 'be brief',
+      systemPrompt: 'be brief',
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -698,7 +698,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     ];
     await runAgentLoop({
       config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
-      system: 'be brief',
+      systemPrompt: 'be brief',
       messages: stored,
       dispatch: async () => 'done',
       compact: true,

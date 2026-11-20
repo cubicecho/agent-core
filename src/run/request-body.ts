@@ -28,7 +28,7 @@ const SYSTEM_JOIN = '\n\n';
  * @remarks
  * The Qwen3.5 and later templates and Devstral's raise on any `system` message that is not the
  * first, and so does Mistral's v0.3, so an app that keeps its own system message in the transcript
- * beside the loop's `system` option, or a transcript stored with a compaction's summary as a
+ * beside the loop's `systemPrompt` option, or a transcript stored with a compaction's summary as a
  * `system` message the way earlier versions wrote it, would otherwise fail on every request. The
  * merge is the same text on every turn, so the prefix stays stable. A `system` message further
  * down the transcript is the app's and is sent where it is: moving it would change what it is

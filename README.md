@@ -563,12 +563,12 @@ import { runAgentLoop, emit } from "@cubicecho/agent-core";
 
 const { turn, messages, usage, loaded } = await runAgentLoop({
   config,                         // Endpoint & ModelParams & { maxToolIterations, toolDiscovery?, maxRetries?, loadingTimeoutSeconds?, contextLength? }
-  system,                         // sent as the first message; on-demand and proxied modes append the catalogue
+  systemPrompt,                   // sent as the first message; on-demand and proxied modes append the catalogue
   messages: history,              // ending in the question; not written to
   tools,                          // every tool the run may reach
   catalog,                        // the same, name-only, for on-demand and proxied loading
   hostTools,                      // the host's own, declared in every mode and never catalogued
-  serverInstructions: true,       // the catalogue's `instructions` after `system`; off by default
+  serverInstructions: true,       // the catalogue's `instructions` after `systemPrompt`; off by default
   preselected,                    // from `preselect`, if a small model chose
   dispatch: ({ name, args }, signal) => pool.call(name, args, signal),
   hooks: { run, context: { session: { id } } },
@@ -1050,7 +1050,7 @@ is next — grows there without `dispatch` changing again.
 
 An MCP server may send `instructions` when it connects — "resolve the library id before querying
 docs" — and agent-mcp-pool puts them on each `catalog()` entry. `serverInstructions: true` writes
-them into the system prompt after `system` and before the catalogue, as `serverInstructionsPrompt`
+them into the system prompt after `systemPrompt` and before the catalogue, as `serverInstructionsPrompt`
 builds them: a heading, one sentence saying what the block is, and a section per server that said
 anything, under its label, with the text inside an `untrusted` fence. The text is a third party's,
 in the one place a model most takes literally, so it is named rather than folded into the
@@ -1211,7 +1211,7 @@ the transcript that comes back; `afterExchange` is told the reply without the ex
 it.
 
 That leaves an earlier question's context to the app, because the loop only ever touches the
-current one. A question sent with `<context>` blocks in one exchange and bare in the next is a different
+current one. A question sent with `<hook_context>` blocks in one exchange and bare in the next is a different
 prompt from that message on, and the server's prefix cache is lost behind it — on every exchange. So
 the result hands back what it said, `context` and the `preface` above it, for the app to keep
 beside the question and put back with `withContext` on every later call:
@@ -1371,7 +1371,7 @@ ai-router serves one per agent name — and hands the app's own tools back with
 `tools`, `hostTools`, `dispatch` and `onEvent` as they are, once the config says so:
 
 ```ts
-// `isAgent` from the model entry: ai-router marks its agents `"ai_router": { "kind": "agent" }`.
+// `isAgent` from the model entry: ai-router marks its agents `"agent_core": { "kind": "agent" }`.
 const result = await runAgentLoop({
   config: {
     baseUrl, apiKey, model: "helper", maxToolIterations: 20,
@@ -1398,9 +1398,9 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   the flag comes from the model entry and the options from the app's code, so a refusal would have
   every app branch on it. A session still sends its header, but no llama.cpp slot is probed or
   pinned.
-- **Progress is asked for**, as `ai_router: { progress: true }` laid under the app's own
-  `extraBody.ai_router` (its `task`, `servers`), and an app's `progress: false` turns it off.
-  `ai_router` is `PROGRESS_FIELD`, the default; a server that reads another names it as
+- **Progress is asked for**, as `agent_core: { progress: true }` laid under the app's own
+  `extraBody.agent_core` (such as its `servers`), and an app's `progress: false` turns it off.
+  `agent_core` is `PROGRESS_FIELD`, the default; a server that reads another names it as
   `progressField`, and the loop asks and reads under that instead.
 - **The server says its own turns.** Each progress chunk's event goes to `onEvent` whole, under the
   server's `runId` and `seq` (`'seq' in event` tells one from the loop's), and the loop then says no
@@ -1421,9 +1421,9 @@ result.remoteRunId; // the server's run, for its `GET /runs/<id>`
   progress there are none; an app that wants `X-Run-Id` reads it in its endpoint's `fetch`.
 
 The wire shape is one codec, here, so a server and the loop cannot drift: `progressChunk(event,
-head)` writes an event as a chunk with empty `choices` and `ai_router: { event }`, which a standard
+head)` writes an event as a chunk with empty `choices` and `agent_core: { event }`, which a standard
 client skips as it skips a usage chunk; `withProgress(completion, runId, events)` puts
-`ai_router: { runId, events }` beside the `choices` of an answer that is not streamed; and
+`agent_core: { runId, events }` beside the `choices` of an answer that is not streamed; and
 `progressEvent` and `progressEvents` read them back, dropping an event that is malformed or of a
 kind this version does not know. Each takes the field as its last argument, `PROGRESS_FIELD` where
 it is left out. A server numbering its own events makes each with `stamp`.
@@ -1494,7 +1494,8 @@ returned. As conversation, the system prompt stays the same text across a compac
 cached prefix for it and its tool block still matches; the reply is there because Mistral's v0.3
 template refuses two user messages in a row. A summary stored as a `system` message by an earlier
 version is still read back and continued. `runAgentLoop` also sends an app's leading `system`
-messages as one with its own `system` prompt, a blank line apart. A `system` message further down
+messages as one with its own `system` prompt, a blank line apart; given parts or `agent_core`, it
+writes them as the `app_system` part instead, after its own sections. A `system` message further down
 an app's transcript is sent where the app put it, and is the app's to move.
 
 An exchange that is one question and a long tool loop has no user message to cut at, so there the plan
@@ -1953,8 +1954,8 @@ The seam above says what a *running* agent is. `@cubicecho/agent-core/spec` says
 one is: a versioned JSON document that any app on this package can read, layer and hand to the
 loop. It exists because the applications here spell "an agent" three incompatible ways — `maxTokens: 0`
 means *no ceiling* in one, *inherit* in the next and *a real ceiling of zero* in the third, and an
-empty server list means *no tools* in one and *every tool* in another. `docs/agent-spec-v1.md` argues
-the whole thing out.
+empty server list means *no tools* in one and *every tool* in another. `docs/agent-spec-v2.md` argues
+the whole thing out, and `docs/agent-spec-v1.md` keeps the version before it.
 
 ```ts
 import { parseSpec, resolveAgentSpec } from "@cubicecho/agent-core/spec";
@@ -1963,7 +1964,9 @@ const { spec, errors, warnings } = parseSpec(JSON.parse(text));
 if (!spec) throw new Error(errors.join("\n"));
 
 const config = resolveAgentSpec([settingsSpec, spec]); // weakest layer first
-const result = await runAgentLoop({ config, ... });    // already the shape the loop takes
+// The parts, so the loop writes them in the agent's `promptLayout`; `config.systemPrompt` is the
+// same parts joined as plain text, for an app that wants one string.
+const result = await runAgentLoop({ config, systemPrompt: config.prompt, ... });
 ```
 
 **Absent inherits, and nothing else does.** There is no inherit sentinel at any depth: `0`, `-1`,
@@ -1971,12 +1974,26 @@ const result = await runAgentLoop({ config, ... });    // already the shape the 
 column round-trips through JSON that way. `tools.servers` keeps its tri-state — absent is every
 server the app offers, `[]` is none, a list is exactly those — and layering replaces it whole
 rather than unioning, since a union of "these two" and "none" is "these two", which silently widens
-a scoped agent. `prompt`, `hooks` and `tasks` merge by id, which is one rule expressing two
-behaviours: different ids stack, the same id replaces.
+a scoped agent. `hooks` and `tasks` merge by id, and `prompt` by part name, which is one rule
+expressing two behaviours: different names stack, the same name replaces.
 
-`parseSpec` reports every problem at once and refuses only four things, all of them about the
-document rather than a value: it is not an object, the `spec` token is missing or of another major,
-a `requires` entry this app does not understand, or a container is of the wrong kind. Everything
+**A prompt part is written like a chat message**: `{ role, name, content }`. A part whose name a
+layer below has overwrites it, `content: ""` deletes it, and `mode: "extend"` or `"replace"` adds a
+part of its own instead (`identity_2`), marked as adding to the one it names or taking its place,
+which stays where it was. `promptLayout` writes the parts as `plain` text (the default), under
+`markdown` headings, or in `xml` tags, with every content fenced so it cannot open or close a
+section. An app using an agent it did not write sends its own parts in `extraBody.agent_core.prompt`:
+the loop stacks them on the agent's (`stackAppParts`), each named with `app_` in front, using a mode
+only where the agent's part lists it in `allowedModes`, and dropping the rest with a notice; the
+conversation's leading system messages become `app_system`, written after the loop's own sections.
+To a remote agent, `agent_core` is sent through for the server to stack.
+`docs/agent-prompt-spec-v2.md` is the design.
+
+`parseSpec` reports every problem at once and refuses only five things, all of them about the
+document rather than a value: it is not an object, the `spec` token is missing or of another major
+(`upgradeSpec` turns a version 1 document into version 2), a `requires` entry this app does not
+understand, a container of the wrong kind, or a prompt part named with `app` as its first word,
+which only an app's parts may be. Everything
 else is dropped with a warning — including an out-of-range number, which is **dropped rather than
 clamped**, because a clamp invents a value the author did not write while dropping falls back to one
 somebody did.
@@ -2053,8 +2070,8 @@ holds, which is an app's bottom layer; `null` and `undefined` are absent whateve
 column that stores something other than its field — a switch for a discovery mode — converts with
 `toSpec` and `fromSpec`, and either returning `undefined` says nothing: that is how a marker that
 is a range (a trimmed blank, any negative) is spelled, and how a column refuses a value it cannot
-hold. `prompt.<id>` is one part's text; an extension's reverse-domain key has dots of its own, so
-its path is written as segments.
+hold. `prompt.<name>` is one part's content; an extension's reverse-domain key has dots of its
+own, so its path is written as segments.
 
 `dropped` is the import preview's list: what a document says that `fromLayer` will not keep, in the
 document's order, and never silently. A field with no column is reported at its path, a task or

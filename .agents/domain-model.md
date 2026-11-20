@@ -174,8 +174,9 @@ What the package remembers between exchanges (clients, server refusals, event hi
 
 From a JSON file, or a stored row, to the settings an exchange uses.
 
-- Any input → Rejected (only if it isn't recognisably an agent document) or Accepted (bad fields
-  dropped with warnings)
+- Any input → Rejected (only if it isn't recognisably an agent document, is another version, or
+  names a part with `app` as its first word) or Accepted (bad fields dropped with warnings)
+- Version 1 document → Version 2 document (`upgradeSpec`)
 - Stored settings row → Layer (unchecked)
 - Layers, weakest first → Merged settings → plus the app's key and transport → an exchange's settings
 - Document → Exported copy without tool servers' secrets → checked for any secret that may remain
@@ -215,6 +216,12 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | One `load_tools` call or preselection brings in at most `maxPerLoad` definitions | `expandNames`, `preselection` |
 | Hook context goes on the request, never into the transcript or the system prompt | `withContext` on the request in `runTurns` |
 | Only `sessionStart` and `beforeExchange` hook output can reach the model | `assembleContext` (`INJECT_EVENTS`) |
+| No part's content, server's instructions or hook's text can open or close a section of the prompt | `fence`, in `writeParts`, `untrusted` and `assembleContext` |
+| Prompt parts are written in the order given; a mode adds its part after the parts already there | `resolvePrompt`, `stackAppParts` |
+| An app's part never overwrites or deletes an agent's, and uses a mode only where the agent's part allows it | `stackAppParts` (`APP_PART_PREFIX`, `allowedModes`); `parseSpec` refuses an agent's part named with `app` first |
+| A model that is not an agent never sees `agent_core` | `withoutAgentCore` in `runTurns` |
+| A string `systemPrompt` with no `agent_core` is sent as it always was | `runTurns` (no stacking without parts or `agent_core`) |
+| `app_system` is written after the loop's sections, so the part that changes most costs the cache least | `writeSystemPrompt` |
 | A declaration is believed only where a call in the exchange touched the location; one artifact per location | `answerRecord`, `RunArtifacts` |
 | The ledger indexes into the current transcript | `rebaseLedger`, each turn |
 | A prune boundary only moves forward | `planPrune` |
@@ -362,11 +369,14 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Token estimate:** a rough count, characters over a calibrated ratio (four until learned).
   Owner: `estimateTokens`, `requestTokens` (`src/wire/tokens.ts`), `charsPerTokenFor`, `calibrate`;
   a count is printed by `formatTokens`.
-- **Untrusted fence:** a wrapper marking text as data, not instructions, whose own tags are
-  escaped inside it so the text cannot close it. Server instructions are fenced with it, and an
-  app fences what nobody vouched for (a fetched page, a tool result) with it. Hook context is not:
-  it has `<context>` blocks of its own, which escape nothing (B41). Owner: `untrusted`,
-  `UNTRUSTED_PREFACE` (`src/wire/text.ts`).
+- **Fence:** text made unable to open or close a section of the prompt: the `<` of every tag the
+  layout writes (any `prompt_…` tag, `precedence`, `server_instructions`, `tool_catalogue`,
+  `untrusted`, `hook_context`) escaped inside it. Every part's content, server's instructions and
+  hook's text is fenced. Owner: `fence`, `LAYOUT_TAGS`, `PROMPT_TAG_PREFIX` (`src/wire/text.ts`).
+- **Untrusted fence:** a wrapper marking text as data, not instructions, its text fenced so it
+  cannot close the wrapper. Server instructions are wrapped in it, and an app wraps what nobody
+  vouched for (a fetched page, a tool result) in it. Owner: `untrusted`, `UNTRUSTED_PREFACE`
+  (`src/wire/text.ts`).
 
 ### Side tasks
 
@@ -462,7 +472,8 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Tool order:** sorting the tool array by name so the same set always reads the same to the
   prompt cache. Owner: `orderTools`.
 - **Server instructions:** the guidance an MCP server sends on connect, added to the system
-  prompt, attributed and fenced. Owner: `serverInstructionsPrompt` (`src/tools/instructions.ts`).
+  prompt, attributed and fenced, in the agent's layout. Owner: `serverInstructionsPrompt`
+  (`src/tools/instructions.ts`).
 
 ### Hooks
 
@@ -474,8 +485,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   Owner: `HookRunner` (`src/hooks/hooks.ts`).
 - **Hook outcome:** what one hook did: its text, whether to inject it, its cap, and a veto.
   Owner: `HookOutcome`.
-- **Injected context:** hook text put on the question's request, fenced and capped by a shared
-  budget. Owner: `gather`, `assembleContext`, `withContext`.
+- **Injected context:** hook text put on the question's request as `<hook_context>` blocks,
+  fenced and capped by a shared budget, after a preface. Owner: `gather`, `assembleContext`,
+  `withContext`, `HOOK_DEFAULTS.preface`.
 - **Hook note:** one line saying what a hook added, why it failed, or that it vetoed. Owner:
   `HookNote`.
 - **Gather, notify, consult:** firing hooks to collect context, to tell and move on, or to wait
@@ -526,8 +538,9 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   app's tools back as calls. Owner: `RemoteAgentParams`, `remoteAgent: true` (`src/core/config.ts`);
   `asRemoteAgent`, `remoteRun` (`src/run/remote.ts`).
 - **Progress:** the server's own events, carried beside the reply under one body field. Owner:
-  `PROGRESS_FIELD` (`ai_router`), `RemoteAgentParams.progressField`; encoded and read by
-  `progressChunk`, `withProgress`, `progressEvent`, `progressEvents`.
+  `PROGRESS_FIELD` (`agent_core`), `RemoteAgentParams.progressField`; encoded and read by
+  `progressChunk`, `withProgress`, `progressEvent`, `progressEvents`. The warnings the server
+  gives about the app's parts travel there too, and are read by `progressWarnings`.
 - **Idempotency key:** one key per turn, sent again on its retries, so a server does not start
   the same work twice. Owner: `IDEMPOTENCY_HEADER`.
 - **Remote run id:** the server's own id for its run. Owner: `AgentLoopResult.remoteRunId`.
@@ -546,8 +559,33 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Resolved agent:** the flat config the layers come to, plus prompt parts, tasks, hooks and
   servers. Owner: `ResolvedAgent`, `AGENT_DEFAULTS`; served on the `./spec` subpath by
   `src/spec/entry.ts`.
-- **Prompt part:** one named piece of system prompt, text or a reference to a file. Owner:
-  `PromptPart`.
+- **Prompt part:** one named piece of system prompt, written like a chat message: a role, a name
+  and its content, and optionally a mode and the modes an app may use on it. Owner: `PromptPart`,
+  `PROMPT_ROLES` (`src/spec/parts.ts`).
+- **Mode:** how a part changes the part with its name in a layer below: `extend` adds a part of
+  its own marked as adding to it, `replace` one marked as taking its place, and the part named
+  stays where it was. With no mode a matching name overwrites. Owner: `PROMPT_MODES`,
+  `resolvePrompt`.
+- **Allowed modes:** the modes an app may use on an agent's part; absent is `extend` only, empty
+  locks it. Owner: `PromptPart.allowedModes`.
+- **Owner (of a part):** who wrote it: the agent's author or the app. Owner: `PART_OWNERS`.
+- **Stacked part:** a part as stacking leaves it, with its owner and its mark, ready for a layout.
+  Owner: `StackedPart`; a resolved agent's `prompt` is a list of them.
+- **App part:** a part an app sends in `agent_core.prompt`, which stacking names with `app_` in
+  front so it can never meet the agent's part of that name. Owner: `AppPart`, `parseAppParts`,
+  `APP_PART_PREFIX`.
+- **app_system:** the part a request's leading system messages become, after the app's other
+  parts. Owner: `APP_SYSTEM_PART`.
+- **Stacking:** putting an app's parts on an agent's: prefixing them, checking each mode against
+  the agent's allowed modes, dropping what breaks them with a warning, then `app_system`. Owner:
+  `stackAppParts`, `StackWarning`, `STACK_RULES` (`src/spec/stack.ts`).
+- **Layout:** how parts become the system prompt's text: `plain` (joined, a replace overwriting),
+  `markdown` (a Title Case heading each) or `xml` (a `prompt_` tag each). Owner: `PROMPT_LAYOUTS`,
+  `plainPrompt`, `writeParts`, `partTags`, `partHeadings`, `LayoutWarning` (`src/spec/layout.ts`).
+- **Precedence:** the fixed section the loop writes between the agent's parts and an app's,
+  saying the agent's words win but where a part replaced one it was allowed to. Owner:
+  `PRECEDENCE_TEXT`, `loopSection`.
+- **Upgrade:** turning a version 1 document into version 2. Owner: `upgradeSpec`.
 - **Agent hook:** a tool call bound to a hook event, which the app runs. Owner: `AgentHook`.
 - **Server scope:** which MCP servers an agent may reach: all, none, or exactly a list. Owner:
   `ToolsSpec.servers`.
@@ -600,13 +638,17 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Proxied shortlist load:** a proxied preselection written as a `load_tools` call the model
   never made. Owner: `loadShortlist`.
 - **Remote stretch:** the per-exchange part of remote-agent mode: progress asked for and
-  forwarded, turn events held back, keys per turn. Owner: `remoteRun`, `SERVER_OWNED`.
+  forwarded, the server's warnings told, turn events held back, keys per turn. Owner: `remoteRun`,
+  `SERVER_OWNED`.
+- **Stacked request:** an app's prompt stacked for a model that is not an agent: `agent_core` taken
+  out of the body, its parts and the leading system messages stacked on the agent's, and written
+  with the loop's sections before `app_system`. Owner: `stackRequest`, `writeSystemPrompt`,
+  `withoutAgentCore` (`src/run/system-prompt.ts`).
 - **Per-fetch cache:** a cache kept once for the global fetch and once per app function, which can
   be walked while the function is held. Owner: `perFetch`.
-- **Merge rules:** how layers combine: scalars by last layer, `extraBody` by key, prompt parts and
-  hooks by id, tasks field by field, server scope whole. A prompt part's text or reference
-  replaces the one below it, since a part has one or the other. Owner: `mergeLayers`,
-  `mergeModel`, `mergeById`, `overPart`, `resolveTasks`.
+- **Merge rules:** how layers combine: scalars by last layer, `extraBody` by key, prompt parts by
+  name and mode, hooks by id, tasks field by field, server scope whole. Owner: `mergeLayers`,
+  `mergeModel`, `mergeById`, `resolvePrompt`, `resolveTasks`.
 - **Report:** the errors and warnings a parse collects. Owner: `Report` (`src/spec/spec.ts`).
 
 ## Explain test

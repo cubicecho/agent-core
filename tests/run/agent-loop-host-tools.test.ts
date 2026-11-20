@@ -88,7 +88,7 @@ describe('hostTools', () => {
     const dispatch = vi.fn(async (_call: ToolCallRequest) => 'yes');
     const result = await runAgentLoop({
       config: onDemand,
-      system: 'sys',
+      systemPrompt: 'sys',
       messages: question,
       tools,
       catalog,

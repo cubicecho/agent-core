@@ -136,26 +136,26 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | T11 | Test [consistency] · low value | Move the test of negotiation over a streamed turn out of a file named for a module that does not exist. | The one-test-per-module layout | — | declined (low value) |
 | B26 | Bug (question) · low value | Decide whether the loop's `userText` and the hooks' `textOf`, which join text and refusals differently, should agree. | One definition of a message's text | M8 | declined (low value) |
 | B27 | Bug · low value (unverified) | Stop formatting a loading wait of 1000 seconds or more as "1.0ks". | A readable notice | — | declined (low value) |
-| M12 | Model change | One fence escapes every tag the prompt uses (`prompt_…`, the loop's sections, `untrusted`, `hook_context`) inside any text it wraps, so no text can close or forge a section. | Hook context and parts in a layout get the fence server instructions already have | — | approved |
-| R50 | Refactor [reuse] | Draw one fence helper out of `untrusted`, taking the tags to escape; `untrusted` writes what it writes now. | M12 | — | open |
-| B41 | Bug | A hook's text containing `</context>` closes its block early, since hook context escapes nothing; fence it. | M12 | R50 | open |
-| B42 | Bug (decided) | Rename the hooks' `<context>` tag, which Open WebUI also uses for retrieved documents, to `<hook_context>`, and have the preface say "the app's hooks". Model-facing text; agent-mcp-pool changes with it. | M12 | B41 | open |
-| M13 | Model change | The loop takes the system prompt as a string, used as it is, or as parts, which it stacks and writes in the agent's layout, in the order given. | The ids survive to where the text is written | — | approved |
-| A15 | API change (breaking) | Rename the loop's `system` option to `systemPrompt`, taking a string or parts. | M13 | — | open |
-| M14 | Model change | `xml` and `markdown` layouts beside today's `plain`: parts in tags with `extends`/`replaces` marks, a fixed `<precedence>` section, the loop's sections in the layout, and the order agent parts, precedence, app parts, loop sections, `app_system`. | The model can tell whose words are whose; system messages stop costing the catalogue's cache | — | approved |
-| M15 | Model change | A part's tag is `prompt_` and its name cleaned to letters, digits, `_` and `-`, case kept, a clash numbered, with a warning when cleaning or a clash changed it. | One rule for every tag | — | approved |
-| M16 | Model change | An app writes one request whatever the model: its parts in `agent_core.prompt`. To an agent the field is sent through; to any other model agent-core takes it out and writes the parts as system messages in the layout. | Local and remote runs read the same text | — | approved |
-| M17 | Model change | Stacking an app's parts on an agent's (`app_` prefix, `allowedModes` check, order, warnings) is `stackAppParts` in the spec module, which ai-router calls instead of its own layers. | One rule, wherever the parts are stacked | — | approved |
-| M18 | Model change | Agent document version 2: parts are `{ role, name, content, mode, allowedModes }`, `ref` goes, `promptLayout` is added, names whose first word is `app` are refused, and the modes `extend` and `replace` add a part of their own. | Parts read like messages everywhere; a layer can add to shared words without restating them | — | approved |
-| A16 | API change (breaking) | Move the agent document to `cubicecho.agent/2` (M18), with a function that upgrades a version 1 document. | M18 | — | open |
-| F1 | Feature | `resolveAgentSpec` reads `mode`: `extend` and `replace` add a part named after the one they change, numbered, marked, and removed with it. | M18 | A16 | open |
-| F2 | Feature | `stackAppParts`, and the loop stacking `systemPrompt`'s parts with it. | M13, M17 | F1, A15 | open |
-| F3 | Feature | Write parts in the XML and markdown layouts: tags or headings, marks, `<precedence>` and the fence; `plain` unchanged. | M14, M15 | R50, F2, T15 | open |
-| F4 | Feature | Write the loop's server instructions and catalogue in the layout, before `app_system`. | M14 | F3 | open |
-| A17 | API change (breaking) | Rename `PROGRESS_FIELD` and the remote request's field from `ai_router` to `agent_core`. | M16 | — | open |
-| F5 | Feature | `agent_core` in the loop: sent through to an agent with `progress`, taken out for any other model and written as system messages in the layout; ai-router's warnings raised as the loop's event. | M16 | F2, F3, A17 | open |
-| T15 | Test [pin] | Pin that `plain` writes today's text byte for byte, and that parts are written in the order given. | F3 does not move a byte it should not | — | open |
-| D13 | Docs | Make `docs/agent-spec-v2.md` and the prompt spec describe the code, and redraw `HOW-IT-WORKS.md`, once the code matches. | Docs that describe the code | A16, F5 | open |
+| M12 | Model change | One fence escapes every tag the prompt uses (`prompt_…`, the loop's sections, `untrusted`, `hook_context`) inside any text it wraps, so no text can close or forge a section. | Hook context and parts in a layout get the fence server instructions already have | — | done (its items) |
+| R50 | Refactor [reuse] | Draw one fence helper out of `untrusted`, taking the tags to escape; `untrusted` writes what it writes now. | M12 | — | done (`28bb7eb`) |
+| B41 | Bug | A hook's text containing `</context>` closes its block early, since hook context escapes nothing; fence it. | M12 | R50 | done (`4365dc4`) |
+| B42 | Bug (decided) | Rename the hooks' `<context>` tag, which Open WebUI also uses for retrieved documents, to `<hook_context>`, and have the preface say "the app's hooks". Model-facing text; agent-mcp-pool changes with it. | M12 | B41 | done (`81256ff`, taken before B41) |
+| M13 | Model change | The loop takes the system prompt as a string, used as it is, or as parts, which it stacks and writes in the agent's layout, in the order given. | The ids survive to where the text is written | — | done (its items) |
+| A15 | API change (breaking) | Rename the loop's `system` option to `systemPrompt`, taking a string or parts. | M13 | — | done (`7311813`) |
+| M14 | Model change | `xml` and `markdown` layouts beside today's `plain`: parts in tags with `extends`/`replaces` marks, a fixed `<precedence>` section, the loop's sections in the layout, and the order agent parts, precedence, app parts, loop sections, `app_system`. | The model can tell whose words are whose; system messages stop costing the catalogue's cache | — | done (its items) |
+| M15 | Model change | A part's tag is `prompt_` and its name cleaned to letters, digits, `_` and `-`, case kept, a clash numbered, with a warning when cleaning or a clash changed it. | One rule for every tag | — | done (`ab54e29`) |
+| M16 | Model change | An app writes one request whatever the model: its parts in `agent_core.prompt`. To an agent the field is sent through; to any other model agent-core takes it out and writes the parts as system messages in the layout. | Local and remote runs read the same text | — | done (its items) |
+| M17 | Model change | Stacking an app's parts on an agent's (`app_` prefix, `allowedModes` check, order, warnings) is `stackAppParts` in the spec module, which ai-router calls instead of its own layers. | One rule, wherever the parts are stacked | — | done (`ca9c644`) |
+| M18 | Model change | Agent document version 2: parts are `{ role, name, content, mode, allowedModes }`, `ref` goes, `promptLayout` is added, names whose first word is `app` are refused, and the modes `extend` and `replace` add a part of their own. | Parts read like messages everywhere; a layer can add to shared words without restating them | — | done (its items) |
+| A16 | API change (breaking) | Move the agent document to `cubicecho.agent/2` (M18), with a function that upgrades a version 1 document. | M18 | — | done (`e1cee2c`) |
+| F1 | Feature | `resolveAgentSpec` reads `mode`: `extend` and `replace` add a part named after the one they change, numbered, marked, and removed with it. | M18 | A16 | done (`d14b243`) |
+| F2 | Feature | `stackAppParts`, and the loop stacking `systemPrompt`'s parts with it. | M13, M17 | F1, A15 | done (`ca9c644`, `732c390`) |
+| F3 | Feature | Write parts in the XML and markdown layouts: tags or headings, marks, `<precedence>` and the fence; `plain` unchanged. | M14, M15 | R50, F2, T15 | done (`ab54e29`, `0c2cafa`) |
+| F4 | Feature | Write the loop's server instructions and catalogue in the layout, before `app_system`. | M14 | F3 | done (`ddb5c0c`, `0bfbb3c`, `732c390`) |
+| A17 | API change (breaking) | Rename `PROGRESS_FIELD` and the remote request's field from `ai_router` to `agent_core`. | M16 | — | done (`3948bd5`) |
+| F5 | Feature | `agent_core` in the loop: sent through to an agent with `progress`, taken out for any other model and written as system messages in the layout; ai-router's warnings raised as the loop's event. | M16 | F2, F3, A17 | done (`732c390`) |
+| T15 | Test [pin] | Pin that `plain` writes today's text byte for byte, and that parts are written in the order given. | F3 does not move a byte it should not | — | done (`acaed3c`) |
+| D13 | Docs | Make `docs/agent-spec-v2.md` and the prompt spec describe the code, and redraw `HOW-IT-WORKS.md`, once the code matches. | Docs that describe the code | A16, F5 | done (this branch's docs commit) |
 
 Status is `open`, `proposed` (an `M` item awaiting Gate 1), `approved`, `deferred`, `declined` or `done`.
 Gate 2 (2026-11-18) approved the recommended set; PR 1 carries the non-breaking items, PR 2 the 5.0.0 renames.
@@ -253,7 +253,7 @@ To-be: one helper escapes the `<` of every tag in the prompt's vocabulary (`prom
 `precedence`, `server_instructions`, `tool_catalogue`, `untrusted`, `hook_context`), opening or
 closing, in any case, inside any text it wraps. `untrusted`, hook context and the XML layout
 use it. Why it is simpler: one rule for "text cannot close its section", where there are two
-behaviours today. Implemented by: R50, B41, B42. Status: approved (2026-11-19).
+behaviours today. Implemented by: R50, B41, B42. Status: done (2026-11-19).
 
 ### M13 — The loop takes parts
 
@@ -261,7 +261,7 @@ As-is: `AgentLoopOptions.system` is one string (`src/run/agent-loop.ts:304`); an
 joined before the loop sees them, so their names are gone. To-be: `systemPrompt` is a string,
 used as it is, or a list of parts, which the loop stacks (M17) and writes in the agent's layout
 (M14), never reordered. Why it is simpler: the place that writes the text knows what each piece is.
-Implemented by: A15, F2. Status: approved (2026-11-19).
+Implemented by: A15, F2. Status: done (2026-11-19).
 
 ### M14 — XML and markdown layouts
 
@@ -274,14 +274,14 @@ loop's sections are written in the layout; and the order is agent parts, precede
 sections, `app_system`. In `markdown`, headings inside a content move down two levels, and text from
 outside keeps its `<untrusted>` and `<hook_context>` tags. In `plain`, a replace is an overwrite.
 Why it is simpler: the model can tell whose words are whose, and the part that changes most is
-written last. Implemented by: F3, F4. Status: approved (2026-11-19).
+written last. Implemented by: F3, F4. Status: done (2026-11-19).
 
 ### M15 — Tag names
 
 As-is: no tags. To-be: `prompt_` and the part's name, each run of characters other than letters,
 digits, `_` and `-` cleaned to one `_`, case kept; a clash takes the next free number. The
 document's check, and `stackAppParts` for an app's parts, warn when cleaning or a clash changed a
-tag. The name itself is unchanged. Implemented by: F3. Status: approved (2026-11-19).
+tag. The name itself is unchanged. Implemented by: F3. Status: done (2026-11-19).
 
 ### M16 — One request, whatever the model
 
@@ -292,7 +292,7 @@ is sent through with `progress: true`; to any other model agent-core takes it ou
 writes the parts as system messages in the layout, merged into one. ai-router's warnings come back in
 `agent_core.warnings` and are raised as the loop's own warning event. Why it is simpler: an app
 builds one request, and the model reads the same text either way. Implemented by: A17, F5. Status:
-approved (2026-11-19).
+done (2026-11-19).
 
 ### M17 — Stacking an app's parts belongs to the spec module
 
@@ -301,7 +301,7 @@ agent-core has no notion of an app's parts. To-be: `stackAppParts` in `src/spec/
 front of each app part's name, checks each `mode` against the agent's `allowedModes` (dropping a
 part that breaks it, with a warning), and orders the agent's parts, the app's, then the leading
 system messages as `app_system`. ai-router calls it; so does the loop for any other model. Why it
-is simpler: one owner for the rule. Implemented by: F2. Status: approved (2026-11-19).
+is simpler: one owner for the rule. Implemented by: F2. Status: done (2026-11-19).
 
 ### M18 — Agent document version 2
 
@@ -312,7 +312,7 @@ whose first word is `app` (`app_lane`, `app-lane`) is refused. With `mode`, a ma
 part of its own: `extend` marks it as adding to the part, `replace` as taking its place; with none,
 a matching name overwrites, as now. Version 1 is refused, and an upgrade function converts it. Why
 it is simpler: a part reads the same in a document, a request and a message. Implemented by: A16,
-F1. Status: approved (2026-11-19).
+F1. Status: done (2026-11-19).
 
 ---
 

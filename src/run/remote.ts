@@ -21,13 +21,13 @@ import { type RunEvent, type RunEventInput, RunEventKind } from './events.ts';
  * an answer that is not streamed.
  *
  * @remarks
- * ai-router's own name, because the request's other router fields (`task`, `servers`) live under it
- * too, and a second name for the answer's half would split one namespace in two. Another server
+ * agent-core's name, the one key for everything an app and an agent server say beyond a chat
+ * request, so the request's other agent fields (`servers`) live under it too. Another server
  * names its own: `RemoteAgentParams.progressField` for the loop, and the last argument of each
  * encoder and decoder here. A standard client skips it on the way in, and a server that refuses it
  * on the way out has it dropped by name.
  */
-export const PROGRESS_FIELD = 'ai_router' as const;
+export const PROGRESS_FIELD = 'agent_core' as const;
 
 /** The header that makes a resent request the same request: one key per turn, kept across its retries. */
 export const IDEMPOTENCY_HEADER = 'Idempotency-Key' as const;
@@ -155,6 +155,27 @@ export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): R
 }
 
 /**
+ * The warnings a remote agent's answer carries, as plain sentences: the app's parts it dropped.
+ *
+ * @param answer - A streamed chunk or a whole `chat.completion`, as parsed.
+ * @param [field] - The field the warnings are under.
+ * @returns Each warning's `message`, in order; empty where there are none, and for any entry that
+ * carries no message.
+ *
+ * @remarks
+ * An agent server stacking an app's `agent_core.prompt` on its agent's parts drops a part that asks
+ * for a mode the agent's part does not allow, and says so here, on the last chunk of a stream. The
+ * loop raises each as a notice, the same as it does for the parts it stacks itself.
+ */
+export function progressWarnings(answer: unknown, field: string = PROGRESS_FIELD): string[] {
+  const carried = isRecord(answer) ? answer[field] : undefined;
+  const warnings = isRecord(carried) && Array.isArray(carried.warnings) ? carried.warnings : [];
+  return warnings.flatMap((warning) =>
+    isRecord(warning) && typeof warning.message === 'string' ? [warning.message] : [],
+  );
+}
+
+/**
  * The run id and events an answer that is not streamed carries, where it carries them.
  *
  * @param completion - The `chat.completion` body, as parsed.
@@ -176,7 +197,7 @@ export function progressEvents(completion: unknown, field: string = PROGRESS_FIE
  * @param extraBody - The app's. Not written to.
  * @param field - The field progress is asked for under.
  * @returns A new body whose `field` object says `progress: true` unless the app's own says
- * otherwise, the app's other router fields kept.
+ * otherwise, the app's other fields under it kept.
  */
 function askingProgress(extraBody: Record<string, unknown>, field: string): Record<string, unknown> {
   const own = extraBody[field];
@@ -247,6 +268,9 @@ export function remoteRun(
       }
     },
     onChunk: (chunk) => {
+      for (const text of progressWarnings(chunk, field)) {
+        told({ kind: RunEventKind.Notice, text });
+      }
       const event = progressEvent(chunk, field);
       if (!event) {
         return;

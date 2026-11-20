@@ -4,11 +4,10 @@ How an agent-core agent's prompt is put together: what an agent says about itsel
 that uses it may add, what the job adds, and how all of it becomes the text a model reads. It goes
 with version 2 of the agent document, [`agent-spec-v2.md`](agent-spec-v2.md).
 
-**Status: agreed, not yet built.** The code still does what version 1 says; the ledger's M12–M18
-make it do this. How particular services and apps follow this page is in
-[`prompt-implementations.md`](prompt-implementations.md). The words are the glossary's, in
-[`.agents/domain-model.md`](../.agents/domain-model.md), and how the package works today is drawn
-in [`HOW-IT-WORKS.md`](../HOW-IT-WORKS.md).
+**Status: built.** agent-core does what this page says (the ledger's M12–M18). How particular
+services and apps follow this page is in [`prompt-implementations.md`](prompt-implementations.md).
+The words are the glossary's, in [`.agents/domain-model.md`](../.agents/domain-model.md), and how
+the package works today is drawn in [`HOW-IT-WORKS.md`](../HOW-IT-WORKS.md).
 
 ## Why
 
@@ -479,8 +478,10 @@ be dropped and the app warned.
 ### When the model is any other model
 
 agent-core takes `agent_core` out of the body and does the agent server's work itself. The agent's
-parts come from the agent document the app gave the loop, such as a copy of Task Reviewer; an
-app that runs a copy owns it.
+parts come from the agent document the app gave the loop, as `systemPrompt` (a resolved agent's
+`prompt`), such as a copy of Task Reviewer; an app that runs a copy owns it. An app that gives a
+string instead has it written first, as it is, with no parts of the agent's to rank its own
+against.
 
 It stacks the parts, the same way, and turns each into a system message, its tag written into the
 content:
@@ -538,7 +539,7 @@ A dropped part is reported with what it was and why:
 ```json
 "agent_core": {
   "warnings": [
-    { "part": "format", "rule": "replace-not-allowed", "message": "Task Reviewer's format does not let an app replace it, so the part was dropped." }
+    { "part": "format", "rule": "replace-not-allowed", "message": "The agent's format part does not let an app replace it, so the part was dropped." }
   ]
 }
 ```
@@ -810,8 +811,9 @@ A tag name can hold letters, digits, `_` and `-`. A name with anything else is c
 - **A clash**, two names that make the same tag, numbers the later one with the next free number.
 - **The name is unchanged.** Cleaning is only how the tag is written: layers still find the part
   by its name, as written.
-- **The warning** comes from the document's check, for a document's parts, and from
-  `stackAppParts`, for an app's.
+- **Case is kept**, so `Rules` and `rules` make two tags.
+- **The warning** comes from the writer (`writeParts`, or `partTags` and `partHeadings` on their
+  own), and the loop raises it as a notice the first time it writes the prompt.
 
 ### The marks
 
@@ -979,7 +981,8 @@ alone; it covers what the structure cannot, the meaning of the words.
 ### The standing sentence
 
 In the XML and markdown layouts, when there are both the agent's parts and app parts, the loop
-writes one section of its own between them. In the XML layout:
+writes one section of its own between them, its sentence one paragraph (`PRECEDENCE_TEXT`). In the
+XML layout:
 
 ```
 <prompt_identity>…</prompt_identity>

@@ -285,6 +285,7 @@ Running against a remote agent: a model that runs a whole agent loop of its own 
 - `progressChunk` — A run event as a progress chunk, for a server streaming a remote agent's run.
 - `progressEvent` — The run event a streamed chunk carries, where it carries one.
 - `progressEvents` — The run id and events an answer that is not streamed carries, where it carries them.
+- `progressWarnings` — The warnings a remote agent's answer carries, as plain sentences: the app's parts it dropped.
 - `REMOTE_AGENT_NOTICE` — What a notice about the options an exchange with a remote agent sets aside opens with, ahead of their names.
 - `RunProgress` (type) — What an answer that is not streamed carries beside `choices`: the run, and what it said.
 - `withProgress` — An answer that is not streamed, with a remote run's events beside its `choices`.
@@ -304,6 +305,14 @@ The tools of one turn: its calls read, run and written into the transcript.
 - `ReasonedMessage` (type) — An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay.
 - `Scratchpad` (type) — A scratchpad to write onto a message, and the field it goes under.
 - `ToolDispatch` (type) — Runs one tool call and resolves to what the model reads, alone or with what the call produced; what it throws, the model reads too.
+
+### system-prompt
+
+How the loop turns an app's prompt into one system message: the agent's parts and the app's, stacked, then written in the agent's layout with the loop's own sections before `app_system`.
+
+- `StackedRequest` (type) — An app's prompt, stacked and ready to write.
+- `stackRequest` — An app's prompt stacked: the agent's parts, the parts under `agent_core.prompt`, and the conversation's leading system messages as `app_system`.
+- `writeSystemPrompt` — The system prompt stacked parts make, in order: the given string, the parts in the layout, the loop's own sections, then `app_system`.
 
 ### reset
 
@@ -341,6 +350,42 @@ An app's stored agent, read as a spec layer and written back: one table of colum
 - `SpecPath` (type) — Where in a spec a column lives, as a dotted path.
 - `SpecSection` (type) — The top-level keys of a spec, for naming a whole section an app reads by hand.
 
+### layout
+
+- `LAYOUT_HEADINGS` — The headings of the loop's own sections in the markdown layout.
+- `LAYOUT_RULES` — Why a layout wrote a part's name differently from how it was given.
+- `LayoutOptions` (type) — What a writer of one of the loop's own sections is told beside its own options: the layout.
+- `LayoutRule` (type) — One of `LAYOUT_RULES`.
+- `LayoutWarning` (type) — A part whose tag or heading is not plainly its name, in the same shape as a `StackWarning`.
+- `LoopSection` (type) — One of the loop's own sections: a key of `LAYOUT_HEADINGS`, and of `LAYOUT_TAGS`.
+- `loopSection` — One of the loop's own sections, in a layout: under its `##` heading, or inside its tag.
+- `PRECEDENCE_TEXT` — The standing sentence the loop writes between the agent's parts and the app's, in each layout's words: the agent's parts win, except where the app replaced one.
+- `partHeadings` — The heading each part is written under in the markdown layout.
+- `partTags` — The tag each part is written as in the XML layout.
+- `SectionLayout` (type) — A layout the model can tell the parts apart in: each part under a heading, or inside a tag.
+- `WrittenNames` (type) — The tags or headings a list of names is written as, in the names' order, and the warnings.
+- `WrittenParts` (type) — The text a layout wrote for some parts, and what it had to change to write them.
+- `writeParts` — Stacked parts as the text of the system prompt, in the markdown or XML layout.
+
+### parts
+
+The words an agent's prompt parts are described in: the modes a part changes another by, the layouts parts are written in, who wrote a part, and the shape stacking leaves parts in.
+
+- `APP_PART_PREFIX` — What stacking puts in front of every name an app sends: `lane` becomes `app_lane`.
+- `APP_SYSTEM_PART` — The part a request's leading system messages become, after the app's other parts.
+- `PART_OWNERS` — Who wrote a part: the agent's author, or the app using the agent.
+- `PartOwner` (type) — One of `PART_OWNERS`.
+- `PROMPT_LAYOUTS` — How the parts are written into the text the model reads.
+- `PROMPT_MODES` — How a part changes the part with its name in a layer below: adds to it, or takes its place.
+- `PROMPT_ROLES` — The roles a part may have, as a chat message's.
+- `PromptLayout` (type) — One of `PROMPT_LAYOUTS`.
+- `PromptMode` (type) — One of `PROMPT_MODES`.
+- `PromptRole` (type) — One of `PROMPT_ROLES`.
+- `STACK_RULES` — Why stacking dropped an app's part.
+- `StackedPart` (type) — A part as stacking leaves it, ready for a layout to write.
+- `StackRule` (type) — One of `STACK_RULES`.
+- `StackWarning` (type) — A part stacking dropped, and why: what a reply's `agent_core.warnings` carries.
+
 ### spec
 
 A JSON document that defines an agent, and the rules for reading one.
@@ -355,12 +400,12 @@ A JSON document that defines an agent, and the rules for reading one.
 - `exportSpec` — A document fit to leave the app: the same agent, with the secrets of its bundled servers gone.
 - `findSpecSecrets` — Where a document's bundled servers may still carry a credential after `exportSpec`.
 - `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
+- `ParsedAppParts` (type) — What `parseAppParts` hands back.
 - `ParsedSpec` (type) — What `parseSpec` hands back.
 - `ParseSpecOptions` (type) — What `parseSpec` takes besides the document.
-- `PromptPart` (type) — One layer of system prompt, named so a layer above can stack beside it or replace it.
+- `PromptPart` (type) — One named piece of the system prompt, written as a chat message is, so a layer above can change it.
+- `parseAppParts` — Reads the parts an app sent in a request's `agent_core.prompt`, dropping what it cannot use.
 - `parseSpec` — Reads a document, dropping what it cannot use and refusing only what it cannot identify.
-- `REF_FILE` — The `ref.type` of a prompt part whose text is in a file.
-- `REF_URL` — The `ref.type` of a prompt part whose text is behind a URL.
 - `ResolvedAgent` (type) — What layered documents resolve to: the flat shape the loop already takes, plus the parts of an agent that are the app's to act on.
 - `ResolvedTask` (type) — One side task, resolved: a model, and the model server it is reached through.
 - `RetrySpec` (type) — What to do about a request lost before the model produced anything.
@@ -372,6 +417,17 @@ A JSON document that defines an agent, and the rules for reading one.
 - `SpecServer` (type) — A bundled MCP server, validated only as far as a round trip needs and otherwise passed through.
 - `TaskSpec` (type) — One side task, which may run on a different model — and a different machine — than the agent.
 - `ToolsSpec` (type) — How tools reach the model, and which servers this agent may reach at all.
+- `UpgradedSpec` (type) — What `upgradeSpec` hands back.
+- `upgradeSpec` — Converts a version 1 agent document into version 2, for `parseSpec` to read.
+
+### stack
+
+Stacked prompt parts: an app's put on top of an agent's, how a part extending or replacing another is named, and how the plain layout writes them.
+
+- `AppPart` (type) — One part an app sends in a request's `agent_core.prompt`, for stacking on top of the agent's.
+- `plainPrompt` — Writes stacked parts as the plain layout does: their contents, trimmed, joined by blank lines.
+- `StackedPrompt` (type) — What `stackAppParts` hands back.
+- `stackAppParts` — Puts an app's parts on top of an agent's, holding them to what each of the agent's parts allows.
 
 ### catalog
 
@@ -509,6 +565,10 @@ Reading one streamed reply back into a message.
 
 Text helpers over the message vocabulary: reading a message's text, and fencing text nobody trusted.
 
+- `fence` — Text that cannot open or close a section of the prompt, whatever it says.
+- `LAYOUT_TAGS` — The tags the loop and its fences write, beside the parts' own: the precedence sentence, the two sections the loop adds, and the two fences around text nobody vouched for.
+- `LayoutTag` (type) — One of `LAYOUT_TAGS`.
+- `PROMPT_TAG_PREFIX` — What every prompt part's tag starts with, in the XML layout: `prompt_identity`, `prompt_app_lane`.
 - `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
 - `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 
