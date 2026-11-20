@@ -229,6 +229,7 @@ export {
   progressChunk,
   progressEvent,
   progressEvents,
+  progressWarnings,
   REMOTE_AGENT_NOTICE,
   type RunProgress,
   withProgress,
@@ -243,6 +244,7 @@ export {
   type Scratchpad,
   type ToolDispatch,
 } from './run/run-calls.ts';
+export { type StackedRequest, stackRequest, writeSystemPrompt } from './run/system-prompt.ts';
 export { resetAll } from './runtime/reset.ts';
 export { createRuntime, defaultRuntime, type Runtime, type RuntimeOptions } from './runtime/runtime.ts';
 export {

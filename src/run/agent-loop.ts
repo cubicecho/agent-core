@@ -46,6 +46,7 @@ import {
   turnMessages,
   withContext,
 } from '../hooks/hooks.ts';
+import { PROMPT_LAYOUTS, type PromptLayout, type StackedPart } from '../spec/parts.ts';
 import type { CatalogServer } from '../tools/catalog.ts';
 import { discoverTools } from '../tools/discovery.ts';
 import { type ServerInstructionsOptions, serverInstructionsPrompt } from '../tools/instructions.ts';
@@ -96,7 +97,7 @@ import {
   stamp,
 } from './events.ts';
 import { AgentLoopError, type AgentLoopFailure, AgentLoopOverflow, ToolIterationLimit } from './failure.ts';
-import { asRemoteAgent, remoteRun, remoteRunOf } from './remote.ts';
+import { asRemoteAgent, PROGRESS_FIELD, remoteRun, remoteRunOf } from './remote.ts';
 import { buildBody, singleCalls, singleSystem } from './request-body.ts';
 import {
   assistantMessage,
@@ -114,6 +115,7 @@ import {
   type TurnOutcome,
   writtenMessage,
 } from './run-calls.ts';
+import { stackRequest, withoutAgentCore, writeSystemPrompt } from './system-prompt.ts';
 
 /**
  * The loop above a turn: send, run the tools the model asked for, send again, until it stops
@@ -295,13 +297,23 @@ export interface AgentLoopOptions {
     Partial<RetryPolicy> & {
       contextLength?: number;
       tasks?: Readonly<Record<string, SideTask>>;
+      /** How the system prompt's parts and the loop's sections are written. Absent is `plain`. */
+      promptLayout?: PromptLayout;
     };
   /**
    * The standing instruction, sent as the first message. On-demand and proxied modes append the
    * catalogue, each in its own wording, and `serverInstructions` puts the servers' own guidance
    * between the two. A resolved agent's `systemPrompt` is passed here as it is.
+   *
+   * @remarks
+   * A string is used as it is. The agent's parts instead (a resolved agent's `prompt`) are stacked
+   * with the app's own, from `extraBody.agent_core.prompt`, and with the conversation's leading
+   * system messages as `app_system`, then written in `config.promptLayout` with the loop's sections
+   * before `app_system` (`docs/agent-prompt-spec-v2.md`). The same happens to a string when
+   * `agent_core` is there, the string written first. Against a remote agent, `agent_core` is the
+   * server's to read and is sent through.
    */
-  systemPrompt?: string;
+  systemPrompt?: string | readonly StackedPart[];
   /** The transcript so far, ending in the question. Not written to; see the result's `messages`. */
   messages: OpenAI.ChatCompletionMessageParam[];
   /**
@@ -1439,8 +1451,19 @@ async function runTurns(
   const supports = capabilitiesFor(config);
   const maxRetries = Math.max(0, Number(config.maxRetries) || 0);
   const notice = (text: string) => onEvent({ kind: RunEventKind.Notice, text });
+  const layout = config.promptLayout ?? PROMPT_LAYOUTS.plain;
+  // A model that is not an agent never sees `agent_core`: its parts are written in here instead.
+  const agentCore = remote === undefined ? config.extraBody?.[PROGRESS_FIELD] : undefined;
+  const stacked =
+    typeof systemPrompt !== 'string' || agentCore !== undefined
+      ? stackRequest(systemPrompt, agentCore, remote === undefined ? options.messages : [])
+      : undefined;
+  for (const warning of stacked?.warnings ?? []) {
+    notice(warning);
+  }
+  let isLayoutTold = false;
   // The app's own fields win over the pin's, so an explicit `cache_prompt: false` stays false.
-  const ownBody = remote?.extraBody ?? config.extraBody;
+  const ownBody = remote?.extraBody ?? withoutAgentCore(config.extraBody);
   const extraBody = pin ? { ...pin.fields, ...ownBody } : ownBody;
   const sending = { ...config, extraBody };
   const reasoningReplay = config.reasoningReplay ?? ReasoningReplay.All;
@@ -1460,7 +1483,7 @@ async function runTurns(
   const instructions =
     serverInstructions === false
       ? ''
-      : serverInstructionsPrompt(catalog, serverInstructions === true ? {} : serverInstructions);
+      : serverInstructionsPrompt(catalog, { ...(serverInstructions === true ? {} : serverInstructions), layout });
   const summarise = ownSummariser(options, notice);
   const used = new Set<string>();
   const definitions = definitionsByName(tools);
@@ -1654,15 +1677,30 @@ async function runTurns(
     // away the cache for the whole transcript. What is loaded is said in `declared` and in the
     // `load_tools` result instead. The preselected first turn is the one exception, by design,
     // and `preselectRouting: "append"` is the way out of it.
-    const catalogue = proxied ? proxyCatalogPrompt(catalog) : catalogPrompt(catalog);
+    const catalogue = proxied ? proxyCatalogPrompt(catalog, { layout }) : catalogPrompt(catalog, undefined, { layout });
     const catalogued = onDemand && !routed;
     const sections = [instructions, catalogued ? catalogue : ''].filter((text) => text !== '');
-    // `systemPrompt` as it was given when nothing is added, so an app with neither sees no change.
-    const isBare = catalogued === false && sections.length === 0;
-    const prompt = isBare ? systemPrompt : [systemPrompt, ...sections].join('\n\n').trim();
+    const conversation = withContext(messages, questionAt(), gathered.context, preface);
+    let prompt: string;
+    if (stacked) {
+      // The leading system messages are `app_system` now, written after the loop's sections.
+      const written = writeSystemPrompt(stacked, layout, sections);
+      prompt = written.text;
+      if (isLayoutTold === false) {
+        isLayoutTold = true;
+        for (const warning of written.warnings) {
+          notice(warning);
+        }
+      }
+    } else {
+      const given = typeof systemPrompt === 'string' ? systemPrompt : '';
+      // `systemPrompt` as it was given when nothing is added, so an app with neither sees no change.
+      const isBare = catalogued === false && sections.length === 0;
+      prompt = isBare ? given : [given, ...sections].join('\n\n').trim();
+    }
     const request = singleSystem([
       ...(prompt ? [{ role: Role.System, content: prompt }] : []),
-      ...withContext(messages, questionAt(), gathered.context, preface),
+      ...(stacked ? conversation.slice(stacked.leading) : conversation),
     ]);
 
     const build = (supported: Capabilities, refused: ModelCapabilities | undefined) =>

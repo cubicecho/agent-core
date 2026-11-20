@@ -6,6 +6,7 @@ import {
   progressChunk,
   progressEvent,
   progressEvents,
+  progressWarnings,
   remoteRun,
   withProgress,
 } from '../../src/run/remote.ts';
@@ -110,6 +111,20 @@ describe('remoteRun', () => {
     remote.emit({ kind: RunEventKind.Notice, text: 'retrying' });
     expect(told).toEqual([called, { kind: RunEventKind.Notice, text: 'retrying' }]);
     expect(remote.runId()).toBe('r1');
+  });
+
+  it("raises the server's warnings about the app's parts as notices", () => {
+    const told: unknown[] = [];
+    const remote = remoteRun(undefined, (event) => told.push(event));
+    const warned = {
+      agent_core: {
+        warnings: [{ part: 'rules', rule: 'replace-not-allowed', message: 'Dropped rules.' }, { part: 'x' }],
+      },
+    };
+    expect(progressWarnings(warned)).toEqual(['Dropped rules.']);
+    remote.onChunk(warned as never);
+    expect(told).toEqual([{ kind: RunEventKind.Notice, text: 'Dropped rules.' }]);
+    expect(progressWarnings({ choices: [] })).toEqual([]);
   });
 
   it('says every event of its own where the host turned progress off', () => {

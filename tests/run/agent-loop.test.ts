@@ -3096,5 +3096,51 @@ describe('runAgentLoop', () => {
     it('puts the proxied catalogue after the prompt', async () => {
       expect(await sent(prompt, { config: proxied })).toEqual([system(`${prompt}\n\n${proxiedCatalogue}`)]);
     });
+
+    it('writes parts given without modes, agent_core or system messages as the same text', async () => {
+      const parts = [
+        { role: Role.System, name: 'identity', content: 'You review cards.', owner: 'agent' },
+        { role: Role.System, name: 'format', content: 'Answer PASS or FAIL.', owner: 'agent' },
+      ] as const;
+      create.mockReset();
+      create.mockReturnValueOnce(says('done'));
+      await runAgentLoop({ config, systemPrompt: parts, messages: question, dispatch: async () => 'ok' });
+      const [body] = create.mock.calls[0];
+      expect(body.messages.filter((message) => message.role === Role.System)).toEqual([system(prompt)]);
+    });
+
+    it("stacks agent_core's parts and the leading system messages, and sends neither as they came", async () => {
+      create.mockReset();
+      create.mockReturnValueOnce(says('done'));
+      const notices: string[] = [];
+      await runAgentLoop({
+        config: {
+          ...config,
+          promptLayout: 'xml',
+          extraBody: {
+            top_k: 20,
+            agent_core: {
+              prompt: [
+                { role: 'system', name: 'lane', content: 'This is the Review lane.' },
+                { role: 'system', name: 'identity', mode: 'replace', content: 'Be lenient.' },
+              ],
+            },
+          },
+        },
+        systemPrompt: [{ role: Role.System, name: 'identity', content: 'You review cards.', owner: 'agent' }],
+        messages: [system('Today is 2026-11-19.'), ...question],
+        dispatch: async () => 'ok',
+        onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      });
+      const [body] = create.mock.calls[0] as unknown as [Record<string, unknown> & { messages: Message[] }];
+      expect(body.agent_core).toBeUndefined();
+      expect(body.top_k).toBe(20);
+      expect(body.messages.map((message) => message.role)).toEqual([Role.System, Role.User]);
+      const text = String(body.messages[0].content);
+      expect(text.indexOf('<prompt_identity>')).toBe(0);
+      expect(text.indexOf('<precedence>')).toBeLessThan(text.indexOf('<prompt_app_lane>'));
+      expect(text.endsWith('<prompt_app_system>\nToday is 2026-11-19.\n</prompt_app_system>')).toBe(true);
+      expect(notices).toEqual(["The agent's identity part does not let an app replace it, so the part was dropped."]);
+    });
   });
 });

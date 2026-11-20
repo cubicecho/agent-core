@@ -155,6 +155,27 @@ export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): R
 }
 
 /**
+ * The warnings a remote agent's answer carries, as plain sentences: the app's parts it dropped.
+ *
+ * @param answer - A streamed chunk or a whole `chat.completion`, as parsed.
+ * @param [field] - The field the warnings are under.
+ * @returns Each warning's `message`, in order; empty where there are none, and for any entry that
+ * carries no message.
+ *
+ * @remarks
+ * An agent server stacking an app's `agent_core.prompt` on its agent's parts drops a part that asks
+ * for a mode the agent's part does not allow, and says so here, on the last chunk of a stream. The
+ * loop raises each as a notice, the same as it does for the parts it stacks itself.
+ */
+export function progressWarnings(answer: unknown, field: string = PROGRESS_FIELD): string[] {
+  const carried = isRecord(answer) ? answer[field] : undefined;
+  const warnings = isRecord(carried) && Array.isArray(carried.warnings) ? carried.warnings : [];
+  return warnings.flatMap((warning) =>
+    isRecord(warning) && typeof warning.message === 'string' ? [warning.message] : [],
+  );
+}
+
+/**
  * The run id and events an answer that is not streamed carries, where it carries them.
  *
  * @param completion - The `chat.completion` body, as parsed.
@@ -247,6 +268,9 @@ export function remoteRun(
       }
     },
     onChunk: (chunk) => {
+      for (const text of progressWarnings(chunk, field)) {
+        told({ kind: RunEventKind.Notice, text });
+      }
       const event = progressEvent(chunk, field);
       if (!event) {
         return;

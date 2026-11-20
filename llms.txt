@@ -285,6 +285,7 @@ Running against a remote agent: a model that runs a whole agent loop of its own 
 - `progressChunk` — A run event as a progress chunk, for a server streaming a remote agent's run.
 - `progressEvent` — The run event a streamed chunk carries, where it carries one.
 - `progressEvents` — The run id and events an answer that is not streamed carries, where it carries them.
+- `progressWarnings` — The warnings a remote agent's answer carries, as plain sentences: the app's parts it dropped.
 - `REMOTE_AGENT_NOTICE` — What a notice about the options an exchange with a remote agent sets aside opens with, ahead of their names.
 - `RunProgress` (type) — What an answer that is not streamed carries beside `choices`: the run, and what it said.
 - `withProgress` — An answer that is not streamed, with a remote run's events beside its `choices`.
@@ -304,6 +305,14 @@ The tools of one turn: its calls read, run and written into the transcript.
 - `ReasonedMessage` (type) — An assistant message as the loop writes it: the SDK's shape, plus the scratchpad it may replay.
 - `Scratchpad` (type) — A scratchpad to write onto a message, and the field it goes under.
 - `ToolDispatch` (type) — Runs one tool call and resolves to what the model reads, alone or with what the call produced; what it throws, the model reads too.
+
+### system-prompt
+
+How the loop turns an app's prompt into one system message: the agent's parts and the app's, stacked, then written in the agent's layout with the loop's own sections before `app_system`.
+
+- `StackedRequest` (type) — An app's prompt, stacked and ready to write.
+- `stackRequest` — An app's prompt stacked: the agent's parts, the parts under `agent_core.prompt`, and the conversation's leading system messages as `app_system`.
+- `writeSystemPrompt` — The system prompt stacked parts make, in order: the given string, the parts in the layout, the loop's own sections, then `app_system`.
 
 ### reset
 
