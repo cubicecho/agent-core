@@ -423,3 +423,45 @@ describe('the proxied tools', () => {
     });
   });
 });
+
+describe('the catalogue in the plain layout', () => {
+  const listing = [
+    'Gmail:',
+    '  gmail__send_email',
+    '  gmail__list_labels',
+    '  gmail__read_email',
+    'Files:',
+    '  files__read_file',
+    '  files__write_file',
+  ];
+
+  it('writes the on-demand catalogue it always has, byte for byte', () => {
+    expect(catalogPrompt(catalog)).toBe(
+      [
+        '# Tool catalogue',
+        '',
+        'These tools exist but are not loaded. Call `load_tools` with the names you need, then call',
+        'them on the step after. Names are descriptive; load a tool to see its parameters. A tool',
+        'already in your tool list is loaded — call it directly, do not load it again. Do not load',
+        'tools the task does not need, and do not mention this mechanism in your answer.',
+        '',
+        ...listing,
+      ].join('\n'),
+    );
+  });
+
+  it('writes the proxied catalogue it always has, byte for byte', () => {
+    expect(proxyCatalogPrompt(catalog)).toBe(
+      [
+        '# Tool catalogue',
+        '',
+        'These tools exist. Call `load_tools` with the names you need to get their definitions, then',
+        'run them with `call_tool`. Names are descriptive; load a tool to see its parameters. A tool',
+        'whose definition is already in this conversation does not need loading again. Do not load',
+        'tools the task does not need, and do not mention this mechanism in your answer.',
+        '',
+        ...listing,
+      ].join('\n'),
+    );
+  });
+});
