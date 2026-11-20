@@ -146,6 +146,29 @@ sends what it sends to any model: a system message and the chat.
 - **It can add, and nothing else.** It cannot extend or replace an agent's part, and its words sit
   below `<precedence>`.
 
+### What it sees while an agent works
+
+ai-router answers Open WebUI with a plain OpenAI stream: the answer's text as it arrives, any calls
+handed back, the finish, and `[DONE]`, with a comment while the stream is quiet so a proxy does not
+close it. The run's events (each turn, the thinking, every tool call and result) go out as progress
+chunks only to an app that asks with `agent_core.progress`, and Open WebUI never asks. So while
+the agent thinks and calls tools, Open WebUI shows nothing until the answer's text starts.
+
+**Planned for ai-router:** stream the run's work in the field chat clients already render as a
+model's reasoning, `reasoning_content` on the chunk's `delta`:
+
+| Run event | Written as |
+| --- | --- |
+| `thinking` | Its text, as it streams |
+| `tool-call` | One line naming the tool: "Calling `search_code`…" |
+| `tool-result` | One line saying it came back, or failed |
+
+Open WebUI, and most clients that show reasoning, fold it into a collapsible "Thinking" block above
+the answer; a client that does not know the field ignores it. It is ai-router's to write, not
+agent-core's: the events are the same ones an app on agent-core already gets, only written in the
+words a chat client reads. It is off for an app that asks for progress, which gets the events
+themselves and would otherwise read the same work twice.
+
 ## Worked examples
 
 All but the last use one agent, Task Reviewer, kept on ai-router:
@@ -363,7 +386,10 @@ rename all break callers. Its ledger has the items.
   has `app` as its first word.
 - The override policy loses `hostPrompt` and `taskPrompt`; its other rules stay. The upgrade lists
   every agent whose policy had `hostPrompt` off.
-- Replies carry `agent_core.warnings` and `agent_core` progress. The model listing marks agents
+- Streams the run's thinking and tool activity to a client that did not ask for progress as
+  `reasoning_content` (see Open WebUI, above).
+- Replies carry `agent_core.warnings` (on the stream's last chunk, and beside `choices` when not
+  streaming) and `agent_core` progress. The model listing marks agents
   with `"agent_core": { "kind": "agent" }`, with their part names and `allowedModes`.
 - Upgrades stored agents and runs once. Its domain model's words change with it.
 - `AGENTS.md` points to `agent-core/docs/agent-spec.md`, which is now `agent-spec-v1.md` and
