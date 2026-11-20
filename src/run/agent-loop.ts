@@ -772,7 +772,7 @@ export interface AgentLoopResult {
   /** The hooks' notes from before the first request. Empty where `fire` lists no injecting event. */
   notes: HookNote[];
   /**
-   * The `<context>` blocks the hooks added to this question, as `withContext` takes them. Empty
+   * The `<hook_context>` blocks the hooks added to this question, as `withContext` takes them. Empty
    * when no hook added any, without `hooks`, and where `fire` lists no injecting event. Not in
    * `messages`, so an app that wants the next exchange's requests to begin with this one's stores
    * it beside the question; see `hooks`.

@@ -4,7 +4,7 @@ import { digestOf } from '../core/digest.ts';
 import { isPositive } from '../core/guards.ts';
 import { assignSettings, scoped } from '../core/scope.ts';
 import { errorMessage } from '../wire/errors.ts';
-import { attribute, textOf } from '../wire/text.ts';
+import { attribute, LAYOUT_TAGS, textOf } from '../wire/text.ts';
 import { clipToTokens, estimateTokens } from '../wire/tokens.ts';
 import { PartType, Role } from '../wire/wire.ts';
 import { type HookEvent, INJECT_EVENTS } from './hook-events.ts';
@@ -105,7 +105,7 @@ export interface HookNote {
   hookId: string;
   /** Estimated tokens of context it added to the request. */
   tokens?: number;
-  /** The context it added, as the model read it: after the cap, without the `<context>` tags. */
+  /** The context it added, as the model read it: after the cap, without the `<hook_context>` tags. */
   text?: string;
   /** Why it added nothing: it failed, timed out, or never ran. */
   error?: string;
@@ -128,7 +128,7 @@ export type HookRunner = (
 
 /** The context a set of outcomes adds to a request, and a note for each hook worth mentioning. */
 export interface Gathered {
-  /** The `<context>` blocks, blank-line separated, or empty when no hook added anything. */
+  /** The `<hook_context>` blocks, blank-line separated, or empty when no hook added anything. */
   context: string;
   notes: HookNote[];
 }
@@ -247,12 +247,13 @@ const failureNote = (outcome: HookOutcome): HookNote => ({
  * notes in the order of `outcomes`.
  *
  * @remarks
- * Each injected outcome is wrapped in `<context source="…">` naming its label, so a model reading
- * a recalled line can tell it is a memory rather than something the user said. Each is held to
+ * Each injected outcome is wrapped in `<hook_context source="…">` naming its label, so a model
+ * reading a recalled line can tell it is a memory rather than something the user said. The tag is
+ * not `context`, which chat clients such as Open WebUI already wrap retrieved documents in. Each is held to
  * its own `maxTokens` and the whole to `maxTokens` here, and a block past the total is dropped
  * whole rather than cut to a stub. For any hooks the pool's `validateHooks` accepts, the text is
  * what its `contextBlocks` builds from the same outcomes, character for character, so an app
- * moving between the two sends the same request.
+ * moving between the two sends the same request; the pool moves to `hook_context` in step.
  *
  * The note keeps each hook's text as it was cut, so an app can show exactly what the model was
  * given without re-deriving the caps or parsing the wrapper back off.
@@ -282,7 +283,8 @@ export function assembleContext(outcomes: readonly HookOutcome[], maxTokens?: nu
     }
     const tokens = estimateTokens(text);
     remaining -= tokens;
-    blocks.push(`<context source="${attribute(outcome.label)}">\n${text}\n</context>`);
+    const tag = LAYOUT_TAGS.hookContext;
+    blocks.push(`<${tag} source="${attribute(outcome.label)}">\n${text}\n</${tag}>`);
     notes.push({ ...noteOf(outcome), tokens, text });
   }
   return { context: blocks.join('\n\n'), notes };

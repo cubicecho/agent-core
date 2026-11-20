@@ -2246,9 +2246,9 @@ describe('runAgentLoop', () => {
     };
     configureHooks({ preface: 'From min-agent:' });
     try {
-      expect(await sentQuestion()).toMatch(/^From min-agent:\n\n<context source="memory">/);
-      expect(await sentQuestion('From kanban:')).toMatch(/^From kanban:\n\n<context/);
-      expect(await sentQuestion('')).toMatch(/^<context source="memory">/);
+      expect(await sentQuestion()).toMatch(/^From min-agent:\n\n<hook_context source="memory">/);
+      expect(await sentQuestion('From kanban:')).toMatch(/^From kanban:\n\n<hook_context/);
+      expect(await sentQuestion('')).toMatch(/^<hook_context source="memory">/);
     } finally {
       resetHooks();
     }
@@ -2459,7 +2459,7 @@ describe('runAgentLoop', () => {
         dispatch: async () => 'ok',
         hooks: hooks('you like tea'),
       });
-      expect(first.context).toBe('<context source="memory">\nyou like tea\n</context>');
+      expect(first.context).toBe('<hook_context source="memory">\nyou like tea\n</hook_context>');
       // The host stores what the user typed, and beside it what the loop said above it.
       expect(first.messages[0].content).toBe('what do I like?');
       const stored = { at: 0, context: first.context, preface: first.preface };
@@ -2523,7 +2523,7 @@ describe('runAgentLoop', () => {
         });
         expect(second.preface).toBe('From kanban:');
         expect(JSON.stringify(sent(1).slice(0, 1))).toBe(JSON.stringify(sent(0)));
-        expect(sent(1).at(-1)?.content).toMatch(/^From kanban:\n\n<context/);
+        expect(sent(1).at(-1)?.content).toMatch(/^From kanban:\n\n<hook_context/);
       } finally {
         resetHooks();
       }

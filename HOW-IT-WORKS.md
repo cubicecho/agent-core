@@ -149,7 +149,7 @@ Where everything else goes:
 | What | Where in the request | When it is written |
 | --- | --- | --- |
 | The app's prompt, server instructions, catalogue | The system message | The same text on every turn of an exchange |
-| Hook context (`sessionStart`, `beforeExchange`) | Before the question, in the user's message, as `<context source="…">` blocks after a short preface | Once per exchange, on the request only, never in the stored transcript |
+| Hook context (`sessionStart`, `beforeExchange`) | Before the question, in the user's message, as `<hook_context source="…">` blocks after a short preface | Once per exchange, on the request only, never in the stored transcript |
 | The conversation | The messages after the system message | Grows by appending each turn |
 | Input the app sent mid-exchange | A new message in the conversation | Between turns |
 | Tools | The `tools` array, sorted by name unless `toolOrder` is `false` | Per turn: which tools depends on the loading mode |

@@ -336,7 +336,7 @@ export interface HookSettings {
 export const HOOK_DEFAULTS: Readonly<HookSettings> = Object.freeze({
   contextTokens: 2000,
   preface:
-    "The <context> blocks below were added for this message by the host's hooks. They are " +
+    "The <hook_context> blocks below were added for this message by the app's hooks. They are " +
     "background the user did not write and may not be relevant. The user's message follows them.",
 });
 

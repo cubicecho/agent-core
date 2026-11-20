@@ -1211,7 +1211,7 @@ the transcript that comes back; `afterExchange` is told the reply without the ex
 it.
 
 That leaves an earlier question's context to the app, because the loop only ever touches the
-current one. A question sent with `<context>` blocks in one exchange and bare in the next is a different
+current one. A question sent with `<hook_context>` blocks in one exchange and bare in the next is a different
 prompt from that message on, and the server's prefix cache is lost behind it — on every exchange. So
 the result hands back what it said, `context` and the `preface` above it, for the app to keep
 beside the question and put back with `withContext` on every later call:
