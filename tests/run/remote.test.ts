@@ -20,12 +20,12 @@ const called = stamp({ kind: RunEventKind.ToolCall, id: 'Srv000001', name: 'ask_
 const overTheWire = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 
 describe('progressChunk and progressEvent', () => {
-  it("writes a chunk in ai-router's shape: empty choices, the event under ai_router", () => {
+  it("writes a chunk in ai-router's shape: empty choices, the event under agent_core", () => {
     expect(progressChunk(called, head)).toEqual({
       ...head,
       object: 'chat.completion.chunk',
       choices: [],
-      ai_router: { event: called },
+      agent_core: { event: called },
     });
   });
 
@@ -71,7 +71,7 @@ describe('withProgress and progressEvents', () => {
 
   it('puts the run and its events beside choices, and leaves the rest of the answer as it was', () => {
     const answer = withProgress(completion, 'r1', [called, done]);
-    expect(answer).toEqual({ ...completion, ai_router: { runId: 'r1', events: [called, done] } });
+    expect(answer).toEqual({ ...completion, agent_core: { runId: 'r1', events: [called, done] } });
     expect(completion).not.toHaveProperty(PROGRESS_FIELD);
   });
 
@@ -92,12 +92,12 @@ describe('withProgress and progressEvents', () => {
 
 describe('remoteRun', () => {
   it("asks for progress under the host's own router fields, and keeps a host's progress: false", () => {
-    expect(remoteRun({ top_k: 20, ai_router: { task: 'triage' } }, () => {}).extraBody).toEqual({
+    expect(remoteRun({ top_k: 20, agent_core: { task: 'triage' } }, () => {}).extraBody).toEqual({
       top_k: 20,
-      ai_router: { progress: true, task: 'triage' },
+      agent_core: { progress: true, task: 'triage' },
     });
-    expect(remoteRun({ ai_router: { progress: false } }, () => {}).extraBody).toEqual({
-      ai_router: { progress: false },
+    expect(remoteRun({ agent_core: { progress: false } }, () => {}).extraBody).toEqual({
+      agent_core: { progress: false },
     });
   });
 
@@ -114,7 +114,7 @@ describe('remoteRun', () => {
 
   it('says every event of its own where the host turned progress off', () => {
     const told: unknown[] = [];
-    const remote = remoteRun({ ai_router: { progress: false } }, (event) => told.push(event));
+    const remote = remoteRun({ agent_core: { progress: false } }, (event) => told.push(event));
     remote.emit({ kind: RunEventKind.Turn, text: 'turn 1' });
     expect(told).toEqual([{ kind: RunEventKind.Turn, text: 'turn 1' }]);
   });

@@ -21,13 +21,13 @@ import { type RunEvent, type RunEventInput, RunEventKind } from './events.ts';
  * an answer that is not streamed.
  *
  * @remarks
- * ai-router's own name, because the request's other router fields (`task`, `servers`) live under it
- * too, and a second name for the answer's half would split one namespace in two. Another server
+ * agent-core's name, the one key for everything an app and an agent server say beyond a chat
+ * request, so the request's other agent fields (`servers`) live under it too. Another server
  * names its own: `RemoteAgentParams.progressField` for the loop, and the last argument of each
  * encoder and decoder here. A standard client skips it on the way in, and a server that refuses it
  * on the way out has it dropped by name.
  */
-export const PROGRESS_FIELD = 'ai_router' as const;
+export const PROGRESS_FIELD = 'agent_core' as const;
 
 /** The header that makes a resent request the same request: one key per turn, kept across its retries. */
 export const IDEMPOTENCY_HEADER = 'Idempotency-Key' as const;
@@ -176,7 +176,7 @@ export function progressEvents(completion: unknown, field: string = PROGRESS_FIE
  * @param extraBody - The app's. Not written to.
  * @param field - The field progress is asked for under.
  * @returns A new body whose `field` object says `progress: true` unless the app's own says
- * otherwise, the app's other router fields kept.
+ * otherwise, the app's other fields under it kept.
  */
 function askingProgress(extraBody: Record<string, unknown>, field: string): Record<string, unknown> {
   const own = extraBody[field];

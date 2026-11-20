@@ -212,7 +212,7 @@ export interface RemoteAgentParams extends Omit<ModelParams, 'maxTokens' | 'temp
    * The body field the server's progress travels under, both ways: asked for as
    * `{ progress: true }`, and read off each chunk as `{ event }`. See `progressChunk`.
    *
-   * @defaultValue `PROGRESS_FIELD`, `"ai_router"`
+   * @defaultValue `PROGRESS_FIELD`, `"agent_core"`
    */
   progressField?: string;
 }
