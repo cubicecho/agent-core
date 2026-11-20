@@ -10,13 +10,16 @@ import { isAbsent, isRecord } from '../core/guards.ts';
 import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
 import {
   APP_PART_PREFIX,
+  PART_OWNERS,
   PROMPT_LAYOUTS,
   PROMPT_MODES,
   PROMPT_ROLES,
   type PromptLayout,
   type PromptMode,
   type PromptRole,
+  type StackedPart,
 } from './parts.ts';
+import { numberedName, plainPrompt } from './stack.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
@@ -275,8 +278,11 @@ export interface ResolvedAgent extends AgentConfig {
   description: string;
   /** The tri-state preserved: absent is every server the app offers, empty is none. */
   servers?: readonly string[];
-  /** The merged prompt parts, in order, without the ones a layer deleted; `systemPrompt` joins them. */
-  prompt: readonly PromptPart[];
+  /**
+   * The merged prompt parts, in order, without the ones a layer deleted: owned by the agent, and
+   * each that extends or replaces another marked against it. `systemPrompt` is `plainPrompt` of them.
+   */
+  prompt: readonly StackedPart[];
   /** The merged layout; `AGENT_DEFAULTS.promptLayout` where no layer set one. */
   promptLayout: PromptLayout;
   /** Only the tasks a layer configured and none declined. `toolSelect` also flattens to `toolSelectModel`. */
@@ -1280,27 +1286,81 @@ function mergeModel(layers: readonly AgentSpec[]) {
  *
  * @param items - Every layer's items in one list, weakest first. None is written to.
  * @param idOf - What an item merges on. `""` is an id like any other.
- * @param [deletes] - Whether an item deletes its id rather than merging into it.
- * @returns A new array of new objects, each the shallow merge of the items that shared its id.
- *
- * @remarks
- * An item `idOf` gives no id for is left out. A deleted id is left out too, with nothing below the
- * deletion kept: an item above it starts afresh, in the place the id first had.
+ * @returns A new array of new objects, each the shallow merge of the items that shared its id. An
+ * item `idOf` gives no id for is left out.
  */
-function mergeById<T extends object>(
-  items: readonly T[],
-  idOf: (item: T) => string | undefined,
-  deletes: (item: T) => boolean = () => false,
-) {
-  // A deleted id keeps its key, holding nothing, so an item above it takes the same place.
-  const merged = new Map<string, T | undefined>();
+function mergeById<T extends object>(items: readonly T[], idOf: (item: T) => string | undefined): T[] {
+  const merged = new Map<string, T>();
   for (const item of items) {
     const id = idOf(item);
     if (id !== undefined) {
-      merged.set(id, deletes(item) ? undefined : { ...merged.get(id), ...item });
+      merged.set(id, { ...merged.get(id), ...item });
     }
   }
-  return [...merged.values()].filter((item) => item !== undefined);
+  return [...merged.values()];
+}
+
+/**
+ * A document's prompt part as stacking leaves it: the agent's, under a name, perhaps marked.
+ *
+ * @param part - The part as the document has it. Not written to.
+ * @param name - The name it is stacked under: its own, or a numbered one when it adds a part.
+ * @param [mark] - The part it extends or replaces.
+ * @returns A new part, with its own copy of `allowedModes`.
+ */
+const asStacked = (part: PromptPart, name: string, mark?: StackedPart['mark']): StackedPart =>
+  kept({
+    role: part.role,
+    name,
+    content: part.content,
+    owner: PART_OWNERS.agent,
+    mark,
+    allowedModes: part.allowedModes && [...part.allowedModes],
+  });
+
+/**
+ * The layers' prompt parts as one list, each part applied to the parts before it.
+ *
+ * @param layers - The documents, weakest first. None is written to.
+ * @returns New parts, owned by the agent, in the order their names were first taken.
+ *
+ * @remarks
+ * With no mode, a part overwrites the content of the part with its name in place, still marked as
+ * that part was, or is added under its own name. With a mode and a name already there, it adds a
+ * part of its own, numbered (`identity_2`), after the parts already there and marked against that
+ * name. An empty content deletes the part and every part marked against it; a part that names it
+ * later starts afresh, in the place the name first had.
+ */
+function resolvePrompt(layers: readonly AgentSpec[]): StackedPart[] {
+  // A deleted name keeps its key, holding nothing, so a part above it takes the same place.
+  const merged = new Map<string, StackedPart | undefined>();
+  const remove = (name: string) => {
+    merged.set(name, undefined);
+    for (const [other, part] of merged) {
+      if (part?.mark?.target === name) {
+        remove(other);
+      }
+    }
+  };
+
+  for (const part of layers.flatMap((layer) => layer.prompt ?? [])) {
+    const below = merged.get(part.name);
+    const isDeletion = part.content === '';
+    if (isDeletion) {
+      remove(part.name);
+      continue;
+    }
+    const { mode } = part;
+    const addsOwnPart = mode !== undefined && below !== undefined;
+    if (addsOwnPart) {
+      const name = numberedName(part.name, merged);
+      merged.set(name, asStacked(part, name, { mode, target: part.name }));
+      continue;
+    }
+    const allowedModes = part.allowedModes ?? below?.allowedModes;
+    merged.set(part.name, asStacked({ ...part, allowedModes }, part.name, below?.mark));
+  }
+  return [...merged.values()].filter((part) => part !== undefined);
 }
 
 /**
@@ -1357,8 +1417,8 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * @remarks
  * Absent inherits, and nothing else does: `0`, `-1`, `""` and `[]` are values that mean what they
  * say. Scalars take the last layer that has the key, `extraBody` and `extensions` merge by top-level
- * key, `prompt`, `hooks` and `tasks` merge by id (different ids stack, the same id replaces),
- * `tools.servers` replaces whole and `requires` unions. No layer is ever fetched, and `apiKey` comes
+ * key, `prompt` merges by part name as each part's mode says, `hooks` and `tasks` merge by id
+ * (different ids stack, the same id replaces), `tools.servers` replaces whole and `requires` unions. No layer is ever fetched, and `apiKey` comes
  * back empty so that a document naming somebody else's model server cannot make this app send its
  * own key there; an app that wants inheritance applies `resolveApiKey` afterwards.
  */
@@ -1378,11 +1438,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const retry = mergeLayers(layers.map((layer) => layer.retry));
 
   const tasks = resolveTasks(layers, endpoint);
-  const prompt = mergeById(
-    layers.flatMap((layer) => layer.prompt ?? []),
-    (part) => part.name,
-    (part) => part.content === '',
-  );
+  const prompt = resolvePrompt(layers);
   // Each layer's flags were checked against that layer's event, and the merge may have moved the
   // hook to another one, so they are checked again. Nothing is reported: resolving has no warnings.
   const hooks = mergeById(
@@ -1437,12 +1493,9 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     toolSelectModel: tasks.toolSelect?.model ?? '',
     maxToolIterations: tools.maxIterations ?? AGENT_DEFAULTS.maxToolIterations,
     maxRetries: retry.maxRetries ?? AGENT_DEFAULTS.maxRetries,
-    // Byte-identical to what a consumer's `systemPromptFor` produces today, so four sources
-    // survive a round trip instead of flattening into one blob nobody can edit a third of.
-    systemPrompt: prompt
-      .map((part) => part.content.trim())
-      .filter(Boolean)
-      .join('\n\n'),
+    // Byte-identical to what a consumer's `systemPromptFor` produces where no part has a mode, so
+    // four sources survive a round trip instead of flattening into one blob nobody can edit a third of.
+    systemPrompt: plainPrompt(prompt),
     prompt,
     promptLayout: promptLayout ?? AGENT_DEFAULTS.promptLayout,
     tasks,

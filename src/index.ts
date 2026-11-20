@@ -309,6 +309,7 @@ export {
   type UpgradedSpec,
   upgradeSpec,
 } from './spec/spec.ts';
+export { plainPrompt } from './spec/stack.ts';
 export type { CatalogServer } from './tools/catalog.ts';
 export { PRESELECTED_NOTICE } from './tools/discovery.ts';
 export { type ServerInstructionsOptions, serverInstructionsPrompt } from './tools/instructions.ts';

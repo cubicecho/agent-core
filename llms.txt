@@ -392,6 +392,12 @@ A JSON document that defines an agent, and the rules for reading one.
 - `UpgradedSpec` (type) — What `upgradeSpec` hands back.
 - `upgradeSpec` — Converts a version 1 agent document into version 2, for `parseSpec` to read.
 
+### stack
+
+Stacked prompt parts: how one that extends or replaces another is named, and how the plain layout writes them.
+
+- `plainPrompt` — Writes stacked parts as the plain layout does: their contents, trimmed, joined by blank lines.
+
 ### catalog
 
 The contract between whatever holds the tools and the loop that offers them to a model.
