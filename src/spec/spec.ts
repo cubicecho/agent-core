@@ -8,22 +8,34 @@ import {
 import { AGENT_DEFAULTS } from '../core/defaults.ts';
 import { isAbsent, isRecord } from '../core/guards.ts';
 import { HOOK_EVENTS, HookEvent, INJECT_EVENTS } from '../hooks/hook-events.ts';
+import {
+  APP_PART_PREFIX,
+  PROMPT_LAYOUTS,
+  PROMPT_MODES,
+  PROMPT_ROLES,
+  type PromptLayout,
+  type PromptMode,
+  type PromptRole,
+} from './parts.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
  *
  * The apps on this package each spelled "an agent" differently, to the point that `maxTokens: 0`
  * meant three different things; this is the shape they can all write and read, argued out in
- * `docs/agent-spec-v1.md`. Nothing outside `src/spec/` imports this module, and it imports nothing that
+ * `docs/agent-spec-v2.md`. Nothing outside `src/spec/` imports this module, and it imports nothing that
  * needs Node, so the loop has no opinion on where an agent comes from and an app can validate a
  * pasted document in a browser.
  */
 
 /** The token a document declares itself with. A loader refuses anything else. */
-export const AGENT_SPEC = 'cubicecho.agent/1';
+export const AGENT_SPEC = 'cubicecho.agent/2';
 
 /** The major version `AGENT_SPEC` pins. Raised only when a field changes meaning. */
-export const AGENT_SPEC_VERSION = 1;
+export const AGENT_SPEC_VERSION = 2;
+
+/** The token of version 1, which `parseSpec` refuses and `upgradeSpec` converts. */
+const AGENT_SPEC_V1 = 'cubicecho.agent/1';
 
 /**
  * The side tasks this package has code for: documentation and a sensible UI order, not a
@@ -61,8 +73,10 @@ export interface AgentSpec {
 
   endpoint?: EndpointSpec;
   model?: ModelSpec;
-  /** Ordered layers of system prompt, merged by `id` and joined with blank lines on resolve. */
+  /** Ordered parts of the system prompt, merged by part `name`. */
   prompt?: PromptPart[];
+  /** How the parts are written for the model. Absent inherits; nowhere is `plain`. */
+  promptLayout?: PromptLayout;
   tools?: ToolsSpec;
   retry?: RetrySpec;
   /** Side tasks run on a model other than the agent's. Open by design; see `AGENT_TASKS`. */
@@ -76,7 +90,7 @@ export interface AgentSpec {
   /** Extension keys an app must understand, or it refuses to run this agent. */
   requires?: string[];
 
-  /** Keys from a later 1.x, kept so an edit-and-export cycle does not erase them. */
+  /** Keys from a later 2.x, kept so an edit-and-export cycle does not erase them. */
   [key: string]: unknown;
 }
 
@@ -112,23 +126,24 @@ export interface ModelSpec {
   extraBody?: Record<string, unknown>;
 }
 
-/** The `ref.type` of a prompt part whose text is in a file. */
-export const REF_FILE = 'file' as const;
-
-/** The `ref.type` of a prompt part whose text is behind a URL. */
-export const REF_URL = 'url' as const;
-
-/** One layer of system prompt, named so a layer above can stack beside it or replace it. */
+/** One named piece of the system prompt, written as a chat message is, so a layer above can change it. */
 export interface PromptPart {
-  /** Names this layer: `project`, `identity`, `role`, `lane`. Merging happens on it. */
-  id: string;
+  /** As a chat message's. Both are written into the system prompt the same way. */
+  role: PromptRole;
   /**
-   * The text. Empty deletes the part a layer below contributed. Absent only when `ref` is given:
-   * `parseSpec` drops a `ref` beside a text.
+   * What the part is for: `identity`, `rules`, `format`, `lane`. Merging happens on it, and a name
+   * whose first word is `app` (`app_lane`, `App lane`) is refused, since that prefix is an app's.
    */
-  text?: string;
-  /** Where the text lives instead. The shape is validated; the reference is never resolved. */
-  ref?: { type: typeof REF_FILE | typeof REF_URL; value: string };
+  name: string;
+  /** The text. Empty deletes the part a layer below contributed, and every part that names it. */
+  content: string;
+  /**
+   * How it changes the part below with its name: `extend` adds a part of its own marked as adding
+   * to it, `replace` one marked as taking its place. Absent overwrites in place.
+   */
+  mode?: PromptMode;
+  /** The modes an app may use on this part. Absent is `["extend"]`; `[]` locks it. */
+  allowedModes?: readonly PromptMode[];
 }
 
 /** How tools reach the model, and which servers this agent may reach at all. */
@@ -260,13 +275,10 @@ export interface ResolvedAgent extends AgentConfig {
   description: string;
   /** The tri-state preserved: absent is every server the app offers, empty is none. */
   servers?: readonly string[];
-  /**
-   * The merged prompt parts, in order, without the ones a layer deleted with an empty text.
-   * `systemPrompt` is the join of their texts, so a part that is only a `ref` contributes nothing
-   * to it — the app resolves the reference and re-resolves, or reads it from here and does what
-   * it likes.
-   */
+  /** The merged prompt parts, in order, without the ones a layer deleted; `systemPrompt` joins them. */
   prompt: readonly PromptPart[];
+  /** The merged layout; `AGENT_DEFAULTS.promptLayout` where no layer set one. */
+  promptLayout: PromptLayout;
   /** Only the tasks a layer configured and none declined. `toolSelect` also flattens to `toolSelectModel`. */
   tasks: Readonly<Record<string, ResolvedTask>>;
   /**
@@ -635,54 +647,122 @@ function parseExtraBody(report: Report, path: string, value: unknown): Record<st
   return extraBody;
 }
 
+/** The roles a part may have, in the order a warning lists them. */
+const ROLES = Object.values(PROMPT_ROLES);
+
+/** The modes a part may have, in the order a warning lists them. */
+const MODES = Object.values(PROMPT_MODES);
+
+/** The first word of a name only an app's part may have: `APP_PART_PREFIX` without its `_`. */
+const APP_WORD = APP_PART_PREFIX.replace(/_$/, '');
+
+/** What a part name is split into words on, so `app_lane`, `app-lane` and `app lane` all begin `app`. */
+const NAME_WORDS = /[\s_-]+/;
+
+/**
+ * Whether a part name is one only an app's part may have.
+ *
+ * @param name - The part's name, as written.
+ * @returns `true` when its first word, read without case, is `app`: `app`, `app_lane`, `App lane`.
+ */
+const isAppName = (name: string) => name.split(NAME_WORDS).find(Boolean)?.toLowerCase() === APP_WORD;
+
+/**
+ * Reads the fields a prompt part has in common with a chat message: its role, name, content and mode.
+ *
+ * @param report - Where what is dropped is written.
+ * @param path - Where the part sits: `prompt[2]`.
+ * @param held - What was held there.
+ * @returns The part, or `undefined` where it is not an object or has no name or no content.
+ *
+ * @remarks
+ * A role that is missing or not one of `PROMPT_ROLES` is read as `system`, with a warning, since
+ * every part has one and both are written alike. A mode that is not one of `PROMPT_MODES` is dropped.
+ */
+function readPart(report: Report, path: string, held: unknown): Omit<PromptPart, 'allowedModes'> | undefined {
+  if (!isRecord(held)) {
+    return void report.drop(path, 'must be an object');
+  }
+  const name = report.string(`${path}.name`, held.name);
+  if (!name) {
+    return void report.drop(path, 'has no name, and merging happens on the name');
+  }
+  // An empty content is how a layer deletes the part below it, so it is not the same as none.
+  const content = report.string(`${path}.content`, held.content);
+  if (content === undefined) {
+    return void report.drop(path, 'has no content');
+  }
+  let role = ROLES.find((known) => known === held.role);
+  if (role === undefined) {
+    const quoted = ROLES.map((known) => `"${known}"`).join(' or ');
+    const problem = isAbsent(held.role) ? 'is missing' : `must be ${quoted}`;
+    report.note(`${path}.role`, `${problem}, and was read as "${PROMPT_ROLES.system}"`);
+    role = PROMPT_ROLES.system;
+  }
+  return kept({ role, name, content, mode: report.oneOf(`${path}.mode`, held.mode, MODES) });
+}
+
+/**
+ * Reads a part's `allowedModes`.
+ *
+ * @param report - Where what is dropped is written.
+ * @param path - Where the list sits: `prompt[2].allowedModes`.
+ * @param value - What the document held there.
+ * @returns The modes, in the order written. `undefined` where it is absent or is not an array.
+ *
+ * @remarks
+ * An entry that is not a mode is dropped and the list kept, so a list that loses every entry locks
+ * the part: a mistake leaves an app able to do less, never more.
+ */
+function parseAllowedModes(report: Report, path: string, value: unknown): PromptMode[] | undefined {
+  if (isAbsent(value)) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    return void report.drop(path, 'must be an array of modes');
+  }
+  const modes: PromptMode[] = [];
+  for (const [index, held] of value.entries()) {
+    const mode = report.oneOf(`${path}[${index}]`, held, MODES);
+    if (mode) {
+      modes.push(mode);
+    }
+  }
+  return modes;
+}
+
 /**
  * Reads the `prompt` array, part by part.
  *
- * @param report - Where what is dropped is written.
+ * @param report - Where what is dropped, and a name only an app may use, is written.
  * @param value - The array, already known to be one.
  * @returns The parts that survived, in the document's order. Empty where none did.
  *
  * @remarks
- * A part goes whole where it is not an object, has no id or an empty one, or has neither a text
- * nor a usable reference. A `ref` beside a text goes alone, the text winning, and so does a
- * malformed one. An empty text is kept: it is how a layer deletes the part below it.
+ * A part goes whole where `readPart` refuses it, and a name whose first word is `app` refuses the
+ * document. An empty content is kept, since it is how a layer deletes the part below it, but a mode
+ * beside one means nothing and goes.
  */
 function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
   const parts: PromptPart[] = [];
   for (const [index, held] of value.entries()) {
     const path = `prompt[${index}]`;
-    if (!isRecord(held)) {
-      report.drop(path, 'must be an object');
+    const part = readPart(report, path, held);
+    if (!part) {
       continue;
     }
-    const id = report.string(`${path}.id`, held.id);
-    if (!id) {
-      report.drop(path, 'has no id, and merging happens on the id');
+    if (isAppName(part.name)) {
+      report.fail(`${path}.name`, `"${part.name}" has "${APP_WORD}" as its first word, which only an app's parts may`);
       continue;
     }
-    const text = report.string(`${path}.text`, held.text);
-    let ref: PromptPart['ref'];
-    const hasRef = isAbsent(held.ref) === false;
-    const hasText = text !== undefined;
-    if (hasRef && hasText) {
-      report.drop(`${path}.ref`, 'sits beside a text, which is used instead');
-    } else if (hasRef) {
-      const raw = held.ref;
-      const type = isRecord(raw) ? raw.type : undefined;
-      const value = isRecord(raw) ? report.string(`${path}.ref.value`, raw.value) : undefined;
-      const isKnownType = type === REF_FILE || type === REF_URL;
-      if (isKnownType && value) {
-        ref = { type, value };
-      } else {
-        report.drop(`${path}.ref`, 'must be { type: "file" | "url", value }');
-      }
+    const allowedModes = isRecord(held)
+      ? parseAllowedModes(report, `${path}.allowedModes`, held.allowedModes)
+      : undefined;
+    const deletesWithMode = part.content === '' && part.mode !== undefined;
+    if (deletesWithMode) {
+      report.drop(`${path}.mode`, 'means nothing beside an empty content, which deletes the part');
     }
-    // An empty text is how a layer deletes the part below it, so it is not the same as neither.
-    if (text === undefined && !ref) {
-      report.drop(path, 'has neither text nor a reference');
-      continue;
-    }
-    parts.push(kept({ id, text, ref }));
+    parts.push(kept({ ...part, mode: deletesWithMode ? undefined : part.mode, allowedModes }));
   }
   return parts;
 }
@@ -931,7 +1011,7 @@ function parseBundle(report: Report, value: unknown): SpecBundle | undefined {
   return { mcpServers: servers };
 }
 
-/** The keys this version names. Anything else is a later 1.x, and is carried rather than erased. */
+/** The keys this version names. Anything else is a later 2.x, and is carried rather than erased. */
 const KNOWN = new Set([
   'spec',
   '$schema',
@@ -941,6 +1021,7 @@ const KNOWN = new Set([
   'endpoint',
   'model',
   'prompt',
+  'promptLayout',
   'tools',
   'retry',
   'tasks',
@@ -963,11 +1044,11 @@ const KNOWN = new Set([
  * @remarks
  * Every problem is reported at once, in `validateHooks`'s `path: what is wrong` shape, so an
  * operator fixes a document in one round trip. The hard errors are about the document itself — not
- * an object, a missing or foreign `spec` token, a container of the wrong kind, a `requires` entry
- * that is not a string or not understood — and anything else drops the field with a warning, an
- * out-of-range value dropped rather than clamped. A foreign version is refused where
- * `importCapabilities` shrugs, because an agent of the wrong version is not the agent its author
- * described (`docs/agent-spec-v1.md`).
+ * an object, a missing or foreign `spec` token, a container of the wrong kind, a prompt part named
+ * as an app's, a `requires` entry that is not a string or not understood — and anything else drops
+ * the field with a warning, an out-of-range value dropped rather than clamped. A foreign version,
+ * version 1 included, is refused where `importCapabilities` shrugs, because an agent of the wrong
+ * version is not the agent its author described; `upgradeSpec` converts a version 1 document.
  */
 export function parseSpec(document: unknown, options: ParseSpecOptions = {}): ParsedSpec {
   const report = new Report();
@@ -983,9 +1064,12 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
   } else if (token !== AGENT_SPEC) {
     const major = Number(token.split('/')[1]);
     const named = token.startsWith('cubicecho.agent/') && Number.isInteger(major);
+    const upgrade = token === AGENT_SPEC_V1 ? ', which upgradeSpec converts it to' : '';
     report.fail(
       'spec',
-      named ? `is version ${major}, and this build reads version ${AGENT_SPEC_VERSION}` : `must be "${AGENT_SPEC}"`,
+      named
+        ? `is version ${major}, and this build reads version ${AGENT_SPEC_VERSION}${upgrade}`
+        : `must be "${AGENT_SPEC}"`,
     );
   }
 
@@ -1046,6 +1130,7 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
       endpoint: parseEndpoint(report, 'endpoint', document.endpoint),
       model: parseModel(report, document.model),
       prompt: Array.isArray(document.prompt) ? parsePrompt(report, document.prompt) : undefined,
+      promptLayout: report.oneOf('promptLayout', document.promptLayout, Object.values(PROMPT_LAYOUTS)),
       tools: parseTools(report, document.tools),
       retry: parseRetry(report, document.retry),
       tasks: isRecord(document.tasks) ? parseTasks(report, document.tasks) : undefined,
@@ -1061,7 +1146,7 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
       continue;
     }
     // Kept, not erased: an app stores what it was given and resolves on read, so a key from a
-    // later 1.x survives an edit-and-export cycle instead of dying at the first app to open it.
+    // later 2.x survives an edit-and-export cycle instead of dying at the first app to open it.
     report.note(key, 'is not a key this version names, and was carried through unread');
     spec[key] = held;
   }
@@ -1071,6 +1156,68 @@ export function parseSpec(document: unknown, options: ParseSpecOptions = {}): Pa
     errors: report.errors,
     warnings: report.warnings,
   };
+}
+
+/** What `upgradeSpec` hands back. */
+export interface UpgradedSpec {
+  /** The version 2 document, new; or the one handed in, untouched, where it was not version 1. */
+  document: unknown;
+  /** Whether it was a version 1 document, and so was converted. */
+  upgraded: boolean;
+  /** What the conversion dropped, in `parseSpec`'s `path: what is wrong` shape. */
+  warnings: string[];
+}
+
+/**
+ * Converts a version 1 agent document into version 2, for `parseSpec` to read.
+ *
+ * @param document - Anything at all: a stored document of either version, or parsed JSON.
+ * @returns The converted document and what it lost. Anything that is not a version 1 document, a
+ * version 2 one included, comes back as it was, with `upgraded: false`.
+ *
+ * @remarks
+ * Only the token and the prompt parts change: each part's `id` becomes its `name`, its `text` its
+ * `content`, and its `role` is `system`. Version 2 has no references, so a `ref` goes, and a part
+ * that had only a `ref` goes whole, each with a warning. Nothing else is checked here; `parseSpec`
+ * does that next.
+ */
+export function upgradeSpec(document: unknown): UpgradedSpec {
+  const isVersion1 = isRecord(document) && document.spec === AGENT_SPEC_V1;
+  if (isVersion1 === false) {
+    return { document, upgraded: false, warnings: [] };
+  }
+  const report = new Report();
+  const { prompt } = document;
+  const upgraded: Record<string, unknown> = { ...document, spec: AGENT_SPEC };
+  if (Array.isArray(prompt)) {
+    upgraded.prompt = prompt.flatMap((held, index) => upgradePart(report, `prompt[${index}]`, held));
+  }
+  return { document: upgraded, upgraded: true, warnings: report.warnings };
+}
+
+/**
+ * One version 1 prompt part as version 2 writes it.
+ *
+ * @param report - Where a dropped reference is written.
+ * @param path - Where the part sits: `prompt[2]`.
+ * @param held - The part as version 1 held it.
+ * @returns The part, new, in a list of one; an empty list where it had only a reference. What is
+ * not an object comes back as it was, for `parseSpec` to report.
+ */
+function upgradePart(report: Report, path: string, held: unknown): unknown[] {
+  if (!isRecord(held)) {
+    return [held];
+  }
+  const { id, text, ref, ...rest } = held;
+  const hasRef = isAbsent(ref) === false;
+  const hasText = isAbsent(text) === false;
+  if (hasRef && hasText) {
+    report.drop(`${path}.ref`, 'is a reference, which version 2 does not read');
+  } else if (hasRef) {
+    report.drop(path, 'had only a reference, which version 2 does not read');
+    return [];
+  }
+  return [{ role: PROMPT_ROLES.system, ...rest, ...kept({ name: id ?? undefined, content: text ?? undefined }) }];
 }
 
 /**
@@ -1144,30 +1291,16 @@ function mergeById<T extends object>(
   items: readonly T[],
   idOf: (item: T) => string | undefined,
   deletes: (item: T) => boolean = () => false,
-  combine: (below: T | undefined, above: T) => T = (below, above) => ({ ...below, ...above }),
 ) {
   // A deleted id keeps its key, holding nothing, so an item above it takes the same place.
   const merged = new Map<string, T | undefined>();
   for (const item of items) {
     const id = idOf(item);
     if (id !== undefined) {
-      merged.set(id, deletes(item) ? undefined : combine(merged.get(id), item));
+      merged.set(id, deletes(item) ? undefined : { ...merged.get(id), ...item });
     }
   }
   return [...merged.values()].filter((item) => item !== undefined);
-}
-
-/**
- * A prompt part laid over the one below it: a text or a reference above replaces what the part below
- * said, since a part has one or the other, never both.
- *
- * @param below - The part a weaker layer gave, if any. Not written to.
- * @param above - The part this layer gives. Not written to.
- * @returns A new part: `above`'s own, or the one below where `above` gives neither.
- */
-function overPart(below: PromptPart | undefined, above: PromptPart): PromptPart {
-  const givesSource = above.text !== undefined || above.ref !== undefined;
-  return givesSource ? { ...above } : { ...below, ...above };
 }
 
 /**
@@ -1247,9 +1380,8 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const tasks = resolveTasks(layers, endpoint);
   const prompt = mergeById(
     layers.flatMap((layer) => layer.prompt ?? []),
-    (part) => part.id,
-    (part) => part.text === '',
-    overPart,
+    (part) => part.name,
+    (part) => part.content === '',
   );
   // Each layer's flags were checked against that layer's event, and the merge may have moved the
   // hook to another one, so they are checked again. Nothing is reported: resolving has no warnings.
@@ -1280,6 +1412,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const id = layers.findLast((layer) => !isAbsent(layer.id))?.id ?? '';
   const name = layers.findLast((layer) => !isAbsent(layer.name))?.name;
   const description = layers.findLast((layer) => !isAbsent(layer.description))?.description;
+  const promptLayout = layers.findLast((layer) => !isAbsent(layer.promptLayout))?.promptLayout;
 
   return {
     id,
@@ -1307,10 +1440,11 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     // Byte-identical to what a consumer's `systemPromptFor` produces today, so four sources
     // survive a round trip instead of flattening into one blob nobody can edit a third of.
     systemPrompt: prompt
-      .map((part) => part.text?.trim() ?? '')
+      .map((part) => part.content.trim())
       .filter(Boolean)
       .join('\n\n'),
     prompt,
+    promptLayout: promptLayout ?? AGENT_DEFAULTS.promptLayout,
     tasks,
     hooks,
     mcpServers: servers,

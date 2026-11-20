@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defineSpecColumns } from '../../src/spec/columns.ts';
+import { PROMPT_LAYOUTS, PROMPT_MODES, PROMPT_ROLES } from '../../src/spec/parts.ts';
 import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../../src/spec/spec.ts';
 
 /** One column per marker a host stores today, beside the same columns with none. */
@@ -174,7 +175,7 @@ describe('defineSpecColumns', () => {
     expect(layer).toEqual({
       spec: AGENT_SPEC,
       model: { model: 'qwen' },
-      prompt: [{ id: 'system', text: 'Be brief.' }],
+      prompt: [{ role: PROMPT_ROLES.system, name: 'system', content: 'Be brief.' }],
       tasks: { compaction: { model: 'small' } },
       extensions: { [EXTENSION]: { toolExecution: 'parallel' } },
       retry: { maxRetries: 0 },
@@ -264,22 +265,42 @@ describe('defineSpecColumns', () => {
       expect(table.dropped(spec).map((drop) => drop.path)).toEqual(['extensions["com.acme"]', 'extensions.com.acme']);
     });
 
-    it('takes a prompt part by its id, and reports the others and any reference', () => {
-      const table = defineSpecColumns<{ systemPrompt: string }>({
-        systemPrompt: { path: 'prompt.system', inherit: '' },
+    it('takes a prompt part by its name, and reports the others and what a column cannot hold', () => {
+      const table = defineSpecColumns<{ identity: string; rules: string }>({
+        identity: { path: 'prompt.identity', inherit: '' },
+        rules: { path: 'prompt.rules', inherit: '' },
       });
+      const project = { role: PROMPT_ROLES.system, name: 'project', content: 'Monorepo.' };
       const spec: AgentSpec = {
         spec: AGENT_SPEC,
         prompt: [
-          { id: 'project', text: 'Monorepo.' },
-          { id: 'system', text: 'Be brief.', ref: { type: 'file', value: 'system.md' } },
+          project,
+          {
+            role: PROMPT_ROLES.developer,
+            name: 'identity',
+            content: 'Be brief.',
+            mode: PROMPT_MODES.extend,
+            allowedModes: [],
+          },
+          { role: PROMPT_ROLES.system, name: 'rules', content: 'Judge the work.' },
         ],
       };
-      expect(table.fromLayer(spec)).toEqual({ systemPrompt: 'Be brief.' });
+      expect(table.fromLayer(spec)).toEqual({ identity: 'Be brief.', rules: 'Judge the work.' });
       expect(table.dropped(spec)).toEqual([
-        { path: 'prompt[0]', value: { id: 'project', text: 'Monorepo.' } },
-        { path: 'prompt[1].ref', value: { type: 'file', value: 'system.md' } },
+        { path: 'prompt[0]', value: project },
+        { path: 'prompt[1].role', value: PROMPT_ROLES.developer },
+        { path: 'prompt[1].mode', value: PROMPT_MODES.extend },
+        { path: 'prompt[1].allowedModes', value: [] },
       ]);
+    });
+
+    it('maps the layout as a column like any other scalar', () => {
+      const table = defineSpecColumns<{ layout: string }>({ layout: { path: 'promptLayout', inherit: '' } });
+      const layer = table.toLayer({ layout: PROMPT_LAYOUTS.xml });
+      expect(layer).toEqual({ spec: AGENT_SPEC, promptLayout: PROMPT_LAYOUTS.xml });
+      expect(table.fromLayer(parsed(layer))).toEqual({ layout: PROMPT_LAYOUTS.xml });
+      expect(table.dropped(layer)).toEqual([]);
+      expect(defineSpecColumns<Row>({}).dropped(layer)).toEqual([{ path: 'promptLayout', value: PROMPT_LAYOUTS.xml }]);
     });
 
     it('reports a value a column refused against that column', () => {

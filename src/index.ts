@@ -295,8 +295,6 @@ export {
   type ParseSpecOptions,
   type PromptPart,
   parseSpec,
-  REF_FILE,
-  REF_URL,
   type ResolvedAgent,
   type ResolvedTask,
   type RetrySpec,
@@ -308,6 +306,8 @@ export {
   type SpecServer,
   type TaskSpec,
   type ToolsSpec,
+  type UpgradedSpec,
+  upgradeSpec,
 } from './spec/spec.ts';
 export type { CatalogServer } from './tools/catalog.ts';
 export { PRESELECTED_NOTICE } from './tools/discovery.ts';
