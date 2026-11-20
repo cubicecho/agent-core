@@ -509,6 +509,10 @@ Reading one streamed reply back into a message.
 
 Text helpers over the message vocabulary: reading a message's text, and fencing text nobody trusted.
 
+- `fence` — Text that cannot open or close a section of the prompt, whatever it says.
+- `LAYOUT_TAGS` — The tags the loop and its fences write, beside the parts' own: the precedence sentence, the two sections the loop adds, and the two fences around text nobody vouched for.
+- `LayoutTag` (type) — One of `LAYOUT_TAGS`.
+- `PROMPT_TAG_PREFIX` — What every prompt part's tag starts with, in the XML layout: `prompt_identity`, `prompt_app_lane`.
 - `UNTRUSTED_PREFACE` — One sentence for a system prompt, saying what an `untrusted` block is.
 - `untrusted` — Fences text nobody trusted — a fetched page, an email, a submitted card, a tool result — so the model can see where it starts and ends and read it as data rather than as instructions.
 

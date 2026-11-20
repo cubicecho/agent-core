@@ -383,7 +383,7 @@ export {
   type TurnUsage,
   type UsageTotals,
 } from './wire/stream.ts';
-export { UNTRUSTED_PREFACE, untrusted } from './wire/text.ts';
+export { fence, LAYOUT_TAGS, type LayoutTag, PROMPT_TAG_PREFIX, UNTRUSTED_PREFACE, untrusted } from './wire/text.ts';
 export {
   ALL_FENCES,
   DEFAULT_FENCES,

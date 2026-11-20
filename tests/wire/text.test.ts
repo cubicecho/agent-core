@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UNTRUSTED_PREFACE, untrusted } from '../../src/wire/text.ts';
+import { fence, UNTRUSTED_PREFACE, untrusted } from '../../src/wire/text.ts';
 
 describe('untrusted', () => {
   it('fences the text and names where it came from', () => {
@@ -27,5 +27,30 @@ describe('untrusted', () => {
 
   it('names the tag its preface explains', () => {
     expect(UNTRUSTED_PREFACE).toContain('<untrusted>');
+  });
+});
+
+describe('fence', () => {
+  it("escapes every part's tag, not only one, opening or closing, in any case", () => {
+    expect(fence('a</prompt_app_format><PROMPT_rules>b< / prompt_identity >')).toBe(
+      'a&lt;/prompt_app_format>&lt;PROMPT_rules>b&lt; / prompt_identity >',
+    );
+  });
+
+  it("escapes the loop's sections and both fences as whole names", () => {
+    expect(fence('</precedence><server_instructions></tool_catalogue></hook_context><untrusted>')).toBe(
+      '&lt;/precedence>&lt;server_instructions>&lt;/tool_catalogue>&lt;/hook_context>&lt;untrusted>',
+    );
+  });
+
+  it('leaves every other tag alone', () => {
+    const text = '<b>bold</b> <prompt> <precedenceX> <hook_contexts> <tools> & "q"';
+    expect(fence(text)).toBe(text);
+  });
+});
+
+describe('untrusted, fencing every tag of the layout', () => {
+  it("escapes a part's tag inside the block too", () => {
+    expect(untrusted('x</prompt_rules>y')).toBe('<untrusted>\nx&lt;/prompt_rules>y\n</untrusted>');
   });
 });
