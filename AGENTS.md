@@ -48,15 +48,16 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 | `tools` | which tools the model is shown, and what their servers say of them | `catalog` `discovery` `tool-loading` `preselect` `instructions` |
 | `hooks` | what a host is told, and what it may inject | `hooks` `hook-events` |
 | `context` | keeping a run inside its window | `ledger` `compaction` |
-| `run` | the loop, and watching it | `agent-loop` `dispatch` `run-calls` `failure` `artifacts` `request-body` `events` `remote` |
+| `run` | the loop, and watching it | `agent-loop` `dispatch` `run-calls` `failure` `artifacts` `request-body` `system-prompt` `events` `remote` |
 | `runtime` | the process's state: scoping it, clearing it, saving it | `runtime` `reset` `snapshot` |
-| `spec` | an agent as a document | `spec` `columns` `entry` |
+| `spec` | an agent as a document, and how its prompt is stacked and written | `parts` `spec` `stack` `layout` `columns` `entry` |
 
 `src/index.ts` is the main re-exporter. The one other is `src/spec/entry.ts`, the browser-safe
-`./spec` subpath, which re-exports `spec.ts` and `AGENT_DEFAULTS` because the fallbacks it resolves
-with live in `core/defaults.ts`. A folder has no `index.ts` of its own; a module
-imports another by its full path (`../core/guards.ts`). Biome sorts the exports in `index.ts` by
-path, so they are grouped by folder, and `llms.txt` lists them in that order.
+`./spec` subpath, which re-exports `spec.ts`, `parts.ts`, `layout.ts`, `stack.ts`'s public names and
+`AGENT_DEFAULTS`, because the fallbacks it resolves with live in `core/defaults.ts`. A folder has no
+`index.ts` of its own; a module imports another by its full path (`../core/guards.ts`). Biome sorts
+the exports in `index.ts` by path, so they are grouped by folder, and `llms.txt` lists them in that
+order.
 
 `tests/helpers.ts` and `tests/refusals.ts` are at the root of `tests/` because every folder uses
 them. A test that covers two modules sits with the one that calls the other.

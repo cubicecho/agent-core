@@ -49,79 +49,79 @@ are the app's.
 
 ## From prompt parts to a system prompt
 
-An agent document's `prompt` is a list of **prompt parts**, each `{ id, text }` or
-`{ id, ref }`. An app stacks documents weakest first, for example settings, then the agent,
-then a task, and `resolveAgentSpec` merges the parts by id:
+An agent document's `prompt` is a list of **prompt parts**, each written like a chat message:
+`{ role, name, content }`, with an optional `mode`. An app stacks documents weakest first, for
+example settings, then the agent, then a task, and `resolveAgentSpec` merges the parts by name:
 
-- a new id adds a part, after those already there;
-- the same id replaces the part in the place it first had;
-- an empty `text` deletes the part, with everything below it.
+- a new name adds a part, after those already there;
+- the same name with no `mode` overwrites the part in the place it first had;
+- the same name with `mode: "extend"` or `"replace"` adds a part of its own, `<name>_2`, marked
+  as adding to that part or taking its place, which stays where it was;
+- an empty `content` deletes the part, and every part marked against it.
 
 ```mermaid
 flowchart LR
   subgraph L1["1 · settings"]
     s1["identity: You are a helpful assistant."]
+    s2["format: Answer in full sentences."]
   end
   subgraph L2["2 · agent"]
     a1["identity: You are a code reviewer."]
     a2["rules: Cite file:line."]
   end
   subgraph L3["3 · task"]
-    t1["rules: (empty text)"]
-    t2["task: Review PR 42."]
+    t1["identity, extend: Review PR 42."]
+    t2["format: (empty content)"]
   end
   subgraph R["Resolved, in order"]
     r1["identity: You are a code reviewer."]
-    r2["task: Review PR 42."]
+    r2["rules: Cite file:line."]
+    r3["identity_2, extends identity: Review PR 42."]
   end
   L1 --> L2 --> L3 --> R
 ```
 
-The resolved agent keeps the merged list as `prompt`, ids and references included, and joins
-the texts into `systemPrompt`:
-
-```ts
-systemPrompt = prompt.map((part) => part.text?.trim() ?? '').filter(Boolean).join('\n\n');
-```
-
-The ids decide merging and order; the model never sees them. A `ref` part adds nothing to
-`systemPrompt`: references are never fetched, so an app that wants one resolves it itself.
+The resolved agent keeps the merged list as `prompt` (each a `StackedPart`, with its owner and
+mark), its `promptLayout`, and the same parts joined as plain text in `systemPrompt`
+(`plainPrompt`: a replace is written in the place of the part it replaces).
 
 ### Two ways an app hands its prompt to the loop
 
-The loop takes the system prompt as one string, its `system` option. Whatever parts the app
-had are already joined when it arrives.
+The loop's `systemPrompt` option takes either one string or the agent's parts.
 
 ```mermaid
 flowchart TB
-  subgraph Layered["An app that layers documents (ai-router)"]
+  subgraph Parts["An app with an agent document"]
     direction TB
-    l1["router layer"] --> l2["agent document"] --> l3["host part:<br/>the client's system messages"] --> l4["task part:<br/>the request's task"]
-    l4 --> lr["resolveAgentSpec"] --> ls["systemPrompt"]
+    d1["agent document layers"] --> dr["resolveAgentSpec"] --> dp["prompt: the agent's parts<br/>promptLayout"]
+    ap["its own parts:<br/>extraBody.agent_core.prompt"]
   end
-  subgraph Own["An app that keeps its own (min-agent)"]
+  subgraph Own["An app with its own string (min-agent)"]
     direction TB
-    o1["settings row:<br/>one systemPrompt column"] --> os["the string, trimmed"]
+    o1["settings row:<br/>one systemPrompt column"] --> os["the string"]
   end
-  ls --> sys["runAgentLoop({ system })"]
-  os --> sys
+  dp --> loop["runAgentLoop({ systemPrompt })"]
+  ap --> loop
+  os --> loop
 ```
 
-An app's documents only matter at this step. Once the loop has `system`, it treats it as text
-and never splits or rewrites it.
+A string with no `agent_core` is used as it is, and never split or rewritten. Parts, or any
+`agent_core`, go through stacking first.
 
 ## What the model is sent
 
 The loop writes the system message on every turn, in one place (`runTurns`,
-`src/run/agent-loop.ts`), in this order:
+`src/run/agent-loop.ts`, with `src/run/system-prompt.ts`).
+
+**Given a string and no `agent_core`**, it is today's text:
 
 ```mermaid
 flowchart TB
-  system["1 · system: the app's prompt"]
-  instr["2 · heading: MCP server instructions<br/>each server's guidance, fenced and attributed<br/>(when serverInstructions is on)"]
-  cat["3 · heading: Tool catalogue<br/>tool names, server by server<br/>(on-demand or proxied loading)"]
+  system["1 · systemPrompt, as given"]
+  instr["2 · server instructions<br/>each server's guidance, fenced and attributed<br/>(when serverInstructions is on)"]
+  cat["3 · tool catalogue<br/>tool names, server by server<br/>(on-demand or proxied loading)"]
   join["joined with blank lines"]
-  single["singleSystem<br/>merges any leading system messages into one"]
+  single["singleSystem<br/>merges any leading system messages in after it"]
   out["the request's first message"]
 
   system --> join
@@ -130,25 +130,42 @@ flowchart TB
   join --> single --> out
 ```
 
-When neither section applies, `system` is sent exactly as it was given. Each server's guidance
-is wrapped as
+**Given parts, or `agent_core`**, the loop stacks first (`stackRequest`). For a model that is not
+an agent it takes `agent_core` out of the body, puts `app_` in front of each of the app's part
+names, drops any whose mode the agent's part does not allow (with a notice), and turns the
+conversation's leading system messages into one part, `app_system`. Then it writes, in the agent's
+`promptLayout`:
 
+```mermaid
+flowchart TB
+  p1["1 · the agent's parts"]
+  p2["2 · precedence: the agent's words win<br/>(markdown and xml, when an app added parts)"]
+  p3["3 · the app's parts, app_… names"]
+  p4["4 · server instructions"]
+  p5["5 · tool catalogue"]
+  p6["6 · app_system: the leading system messages<br/>(last: it changes most)"]
+  out["one system message"]
+  p1 --> p2 --> p3 --> p4 --> p5 --> p6 --> out
 ```
-## <server label>
 
-<untrusted source="<server label>">
-…
-</untrusted>
-```
+| Layout | A part is written as | The loop's sections |
+| --- | --- | --- |
+| `plain` (default) | Its content; a replace overwrites in place | Headed `# MCP server instructions`, `# Tool catalogue` |
+| `markdown` | Under `## Name In Title Case`, its own headings moved two levels down | `## Server Instructions`, `## Tool Catalogue`, `## Precedence` |
+| `xml` | Inside `<prompt_name>`, marked `extends="…"` or `replaces="…"` | `<server_instructions>`, `<tool_catalogue>`, `<precedence>` |
 
-and text inside it cannot close its own fence. The catalogue is left out on a turn whose tools
-a preselection already chose.
+In every layout each server's guidance is inside `<untrusted source="<server label>">`, and every
+part's content, server's guidance and hook's text is fenced (`fence`): it cannot open or close any
+tag the layout writes. The catalogue is left out on a turn whose tools a preselection already
+chose. To a remote agent, `agent_core` is sent through instead, for the server to stack, and the
+warnings its reply carries are raised as notices.
 
 Where everything else goes:
 
 | What | Where in the request | When it is written |
 | --- | --- | --- |
-| The app's prompt, server instructions, catalogue | The system message | The same text on every turn of an exchange |
+| The app's prompt, server instructions, catalogue, `app_system` | The system message | The same text on every turn of an exchange |
+| `agent_core` | Taken out of the body for a model that is not an agent; sent through to an agent | Read once per exchange |
 | Hook context (`sessionStart`, `beforeExchange`) | Before the question, in the user's message, as `<hook_context source="…">` blocks after a short preface | Once per exchange, on the request only, never in the stored transcript |
 | The conversation | The messages after the system message | Grows by appending each turn |
 | Input the app sent mid-exchange | A new message in the conversation | Between turns |
@@ -296,7 +313,8 @@ flowchart TB
 - Tools are sorted by name unless `toolOrder` is `false`, so the same set always reads the same.
 - Pruning moves its boundary only forward, so between moves each request extends the last.
 - Between exchanges, the first prompt part that differs is where reuse stops: everything after
-  it, the server instructions and catalogue included, is read again.
+  it is read again. `app_system`, which a chat client rewrites on every message, is written last,
+  after the server instructions and catalogue, so a change to it costs only itself.
 
 The token ledger records each request's size and, when a cache falls short of the one before,
 its likely cause (`cacheDiagnosis`).

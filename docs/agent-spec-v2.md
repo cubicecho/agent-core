@@ -7,9 +7,9 @@ It is implemented in `src/spec/`. `parseSpec` reads a document, `resolveAgentSpe
 into the flat config the loop takes, `exportSpec` and `findSpecSecrets` prepare one to leave the
 host, and `defineSpecColumns` maps an app's stored row to a layer and back.
 
-**This page describes version 2, `cubicecho.agent/2`.** The code implements version 1, which
-[`agent-spec-v1.md`](agent-spec-v1.md) describes, until version 2 lands (the ledger's A16). What
-changed is under [Version 2](#version-2). How an agent's parts are stacked with an app's and
+**This page describes version 2, `cubicecho.agent/2`, which the code implements.** Version 1 is
+kept as a record in [`agent-spec-v1.md`](agent-spec-v1.md). What changed is under
+[Version 2](#version-2). How an agent's parts are stacked with an app's and
 written for the model is [`agent-prompt-spec-v2.md`](agent-prompt-spec-v2.md).
 
 ## Why

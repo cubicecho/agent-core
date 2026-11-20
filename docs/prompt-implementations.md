@@ -6,8 +6,8 @@ rules any agent server and any app would follow; this page holds what is particu
 ai-router, task_server, telos, min-agent, kanban_server, agent-mcp-pool, and Open WebUI as a
 client.
 
-**Status: planned.** Nothing here is built yet. agent-core's part is in its ledger
-(`.agents/coding-standards-todos.md`, M12–M18); each other repo's is listed at the end.
+**Status: agent-core's part is built** (its ledger's M12–M18). Every other repo's part, listed at
+the end, is planned.
 
 ## In cubicecho's words
 
@@ -268,7 +268,7 @@ then the loop's sections. The reply carries:
 ```json
 "agent_core": {
   "warnings": [
-    { "part": "rules", "rule": "replace-not-allowed", "message": "Task Reviewer's rules does not let an app replace it, so the part was dropped." }
+    { "part": "rules", "rule": "replace-not-allowed", "message": "The agent's rules part does not let an app replace it, so the part was dropped." }
   ]
 }
 ```
