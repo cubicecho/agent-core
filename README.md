@@ -1953,7 +1953,7 @@ The seam above says what a *running* agent is. `@cubicecho/agent-core/spec` says
 one is: a versioned JSON document that any app on this package can read, layer and hand to the
 loop. It exists because the applications here spell "an agent" three incompatible ways — `maxTokens: 0`
 means *no ceiling* in one, *inherit* in the next and *a real ceiling of zero* in the third, and an
-empty server list means *no tools* in one and *every tool* in another. `docs/agent-spec.md` argues
+empty server list means *no tools* in one and *every tool* in another. `docs/agent-spec-v1.md` argues
 the whole thing out.
 
 ```ts
