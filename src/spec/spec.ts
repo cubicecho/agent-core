@@ -19,7 +19,7 @@ import {
   type PromptRole,
   type StackedPart,
 } from './parts.ts';
-import { numberedName, plainPrompt } from './stack.ts';
+import { type AppPart, numberedName, plainPrompt } from './stack.ts';
 
 /**
  * A JSON document that defines an agent, and the rules for reading one.
@@ -685,7 +685,7 @@ const isAppName = (name: string) => name.split(NAME_WORDS).find(Boolean)?.toLowe
  * A role that is missing or not one of `PROMPT_ROLES` is read as `system`, with a warning, since
  * every part has one and both are written alike. A mode that is not one of `PROMPT_MODES` is dropped.
  */
-function readPart(report: Report, path: string, held: unknown): Omit<PromptPart, 'allowedModes'> | undefined {
+function readPart(report: Report, path: string, held: unknown): AppPart | undefined {
   if (!isRecord(held)) {
     return void report.drop(path, 'must be an object');
   }
@@ -771,6 +771,51 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
     parts.push(kept({ ...part, mode: deletesWithMode ? undefined : part.mode, allowedModes }));
   }
   return parts;
+}
+
+/** What `parseAppParts` hands back. */
+export interface ParsedAppParts {
+  /** The parts that survived, in the order sent. */
+  parts: AppPart[];
+  /** What was dropped, in `parseSpec`'s `path: what is wrong` shape, each path opening `prompt`. */
+  warnings: string[];
+}
+
+/**
+ * Reads the parts an app sent in a request's `agent_core.prompt`, dropping what it cannot use.
+ *
+ * @param value - What the request held under `prompt`: anything at all. Absent is no parts.
+ * @returns The parts that survived, and what was dropped. Nothing is refused.
+ *
+ * @remarks
+ * A part is read as a document's is: one with no name or no content goes, a role that is missing or
+ * unknown is read as `system`, and an unknown mode is dropped. `allowedModes` is the agent's to set,
+ * so it is dropped too. The names are the app's own and are not checked here; `stackAppParts` holds
+ * them to its rules.
+ */
+export function parseAppParts(value: unknown): ParsedAppParts {
+  const report = new Report();
+  const parts: AppPart[] = [];
+  if (isAbsent(value)) {
+    return { parts, warnings: report.warnings };
+  }
+  if (!Array.isArray(value)) {
+    report.drop('prompt', 'must be an array');
+    return { parts, warnings: report.warnings };
+  }
+  for (const [index, held] of value.entries()) {
+    const path = `prompt[${index}]`;
+    const part = readPart(report, path, held);
+    if (!part) {
+      continue;
+    }
+    const setsAllowedModes = isRecord(held) && isAbsent(held.allowedModes) === false;
+    if (setsAllowedModes) {
+      report.drop(`${path}.allowedModes`, "is the agent's to set");
+    }
+    parts.push(part);
+  }
+  return { parts, warnings: report.warnings };
 }
 
 /**

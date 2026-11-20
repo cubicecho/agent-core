@@ -11,4 +11,4 @@
 export { AGENT_DEFAULTS, type AgentSettings } from '../core/defaults.ts';
 export * from './parts.ts';
 export * from './spec.ts';
-export { plainPrompt } from './stack.ts';
+export { type AppPart, plainPrompt, type StackedPrompt, stackAppParts } from './stack.ts';

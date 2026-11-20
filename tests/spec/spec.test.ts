@@ -8,6 +8,7 @@ import {
   type AgentSpec,
   exportSpec,
   findSpecSecrets,
+  parseAppParts,
   parseSpec,
   type ResolvedAgent,
   resolveAgentSpec,
@@ -1072,5 +1073,48 @@ describe('resolveAgentSpec', () => {
     expect(resolved.requestTimeoutSeconds).toBeUndefined();
     expect(resolved.servers).toBeUndefined();
     expect(resolved.name).toBe('');
+  });
+});
+
+describe('parseAppParts', () => {
+  it("reads a request's parts as a document's, in the order sent", () => {
+    const prompt = [
+      part('identity', 'Here you review one workflow step.', { mode: PROMPT_MODES.extend }),
+      { role: PROMPT_ROLES.developer, name: 'lane', content: 'This is the Review lane.' },
+    ];
+    expect(parseAppParts(prompt)).toEqual({ parts: prompt, warnings: [] });
+    expect(parseAppParts(undefined)).toEqual({ parts: [], warnings: [] });
+    expect(parseAppParts(null)).toEqual({ parts: [], warnings: [] });
+  });
+
+  it('drops what it cannot use, reading a missing role as system, and never refuses', () => {
+    const result = parseAppParts([
+      { name: 'lane', content: 'Review.' },
+      part('format', 'JSON.', { mode: 'append' }),
+      part('rules', 'Be quick.', { allowedModes: [PROMPT_MODES.replace] }),
+      part('', 'No name.'),
+      { role: PROMPT_ROLES.system, name: 'project' },
+      7,
+    ]);
+    expect(result.parts).toEqual([part('lane', 'Review.'), part('format', 'JSON.'), part('rules', 'Be quick.')]);
+    expect(result.warnings).toEqual([
+      'prompt[0].role: is missing, and was read as "system"',
+      'prompt[1].mode: must be "extend" or "replace", and was dropped',
+      "prompt[2].allowedModes: is the agent's to set, and was dropped",
+      'prompt[3]: has no name, and merging happens on the name, and was dropped',
+      'prompt[4]: has no content, and was dropped',
+      'prompt[5]: must be an object, and was dropped',
+    ]);
+    expect(parseAppParts({ identity: 'x' })).toEqual({
+      parts: [],
+      warnings: ['prompt: must be an array, and was dropped'],
+    });
+  });
+
+  it("leaves the app's names to stacking, which prefixes them", () => {
+    // `app_lane` is refused in a document; from an app it is only a name, which becomes `app_app_lane`.
+    const { parts, warnings } = parseAppParts([part('app_lane', 'Review.'), part('system', 'Today.')]);
+    expect(warnings).toEqual([]);
+    expect(parts.map((held) => held.name)).toEqual(['app_lane', 'system']);
   });
 });

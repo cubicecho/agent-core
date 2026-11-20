@@ -291,9 +291,11 @@ export {
   exportSpec,
   findSpecSecrets,
   type ModelSpec,
+  type ParsedAppParts,
   type ParsedSpec,
   type ParseSpecOptions,
   type PromptPart,
+  parseAppParts,
   parseSpec,
   type ResolvedAgent,
   type ResolvedTask,
@@ -309,7 +311,7 @@ export {
   type UpgradedSpec,
   upgradeSpec,
 } from './spec/spec.ts';
-export { plainPrompt } from './spec/stack.ts';
+export { type AppPart, plainPrompt, type StackedPrompt, stackAppParts } from './spec/stack.ts';
 export type { CatalogServer } from './tools/catalog.ts';
 export { PRESELECTED_NOTICE } from './tools/discovery.ts';
 export { type ServerInstructionsOptions, serverInstructionsPrompt } from './tools/instructions.ts';
