@@ -32,7 +32,7 @@ request — is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 | `thinking` | Tells a scratchpad fenced inside `content` from the answer: `FenceSplitter` for a stream, `stripThinking` for a whole reply, and the fence tables both read. |
 | `side-task` | One-shot calls that support an exchange without being one — small prompt, short answer, no tools, never worth failing the exchange over. Each is one request sent by `runTurn`, as a turn is. `askJson` holds the answer to a schema where the server can, and `taskCall` turns the settings an agent spec gives a task into the call that honours them. |
 | `hooks` | The app's side of lifecycle hooks: `gather` before a request and `notify` after, the shared context budget, `withContext` to put what they add on the exchange's question, `untrusted` to fence text nobody vouched for, and `turnMessages` to hand them a transcript. Running a hook is a runner the caller passes. |
-| `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, `stamp` for an app that numbers its own, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
+| `events` | The in-memory bus a watcher reads while a run happens: `emit`, `watch`, `history`, `fold`, `stamp` for an app that numbers its own, `nestEvent` for a run's events shown inside another's, and `runMetrics` for what a run cost. A watcher's backlog is capped and reports its own gaps. |
 | `client` | A pooled `OpenAI` client per model server, plus the context window: the served one where a local server says, the listed one otherwise, and their caches. And `resolveApiKey`, for a caller deciding which key a model server gets, and `probeEndpoint`, for listing one a form has not saved yet. |
 | `retry` | What to do when a request is lost, refused or too big: `isTransient`, `isModelLoading`, `backoffMs`, `ContextOverflow`, `EndpointSilent`. |
 | `calibration` | How many characters a token is worth on one model, learned from the prompt counts its model server reports: `charsPerTokenFor`, `calibrate`. |
@@ -1434,8 +1434,10 @@ head)` writes an event as a chunk with empty `choices` and `agent_core: { event 
 client skips as it skips a usage chunk; `withProgress(completion, runId, events)` puts
 `agent_core: { runId, events }` beside the `choices` of an answer that is not streamed; and
 `progressEvent` and `progressEvents` read them back, dropping an event that is malformed or of a
-kind this version does not know. Each takes the field as its last argument, `PROGRESS_FIELD` where
-it is left out. A server numbering its own events makes each with `stamp`.
+kind this version does not know. An event's `via` travels unchanged both ways, and a malformed one
+makes the event malformed; the loop forwards a nested event whatever its kind, since its start and
+end are an inner run's and not the server's own. Each takes the field as its last argument,
+`PROGRESS_FIELD` where it is left out. A server numbering its own events makes each with `stamp`.
 
 ## Fields this interface cannot spell
 
@@ -1792,6 +1794,29 @@ is not the next one's.
 the same way — as a last argument, which is 12 tools a load and 16 carried unless given. A resolution
 carries the cap it was held to, so `loadResult` tells the model the number it was actually
 measured against rather than the module's own.
+
+### A run inside a call
+
+A tool call can itself be an agent run — another agent called as an MCP task, say — and a host can
+show that run's turns, thinking and tool calls inside the caller's stream, under the call. It
+republishes each of the inner run's events on the outer run with `nestEvent`, which drops the inner
+`runId` and `seq` and puts `{ runId, callId }` at the front of the event's `via`:
+
+```ts
+import { emit, nestEvent, watch } from "@cubicecho/agent-core";
+
+for await (const event of watch(childRunId, signal)) {
+  emit(parentRunId, nestEvent(event, { runId: childRunId, callId }));
+}
+```
+
+`via` lists the hops outermost first, so a run two calls down reaches the top with both, and an
+event without one (or with an empty one) is the run's own; `isNested` says which. The outer run
+numbers what it republishes in its own sequence, so `seq` stays the one thing a client orders and
+de-duplicates on. A nested event is shown, not acted on: its `done` does not end a watcher, its
+`wait` and `done` do not move the outer run's retention, `fold` never joins its text to the outer
+run's or to another inner run's, and `runMetrics` leaves it out — an inner run's cost is summed from
+its own events. A renderer groups or indents by `via`.
 
 ## Hooks
 

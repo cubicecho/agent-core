@@ -210,6 +210,22 @@ export interface LoadCounts {
 }
 
 /**
+ * One step on the way from a run to an event that happened in a run inside it: the inner run, and
+ * the call of the outer run it ran under.
+ *
+ * @remarks
+ * A tool call can itself be an agent run, such as another agent called as an MCP task. A host that
+ * shows that run's events inside its caller's stream republishes each with `nestEvent`, which says
+ * where it came from here.
+ */
+export interface RunVia {
+  /** The inner run the event came from. */
+  runId: string;
+  /** The id of the outer run's call that the inner run answers. */
+  callId: string;
+}
+
+/**
  * One thing that happened in a run, as a watcher receives it.
  *
  * @remarks
@@ -276,6 +292,58 @@ export interface RunEvent {
    * asked. Optional for the reason `id` is.
    */
   pending?: string[];
+  /**
+   * Where an event from a run inside this one came from, outermost first: the run that called it and
+   * the call, then any run that run called in turn. Absent, or empty, on the run's own events. Optional
+   * for the reason `id` is.
+   *
+   * @remarks
+   * A nested event is shown, not acted on: its `done` does not end a watcher, its `wait` or `done`
+   * does not move the run's retention, `fold` keeps its text apart, and `runMetrics` leaves it out.
+   */
+  via?: RunVia[];
+}
+
+/**
+ * Whether an event came from a run inside the one it is filed under.
+ *
+ * @param event - The event.
+ * @returns True where its `via` names at least one run.
+ */
+export const isNested = (event: Pick<RunEvent, 'via'>): boolean => (event.via?.length ?? 0) > 0;
+
+/**
+ * An inner run's event as its outer run republishes it, filed under the call it ran for.
+ *
+ * @param event - The inner run's event, whole. Not written to.
+ * @param hop - The inner run and the outer run's call it answers.
+ * @returns An input for `emit` (or `stamp`) on the outer run: the event less its `runId` and `seq`,
+ * which are the outer run's to give, its `at` kept, and `hop` put ahead of whatever `via` it had.
+ *
+ * @remarks
+ * The outer run numbers what it republishes in its own sequence, so a watcher still orders and
+ * de-duplicates the stream on `seq` alone. Nesting more than one level is the same call at each
+ * level: a run two calls down reaches the top with both hops, outermost first.
+ */
+export function nestEvent(event: RunEvent, hop: RunVia): RunEventInput {
+  const { runId: _runId, seq: _seq, via = [], ...rest } = event;
+  return { ...rest, via: [{ runId: hop.runId, callId: hop.callId }, ...via] };
+}
+
+/**
+ * Whether two events came by the same way: both the run's own, or both through the same calls.
+ *
+ * @param a - One event.
+ * @param b - The other.
+ * @returns True where their `via`s name the same runs and calls in the same order.
+ */
+function sameVia(a: Pick<RunEvent, 'via'>, b: Pick<RunEvent, 'via'>): boolean {
+  const left = a.via ?? [];
+  const right = b.via ?? [];
+  return (
+    left.length === right.length &&
+    left.every((hop, i) => hop.runId === right[i].runId && hop.callId === right[i].callId)
+  );
 }
 
 /**
@@ -464,8 +532,9 @@ export function emit(runId: string, input: RunEventInput): RunEvent {
   // A finished run is kept for a moment so a watcher that arrives just after the end still sees
   // how it went, then dropped: its record is the row, not this. A waiting one is kept far longer.
   // An exchange's end says nothing of whether the run goes on: after a `wait`, it is still waiting.
+  // Nor does a nested event, which is a run inside this one waiting or ending, not this run.
   const isOver = stream.phase === StreamPhase.Ended;
-  const movesPhase = isOver === false && event.kind !== RunEventKind.ExchangeEnd;
+  const movesPhase = isOver === false && event.kind !== RunEventKind.ExchangeEnd && isNested(event) === false;
   if (movesPhase) {
     stream.phase = PHASE_BY_KIND.get(event.kind) ?? StreamPhase.Live;
   }
@@ -597,8 +666,10 @@ async function* watching(held: Bus, runId: string, signal?: AbortSignal): AsyncG
         }
         yield event;
         // `done` is the last event a run will ever have, so the subscription completes rather
-        // than leaving the client holding an open stream that will never say anything again.
-        if (event.kind === RunEventKind.Done) {
+        // than leaving the client holding an open stream that will never say anything again. A
+        // nested `done` is a run inside this one ending, and this one goes on.
+        const isRunDone = event.kind === RunEventKind.Done && isNested(event) === false;
+        if (isRunDone) {
           return;
         }
       }
@@ -671,7 +742,9 @@ export const resetEvents = () => {
  *
  * @param events - Events in `seq` order, from `history` or collected from `watch`. Not written to.
  * @returns One event per block, every one a copy. A stretch of `thinking` or of `output` within
- * one exchange is a single block with the texts joined; anything else is a block to itself.
+ * one exchange, said by one run, is a single block with the texts joined; anything else is a block
+ * to itself. A nested event's run is its `via`, so a stretch of an inner run's thinking is kept
+ * apart from the outer run's and from every other inner run's.
  *
  * @remarks
  * Consecutive tokens of one kind are one thing being said, not hundreds of things. A client that
@@ -700,7 +773,7 @@ export function fold(events: RunEvent[]): RunEvent[] {
   for (const event of events) {
     const last = blocks[blocks.length - 1];
     const mergeable = event.kind === RunEventKind.Thinking || event.kind === RunEventKind.Output;
-    const continuesLast = last && last.kind === event.kind && last.exchange === event.exchange;
+    const continuesLast = last && last.kind === event.kind && last.exchange === event.exchange && sameVia(last, event);
     if (mergeable && continuesLast) {
       last.seq = event.seq;
       last.at = event.at;
@@ -906,7 +979,8 @@ export interface RunMetricsOptions {
  * A run's totals, timings and cache findings, derived from the events it emitted.
  *
  * @param events - A run's events in `seq` order, from `history` or collected from `watch`. A backlog
- * that has lost its oldest events to the cap sums what it still has.
+ * that has lost its oldest events to the cap sums what it still has. Nested events, those with a
+ * `via`, are left out: they are an inner run's, which is summed from its own events.
  * @param [options] - The served context window, for how full the run came to it.
  * @returns A summary of the caller's own. The counts are zero for an empty list, and `outcome` is
  * what `RunMetrics.outcome` says: absent while an exchange is going.
@@ -956,6 +1030,9 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   let failed = false;
 
   for (const event of events) {
+    if (isNested(event)) {
+      continue;
+    }
     if (event.kind === RunEventKind.Exchange) {
       metrics.exchanges++;
       ending = undefined;

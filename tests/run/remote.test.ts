@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RunEventKind, stamp } from '../../src/run/events.ts';
+import { nestEvent, RunEventKind, stamp } from '../../src/run/events.ts';
 import {
   IDEMPOTENCY_HEADER,
   PROGRESS_FIELD,
@@ -148,5 +148,30 @@ describe('remoteRun', () => {
     const remote = remoteRun(undefined, () => {}, { newKey: () => `key-${++made}` });
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-1' });
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-2' });
+  });
+});
+
+describe('nested events over the wire', () => {
+  /** The server's tool call, republished from an inner run under the call it answers. */
+  const nested = { ...called, via: [{ runId: 'inner', callId: 'Srv000000' }] };
+
+  it('carries via through a chunk and an answer unchanged', () => {
+    expect(progressEvent(overTheWire(progressChunk(nested, head)))).toEqual(nested);
+    expect(progressEvents(overTheWire(withProgress({}, 'r1', [nested])))?.events).toEqual([nested]);
+  });
+
+  it('reads nothing off an event whose via is not a list of hops', () => {
+    for (const via of ['inner', [{ runId: 'inner' }], [{ runId: 'inner', callId: 7 }]]) {
+      expect(progressEvent(progressChunk({ ...called, via } as never, head))).toBeUndefined();
+    }
+  });
+
+  it("forwards an inner run's done, which is not the server's own", () => {
+    const told: unknown[] = [];
+    const remote = remoteRun(undefined, (event) => told.push(event));
+    const innerDone = stamp({ kind: RunEventKind.Done, ok: true }, 'inner', 3, 40);
+    const event = stamp(nestEvent(innerDone, { runId: 'inner', callId: 'Srv000000' }), 'r1', 8, 41);
+    remote.onChunk(progressChunk(event, head));
+    expect(told).toEqual([event]);
   });
 });

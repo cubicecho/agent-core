@@ -253,13 +253,16 @@ What a run is doing, while it is doing it.
 - `endRun` — Forgets a run that will not be emitting `done` — one whose process is tearing down, or whose loop threw where it could not be caught.
 - `fold` — A run's events with each stretch of `thinking` or of `output` joined into one block, for a reader that takes a run in snapshots.
 - `history` — The backlog alone, for a caller that wants a snapshot rather than a subscription.
+- `isNested` — Whether an event came from a run inside the one it is filed under.
 - `LoadCounts` (type) — What `load_tools` calls resolved to: new tools, ones already loaded, and names in no catalogue.
+- `nestEvent` — An inner run's event as its outer run republishes it, filed under the call it ran for.
 - `RunEvent` (type) — One thing that happened in a run, as a watcher receives it.
 - `RunEventInput` (type) — What `emit` is given: the run and the sequence are the bus's to assign.
 - `RunEventKind` — Which kind of thing happened, and what `text`, `name`, `ok` and `usage` carry for it.
 - `RunMetrics` (type) — A run summed and derived from its events: what it cost, where the time went, and why.
 - `RunMetricsOptions` (type) — What `runMetrics` takes besides the events.
 - `RunUsage` (type) — What an exchange has spent, counted from the start of the exchange rather than for the turn that carried it: a client draws the latest one it has seen and needs no arithmetic of its own, and one lost to the backlog cap costs nothing because the next supersedes it.
+- `RunVia` (type) — One step on the way from a run to an event that happened in a run inside it: the inner run, and the call of the outer run it ran under.
 - `resetEvents` — Test seam: forget every run, so one test's events cannot be read by the next.
 - `runMetrics` — A run's totals, timings and cache findings, derived from the events it emitted.
 - `stamp` — A whole event from what a caller said of it: the empty defaults under it, the run and sequence over it.
