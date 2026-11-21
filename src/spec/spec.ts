@@ -127,6 +127,13 @@ export interface ModelSpec {
    * the `SPELLED_BODY_FIELDS`, which the fields above set.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * Request fields a layer above this one may not change, by their wire names: `temperature`,
+   * `max_tokens` (which covers `max_completion_tokens`), `reasoning_effort`, or any key that would
+   * go in `extraBody`, such as `top_p`, `seed` or a provider's own field. Absent locks nothing:
+   * every field is open by default.
+   */
+  lockedFields?: string[];
 }
 
 /** One named piece of the system prompt, written as a chat message is, so a layer above can change it. */
@@ -297,6 +304,11 @@ export interface ResolvedAgent extends AgentConfig {
   extensions: Readonly<Record<string, unknown>>;
   /** Every layer's requirements, unioned, so a layer above cannot quietly drop one below it. */
   requires: readonly string[];
+  /**
+   * Every layer's `model.lockedFields`, unioned, less the `RESERVED_BODY_FIELDS`: the request fields
+   * an app may not change. `max_completion_tokens` is listed as `max_tokens`. See `lockedFieldsIn`.
+   */
+  lockedFields: readonly string[];
 }
 
 /** What `parseSpec` hands back. A refused document is `spec: null` with the reasons in `errors`. */
@@ -581,8 +593,12 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
     reasoningReplay,
     contextLength: report.number('model.contextLength', value.contextLength, 0),
     extraBody: parseExtraBody(report, 'model.extraBody', value.extraBody),
+    lockedFields: parseLockedFields(report, value.lockedFields),
   });
 }
+
+/** The sampling fields `model` and each task spell as fields of their own, rather than in `extraBody`. */
+type SpelledField = 'maxTokens' | 'temperature' | 'reasoningEffort';
 
 /**
  * The request fields `model` and each task spell for themselves, by the field that spells each.
@@ -592,12 +608,77 @@ function parseModel(report: Report, value: unknown): ModelSpec | undefined {
  * sets elsewhere. Kept in `extraBody`, a copy would be spread over the stated value at send time,
  * past the negotiation that sends a temperature only to a model that takes one.
  */
-const SPELLED_BODY_FIELDS: Readonly<Record<string, keyof ModelSpec & keyof TaskSpec>> = Object.freeze({
+const SPELLED_BODY_FIELDS: Readonly<Record<string, SpelledField>> = Object.freeze({
   temperature: 'temperature',
   max_tokens: 'maxTokens',
   max_completion_tokens: 'maxTokens',
   reasoning_effort: 'reasoningEffort',
 });
+
+/** The name `model.lockedFields` gives each spelled field: its request field's, `max_tokens` for both. */
+const SPELLED_LOCK_NAMES: Readonly<Record<SpelledField, string>> = Object.freeze({
+  maxTokens: 'max_tokens',
+  temperature: 'temperature',
+  reasoningEffort: 'reasoning_effort',
+});
+
+/**
+ * The name a spelled field is locked by.
+ *
+ * @param field - A `ModelSpec` field's name, as `maxTokens`.
+ * @returns Its request field's name, as `max_tokens`, or `undefined` for a field that is not spelled.
+ */
+function spelledLockName(field: unknown): string | undefined {
+  return Object.entries(SPELLED_LOCK_NAMES).find(([spelled]) => spelled === field)?.[1];
+}
+
+/**
+ * The name a request field is locked by.
+ *
+ * @param field - A request field's name, as a request or `model.lockedFields` writes it.
+ * @returns `max_tokens` for `max_completion_tokens`, and any other name as it is.
+ */
+function lockName(field: string): string {
+  const isSpelled = Object.hasOwn(SPELLED_BODY_FIELDS, field);
+  return isSpelled ? SPELLED_LOCK_NAMES[SPELLED_BODY_FIELDS[field]] : field;
+}
+
+/**
+ * Reads `model.lockedFields`.
+ *
+ * @param report - Where what is refused or dropped is written.
+ * @param value - What the document held there.
+ * @returns The names as written, less a repeat. `undefined` where it is absent or is refused.
+ *
+ * @remarks
+ * Any name is kept, since it may be a provider's field, but a reserved one refuses the document: the
+ * loop sets those, so locking one is a mistake about what the field is. A name listed twice, which
+ * `max_tokens` and `max_completion_tokens` are, is warned about and kept once.
+ */
+function parseLockedFields(report: Report, value: unknown): string[] | undefined {
+  if (isAbsent(value)) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    return void report.fail('model.lockedFields', 'must be an array of request-field names');
+  }
+  const lockedFields: string[] = [];
+  const seen = new Map<string, string>();
+  for (const [index, name] of value.entries()) {
+    const path = `model.lockedFields[${index}]`;
+    if (typeof name !== 'string') {
+      report.drop(path, 'must be a string');
+    } else if (RESERVED_BODY_FIELDS.includes(name)) {
+      report.fail(path, `"${name}" is the loop's to set, so it cannot be locked`);
+    } else if (seen.has(lockName(name))) {
+      report.drop(path, `"${name}" is listed already, as "${seen.get(lockName(name))}"`);
+    } else {
+      seen.set(lockName(name), name);
+      lockedFields.push(name);
+    }
+  }
+  return lockedFields;
+}
 
 /**
  * An `extraBody` less the fields something else sets: the `RESERVED_BODY_FIELDS` and the
@@ -1304,25 +1385,128 @@ const asEndpoint = (spec: EndpointSpec): Endpoint => ({
  * The layers' `model` sections as one, with their `extraBody` merged by top-level key beside it.
  *
  * @param layers - The documents, weakest first. None is written to.
- * @returns `model`, holding the last stated value of every field but `extraBody`, and `extraBody`
- * apart from it, less the fields something else sets — empty where nothing is left.
+ * @returns `model`, holding the last stated value of every field but `extraBody` and `lockedFields`;
+ * `extraBody` apart from it, less the fields something else sets; and `lockedFields`, every layer's.
+ *
+ * @remarks
+ * A lock binds the layers above the one that states it, so a locked field keeps the value the
+ * locking layer gave it, or the one resolved below it. The `RESERVED_BODY_FIELDS` never lock.
  */
 function mergeModel(layers: readonly AgentSpec[]) {
   const model: ModelSpec = {};
   const extraBody: Record<string, unknown> = {};
+  const locked = new Set<string>();
   for (const layer of layers) {
-    for (const [key, value] of Object.entries(layer.model ?? {})) {
-      if (value === undefined) {
-        continue;
-      }
-      if (key === 'extraBody') {
-        Object.assign(extraBody, value);
-      } else {
+    const { extraBody: layerBody, lockedFields: layerLocks, ...fields } = layer.model ?? {};
+    for (const [key, value] of Object.entries(fields)) {
+      const requestName = spelledLockName(key);
+      const isLocked = requestName !== undefined && locked.has(requestName);
+      if (value !== undefined && isLocked === false) {
         (model as Record<string, unknown>)[key] = value;
       }
     }
+    for (const [key, value] of Object.entries(layerBody ?? {})) {
+      if (value !== undefined && locked.has(lockName(key)) === false) {
+        extraBody[key] = value;
+      }
+    }
+    for (const name of layerLocks ?? []) {
+      if (RESERVED_BODY_FIELDS.includes(name) === false) {
+        locked.add(lockName(name));
+      }
+    }
   }
-  return { model, extraBody: unownedFields(extraBody) };
+  return { model, extraBody: unownedFields(extraBody), lockedFields: [...locked] };
+}
+
+/**
+ * The locked fields an app's request, or a would-be layer's fields, sets.
+ *
+ * @param resolved - The agent, as `resolveAgentSpec` returned it.
+ * @param fields - The request body, its `extra_body` spread in, or any record keyed by wire name.
+ * @returns The keys locked, as given: `max_completion_tokens` stays itself when `max_tokens` is
+ * locked. A key whose value is `null` or `undefined` sets nothing, and is never named.
+ *
+ * @remarks
+ * Setting a field is changing it, whatever the value: an app restating the agent's own temperature
+ * is named too. Resolving drops what this names, silently.
+ */
+export function lockedFieldsIn(resolved: ResolvedAgent, fields: Readonly<Record<string, unknown>>): string[] {
+  return Object.entries(fields)
+    .filter(([field, value]) => isAbsent(value) === false && resolved.lockedFields.includes(lockName(field)))
+    .map(([field]) => field);
+}
+
+/** What `checkLockedFields` does with a request that sets a locked field. */
+export const LOCKED_FIELD_ACTIONS = Object.freeze({ refuse: 'refuse', drop: 'drop' } as const);
+
+/** One of `LOCKED_FIELD_ACTIONS`. */
+export type LockedFieldAction = (typeof LOCKED_FIELD_ACTIONS)[keyof typeof LOCKED_FIELD_ACTIONS];
+
+/** A request refused for setting fields its agent locked. */
+export class LockedFieldsError extends Error {
+  override readonly name = 'LockedFieldsError';
+  /** The fields, as the request spelled them. */
+  readonly fields: readonly string[];
+
+  /**
+   * @param fields - The locked fields the request set, as it spelled them.
+   */
+  constructor(fields: readonly string[]) {
+    super(`${fields.join(', ')}: locked by the agent, so a request may not set ${fields.length === 1 ? 'it' : 'them'}`);
+    this.fields = fields;
+  }
+}
+
+/** What `checkLockedFields` takes besides the agent and the request. */
+export interface CheckLockedFieldsOptions {
+  /**
+   * Refuse a request that sets a locked field, or drop the field and warn.
+   *
+   * @defaultValue `"refuse"`
+   */
+  onLocked?: LockedFieldAction;
+}
+
+/** What `checkLockedFields` hands back. */
+export interface CheckedFields {
+  /** The request less the locked fields it set: a new object, or the one given where it set none. */
+  fields: Readonly<Record<string, unknown>>;
+  /** The locked fields dropped, as the request spelled them. Empty under `refuse`. */
+  dropped: readonly string[];
+  /** One line for each dropped field, worded for the app. */
+  warnings: readonly string[];
+}
+
+/**
+ * Holds an app's request to its agent's locked fields, refusing it or dropping them.
+ *
+ * @param resolved - The agent, as `resolveAgentSpec` returned it.
+ * @param fields - The request body, its `extra_body` spread in. Not written to.
+ * @param [options] - Whether to refuse or drop.
+ * @returns The request to build the run from, and what was dropped.
+ * @throws {@link LockedFieldsError} Under `refuse`, when the request sets a locked field.
+ *
+ * @remarks
+ * A field set to `null` or left `undefined` sets nothing, so it is neither refused nor dropped.
+ */
+export function checkLockedFields(
+  resolved: ResolvedAgent,
+  fields: Readonly<Record<string, unknown>>,
+  { onLocked = LOCKED_FIELD_ACTIONS.refuse }: CheckLockedFieldsOptions = {},
+): CheckedFields {
+  const locked = lockedFieldsIn(resolved, fields);
+  if (locked.length === 0) {
+    return { fields, dropped: [], warnings: [] };
+  }
+  if (onLocked === LOCKED_FIELD_ACTIONS.refuse) {
+    throw new LockedFieldsError(locked);
+  }
+  return {
+    fields: Object.fromEntries(Object.entries(fields).filter(([field]) => locked.includes(field) === false)),
+    dropped: locked,
+    warnings: locked.map((field) => `${field}: locked by the agent, and was dropped`),
+  };
 }
 
 /**
@@ -1463,14 +1647,15 @@ function resolveTasks(layers: readonly AgentSpec[], endpoint: EndpointSpec) {
  * Absent inherits, and nothing else does: `0`, `-1`, `""` and `[]` are values that mean what they
  * say. Scalars take the last layer that has the key, `extraBody` and `extensions` merge by top-level
  * key, `prompt` merges by part name as each part's mode says, `hooks` and `tasks` merge by id
- * (different ids stack, the same id replaces), `tools.servers` replaces whole and `requires` unions. No layer is ever fetched, and `apiKey` comes
- * back empty so that a document naming somebody else's model server cannot make this app send its
- * own key there; an app that wants inheritance applies `resolveApiKey` afterwards.
+ * (different ids stack, the same id replaces), `tools.servers` replaces whole, and `requires` and
+ * `model.lockedFields` union, a locked field keeping its value from below. No layer is ever fetched, and
+ * `apiKey` comes back empty so that a document naming somebody else's model server cannot make this
+ * app send its own key there; an app that wants inheritance applies `resolveApiKey` afterwards.
  */
 export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   const endpoint = mergeLayers(layers.map((layer) => layer.endpoint));
 
-  const { model, extraBody } = mergeModel(layers);
+  const { model, extraBody, lockedFields } = mergeModel(layers);
 
   // `servers` is replaced whole rather than unioned: a list, an empty list and no list are three
   // answers, and a union of the first two is the first, which loses the scoping the operator
@@ -1548,6 +1733,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
     mcpServers: servers,
     extensions,
     requires: [...requires],
+    lockedFields,
   };
 }
 

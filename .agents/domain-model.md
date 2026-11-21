@@ -219,6 +219,7 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 | No part's content, server's instructions or hook's text can open or close a section of the prompt | `fence`, in `writeParts`, `untrusted` and `assembleContext` |
 | Prompt parts are written in the order given; a mode adds its part after the parts already there | `resolvePrompt`, `stackAppParts` |
 | An app's part never overwrites or deletes an agent's, and uses a mode only where the agent's part allows it | `stackAppParts` (`APP_PART_PREFIX`, `allowedModes`); `parseSpec` refuses an agent's part named with `app` first |
+| A layer above never changes a request field a layer below locked, and never unlocks one | `mergeModel` in `resolveAgentSpec` (`model.lockedFields`); `lockedFieldsIn` names the attempt, and `checkLockedFields` refuses it or drops it, for a host |
 | A model that is not an agent never sees `agent_core` | `withoutAgentCore` in `runTurns` |
 | A string `systemPrompt` with no `agent_core` is sent as it always was | `runTurns` (no stacking without parts or `agent_core`) |
 | `app_system` is written after the loop's sections, so the part that changes most costs the cache least | `writeSystemPrompt` |
@@ -572,6 +573,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
   `resolvePrompt`.
 - **Allowed modes:** the modes an app may use on an agent's part; absent is `extend` only, empty
   locks it. Owner: `PromptPart.allowedModes`.
+- **Locked field:** a request field an agent's layer lists in `model.lockedFields`, by its wire
+  name, which no layer above may change; every field is open by default. Owner:
+  `ModelSpec.lockedFields`, `ResolvedAgent.lockedFields`, `lockedFieldsIn`, `checkLockedFields`,
+  `LOCKED_FIELD_ACTIONS`, `LockedFieldsError`.
 - **Owner (of a part):** who wrote it: the agent's author or the app. Owner: `PART_OWNERS`.
 - **Stacked part:** a part as stacking leaves it, with its owner and its mark, ready for a layout.
   Owner: `StackedPart`; a resolved agent's `prompt` is a list of them.

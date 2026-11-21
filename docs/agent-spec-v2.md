@@ -129,6 +129,13 @@ export interface ModelSpec {
    * `reasoning_effort`, which the fields above spell: on parse, and again on resolve.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * Request fields a layer above this one may not change, by their wire names: `temperature`,
+   * `max_tokens` (which covers `max_completion_tokens`), `reasoning_effort`, or any key that would
+   * go in `extraBody`, such as `top_p`, `seed` or a provider's own field. Absent locks nothing:
+   * every field is open by default.
+   */
+  lockedFields?: string[];
 }
 
 export interface PromptPart {
@@ -239,7 +246,8 @@ A document with every field set, as an operator would read it:
     "temperature": 0,
     "reasoningEffort": "off",
     "contextLength": 128000,
-    "extraBody": { "top_k": 20, "min_p": 0.05 }
+    "extraBody": { "top_k": 20, "min_p": 0.05 },
+    "lockedFields": ["temperature", "top_k"]
   },
 
   "prompt": [
@@ -315,6 +323,8 @@ export interface ResolvedAgent extends AgentConfig {
   extensions: Readonly<Record<string, unknown>>;
   /** Every layer's requirements, unioned, so a layer above cannot quietly drop one below it. */
   requires: readonly string[];
+  /** Every layer's `model.lockedFields`, unioned, less the reserved fields; `max_tokens` for both spellings. */
+  lockedFields: readonly string[];
 }
 
 export interface ResolvedTask {
@@ -359,6 +369,7 @@ as `null` and refusing it would make every host write a stripper first.
 | `model.reasoningReplay` | inherit; nowhere is `all` | as stated | — |
 | `model.contextLength` | inherit | this window | `0` — ask the endpoint |
 | `model.extraBody` | inherit | merged key by key, less the fields the loop sets or the spec spells | `{}` — adds nothing |
+| `model.lockedFields` | locks nothing: every field is open | these fields, unioned with the layers' below | `[]` — locks nothing, and unlocks nothing below |
 | `prompt` | inherit | merged by part name, as each part's `mode` says | `[]` — adds nothing; `content: ""` deletes a part, and the parts that name it |
 | `promptLayout` | inherit; nowhere is `plain` | as stated | — |
 | `tools.servers` | **every server** | exactly these | `[]` — **no servers** |
@@ -379,7 +390,8 @@ a task, then a step. Scalars take the last layer that has the key. `extraBody` a
 merge by top-level key. `prompt` merges by part name, and `hooks` and `tasks` by id, ordered by
 first appearance.
 `tools.servers` replaces whole, since a tri-state cannot be unioned. `requires` unions, so a layer
-above cannot quietly drop a requirement below it.
+above cannot quietly drop a requirement below it, and so does `model.lockedFields`, so a layer
+above cannot unlock a field (see [Locked fields](#locked-fields)).
 
 There is no field for one document to extend another, and no URL resolution: the package never
 fetches a layer. Which
@@ -411,6 +423,71 @@ replaces, which is a settings to task to step chain. Neither host branches on an
 join is `parts.map(trim).filter(Boolean).join("\n\n")` — byte-identical to the same texts joined
 by hand, so four sources survive a round trip instead of flattening into one blob nobody can edit
 a third of.
+
+## Locked fields
+
+An agent's prompt parts say what an app may do to them (`allowedModes`); `model.lockedFields` says
+the same of the request fields. A deterministic extractor locks `temperature` and `seed`, a
+summariser locks `max_tokens`, and the list is kept in the document with the agent's revisions,
+written by whoever writes the agent.
+
+- **Open by default.** A field not listed is not locked, so nothing is locked by accident: an agent
+  that must never run at another temperature lists `temperature`. A host's UI shows each field as a
+  switch, off by default, and turning one on adds it here.
+- **Names are wire names**, because that is what a host compares an app's request with:
+  `temperature`, `max_tokens`, `reasoning_effort`, or any key that would go in `extraBody` (`top_p`,
+  `seed`, a provider's own field). `max_tokens` and `max_completion_tokens` are one field, and
+  `resolved.lockedFields` lists it as `max_tokens`. An `extraBody` key locks whole: locking
+  `chat_template_kwargs` locks every entry in it.
+- **Locks hold upward.** A lock binds the layers above the one that states it. The locking layer
+  may still set the field; a layer above that sets it keeps the locking layer's value, or the one
+  resolved below it. `lockedFields` unions, so a layer above can add a lock and never remove one.
+- **Only the main model.** `tasks.<key>` has no list of its own yet; hosts already keep a request's
+  sampling away from side tasks.
+- **`parseSpec`** refuses a reserved name (`model`, `messages`, `stream`, `tools`), since the loop
+  sets those, and a `lockedFields` that is not an array. It keeps any other name, which may be a
+  provider's field, and warns about a name listed twice (`max_tokens` beside
+  `max_completion_tokens` included), keeping it once. `exportSpec` round-trips the list.
+
+Resolving has no warnings, so it drops what a layer above tries to change without saying so. A host
+that takes fields from an app checks the request first with `checkLockedFields`, which either
+refuses it or drops the locked fields and warns, as the host's `onLocked` option says:
+
+```ts
+const agent = resolveAgentSpec([settings, agentDoc]);
+
+// The fields of the app's request the host passes on to the model, `extra_body` spread in.
+// Refuses by default, throwing a `LockedFieldsError` whose `fields` names each one as sent:
+const { fields } = checkLockedFields(agent, requested);
+
+// Or drop them and tell the app:
+const { fields, warnings } = checkLockedFields(agent, requested, { onLocked: "drop" });
+// warnings: ["max_completion_tokens: locked by the agent, and was dropped"]
+```
+
+`lockedFieldsIn(agent, requested)` names the locked fields without acting on them. Both rules:
+
+- **A field set to `null`, or left `undefined`, sets nothing**, so it is never named. Some clients
+  send every parameter, with `null` for the unset ones.
+- **Setting a locked field is changing it, whatever the value:** an app that restates the agent's
+  own temperature is named too.
+- **Pass only the fields that go to the model,** not the ones the host reads itself
+  (`stream_options`, `parallel_tool_calls`, `tool_choice`, `agent_core`). agent-core sends some of
+  those on every request, and resolving never touches them, so a lock on one would refuse every
+  agent-core client and protect nothing.
+
+This mirrors `stackAppParts`: agent-core decides the rule, the host decides how to tell the app.
+
+With the reviewer above, which locks `temperature` and `top_k`:
+
+| Layer | `temperature` | `top_k` | `top_p` |
+| --- | --- | --- | --- |
+| Settings | `0.7` | — | — |
+| Reviewer, `lockedFields: ["temperature", "top_k"]` | `0` | `20` | — |
+| App | `1` | `50` | `0.9` |
+| **Resolved** | **`0`** | **`20`** | **`0.9`** |
+
+`lockedFieldsIn(resolved, { temperature: 1, top_k: 50, top_p: 0.9 })` is `["temperature", "top_k"]`.
 
 ## Servers, in two layers
 
@@ -465,8 +542,9 @@ dropped`), and importable in a browser.
 
 The hard errors are all about the document rather than a value: it is not an object; the `spec`
 token is missing or names another format or major; a container is of the wrong kind, meaning
-`prompt`, `hooks` or `requires` is not an array, or `tasks` is not an object; a prompt part's name
-has `app` as its first word; or a `requires` entry is not a string, or names an extension this host
+`prompt`, `hooks`, `requires` or `model.lockedFields` is not an array, or `tasks` is not an object;
+a prompt part's name has `app` as its first word; a `model.lockedFields` entry is a reserved field;
+or a `requires` entry is not a string, or names an extension this host
 does not understand. Everything else drops the offending field and warns — the lesson
 `coerceLlmConfig` learned the hard way when a stored out-of-range value stopped a server booting.
 
@@ -761,6 +839,7 @@ and a bundle, which is the part that needs an explicit trust decision before it 
 | "No servers means all" | yes | `servers` absent |
 | Per-task and per-step overrides | yes | more layers, one function |
 | `extraBody` | yes | the first place it can be stored |
+| Request fields an app may not change | yes | `model.lockedFields`, open by default |
 | A side-task model on another host | yes | `tasks.<key>.endpoint` |
 | Sentinel confusion | yes | absent inherits, and nothing else does |
 | API keys | no, by design | no field; the host applies `resolveApiKey` after |

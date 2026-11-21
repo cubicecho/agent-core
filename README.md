@@ -1998,11 +1998,19 @@ conversation's leading system messages become `app_system`, written after the lo
 To a remote agent, `agent_core` is sent through for the server to stack.
 `docs/agent-prompt-spec-v2.md` is the design.
 
-`parseSpec` reports every problem at once and refuses only five things, all of them about the
+**An agent can lock request fields.** `model.lockedFields` lists the fields no layer above may
+change, by wire name (`temperature`, `max_tokens`, `reasoning_effort`, or any `extraBody` key such
+as `seed`). Every field is open by default: nothing is locked unless listed. Locks union across
+layers, and a locked field keeps the locking layer's value. Resolving drops an override silently,
+so a host that takes fields from an app checks first with `checkLockedFields(resolved, fields)`,
+which refuses with a `LockedFieldsError` naming each field or, with `onLocked: "drop"`, drops them
+and warns. A field sent as `null` sets nothing and is never named.
+
+`parseSpec` reports every problem at once and refuses only six things, all of them about the
 document rather than a value: it is not an object, the `spec` token is missing or of another major
 (`upgradeSpec` turns a version 1 document into version 2), a `requires` entry this app does not
-understand, a container of the wrong kind, or a prompt part named with `app` as its first word,
-which only an app's parts may be. Everything
+understand, a container of the wrong kind, a prompt part named with `app` as its first word,
+which only an app's parts may be, or a reserved field in `model.lockedFields`. Everything
 else is dropped with a warning — including an out-of-range number, which is **dropped rather than
 clamped**, because a clamp invents a value the author did not write while dropping falls back to one
 somebody did.

@@ -396,10 +396,17 @@ A JSON document that defines an agent, and the rules for reading one.
 - `AGENT_TASKS` — The side tasks this package has code for: documentation and a sensible UI order, not a validator.
 - `AgentHook` (type) — A tool call bound to a lifecycle event, run by the app rather than the model.
 - `AgentSpec` (type) — One agent, as a document.
+- `CheckedFields` (type) — What `checkLockedFields` hands back.
+- `CheckLockedFieldsOptions` (type) — What `checkLockedFields` takes besides the agent and the request.
+- `checkLockedFields` — Holds an app's request to its agent's locked fields, refusing it or dropping them.
 - `EndpointSpec` (type) — Where a model is reached, and how long to wait for it.
 - `ExportSpecOptions` (type) — What `exportSpec` takes besides the document.
 - `exportSpec` — A document fit to leave the app: the same agent, with the secrets of its bundled servers gone.
 - `findSpecSecrets` — Where a document's bundled servers may still carry a credential after `exportSpec`.
+- `LOCKED_FIELD_ACTIONS` — What `checkLockedFields` does with a request that sets a locked field.
+- `LockedFieldAction` (type) — One of `LOCKED_FIELD_ACTIONS`.
+- `LockedFieldsError` — A request refused for setting fields its agent locked.
+- `lockedFieldsIn` — The locked fields an app's request, or a would-be layer's fields, sets.
 - `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
 - `ParsedAppParts` (type) — What `parseAppParts` hands back.
 - `ParsedSpec` (type) — What `parseSpec` hands back.
