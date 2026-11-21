@@ -6,8 +6,11 @@ import { PART_OWNERS, PROMPT_LAYOUTS, PROMPT_MODES, PROMPT_ROLES } from '../../s
 import {
   AGENT_SPEC,
   type AgentSpec,
+  checkLockedFields,
   exportSpec,
   findSpecSecrets,
+  LOCKED_FIELD_ACTIONS,
+  LockedFieldsError,
   lockedFieldsIn,
   parseAppParts,
   parseSpec,
@@ -1154,10 +1157,44 @@ describe('model.lockedFields', () => {
   it('names the locked fields a request sets, as the request spells them', () => {
     const resolved = resolveAgentSpec([parsed(agent(['max_tokens', 'seed', 'temperature']))]);
     const body = { model: 'agent', messages: [], max_completion_tokens: 10, seed: 3, top_p: 1 };
-    expect(lockedFieldsIn(resolved, Object.keys(body))).toEqual(['max_completion_tokens', 'seed']);
+    expect(lockedFieldsIn(resolved, body)).toEqual(['max_completion_tokens', 'seed']);
     // Restating the agent's own value is setting it all the same.
-    expect(lockedFieldsIn(resolved, ['temperature'])).toEqual(['temperature']);
-    expect(lockedFieldsIn(resolved, [])).toEqual([]);
+    expect(lockedFieldsIn(resolved, { temperature: 0 })).toEqual(['temperature']);
+  });
+
+  it('never names a field set to null or left undefined, since it sets nothing', () => {
+    const resolved = resolveAgentSpec([parsed(agent(['temperature', 'max_tokens']))]);
+    expect(lockedFieldsIn(resolved, { temperature: null, max_tokens: undefined })).toEqual([]);
+  });
+
+  it('refuses a request that sets a locked field, by default, naming each', () => {
+    const resolved = resolveAgentSpec([parsed(agent(['temperature', 'seed']))]);
+    const body = { model: 'agent', temperature: 1, seed: 2, top_p: 1 };
+    expect(() => checkLockedFields(resolved, body)).toThrow(LockedFieldsError);
+    expect(() => checkLockedFields(resolved, body)).toThrow('temperature, seed: locked by the agent');
+    try {
+      checkLockedFields(resolved, body, { onLocked: LOCKED_FIELD_ACTIONS.refuse });
+    } catch (error) {
+      expect(error instanceof LockedFieldsError && error.fields).toEqual(['temperature', 'seed']);
+    }
+  });
+
+  it('drops the locked fields and warns, when told to, leaving the request it was given alone', () => {
+    const resolved = resolveAgentSpec([parsed(agent(['temperature', 'seed']))]);
+    const body = { model: 'agent', temperature: 1, seed: 2, top_p: 1, max_tokens: null };
+    const checked = checkLockedFields(resolved, body, { onLocked: LOCKED_FIELD_ACTIONS.drop });
+    expect(checked).toEqual({
+      fields: { model: 'agent', top_p: 1, max_tokens: null },
+      dropped: ['temperature', 'seed'],
+      warnings: ['temperature: locked by the agent, and was dropped', 'seed: locked by the agent, and was dropped'],
+    });
+    expect(body.temperature).toBe(1);
+  });
+
+  it('hands back the request itself when it sets nothing locked', () => {
+    const resolved = resolveAgentSpec([parsed(agent(['temperature']))]);
+    const body = { model: 'agent', temperature: null };
+    expect(checkLockedFields(resolved, body).fields).toBe(body);
   });
 
   it('survives an export and a parse unchanged', () => {

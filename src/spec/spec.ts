@@ -1420,19 +1420,93 @@ function mergeModel(layers: readonly AgentSpec[]) {
 }
 
 /**
- * The locked fields among those a would-be layer or an app's request sets, so a host can name them.
+ * The locked fields an app's request, or a would-be layer's fields, sets.
  *
  * @param resolved - The agent, as `resolveAgentSpec` returned it.
- * @param fields - Wire names: a request body's keys, its `extra_body` spread in, or a layer's fields.
- * @returns The ones locked, as given: `max_completion_tokens` stays itself when `max_tokens` is locked.
- * Empty when none is.
+ * @param fields - The request body, its `extra_body` spread in, or any record keyed by wire name.
+ * @returns The keys locked, as given: `max_completion_tokens` stays itself when `max_tokens` is
+ * locked. A key whose value is `null` or `undefined` sets nothing, and is never named.
  *
  * @remarks
- * Setting a field is changing it, whatever the value, so pass the keys a request sets rather than
- * the ones whose value differs. Resolving drops what this names, silently.
+ * Setting a field is changing it, whatever the value: an app restating the agent's own temperature
+ * is named too. Resolving drops what this names, silently.
  */
-export function lockedFieldsIn(resolved: ResolvedAgent, fields: Iterable<string>): string[] {
-  return [...fields].filter((field) => resolved.lockedFields.includes(lockName(field)));
+export function lockedFieldsIn(resolved: ResolvedAgent, fields: Readonly<Record<string, unknown>>): string[] {
+  return Object.entries(fields)
+    .filter(([field, value]) => isAbsent(value) === false && resolved.lockedFields.includes(lockName(field)))
+    .map(([field]) => field);
+}
+
+/** What `checkLockedFields` does with a request that sets a locked field. */
+export const LOCKED_FIELD_ACTIONS = Object.freeze({ refuse: 'refuse', drop: 'drop' } as const);
+
+/** One of `LOCKED_FIELD_ACTIONS`. */
+export type LockedFieldAction = (typeof LOCKED_FIELD_ACTIONS)[keyof typeof LOCKED_FIELD_ACTIONS];
+
+/** A request refused for setting fields its agent locked. */
+export class LockedFieldsError extends Error {
+  override readonly name = 'LockedFieldsError';
+  /** The fields, as the request spelled them. */
+  readonly fields: readonly string[];
+
+  /**
+   * @param fields - The locked fields the request set, as it spelled them.
+   */
+  constructor(fields: readonly string[]) {
+    super(`${fields.join(', ')}: locked by the agent, so a request may not set ${fields.length === 1 ? 'it' : 'them'}`);
+    this.fields = fields;
+  }
+}
+
+/** What `checkLockedFields` takes besides the agent and the request. */
+export interface CheckLockedFieldsOptions {
+  /**
+   * Refuse a request that sets a locked field, or drop the field and warn.
+   *
+   * @defaultValue `"refuse"`
+   */
+  onLocked?: LockedFieldAction;
+}
+
+/** What `checkLockedFields` hands back. */
+export interface CheckedFields {
+  /** The request less the locked fields it set: a new object, or the one given where it set none. */
+  fields: Readonly<Record<string, unknown>>;
+  /** The locked fields dropped, as the request spelled them. Empty under `refuse`. */
+  dropped: readonly string[];
+  /** One line for each dropped field, worded for the app. */
+  warnings: readonly string[];
+}
+
+/**
+ * Holds an app's request to its agent's locked fields, refusing it or dropping them.
+ *
+ * @param resolved - The agent, as `resolveAgentSpec` returned it.
+ * @param fields - The request body, its `extra_body` spread in. Not written to.
+ * @param [options] - Whether to refuse or drop.
+ * @returns The request to build the run from, and what was dropped.
+ * @throws {@link LockedFieldsError} Under `refuse`, when the request sets a locked field.
+ *
+ * @remarks
+ * A field set to `null` or left `undefined` sets nothing, so it is neither refused nor dropped.
+ */
+export function checkLockedFields(
+  resolved: ResolvedAgent,
+  fields: Readonly<Record<string, unknown>>,
+  { onLocked = LOCKED_FIELD_ACTIONS.refuse }: CheckLockedFieldsOptions = {},
+): CheckedFields {
+  const locked = lockedFieldsIn(resolved, fields);
+  if (locked.length === 0) {
+    return { fields, dropped: [], warnings: [] };
+  }
+  if (onLocked === LOCKED_FIELD_ACTIONS.refuse) {
+    throw new LockedFieldsError(locked);
+  }
+  return {
+    fields: Object.fromEntries(Object.entries(fields).filter(([field]) => locked.includes(field) === false)),
+    dropped: locked,
+    warnings: locked.map((field) => `${field}: locked by the agent, and was dropped`),
+  };
 }
 
 /**
