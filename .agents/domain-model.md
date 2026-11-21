@@ -528,6 +528,10 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Bus:** the in-memory store of each run's events that watchers read, with a backlog for late
   ones. Owner: `emit`, `watch`, `history`, `endRun` (`src/run/events.ts`).
 - **Stamp:** making a whole event from an input, with its run, number and time. Owner: `stamp`.
+- **Nested event:** an event of a run inside a tool call, republished on the calling run under that
+  call; its `via` lists each inner run and call, outermost first. Shown, never acted on: it ends no
+  watcher, moves no retention, and is left out of the outer run's metrics. Owner: `RunEvent.via`,
+  `RunVia`, `nestEvent`, `isNested`.
 - **Metrics:** a run's totals, timings, cache findings and outcome, read off its events. Owner:
   `RunMetrics`, `runMetrics`; an exchange's own are on `AgentLoopResult.metrics`.
 - **Artifact:** something an exchange's calls produced, one per location: linked by a tool's
