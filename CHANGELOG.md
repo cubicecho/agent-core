@@ -1,3 +1,10 @@
+# [7.3.0](https://github.com/cubicecho/agent-core/compare/v7.2.0...v7.3.0) (2026-11-21)
+
+
+### Features
+
+* **run:** nest one run's events inside another's with RunEvent.via ([aae32e0](https://github.com/cubicecho/agent-core/commit/aae32e04051080bb7b4a3127db39b4e4d02e591a)), closes [#247](https://github.com/cubicecho/agent-core/issues/247)
+
 # [7.2.0](https://github.com/cubicecho/agent-core/compare/v7.1.0...v7.2.0) (2026-11-21)
 
 
