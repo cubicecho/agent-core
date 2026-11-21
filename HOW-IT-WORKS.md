@@ -232,12 +232,12 @@ each call and result, `usage` per turn, `wait` when calls are handed back, and n
 ```mermaid
 sequenceDiagram
   autonumber
-  participant Loop as runAgentLoop
+  participant AgentLoop as runAgentLoop
   participant Turn as runTurn
   participant Neg as negotiate
   participant Srv as Model server
 
-  Loop->>Turn: build(supported, refused), options
+  AgentLoop->>Turn: build(supported, refused), options
   Turn->>Turn: size the request against contextLimit (at most once)
   loop until answered or out of retries
     Turn->>Neg: send
@@ -256,7 +256,7 @@ sequenceDiagram
       Srv-->>Turn: chunks
     end
   end
-  Turn-->>Loop: reply, tool calls, usage
+  Turn-->>AgentLoop: reply, tool calls, usage
 ```
 
 A reply that has produced anything is never sent again, and a request too big for the window
