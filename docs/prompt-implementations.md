@@ -137,9 +137,10 @@ kept in the document with the agent's revisions. ai-router's editor shows each f
 off by default.
 
 ai-router refuses a request that sets a locked field, or drops it and names it under its own
-setting, and never trims quietly. It names them with agent-core's
-`lockedFieldsIn(resolved, Object.keys(body))` on the request as it arrived. Resolving honours the
-lock as well, so a field that got past the check still keeps the agent's value.
+setting, and never trims quietly. Both are agent-core's `checkLockedFields`, with ai-router's
+setting as its `onLocked`, run over the fields `readSampling` passes on to the model: not the ones
+in `READ_FIELDS`, and not one sent as `null`. Resolving honours the lock as well, so a field that
+got past the check still keeps the agent's value.
 
 ### Stored agents and runs
 

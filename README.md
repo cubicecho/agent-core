@@ -2002,8 +2002,9 @@ To a remote agent, `agent_core` is sent through for the server to stack.
 change, by wire name (`temperature`, `max_tokens`, `reasoning_effort`, or any `extraBody` key such
 as `seed`). Every field is open by default: nothing is locked unless listed. Locks union across
 layers, and a locked field keeps the locking layer's value. Resolving drops an override silently,
-so a host that takes fields from an app checks first with `lockedFieldsIn(resolved, fields)` and
-refuses by the field's name.
+so a host that takes fields from an app checks first with `checkLockedFields(resolved, fields)`,
+which refuses with a `LockedFieldsError` naming each field or, with `onLocked: "drop"`, drops them
+and warns. A field sent as `null` sets nothing and is never named.
 
 `parseSpec` reports every problem at once and refuses only six things, all of them about the
 document rather than a value: it is not an object, the `spec` token is missing or of another major

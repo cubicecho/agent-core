@@ -450,22 +450,33 @@ written by whoever writes the agent.
   `max_completion_tokens` included), keeping it once. `exportSpec` round-trips the list.
 
 Resolving has no warnings, so it drops what a layer above tries to change without saying so. A host
-that takes fields from an app checks first, and refuses, or drops and names them under its own
-setting:
+that takes fields from an app checks the request first with `checkLockedFields`, which either
+refuses it or drops the locked fields and warns, as the host's `onLocked` option says:
 
 ```ts
 const agent = resolveAgentSpec([settings, agentDoc]);
 
-// The app's chat-completion request as it arrived, `extra_body` spread in:
-const locked = lockedFieldsIn(agent, Object.keys(body)); // ["max_completion_tokens"], as given
-if (locked.length > 0) {
-  return refuse(`locked by the agent: ${locked.join(", ")}`);
-}
+// The fields of the app's request the host passes on to the model, `extra_body` spread in.
+// Refuses by default, throwing a `LockedFieldsError` whose `fields` names each one as sent:
+const { fields } = checkLockedFields(agent, requested);
+
+// Or drop them and tell the app:
+const { fields, warnings } = checkLockedFields(agent, requested, { onLocked: "drop" });
+// warnings: ["max_completion_tokens: locked by the agent, and was dropped"]
 ```
 
-Setting a locked field is changing it, whatever the value: an app that restates the agent's own
-temperature is named too. This mirrors `stackAppParts`: agent-core decides the rule, the host
-decides how to tell the app.
+`lockedFieldsIn(agent, requested)` names the locked fields without acting on them. Both rules:
+
+- **A field set to `null`, or left `undefined`, sets nothing**, so it is never named. Some clients
+  send every parameter, with `null` for the unset ones.
+- **Setting a locked field is changing it, whatever the value:** an app that restates the agent's
+  own temperature is named too.
+- **Pass only the fields that go to the model,** not the ones the host reads itself
+  (`stream_options`, `parallel_tool_calls`, `tool_choice`, `agent_core`). agent-core sends some of
+  those on every request, and resolving never touches them, so a lock on one would refuse every
+  agent-core client and protect nothing.
+
+This mirrors `stackAppParts`: agent-core decides the rule, the host decides how to tell the app.
 
 With the reviewer above, which locks `temperature` and `top_k`:
 
@@ -476,7 +487,7 @@ With the reviewer above, which locks `temperature` and `top_k`:
 | App | `1` | `50` | `0.9` |
 | **Resolved** | **`0`** | **`20`** | **`0.9`** |
 
-`lockedFieldsIn(resolved, ["temperature", "top_k", "top_p"])` is `["temperature", "top_k"]`.
+`lockedFieldsIn(resolved, { temperature: 1, top_k: 50, top_p: 0.9 })` is `["temperature", "top_k"]`.
 
 ## Servers, in two layers
 
