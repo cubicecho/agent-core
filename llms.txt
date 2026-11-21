@@ -400,8 +400,7 @@ A JSON document that defines an agent, and the rules for reading one.
 - `ExportSpecOptions` (type) — What `exportSpec` takes besides the document.
 - `exportSpec` — A document fit to leave the app: the same agent, with the secrets of its bundled servers gone.
 - `findSpecSecrets` — Where a document's bundled servers may still carry a credential after `exportSpec`.
-- `lockedFieldsIn` — The locked fields a would-be layer above a resolved agent sets, so a host can refuse it by name.
-- `lockedRequestFields` — The locked fields a request body sets, so a host can refuse an app's request by the field's name.
+- `lockedFieldsIn` — The locked fields among those a would-be layer or an app's request sets, so a host can name them.
 - `ModelSpec` (type) — Which model answers and how, including the request fields this interface cannot spell.
 - `ParsedAppParts` (type) — What `parseAppParts` hands back.
 - `ParsedSpec` (type) — What `parseSpec` hands back.

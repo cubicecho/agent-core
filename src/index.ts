@@ -310,7 +310,6 @@ export {
   exportSpec,
   findSpecSecrets,
   lockedFieldsIn,
-  lockedRequestFields,
   type ModelSpec,
   type ParsedAppParts,
   type ParsedSpec,

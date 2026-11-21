@@ -9,7 +9,6 @@ import {
   exportSpec,
   findSpecSecrets,
   lockedFieldsIn,
-  lockedRequestFields,
   parseAppParts,
   parseSpec,
   type ResolvedAgent,
@@ -1078,41 +1077,51 @@ describe('resolveAgentSpec', () => {
   });
 });
 
-describe('model.locked', () => {
-  /** Settings, an agent that locks, and an app above them, each naming every setting it sets. */
+describe('model.lockedFields', () => {
+  /** Settings, an agent that locks, and an app above them, each naming every field it sets. */
   const settings = doc({ model: { model: 'm', temperature: 0.7, maxTokens: 4096, extraBody: { seed: 1 } } });
-  const agent = (locked: unknown, extra: Record<string, unknown> = {}) =>
-    doc({ model: { temperature: 0, extraBody: { seed: 7, top_p: 0.9 }, ...extra, locked } });
+  const agent = (lockedFields: unknown) =>
+    doc({ model: { temperature: 0, extraBody: { seed: 7, top_p: 0.9 }, lockedFields } });
   const app = doc({ model: { temperature: 1, maxTokens: 256, extraBody: { seed: 99, top_p: 0.5 } } });
 
-  it('keeps every name it can lock, and notes one that is neither spelled nor in extraBody', () => {
-    const result = parseSpec(agent(['temperature', 'max_completion_tokens', 'seed', 'min_p']));
-    expect(result.spec?.model?.locked).toEqual(['temperature', 'max_completion_tokens', 'seed', 'min_p']);
-    expect(result.warnings).toEqual([
-      'model.locked[3]: "min_p" is not a spelled field or a key of model.extraBody, and was kept',
+  it("keeps any name, a provider's own field included, without a warning", () => {
+    const result = parseSpec(agent(['temperature', 'max_completion_tokens', 'seed', 'x_provider_mode']));
+    expect(result.spec?.model?.lockedFields).toEqual([
+      'temperature',
+      'max_completion_tokens',
+      'seed',
+      'x_provider_mode',
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('refuses a reserved name, and a list that is not an array', () => {
+    expect(parseSpec(agent(['seed', 'stream'])).errors).toEqual([
+      `model.lockedFields[1]: "stream" is the loop's to set, so it cannot be locked`,
+    ]);
+    expect(parseSpec(agent('temperature')).errors).toEqual([
+      'model.lockedFields: must be an array of request-field names',
     ]);
   });
 
-  it("drops a reserved name, a field's own spelling and a non-string, and keeps the rest", () => {
-    const result = parseSpec(agent(['model', 'maxTokens', 3, 'seed']));
-    expect(result.errors).toEqual([]);
-    expect(result.spec?.model?.locked).toEqual(['seed']);
+  it('warns about a name listed twice, max_tokens and max_completion_tokens being one, and keeps it once', () => {
+    const result = parseSpec(agent(['seed', 'max_tokens', 'seed', 'max_completion_tokens', 3]));
+    expect(result.spec?.model?.lockedFields).toEqual(['seed', 'max_tokens']);
     expect(result.warnings).toEqual([
-      `model.locked[0]: "model" is the loop's to set, never an app's, and was dropped`,
-      'model.locked[1]: "maxTokens" is locked by its request-field name, "max_tokens", and was dropped',
-      'model.locked[2]: must be a string, and was dropped',
+      'model.lockedFields[2]: "seed" is listed already, as "seed", and was dropped',
+      'model.lockedFields[3]: "max_completion_tokens" is listed already, as "max_tokens", and was dropped',
+      'model.lockedFields[4]: must be a string, and was dropped',
     ]);
   });
 
-  it('drops a list that is not an array, and keeps an empty one as the value it is', () => {
-    expect(parseSpec(agent('temperature')).spec?.model?.locked).toBeUndefined();
-    expect(parsed(agent([])).model?.locked).toEqual([]);
+  it('keeps an empty list as the value it is', () => {
+    expect(parsed(agent([])).model?.lockedFields).toEqual([]);
   });
 
-  it('locks nothing when absent, so an app overrides every setting', () => {
+  it('locks nothing when absent, so an app overrides every field', () => {
     const resolved = resolveAgentSpec([parsed(settings), parsed(agent(undefined)), parsed(app)]);
     expect(resolved).toMatchObject({ temperature: 1, maxTokens: 256, extraBody: { seed: 99, top_p: 0.5 } });
-    expect(resolved.locked).toEqual([]);
+    expect(resolved.lockedFields).toEqual([]);
   });
 
   it("keeps the locking layer's value, or the one below it, over a layer above", () => {
@@ -1120,46 +1129,40 @@ describe('model.locked', () => {
     const resolved = resolveAgentSpec([parsed(settings), parsed(agent(locks)), parsed(app)]);
     // max_tokens was never the agent's: the settings' ceiling is what it locked.
     expect(resolved).toMatchObject({ temperature: 0, maxTokens: 4096, extraBody: { seed: 7, top_p: 0.5 } });
-    expect(resolved.locked).toEqual(['temperature', 'max_tokens', 'seed']);
+    expect(resolved.lockedFields).toEqual(['temperature', 'max_tokens', 'seed']);
   });
 
   it('cannot be unlocked by a layer above, whose own locks are added', () => {
-    const above = doc({ model: { temperature: 1, locked: [], extraBody: { top_p: 0.1 } } });
-    const top = doc({ model: { extraBody: { top_p: 0.2 }, locked: ['top_p'] } });
+    const above = doc({ model: { temperature: 1, lockedFields: [], extraBody: { top_p: 0.1 } } });
+    const top = doc({ model: { extraBody: { top_p: 0.2 }, lockedFields: ['top_p'] } });
     const resolved = resolveAgentSpec([parsed(agent(['temperature'])), parsed(above), parsed(top)]);
     expect(resolved.temperature).toBe(0);
     // The top layer's lock binds only what is above it, so its own value still lands.
     expect(resolved.extraBody).toEqual({ seed: 7, top_p: 0.2 });
-    expect(resolved.locked).toEqual(['temperature', 'top_p']);
+    expect(resolved.lockedFields).toEqual(['temperature', 'top_p']);
   });
 
   it('never locks a reserved field, even from a layer built in code', () => {
     const resolved = resolveAgentSpec([
-      { spec: AGENT_SPEC, model: { model: 'a', locked: ['model'] } },
+      { spec: AGENT_SPEC, model: { model: 'a', lockedFields: ['model'] } },
       { spec: AGENT_SPEC, model: { model: 'b' } },
     ]);
     expect(resolved.model).toBe('b');
-    expect(resolved.locked).toEqual([]);
+    expect(resolved.lockedFields).toEqual([]);
   });
 
-  it('names the locked fields a would-be layer sets, by their request names', () => {
-    const resolved = resolveAgentSpec([parsed(settings), parsed(agent(['temperature', 'max_tokens', 'seed']))]);
-    expect(lockedFieldsIn(resolved, parsed(app))).toEqual(['temperature', 'max_tokens', 'seed']);
+  it('names the locked fields a request sets, as the request spells them', () => {
+    const resolved = resolveAgentSpec([parsed(agent(['max_tokens', 'seed', 'temperature']))]);
+    const body = { model: 'agent', messages: [], max_completion_tokens: 10, seed: 3, top_p: 1 };
+    expect(lockedFieldsIn(resolved, Object.keys(body))).toEqual(['max_completion_tokens', 'seed']);
     // Restating the agent's own value is setting it all the same.
-    expect(lockedFieldsIn(resolved, parsed(doc({ model: { temperature: 0 } })))).toEqual(['temperature']);
-    expect(lockedFieldsIn(resolved, parsed(doc({ model: { model: 'x', extraBody: { top_p: 1 } } })))).toEqual([]);
-  });
-
-  it('names the locked fields a request body sets, as the body spells them', () => {
-    const resolved = resolveAgentSpec([parsed(agent(['max_tokens', 'seed']))]);
-    const body = { model: 'agent', messages: [], max_completion_tokens: 10, seed: 3, top_p: 1, temperature: 1 };
-    expect(lockedRequestFields(resolved, body)).toEqual(['max_completion_tokens', 'seed']);
-    expect(lockedRequestFields(resolved, { seed: undefined })).toEqual([]);
+    expect(lockedFieldsIn(resolved, ['temperature'])).toEqual(['temperature']);
+    expect(lockedFieldsIn(resolved, [])).toEqual([]);
   });
 
   it('survives an export and a parse unchanged', () => {
     const spec = parsed(agent(['temperature', 'seed']));
-    expect(parsed(exportSpec(spec)).model?.locked).toEqual(['temperature', 'seed']);
+    expect(parsed(exportSpec(spec)).model?.lockedFields).toEqual(['temperature', 'seed']);
   });
 });
 
