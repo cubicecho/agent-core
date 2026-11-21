@@ -3,7 +3,7 @@ import { ToolDiscovery } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
 import { CallIds } from '../wire/call-ids.ts';
 import type { AgentLoopOptions } from './agent-loop.ts';
-import { type RunEvent, type RunEventInput, RunEventKind } from './events.ts';
+import { isNested, type RunEvent, type RunEventInput, RunEventKind, type RunVia } from './events.ts';
 
 /**
  * Running against a remote agent: a model that runs a whole agent loop of its own behind the chat
@@ -75,17 +75,28 @@ export interface RunProgress {
 }
 
 /**
+ * Whether a value off the wire is one hop of a nested event's `via`.
+ *
+ * @param value - Anything, usually just parsed.
+ * @returns True of an object with a string `runId` and a string `callId`.
+ */
+function isRunVia(value: unknown): value is RunVia {
+  return isRecord(value) && typeof value.runId === 'string' && typeof value.callId === 'string';
+}
+
+/**
  * Whether a value off the wire is a whole run event, as `stamp` makes one.
  *
  * @param value - Anything, usually just parsed.
  * @returns True of an object with a known `kind`, a `runId`, a whole `seq`, an `at`, and every other
- * always-present field of the right kind. `usage` is checked only for being an object or `null`.
+ * always-present field of the right kind. `usage` is checked only for being an object or `null`, and
+ * a `via`, where there is one, for being a list of hops.
  */
 function isRunEvent(value: unknown): value is RunEvent {
   if (!isRecord(value)) {
     return false;
   }
-  const { kind, runId, seq, at, text, name, exchange, ok, usage, id } = value;
+  const { kind, runId, seq, at, text, name, exchange, ok, usage, id, via } = value;
   const isKnown = typeof kind === 'string' && KINDS.has(kind);
   return (
     isKnown &&
@@ -97,7 +108,8 @@ function isRunEvent(value: unknown): value is RunEvent {
     typeof name === 'string' &&
     (ok === null || typeof ok === 'boolean') &&
     (usage === null || isRecord(usage)) &&
-    (id === undefined || typeof id === 'string')
+    (id === undefined || typeof id === 'string') &&
+    (via === undefined || (Array.isArray(via) && via.every(isRunVia)))
   );
 }
 
@@ -145,8 +157,8 @@ export function withProgress<T extends object, F extends string = typeof PROGRES
  *
  * @param chunk - One chunk of the stream, as parsed.
  * @param [field] - The field the event is under.
- * @returns The event as the server sent it, its `runId`, `seq` and `at` kept, or `undefined` for a
- * chunk with none, and for one whose event is malformed or of a kind this version does not know.
+ * @returns The event as the server sent it, its `runId`, `seq`, `at` and `via` kept, or `undefined`
+ * for a chunk with none, and for one whose event is malformed or of a kind this version does not know.
  */
 export function progressEvent(chunk: unknown, field: string = PROGRESS_FIELD): RunEvent | undefined {
   const carried = isRecord(chunk) ? chunk[field] : undefined;
@@ -247,7 +259,8 @@ interface RemoteRun {
  * With progress on, the server says the `turn`, `thinking`, `output`, `tool-call`, `tool-result`
  * and `usage` of each of its turns, its handed-back calls included, so the loop says none of those
  * itself. The server's `exchange`, `exchange-end` and `done` are not forwarded: the loop's own start
- * and end say the app's exchange, and the run's end is the app's to say. With progress off, the
+ * and end say the app's exchange, and the run's end is the app's to say. A nested event, one with a
+ * `via`, is forwarded whatever its kind. With progress off, the
  * loop's own events are all there is, and all are said.
  */
 export function remoteRun(
@@ -276,7 +289,9 @@ export function remoteRun(
         return;
       }
       runId = event.runId;
-      const isForwarded = UNFORWARDED.has(event.kind) === false;
+      // A nested event is a run inside the server's, under one of its calls, so its start and end
+      // are that run's to show rather than the server's own.
+      const isForwarded = isNested(event) || UNFORWARDED.has(event.kind) === false;
       if (isForwarded) {
         told(event);
       }
