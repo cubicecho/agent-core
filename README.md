@@ -1998,6 +1998,13 @@ conversation's leading system messages become `app_system`, written after the lo
 To a remote agent, `agent_core` is sent through for the server to stack.
 `docs/agent-prompt-spec-v2.md` is the design.
 
+**An agent can lock its sampling.** `model.locked` lists the settings no layer above may change, by
+request-field name (`temperature`, `max_tokens`, `reasoning_effort`, or an `extraBody` key such as
+`seed`). It is opt in: nothing is locked unless listed. Locks union across layers, and a locked
+field keeps the locking layer's value. Resolving drops an override silently, so a host that takes
+settings from an app checks first with `lockedFieldsIn(resolved, layer)` or
+`lockedRequestFields(resolved, body)` and refuses by the field's name.
+
 `parseSpec` reports every problem at once and refuses only five things, all of them about the
 document rather than a value: it is not an object, the `spec` token is missing or of another major
 (`upgradeSpec` turns a version 1 document into version 2), a `requires` entry this app does not

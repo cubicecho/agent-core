@@ -121,10 +121,26 @@ refusing it was the only protection an agent had.
 
 Under the spec the agent's words are kept by the structure, by `allowedModes` and by
 `<precedence>`, so both switches are removed and no `appPrompt` is added. The policy's other rules
-(`narrowServers`, `sampling`, `responseFormat`) stay; they are not about the prompt.
+(`narrowServers`, `responseFormat`) stay; they are not about the prompt. `sampling` moves into the
+agent, below.
 
 An agent whose policy has `hostPrompt` off today would start taking system messages, so the
 upgrade lists every such agent for someone to check.
+
+### No sampling policy
+
+The policy's `sampling` rule listed, for each agent, which sampling fields an app's request may
+set. Which settings an app may change is a fact about the agent, so it moves into the document as
+`model.locked` ([`agent-spec-v2.md`](agent-spec-v2.md#locked-settings)), kept with the agent's
+revisions. It is opt in: a field is locked only when the agent lists it.
+
+ai-router refuses a request that sets a locked field rather than ignoring it, since nothing is
+trimmed quietly there. It names them with agent-core's `lockedRequestFields(resolved, body)` on the
+request as it arrived, and refuses with each field's name. Resolving honours the lock as well, so a
+field that got past the check still keeps the agent's value.
+
+The upgrade turns each agent's `sampling` allowlist into a `locked` list: every sampling field the
+policy did not allow is locked. An agent whose policy allowed every field gets no `locked` at all.
 
 ### Stored agents and runs
 
