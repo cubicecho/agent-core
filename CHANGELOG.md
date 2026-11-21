@@ -1,3 +1,12 @@
+# [7.2.0](https://github.com/cubicecho/agent-core/compare/v7.1.0...v7.2.0) (2026-11-21)
+
+
+### Features
+
+* **spec:** let an agent lock sampling settings a layer above may not change ([451d470](https://github.com/cubicecho/agent-core/commit/451d470579f3142937b60ed7fd592f10d988ab59)), closes [#245](https://github.com/cubicecho/agent-core/issues/245)
+* **spec:** refuse or drop a request's locked fields, and skip unset ones ([839b507](https://github.com/cubicecho/agent-core/commit/839b5076aed3a0eef75581f30e8fbc33b59ac46d))
+* **spec:** rename model.locked to lockedFields and follow the revised issue ([b5619d0](https://github.com/cubicecho/agent-core/commit/b5619d0e44509bb17e3d080b53a519659e3d13db)), closes [#245](https://github.com/cubicecho/agent-core/issues/245)
+
 # [7.1.0](https://github.com/cubicecho/agent-core/compare/v7.0.0...v7.1.0) (2026-11-20)
 
 
