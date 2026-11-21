@@ -129,18 +129,17 @@ upgrade lists every such agent for someone to check.
 
 ### No sampling policy
 
-The policy's `sampling` rule listed, for each agent, which sampling fields an app's request may
-set. Which settings an app may change is a fact about the agent, so it moves into the document as
-`model.locked` ([`agent-spec-v2.md`](agent-spec-v2.md#locked-settings)), kept with the agent's
-revisions. It is opt in: a field is locked only when the agent lists it.
+The policy's `sampling` rule listed, for each agent, which request fields an app may set. In its
+place **every request field passes by default**, so an OpenAI client's request goes through as it
+would to OpenAI, and the agent locks the fields an app may not change in `model.lockedFields`
+([`agent-spec-v2.md`](agent-spec-v2.md#locked-fields)). That is a fact about the agent, so it is
+kept in the document with the agent's revisions. ai-router's editor shows each field as a switch,
+off by default.
 
-ai-router refuses a request that sets a locked field rather than ignoring it, since nothing is
-trimmed quietly there. It names them with agent-core's `lockedRequestFields(resolved, body)` on the
-request as it arrived, and refuses with each field's name. Resolving honours the lock as well, so a
-field that got past the check still keeps the agent's value.
-
-The upgrade turns each agent's `sampling` allowlist into a `locked` list: every sampling field the
-policy did not allow is locked. An agent whose policy allowed every field gets no `locked` at all.
+ai-router refuses a request that sets a locked field, or drops it and names it under its own
+setting, and never trims quietly. It names them with agent-core's
+`lockedFieldsIn(resolved, Object.keys(body))` on the request as it arrived. Resolving honours the
+lock as well, so a field that got past the check still keeps the agent's value.
 
 ### Stored agents and runs
 

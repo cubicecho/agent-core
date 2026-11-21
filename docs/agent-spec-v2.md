@@ -130,11 +130,12 @@ export interface ModelSpec {
    */
   extraBody?: Record<string, unknown>;
   /**
-   * Settings a layer above this one may not change, by their request-field names: `temperature`,
-   * `max_tokens` (which covers `max_completion_tokens`), `reasoning_effort`, or a key of
-   * `extraBody` such as `top_p` or `seed`. Absent and `[]` lock nothing; locks union across layers.
+   * Request fields a layer above this one may not change, by their wire names: `temperature`,
+   * `max_tokens` (which covers `max_completion_tokens`), `reasoning_effort`, or any key that would
+   * go in `extraBody`, such as `top_p`, `seed` or a provider's own field. Absent locks nothing:
+   * every field is open by default.
    */
-  locked?: string[];
+  lockedFields?: string[];
 }
 
 export interface PromptPart {
@@ -246,7 +247,7 @@ A document with every field set, as an operator would read it:
     "reasoningEffort": "off",
     "contextLength": 128000,
     "extraBody": { "top_k": 20, "min_p": 0.05 },
-    "locked": ["temperature", "top_k"]
+    "lockedFields": ["temperature", "top_k"]
   },
 
   "prompt": [
@@ -322,8 +323,8 @@ export interface ResolvedAgent extends AgentConfig {
   extensions: Readonly<Record<string, unknown>>;
   /** Every layer's requirements, unioned, so a layer above cannot quietly drop one below it. */
   requires: readonly string[];
-  /** Every layer's `model.locked`, unioned, less the reserved fields; `max_tokens` for both spellings. */
-  locked: readonly string[];
+  /** Every layer's `model.lockedFields`, unioned, less the reserved fields; `max_tokens` for both spellings. */
+  lockedFields: readonly string[];
 }
 
 export interface ResolvedTask {
@@ -368,7 +369,7 @@ as `null` and refusing it would make every host write a stripper first.
 | `model.reasoningReplay` | inherit; nowhere is `all` | as stated | — |
 | `model.contextLength` | inherit | this window | `0` — ask the endpoint |
 | `model.extraBody` | inherit | merged key by key, less the fields the loop sets or the spec spells | `{}` — adds nothing |
-| `model.locked` | locks nothing | these fields, unioned with the layers' below | `[]` — locks nothing, and unlocks nothing below |
+| `model.lockedFields` | locks nothing: every field is open | these fields, unioned with the layers' below | `[]` — locks nothing, and unlocks nothing below |
 | `prompt` | inherit | merged by part name, as each part's `mode` says | `[]` — adds nothing; `content: ""` deletes a part, and the parts that name it |
 | `promptLayout` | inherit; nowhere is `plain` | as stated | — |
 | `tools.servers` | **every server** | exactly these | `[]` — **no servers** |
@@ -389,8 +390,8 @@ a task, then a step. Scalars take the last layer that has the key. `extraBody` a
 merge by top-level key. `prompt` merges by part name, and `hooks` and `tasks` by id, ordered by
 first appearance.
 `tools.servers` replaces whole, since a tri-state cannot be unioned. `requires` unions, so a layer
-above cannot quietly drop a requirement below it, and so does `model.locked`, so a layer above
-cannot unlock a setting (see [Locked settings](#locked-settings)).
+above cannot quietly drop a requirement below it, and so does `model.lockedFields`, so a layer
+above cannot unlock a field (see [Locked fields](#locked-fields)).
 
 There is no field for one document to extend another, and no URL resolution: the package never
 fetches a layer. Which
@@ -423,43 +424,42 @@ join is `parts.map(trim).filter(Boolean).join("\n\n")` — byte-identical to the
 by hand, so four sources survive a round trip instead of flattening into one blob nobody can edit
 a third of.
 
-## Locked settings
+## Locked fields
 
-An agent's prompt parts say what an app may do to them (`allowedModes`); `model.locked` says the
-same of its sampling. A deterministic extractor locks `temperature` and `seed`, a summariser locks
-`max_tokens`, and the lock is kept in the document with the agent's revisions, written by whoever
-writes the agent. **It is opt in:** nothing is locked unless a layer names it, so an agent that
-must never run at another temperature lists `temperature`.
+An agent's prompt parts say what an app may do to them (`allowedModes`); `model.lockedFields` says
+the same of the request fields. A deterministic extractor locks `temperature` and `seed`, a
+summariser locks `max_tokens`, and the list is kept in the document with the agent's revisions,
+written by whoever writes the agent.
 
-- **Names are request-field names**, because that is what a host compares an app's request with:
-  `temperature`, `max_tokens`, `reasoning_effort`, or any `extraBody` key (`top_p`, `seed`,
-  `min_p`). `max_tokens` and `max_completion_tokens` are one setting, and `resolved.locked` lists
-  it as `max_tokens`. An `extraBody` key locks whole: locking `chat_template_kwargs` locks every
-  entry in it.
-- **A lock binds the layers above the one that states it.** The locking layer may still set the
-  field; a layer above that sets it keeps the locking layer's value, or the one resolved below it.
-  Locks union, so a layer above can add a lock and never remove one.
-- **Only the main model.** `tasks.<key>` has no `locked`; hosts already keep a request's sampling
-  away from side tasks.
-- **`parseSpec`** drops a reserved name (`model`, `messages`, `stream`, `tools`), a field's
-  document spelling (`maxTokens`, which locks nothing), and an entry that is not a string, each
-  with a warning. It keeps, with a warning, a name that is neither a spelled field nor a key of the
-  same document's `model.extraBody`, since that is either a typo or a key a layer below sets.
-  `exportSpec` round-trips the list unchanged.
+- **Open by default.** A field not listed is not locked, so nothing is locked by accident: an agent
+  that must never run at another temperature lists `temperature`. A host's UI shows each field as a
+  switch, off by default, and turning one on adds it here.
+- **Names are wire names**, because that is what a host compares an app's request with:
+  `temperature`, `max_tokens`, `reasoning_effort`, or any key that would go in `extraBody` (`top_p`,
+  `seed`, a provider's own field). `max_tokens` and `max_completion_tokens` are one field, and
+  `resolved.lockedFields` lists it as `max_tokens`. An `extraBody` key locks whole: locking
+  `chat_template_kwargs` locks every entry in it.
+- **Locks hold upward.** A lock binds the layers above the one that states it. The locking layer
+  may still set the field; a layer above that sets it keeps the locking layer's value, or the one
+  resolved below it. `lockedFields` unions, so a layer above can add a lock and never remove one.
+- **Only the main model.** `tasks.<key>` has no list of its own yet; hosts already keep a request's
+  sampling away from side tasks.
+- **`parseSpec`** refuses a reserved name (`model`, `messages`, `stream`, `tools`), since the loop
+  sets those, and a `lockedFields` that is not an array. It keeps any other name, which may be a
+  provider's field, and warns about a name listed twice (`max_tokens` beside
+  `max_completion_tokens` included), keeping it once. `exportSpec` round-trips the list.
 
 Resolving has no warnings, so it drops what a layer above tries to change without saying so. A host
-that takes settings from an app checks first, and refuses (or drops and reports, by its own rule):
+that takes fields from an app checks first, and refuses, or drops and names them under its own
+setting:
 
 ```ts
 const agent = resolveAgentSpec([settings, agentDoc]);
 
-// The app's settings as a layer:
-const changed = lockedFieldsIn(agent, appLayer); // ["temperature", "seed"]
-
-// Or the app's chat-completion request as it arrived, `extra_body` spread in:
-const fields = lockedRequestFields(agent, body); // ["max_completion_tokens"], as the body spells it
-if (fields.length > 0) {
-  return refuse(`locked by the agent: ${fields.join(", ")}`);
+// The app's chat-completion request as it arrived, `extra_body` spread in:
+const locked = lockedFieldsIn(agent, Object.keys(body)); // ["max_completion_tokens"], as given
+if (locked.length > 0) {
+  return refuse(`locked by the agent: ${locked.join(", ")}`);
 }
 ```
 
@@ -472,11 +472,11 @@ With the reviewer above, which locks `temperature` and `top_k`:
 | Layer | `temperature` | `top_k` | `top_p` |
 | --- | --- | --- | --- |
 | Settings | `0.7` | — | — |
-| Reviewer, `locked: ["temperature", "top_k"]` | `0` | `20` | — |
+| Reviewer, `lockedFields: ["temperature", "top_k"]` | `0` | `20` | — |
 | App | `1` | `50` | `0.9` |
 | **Resolved** | **`0`** | **`20`** | **`0.9`** |
 
-`lockedFieldsIn(resolved, app)` is `["temperature", "top_k"]`.
+`lockedFieldsIn(resolved, ["temperature", "top_k", "top_p"])` is `["temperature", "top_k"]`.
 
 ## Servers, in two layers
 
@@ -531,8 +531,9 @@ dropped`), and importable in a browser.
 
 The hard errors are all about the document rather than a value: it is not an object; the `spec`
 token is missing or names another format or major; a container is of the wrong kind, meaning
-`prompt`, `hooks` or `requires` is not an array, or `tasks` is not an object; a prompt part's name
-has `app` as its first word; or a `requires` entry is not a string, or names an extension this host
+`prompt`, `hooks`, `requires` or `model.lockedFields` is not an array, or `tasks` is not an object;
+a prompt part's name has `app` as its first word; a `model.lockedFields` entry is a reserved field;
+or a `requires` entry is not a string, or names an extension this host
 does not understand. Everything else drops the offending field and warns — the lesson
 `coerceLlmConfig` learned the hard way when a stored out-of-range value stopped a server booting.
 
@@ -827,7 +828,7 @@ and a bundle, which is the part that needs an explicit trust decision before it 
 | "No servers means all" | yes | `servers` absent |
 | Per-task and per-step overrides | yes | more layers, one function |
 | `extraBody` | yes | the first place it can be stored |
-| Sampling an app may not change | yes | `model.locked`, opt in |
+| Request fields an app may not change | yes | `model.lockedFields`, open by default |
 | A side-task model on another host | yes | `tasks.<key>.endpoint` |
 | Sentinel confusion | yes | absent inherits, and nothing else does |
 | API keys | no, by design | no field; the host applies `resolveApiKey` after |
