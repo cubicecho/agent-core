@@ -309,6 +309,8 @@ export {
   type ExportSpecOptions,
   exportSpec,
   findSpecSecrets,
+  lockedFieldsIn,
+  lockedRequestFields,
   type ModelSpec,
   type ParsedAppParts,
   type ParsedSpec,
