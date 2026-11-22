@@ -785,6 +785,17 @@ describe('negotiate, for a field the caller can do without', () => {
     ]);
   });
 
+  it('drops the field a refusal names, not the response_format it suggests instead', async () => {
+    const supports = vllm();
+    const { send } = modelThatRefuses(
+      apiError(400, "property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?"),
+    );
+    await negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] });
+    const refused = modelCapabilitiesFor(supports, 'qwen');
+    expect([...refused.refusedFields]).toEqual(['chat_template_kwargs']);
+    expect(refused.structuredOutput).toBe(true);
+  });
+
   it('reads no field from a pydantic error that is not about an extra input', async () => {
     const missing = apiError(400, '{"detail":[{"type":"missing","loc":["body","model"],"msg":"Field required"}]}');
     const { send } = modelThatRefuses(missing);
