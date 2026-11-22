@@ -5,6 +5,7 @@ import {
   CALL_TOOL,
   carryOver,
   catalogPrompt,
+  definedNames,
   expandNames,
   holdsDefinitions,
   inCatalog,
@@ -46,6 +47,10 @@ describe('expandNames and loadResult', () => {
     expect(expandNames(['gmail__*'], catalog).matched).toHaveLength(3);
     // The model dropped the server prefix; `__gmail` still finds the group.
     expect(expandNames(['files__read*'], catalog).matched).toEqual(['files__read_file']);
+  });
+
+  it('expand a wildcard by the name after a server prefix, when no name begins with it', () => {
+    expect(expandNames(['read*'], catalog).matched).toEqual(['gmail__read_email', 'files__read_file']);
   });
 
   it('refuse an over-broad wildcard with its hits listed', () => {
@@ -301,6 +306,10 @@ describe('carryOver', () => {
     // answer a caller asking for zero cannot have meant.
     expect(carryOver(['a', 'b', 'c'], new Set(['d']), 0)).toEqual(['d']);
   });
+
+  it('drops the earliest of all when everything past the cap was used', () => {
+    expect(carryOver(['a', 'b'], new Set(['a', 'b', 'c']), 2)).toEqual(['b', 'c']);
+  });
 });
 
 describe('the proxied tools', () => {
@@ -392,6 +401,15 @@ describe('the proxied tools', () => {
     expect(holdsDefinitions(loadResult(resolved, catalog))).toBe(false);
   });
 
+  it('read the names a load defined off its lines of JSON, and nothing off any other text', () => {
+    const resolved = expandNames(['gmail__send_email'], catalog);
+    const result = proxyLoadResult(resolved, catalog, [definition('gmail__send_email')]);
+    expect(definedNames(result)).toEqual(['gmail__send_email']);
+    // A line cut short, or one with no name, defines nothing.
+    expect(definedNames(`${result}\n\n{"name":"files__read_f\n\n{"id":1}`)).toEqual(['gmail__send_email']);
+    expect(definedNames(loadResult(resolved, catalog))).toEqual([]);
+  });
+
   it('read call_tool as the tool it names, with arguments as an object or as JSON', () => {
     expect(proxiedCall({ name: 'files__read_file', arguments: { path: 'a' } }, catalog)).toEqual({
       name: 'files__read_file',
@@ -399,6 +417,7 @@ describe('the proxied tools', () => {
     });
     expect(proxiedCall({ name: 'files__read_file', arguments: '{"path":"a"}' }, catalog).input).toEqual({ path: 'a' });
     expect(proxiedCall({ name: 'files__read_file' }, catalog).input).toEqual({});
+    expect(proxiedCall({ name: 'files__read_file', arguments: '  ' }, catalog).input).toEqual({});
   });
 
   it('refuse through call_tool what it cannot run, in words the model can act on', () => {
@@ -416,6 +435,7 @@ describe('the proxied tools', () => {
       name: 'files__read_file',
       input: '{"path":"a"}',
     });
+    expect(shownCall(CALL_TOOL, '{"name":"files__read_file"}')).toEqual({ name: 'files__read_file', input: '{}' });
     expect(shownCall(CALL_TOOL, '{not json')).toEqual({ name: CALL_TOOL, input: '{not json' });
     expect(shownCall('files__read_file', '{"name":"x"}')).toEqual({
       name: 'files__read_file',
