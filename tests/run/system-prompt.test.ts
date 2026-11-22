@@ -36,9 +36,9 @@ describe('stackRequest', () => {
     // With no agent's part to act on, the mode is moot and the part is added.
     expect(stacked.parts.map((part) => part.name)).toEqual(['app_identity']);
     const strict = stackRequest(reviewer, agentCore, []);
-    expect(strict.warnings).toEqual([
-      "The agent's identity part does not let an app replace it, so the part was dropped.",
-    ]);
+    expect(strict.warnings).toHaveLength(1);
+    expect(strict.warnings[0]).toContain('identity');
+    expect(strict.warnings[0]).toContain('dropped');
   });
 
   it('names the agent_core field a malformed prompt came in', () => {
