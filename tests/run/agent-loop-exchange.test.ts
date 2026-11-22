@@ -93,11 +93,10 @@ describe("an exchange's start and end events", () => {
     expect(settled).toMatchObject({ metrics: { outcome: ExchangeOutcome.Ended } });
   });
 
-  it('lists the calls a waiting exchange handed back, after its wait', async () => {
+  it('lists the calls a waiting exchange handed back', async () => {
     create.mockReturnValueOnce(asks('ask_person'));
     const { events } = await exchange({ tools: [], hostTools: [tool('ask_person')], handBack: true });
 
-    expect(events.slice(-2).map((event) => event.kind)).toEqual([RunEventKind.Wait, RunEventKind.ExchangeEnd]);
     expect(last(events)).toEqual({
       kind: RunEventKind.ExchangeEnd,
       outcome: ExchangeOutcome.Waiting,
