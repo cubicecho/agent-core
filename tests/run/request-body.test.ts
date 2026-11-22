@@ -18,6 +18,9 @@ import {
 
 afterEach(() => resetCapabilities());
 
+/** A local model server's capabilities, as negotiation starts them. */
+const local = () => capabilitiesFor({ baseUrl: 'http://local/v1' });
+
 describe('buildBody', () => {
   const messages: Message[] = [{ role: Role.User, content: 'hi' }];
 
@@ -95,18 +98,13 @@ describe('buildBody', () => {
   });
 
   it('sends no ceiling at zero and no effort at off', () => {
-    const body = buildBody(
-      { ...config, maxTokens: 0, reasoningEffort: 'off' },
-      capabilitiesFor({ baseUrl: 'http://local/v1' }),
-      undefined,
-      messages,
-    );
+    const body = buildBody({ ...config, maxTokens: 0, reasoningEffort: 'off' }, local(), undefined, messages);
     expect(body).not.toHaveProperty('max_tokens');
     expect(body).not.toHaveProperty('reasoning_effort');
   });
 
   it("merges extraBody last, less the refused fields and the loop's own", () => {
-    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
+    const supports = local();
     const refused = modelCapabilitiesFor(supports, 'm');
     refused.refusedFields.add('min_p');
     const body = buildBody(
@@ -136,30 +134,26 @@ describe('buildBody', () => {
     ];
 
     it('sends neither the field nor a split by default', () => {
-      const body = buildBody(config, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript, [
-        tool('a'),
-      ]);
+      const body = buildBody(config, local(), undefined, transcript, [tool('a')]);
       expect(body).not.toHaveProperty(PARALLEL_TOOL_CALLS);
       expect(body.messages).toBe(transcript);
     });
 
     it('asks for one call at a time beside tools and replays each call as a pair of its own', () => {
       const single = { ...config, singleCallMessages: true };
-      const body = buildBody(single, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript, [
-        tool('a'),
-      ]);
+      const body = buildBody(single, local(), undefined, transcript, [tool('a')]);
       expect(body).toHaveProperty(PARALLEL_TOOL_CALLS, false);
       expect(singleCallRefusal(transcript)).toBeDefined();
       expect(singleCallRefusal(body.messages)).toBeUndefined();
       expect(pairsByPosition(body.messages)).toBe(true);
       // OpenAI refuses the field on a request with no tools.
-      const bare = buildBody(single, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript);
+      const bare = buildBody(single, local(), undefined, transcript);
       expect(bare).not.toHaveProperty(PARALLEL_TOOL_CALLS);
       expect(singleCallRefusal(bare.messages)).toBeUndefined();
     });
 
     it('does the same for a model whose template refused, and drops the field once it is refused', () => {
-      const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
+      const supports = local();
       const refused = modelCapabilitiesFor(supports, 'm');
       refused.multiCallMessages = false;
       const body = buildBody(config, supports, refused, transcript, [tool('a')]);
@@ -173,15 +167,13 @@ describe('buildBody', () => {
 
     it("lets extraBody's own parallel_tool_calls win", () => {
       const single = { ...config, singleCallMessages: true, extraBody: { [PARALLEL_TOOL_CALLS]: true } };
-      const body = buildBody(single, capabilitiesFor({ baseUrl: 'http://local/v1' }), undefined, transcript, [
-        tool('a'),
-      ]);
+      const body = buildBody(single, local(), undefined, transcript, [tool('a')]);
       expect(body).toHaveProperty(PARALLEL_TOOL_CALLS, true);
     });
   });
 
   it('relaxes schemas where the endpoint could not build a grammar', () => {
-    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
+    const supports = local();
     supports.strictSchemas = false;
     const pattern: OpenAI.ChatCompletionTool = {
       type: FUNCTION_TOOL,
@@ -198,7 +190,7 @@ describe('buildBody', () => {
   const names = (body: Body) => toolNames(body.tools);
 
   it("orders by a comparator of the caller's", () => {
-    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
+    const supports = local();
     const body = buildBody(config, supports, undefined, messages, [tool('a'), tool('b'), tool('c')], (a, b) =>
       b.localeCompare(a),
     );

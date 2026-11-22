@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import type { AgentLoopOptions } from '../../src/run/agent-loop.ts';
-import { nestEvent, type RunEventInput, RunEventKind, stamp } from '../../src/run/events.ts';
+import { nestEvent, type RunEvent, type RunEventInput, RunEventKind, stamp } from '../../src/run/events.ts';
 import {
   asRemoteAgent,
   IDEMPOTENCY_HEADER,
@@ -109,6 +109,12 @@ describe('withProgress and progressEvents', () => {
 });
 
 describe('remoteRun', () => {
+  /** A remote half over `extraBody`, with every event it tells collected. */
+  const listening = (extraBody?: Record<string, unknown>, options?: Parameters<typeof remoteRun>[2]) => {
+    const told: (RunEventInput | RunEvent)[] = [];
+    return { remote: remoteRun(extraBody, (event) => told.push(event), options), told };
+  };
+
   it("asks for progress under the host's own router fields, and keeps a host's progress: false", () => {
     expect(remoteRun({ top_k: 20, agent_core: { task: 'triage' } }, () => {}).extraBody).toEqual({
       top_k: 20,
@@ -120,8 +126,7 @@ describe('remoteRun', () => {
   });
 
   it("forwards the server's events but its done, and holds back the loop's own for the server's steps", () => {
-    const told: unknown[] = [];
-    const remote = remoteRun(undefined, (event) => told.push(event));
+    const { remote, told } = listening();
     remote.onChunk(progressChunk(called, head));
     remote.onChunk(progressChunk(stamp({ kind: RunEventKind.Done, ok: true }, 'r1', 8, 43), head));
     remote.emit({ kind: RunEventKind.ToolCall, id: 'Srv000001', name: 'ask_user' });
@@ -131,8 +136,7 @@ describe('remoteRun', () => {
   });
 
   it("raises the server's warnings about the app's parts as notices", () => {
-    const told: unknown[] = [];
-    const remote = remoteRun(undefined, (event) => told.push(event));
+    const { remote, told } = listening();
     const warned = {
       agent_core: {
         warnings: [{ part: 'rules', rule: 'replace-not-allowed', message: 'Dropped rules.' }, { part: 'x' }],
@@ -145,15 +149,13 @@ describe('remoteRun', () => {
   });
 
   it('says every event of its own where the host turned progress off', () => {
-    const told: unknown[] = [];
-    const remote = remoteRun({ agent_core: { progress: false } }, (event) => told.push(event));
+    const { remote, told } = listening({ agent_core: { progress: false } });
     remote.emit({ kind: RunEventKind.Turn, text: 'turn 1' });
     expect(told).toEqual([{ kind: RunEventKind.Turn, text: 'turn 1' }]);
   });
 
   it('asks for progress and forwards it under the field it is given', () => {
-    const told: unknown[] = [];
-    const remote = remoteRun({ agent_run: { task: 'triage' } }, (event) => told.push(event), { field: 'agent_run' });
+    const { remote, told } = listening({ agent_run: { task: 'triage' } }, { field: 'agent_run' });
     expect(remote.extraBody).toEqual({ agent_run: { progress: true, task: 'triage' } });
     remote.onChunk(progressChunk(called, head));
     remote.onChunk(progressChunk(called, head, 'agent_run'));
@@ -168,8 +170,7 @@ describe('remoteRun', () => {
   });
 
   it("forwards an inner run's done, which is not the server's own", () => {
-    const told: unknown[] = [];
-    const remote = remoteRun(undefined, (event) => told.push(event));
+    const { remote, told } = listening();
     const innerDone = stamp({ kind: RunEventKind.Done, ok: true }, 'inner', 3, 40);
     const event = stamp(nestEvent(innerDone, { runId: 'inner', callId: 'Srv000000' }), 'r1', 8, 41);
     remote.onChunk(progressChunk(event, head));
