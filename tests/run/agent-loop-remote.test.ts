@@ -293,7 +293,7 @@ describe('a run on a remote agent', () => {
     expect(received[0].body).not.toHaveProperty('id_slot');
   });
 
-  it("sets aside the loop's own compaction, pruning, preselection, loading, continuations and window guard", async () => {
+  it("sets aside the loop's own compaction, pruning, preselection, loading, continuations, call recovery, minted ids and window guard", async () => {
     const { spec, errors } = parseSpec({
       spec: AGENT_SPEC,
       endpoint: { baseUrl: 'http://router.internal/v1' },
@@ -314,6 +314,8 @@ describe('a run on a remote agent', () => {
         compact: true,
         prune: true,
         maxContinuations: 2,
+        recoverToolCalls: true,
+        callIds: CallIds.Minted,
       },
     );
 
@@ -326,19 +328,8 @@ describe('a run on a remote agent', () => {
     // Eager: the host's tools, no `load_tools`, and no catalogue on a system prompt.
     expect(received[0].body.tools?.map(toolName)).toEqual(['ask_user', 'gmail__send_email']);
     expect(received[0].body.messages).toEqual([user(long)]);
-    expect(events).toContainEqual({
-      kind: RunEventKind.Notice,
-      text: `${REMOTE_AGENT_NOTICE}compact, prune, preselect, toolDiscovery "ondemand", maxContinuations`,
-    });
-  });
-
-  it('names call recovery and minted call ids in its notice, which it also sets aside', async () => {
-    const { fetch } = remoteAgent([{ events: [], content: 'Blue it is.' }]);
-    const { events } = await ask(remoteConfig(fetch), { recoverToolCalls: true, callIds: CallIds.Minted });
-    expect(events).toContainEqual({
-      kind: RunEventKind.Notice,
-      text: `${REMOTE_AGENT_NOTICE}recoverToolCalls, callIds "minted"`,
-    });
+    // What the notice lists is `asRemoteAgent`'s; the loop tells it.
+    expect(events).toContainEqual({ kind: RunEventKind.Notice, text: expect.stringContaining(REMOTE_AGENT_NOTICE) });
   });
 
   it('takes a call the remote agent wrote into its answer as the answer, not as a call', async () => {
