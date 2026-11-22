@@ -77,15 +77,8 @@ describe('parseToolArguments', () => {
 
   it('refuses what is not an object, as malformed', () => {
     for (const raw of ['[1]', '{nope', '42']) {
-      const error = (() => {
-        try {
-          parseToolArguments(raw);
-        } catch (caught) {
-          return caught;
-        }
-      })();
-      expect(error).toBeInstanceOf(ToolArgumentsError);
-      expect((error as ToolArgumentsError).kind).toBe(ARGUMENTS_MALFORMED);
+      expect(() => parseToolArguments(raw)).toThrow(ToolArgumentsError);
+      expect(() => parseToolArguments(raw)).toThrow(expect.objectContaining({ kind: ARGUMENTS_MALFORMED }));
     }
     expect(() => parseToolArguments('[1]')).toThrow('not an object');
     expect(() => parseToolArguments('{nope')).toThrow('invalid tool arguments');

@@ -18,6 +18,10 @@ const tool = (parameters?: OpenAI.FunctionParameters): OpenAI.ChatCompletionTool
 const paramsOf = (tools: OpenAI.ChatCompletionTool[]) =>
   (tools[0] as { function: { parameters: Record<string, unknown> } }).function.parameters;
 
+/** The `properties` of a rewritten schema, by name. */
+const propertiesOf = (parameters: Record<string, unknown>) =>
+  parameters.properties as Record<string, Record<string, unknown>>;
+
 describe('sanitizeTools', () => {
   it('rewrites a list type and drops lookaround patterns', () => {
     const out = paramsOf(
@@ -31,7 +35,7 @@ describe('sanitizeTools', () => {
         }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.label).toEqual({ nullable: true, type: SchemaType.String });
     expect(properties.count.anyOf).toEqual([{ type: SchemaType.String }, { type: SchemaType.Number }]);
   });
@@ -42,7 +46,7 @@ describe('sanitizeTools', () => {
         tool({ type: SchemaType.Object, properties: { filter: SchemaType.Object, flag: SchemaType.Boolean } }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.filter).toEqual({ type: SchemaType.Object, properties: {} });
     expect(properties.flag).toEqual({ type: SchemaType.Boolean });
   });
@@ -51,7 +55,7 @@ describe('sanitizeTools', () => {
     const out = paramsOf(
       sanitizeTools([tool({ type: SchemaType.Object, properties: { list: { type: SchemaType.Array, items: null } } })]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.list.items).toEqual({ type: SchemaType.Object, properties: {} });
   });
 
@@ -59,7 +63,7 @@ describe('sanitizeTools', () => {
     const out = paramsOf(
       sanitizeTools([tool({ type: SchemaType.Object, properties: { gone: { type: [SchemaType.Null] } } })]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.gone).toEqual({ nullable: true, type: SchemaType.Null });
   });
 
@@ -94,7 +98,7 @@ describe('sanitizeTools', () => {
         }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.where).toEqual({ $ref: '#/definitions/Filters' });
     expect(properties.note).toEqual({ $ref: '#/definitions/Note' });
     // The targets are still there: the reference is narrowed, never severed.
@@ -110,14 +114,14 @@ describe('sanitizeTools', () => {
         }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.name).toEqual({ nullable: true, type: SchemaType.String, maxLength: 3 });
   });
 
   it('leaves a union of two real branches as it was', () => {
     const anyOf = [{ type: SchemaType.String }, { type: SchemaType.Number }];
     const out = paramsOf(sanitizeTools([tool({ type: SchemaType.Object, properties: { a: { anyOf } } })]));
-    expect((out.properties as Record<string, unknown>).a).toEqual({ anyOf });
+    expect(propertiesOf(out).a).toEqual({ anyOf });
   });
 
   it('keeps a pattern a grammar can express, and enums and descriptions too', () => {
@@ -424,7 +428,7 @@ describe('relaxTools', () => {
         }),
       ]),
     );
-    const items = (out.properties as Record<string, Record<string, unknown>>).to.items;
+    const items = propertiesOf(out).to.items;
     expect(items).toEqual({ type: SchemaType.String });
   });
 
@@ -445,7 +449,7 @@ describe('relaxTools', () => {
 
     // The arguments survive; only the keywords on `keep` are stripped.
     expect(Object.keys(out.properties as object).sort()).toEqual(['format', 'keep', 'pattern']);
-    expect((out.properties as Record<string, unknown>).keep).toEqual({ type: SchemaType.String });
+    expect(propertiesOf(out).keep).toEqual({ type: SchemaType.String });
     expect(out.required).toEqual(['format', 'pattern']);
   });
 
@@ -460,7 +464,7 @@ describe('relaxTools', () => {
         }),
       ]),
     );
-    expect((out.properties as Record<string, unknown>).a).toEqual({
+    expect(propertiesOf(out).a).toEqual({
       type: SchemaType.String,
       default: { format: 'kept' },
       enum: [{ pattern: 'x' }],
