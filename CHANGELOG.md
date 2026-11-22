@@ -1,3 +1,13 @@
+## [7.3.1](https://github.com/cubicecho/agent-core/compare/v7.3.0...v7.3.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **context:** read a changed developer message as the system prompt changing (B46) ([f354ae3](https://github.com/cubicecho/agent-core/commit/f354ae3f4cea71091162714473a37c8c04a9be7e))
+* **endpoint:** read a named field before a mentioned response_format (B45) ([2ecb0d3](https://github.com/cubicecho/agent-core/commit/2ecb0d36db640d0b84585ce44093c88d85534a7f))
+* **run:** time a run's wallMs by its own events alone (B43) ([8c07af6](https://github.com/cubicecho/agent-core/commit/8c07af6dfc17cd958a7f07e8837b10b6e22b017c))
+* **spec:** name a bundled server by one rule everywhere (B44) ([a48260b](https://github.com/cubicecho/agent-core/commit/a48260b7a3dc27060195d9c95e9a44bd5d36e889))
+
 # [7.3.0](https://github.com/cubicecho/agent-core/compare/v7.2.0...v7.3.0) (2026-11-21)
 
 
