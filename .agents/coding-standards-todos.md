@@ -156,6 +156,29 @@ files pass. No benchmark was recorded. The hot path is `streamTurn`, and `runSte
 | F5 | Feature | `agent_core` in the loop: sent through to an agent with `progress`, taken out for any other model and written as system messages in the layout; ai-router's warnings raised as the loop's event. | M16 | F2, F3, A17 | done (`732c390`) |
 | T15 | Test [pin] | Pin that `plain` writes today's text byte for byte, and that parts are written in the order given. | F3 does not move a byte it should not | — | done (`acaed3c`) |
 | D13 | Docs | Make `docs/agent-spec-v2.md` and the prompt spec describe the code, and redraw `HOW-IT-WORKS.md`, once the code matches. | Docs that describe the code | A16, F5 | done (this branch's docs commit) |
+| B43 | Bug | `runMetrics.wallMs` spans nested events too, though its doc says nested events are left out (`runMetrics([own@0, nested@5000]).wallMs` is 5000). Take it over the run's own events. | The #247 rule holds for every field | — | approved |
+| B44 | Bug | A bundled server with `slug: ""` parses cleanly (`parseBundle` falls back to `id`), then vanishes on resolve and is named `""` by `findSpecSecrets` (both use `slug ?? id`). One `effectiveSlug` helper for all three. | A server that parsed is never silently dropped | — | approved |
+| B45 | Bug | `rejectsResponseFormat` matches any refusal that mentions `response_format`, and runs before the dropped-field check: `property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?` latches structured output off for the process and drops nothing. Check the named unknown field first. | No wrong process-long latch | T26 | approved |
+| B46 | Bug (question) | "The leading system messages" is computed three times (`ledger.ts` `leadingSystem`, `request-body.ts:38`, `system-prompt.ts:55`); the third takes `developer` messages in, the other two stop at them. Intended? | One definition of a prompt's head, or a documented reason for two | — | decided: `leadingSystem` counts `developer` too; `singleSystem` keeps merging only `system`, and each says why |
+| T16 | Test [redundant] | Loop tests: delete 6 that repeat another test (transcript:391, agent-loop:242, :1024, :2318, :2982, and the half of transcript:827 that is `planPrune`'s rule); merge 2740 into transcript:375 and 2300 into 2281. | One test per behaviour, at its owner | — | approved |
+| T17 | Test [redundant] | run/hooks/context: delete hooks.test :302, :101, :109, :186 and request-body.test :200, :208 (each repeated at the same path or owned by `orderTools`). | Same | — | approved |
+| T18 | Test [redundant] | spec/tools/runtime: delete spec.test :98, :455, :556, :892, columns.test :127, tool-loading.test :98, :92, :200, instructions.test :148, snapshot.test :204, :219; merge tool-loading :263 into :255; trim spec :167-171 and :785-794, snapshot :159-189, preselect line 35, tool-loading line 192. | Same | — | approved |
+| T19 | Test [redundant] | wire/turn/endpoint: dissolve `tests/endpoint/turn.test.ts` (3 tests repeat negotiate/runTurn ones, one moves to negotiate's describe, one folds into run-turn.test); delete schema-compat :22, side-task-answer :30/:39/:50 (moving two cases into `stripThinking`'s tests), stream.test :99; cut schema-compat :448 to its equality checks. | Same | — | approved |
+| T20 | Test [reuse] | The almost-JSON repair is tested at its two callers and never where it lives: give `looseJson` its own describe in tool-calls.test (covering :89, :143, :145) and keep one wiring case each in `parseToolArguments` and `parseJson`. | The rule tested at its owner, plus coverage | — | approved |
+| T21 | Test [consistency] | Split `describe('nestEvent')` in events.test so each behaviour sits under its subject (`isNested`, `watch`, `cleanup`, `fold`, `runMetrics`), drop "wait and" from the retention title; fold remote.test's nested describe into the codec and `remoteRun` describes, building the bad `via` raw instead of with `as never`. | Titles read as their subject's predicates | — | approved |
+| T22 | Test [consistency] | Move misplaced tests to their owner's file: the loop's `describe('artifacts')` to agent-loop-artifacts; minted-ids and dropped-nameless-call tests to their describes in -transcript; the `report.log` compile test to a new tests/run/dispatch.test.ts; `taskCall` tests to tests/turn/side-task.test; hooks' `is ignored by notify` into `notify`. | Each test where the layout rule puts it | — | approved |
+| T23 | Test [pin] | Loop coverage: prune right after a compaction (agent-loop.ts:1646); a failure before `runTurns` (onEvent throws on `exchange`, :864/872); afterExchange with no question (:1140/1552); layout warnings told once per exchange (:1689); a remote agent with a parts prompt (:1459). | The loop's only untested paths | — | approved |
+| T24 | Test [pin] | run/hooks/context coverage: unit tests for `breakReason`/`cacheDiagnosis` in ledger.test (all four reasons, `SystemChanged` uncovered) and `asRemoteAgent` in remote.test, then trim the loop's copies; plus one-liners for events.ts:1064/1089/500, hooks.ts:236, compaction.ts:679/722, artifacts.ts:373, system-prompt.ts:64/120, ledger.ts:103/140, run-calls.ts:419/1154. | Behaviour pinned at its owner; branch coverage | — | approved |
+| T25 | Test [pin] | spec/tools/runtime coverage: `parseSpec`'s untested refusals and drops (`requires` shape, non-object sections, bundle shapes, hooks missing fields, `maxTokens: -1`); tool-loading's suffix wildcard (:319, its test title claims it but never runs it) and `definedNames`/`proxiedCall`/`shownCall`/`carryOver` edges; `createRuntime({ events })`; snapshot's defensive skips; discovery's multipart `userText`. | Documented refusals actually tested | — | approved |
+| T26 | Test [pin] | wire/endpoint coverage: split capabilities.test :761 (its Groq case passes only because the pydantic pass already latched the field); a malformed-marker table for tool-calls and the nested-marker case (:552); schema-compat's `$ref` cycle, foreign and missing refs; `servedWindow` (public, untested); client.ts:873/1009/56; continuation's non-refusal fallback and `inFlight`; `slots.release` with nothing held. | A test that proves what its title says; coverage of public API | — | approved |
+| T27 | Test [reuse] | Shared builders: `toolCall`/`toolResult` (four local copies, and helpers' `answer` means something else), `parsed()` (spec, columns), `stackedPart` (stack, layout, spec), the variadic `calls` (agent-loop, host-tools); `NO_HINTS` in runtime/reset tests (the T1 reason for not using it no longer holds); tool-loading uses `tool()`/`toolNames()`; helpers used by one file move back into it. | One name, one meaning, one place | — | approved |
+| T28 | Test [readability] | Local setup helpers and cast removal: `noticesOf` (≈8 copies), hooks' `ctx`, remote's `listening()`, request-body's `local()`, preselect's `desks` and its shadowed `catalog`, schema-compat's `propertiesOf`, tokens.test's four `as never`, tool-calls' IIFE catch, `checkLockedFields`' unchecked try/catch. | Each test shows only what it changes | — | approved |
+| T29 | Test [readability] | Whole-sentence notice assertions become `toContain` of the part that matters (loop, hand-back, capabilities, compaction `pruneNotice`, system-prompt). Not spec.test's ~40 operator warnings, which need a decision. | Wording can improve without breaking tests | — | approved |
+| T30 | Test [consistency] | Titles that lead with a noun or repeat the subject (compaction :194, tool-loading :234/:255/:263, preselect :278/:303, spec :84/:311 asserting resolve inside parseSpec). Titles only, own commit. | Titles read as sentences | — | approved |
+| R51 | Refactor [readability] | agent-loop.ts:1457/1696: one `plain` discriminator decides plain vs stacked prompt; drops a `: ''` that can never run. | One condition, no dead branch | T23 | approved |
+| R52 | Refactor [simplify] | Dead fallbacks: spec.ts:845 ternary, snapshot.ts:101 `?? 0`, tool-calls.ts `readValue`'s unclosed branch (with its doc, D14), schema-compat `strip`'s array branch, retry.ts:200 `?? new Error`, client.ts:838 reading back what `noteSlots` just set. | Fewer branches that mislead a reader | T26 | approved |
+| D14 | Doc | Stale comments: RunEvent's "every field but `id` and `link`" (five more are optional); spec.ts:29 "nothing outside src/spec imports this" (system-prompt does); spec.test.ts:50 "four hard errors" (nine); tool-loading.test :47 says suffix and tests prefix; tool-calls.ts:247 unclosed value. | Comments that match the code | — | approved |
+| R53 | Refactor [simplify] · low value | agent-loop.ts:1474/1882: `firing` takes `hooks | undefined` and returns all-off, so the optional chains and the per-turn re-read go. | A little less noise in the loop | — | declined (low value) |
 
 Status is `open`, `proposed` (an `M` item awaiting Gate 1), `approved`, `deferred`, `declined` or `done`.
 Gate 2 (2026-11-18) approved the recommended set; PR 1 carries the non-breaking items, PR 2 the 5.0.0 renames.
@@ -1172,6 +1195,104 @@ documents in `<context>`, so behind it a model can read the two as one. Decided:
 `<hook_context>` and have the preface say "the app's hooks" (it says "the host's hooks"). This is
 text the model reads; agent-mcp-pool's `contextBlocks` writes the same blocks and changes with it.
 Implements: M12. Needs: B41.
+
+---
+
+## Review pass, 2026-11-22
+
+Baseline at `109355d`: `biome ci` clean, `tsc --noEmit` clean, 1295 tests in 60 files pass; coverage 98.36% lines, 94.5% branches, 99.06% functions. Surveyed in four parts (loop; run/hooks/context; wire/turn/endpoint; tools/spec/runtime/core). The three bugs were reproduced by script. The domain model matched the code in scope (it was updated in #248), so it is unchanged.
+
+### B43 — Bug
+
+`runMetrics.wallMs` spans nested events too, though its doc says nested events are left out (`runMetrics([own@0, nested@5000]).wallMs` is 5000). Take it over the run's own events. Buys: The #247 rule holds for every field. Needs: —.
+
+### B44 — Bug
+
+A bundled server with `slug: ""` parses cleanly (`parseBundle` falls back to `id`), then vanishes on resolve and is named `""` by `findSpecSecrets` (both use `slug ?? id`). One `effectiveSlug` helper for all three. Buys: A server that parsed is never silently dropped. Needs: —.
+
+### B45 — Bug
+
+`rejectsResponseFormat` matches any refusal that mentions `response_format`, and runs before the dropped-field check: `property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?` latches structured output off for the process and drops nothing. Check the named unknown field first. Buys: No wrong process-long latch. Needs: T26.
+
+### B46 — Bug (question)
+
+"The leading system messages" is computed three times (`ledger.ts` `leadingSystem`, `request-body.ts:38`, `system-prompt.ts:55`); the third takes `developer` messages in, the other two stop at them. Intended? Buys: One definition of a prompt's head, or a documented reason for two. Needs: —.
+
+### T16 — Test [redundant]
+
+Loop tests: delete 6 that repeat another test (transcript:391, agent-loop:242, :1024, :2318, :2982, and the half of transcript:827 that is `planPrune`'s rule); merge 2740 into transcript:375 and 2300 into 2281. Buys: One test per behaviour, at its owner. Needs: —.
+
+### T17 — Test [redundant]
+
+run/hooks/context: delete hooks.test :302, :101, :109, :186 and request-body.test :200, :208 (each repeated at the same path or owned by `orderTools`). Buys: Same. Needs: —.
+
+### T18 — Test [redundant]
+
+spec/tools/runtime: delete spec.test :98, :455, :556, :892, columns.test :127, tool-loading.test :98, :92, :200, instructions.test :148, snapshot.test :204, :219; merge tool-loading :263 into :255; trim spec :167-171 and :785-794, snapshot :159-189, preselect line 35, tool-loading line 192. Buys: Same. Needs: —.
+
+### T19 — Test [redundant]
+
+wire/turn/endpoint: dissolve `tests/endpoint/turn.test.ts` (3 tests repeat negotiate/runTurn ones, one moves to negotiate's describe, one folds into run-turn.test); delete schema-compat :22, side-task-answer :30/:39/:50 (moving two cases into `stripThinking`'s tests), stream.test :99; cut schema-compat :448 to its equality checks. Buys: Same. Needs: —.
+
+### T20 — Test [reuse]
+
+The almost-JSON repair is tested at its two callers and never where it lives: give `looseJson` its own describe in tool-calls.test (covering :89, :143, :145) and keep one wiring case each in `parseToolArguments` and `parseJson`. Buys: The rule tested at its owner, plus coverage. Needs: —.
+
+### T21 — Test [consistency]
+
+Split `describe('nestEvent')` in events.test so each behaviour sits under its subject (`isNested`, `watch`, `cleanup`, `fold`, `runMetrics`), drop "wait and" from the retention title; fold remote.test's nested describe into the codec and `remoteRun` describes, building the bad `via` raw instead of with `as never`. Buys: Titles read as their subject's predicates. Needs: —.
+
+### T22 — Test [consistency]
+
+Move misplaced tests to their owner's file: the loop's `describe('artifacts')` to agent-loop-artifacts; minted-ids and dropped-nameless-call tests to their describes in -transcript; the `report.log` compile test to a new tests/run/dispatch.test.ts; `taskCall` tests to tests/turn/side-task.test; hooks' `is ignored by notify` into `notify`. Buys: Each test where the layout rule puts it. Needs: —.
+
+### T23 — Test [pin]
+
+Loop coverage: prune right after a compaction (agent-loop.ts:1646); a failure before `runTurns` (onEvent throws on `exchange`, :864/872); afterExchange with no question (:1140/1552); layout warnings told once per exchange (:1689); a remote agent with a parts prompt (:1459). Buys: The loop's only untested paths. Needs: —.
+
+### T24 — Test [pin]
+
+run/hooks/context coverage: unit tests for `breakReason`/`cacheDiagnosis` in ledger.test (all four reasons, `SystemChanged` uncovered) and `asRemoteAgent` in remote.test, then trim the loop's copies; plus one-liners for events.ts:1064/1089/500, hooks.ts:236, compaction.ts:679/722, artifacts.ts:373, system-prompt.ts:64/120, ledger.ts:103/140, run-calls.ts:419/1154. Buys: Behaviour pinned at its owner; branch coverage. Needs: —.
+
+### T25 — Test [pin]
+
+spec/tools/runtime coverage: `parseSpec`'s untested refusals and drops (`requires` shape, non-object sections, bundle shapes, hooks missing fields, `maxTokens: -1`); tool-loading's suffix wildcard (:319, its test title claims it but never runs it) and `definedNames`/`proxiedCall`/`shownCall`/`carryOver` edges; `createRuntime({ events })`; snapshot's defensive skips; discovery's multipart `userText`. Buys: Documented refusals actually tested. Needs: —.
+
+### T26 — Test [pin]
+
+wire/endpoint coverage: split capabilities.test :761 (its Groq case passes only because the pydantic pass already latched the field); a malformed-marker table for tool-calls and the nested-marker case (:552); schema-compat's `$ref` cycle, foreign and missing refs; `servedWindow` (public, untested); client.ts:873/1009/56; continuation's non-refusal fallback and `inFlight`; `slots.release` with nothing held. Buys: A test that proves what its title says; coverage of public API. Needs: —.
+
+### T27 — Test [reuse]
+
+Shared builders: `toolCall`/`toolResult` (four local copies, and helpers' `answer` means something else), `parsed()` (spec, columns), `stackedPart` (stack, layout, spec), the variadic `calls` (agent-loop, host-tools); `NO_HINTS` in runtime/reset tests (the T1 reason for not using it no longer holds); tool-loading uses `tool()`/`toolNames()`; helpers used by one file move back into it. Buys: One name, one meaning, one place. Needs: —.
+
+### T28 — Test [readability]
+
+Local setup helpers and cast removal: `noticesOf` (≈8 copies), hooks' `ctx`, remote's `listening()`, request-body's `local()`, preselect's `desks` and its shadowed `catalog`, schema-compat's `propertiesOf`, tokens.test's four `as never`, tool-calls' IIFE catch, `checkLockedFields`' unchecked try/catch. Buys: Each test shows only what it changes. Needs: —.
+
+### T29 — Test [readability]
+
+Whole-sentence notice assertions become `toContain` of the part that matters (loop, hand-back, capabilities, compaction `pruneNotice`, system-prompt). Not spec.test's ~40 operator warnings: decided 2026-11-22 to keep those exact, since the sentences are what `parseSpec` returns to an operator, so a rewording is a deliberate test edit. Buys: Wording can improve without breaking tests. Needs: —.
+
+### T30 — Test [consistency]
+
+Titles that lead with a noun or repeat the subject (compaction :194, tool-loading :234/:255/:263, preselect :278/:303, spec :84/:311 asserting resolve inside parseSpec). Titles only, own commit. Buys: Titles read as sentences. Needs: —.
+
+### R51 — Refactor [readability]
+
+agent-loop.ts:1457/1696: one `plain` discriminator decides plain vs stacked prompt; drops a `: ''` that can never run. Buys: One condition, no dead branch. Needs: T23.
+
+### R52 — Refactor [simplify]
+
+Dead fallbacks: spec.ts:845 ternary, snapshot.ts:101 `?? 0`, tool-calls.ts `readValue`'s unclosed branch (with its doc, D14), schema-compat `strip`'s array branch, retry.ts:200 `?? new Error`, client.ts:838 reading back what `noteSlots` just set. Buys: Fewer branches that mislead a reader. Needs: T26.
+
+### D14 — Doc
+
+Stale comments: RunEvent's "every field but `id` and `link`" (five more are optional); spec.ts:29 "nothing outside src/spec imports this" (system-prompt does); spec.test.ts:50 "four hard errors" (nine); tool-loading.test :47 says suffix and tests prefix; tool-calls.ts:247 unclosed value. Buys: Comments that match the code. Needs: —.
+
+### R53 — Refactor [simplify] · low value
+
+agent-loop.ts:1474/1882: `firing` takes `hooks | undefined` and returns all-off, so the optional chains and the per-turn re-read go. Buys: A little less noise in the loop. Needs: —.
 
 ---
 
