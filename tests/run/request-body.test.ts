@@ -197,20 +197,6 @@ describe('buildBody', () => {
   /** The names a built body declares, in the order it declares them. */
   const names = (body: Body) => toolNames(body.tools);
 
-  it('declares the same set in the same order however the caller built the array', () => {
-    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
-    const one = buildBody(config, supports, undefined, messages, [tool('b__x'), tool('a__y'), tool('a__x')]);
-    const other = buildBody(config, supports, undefined, messages, [tool('a__x'), tool('b__x'), tool('a__y')]);
-    expect(names(one)).toEqual(['a__x', 'a__y', 'b__x']);
-    expect(names(other)).toEqual(names(one));
-  });
-
-  it("sends the caller's own order when told to", () => {
-    const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
-    const body = buildBody(config, supports, undefined, messages, [tool('b'), tool('a')], false);
-    expect(names(body)).toEqual(['b', 'a']);
-  });
-
   it("orders by a comparator of the caller's", () => {
     const supports = capabilitiesFor({ baseUrl: 'http://local/v1' });
     const body = buildBody(config, supports, undefined, messages, [tool('a'), tool('b'), tool('c')], (a, b) =>

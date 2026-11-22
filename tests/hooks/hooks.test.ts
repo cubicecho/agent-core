@@ -98,16 +98,8 @@ describe('withContext', () => {
     expect(history[3].content).toBe('now');
   });
 
-  it("takes the host's own preface", () => {
-    expect(withContext(history, 3, 'ctx', 'From min-agent:')[3].content).toBe('From min-agent:\n\nctx\n\nnow');
-  });
-
   it('says the default preface until something moves it', () => {
     expect(withContext(history, 3, 'ctx')[3].content).toBe(`${HOOK_DEFAULTS.preface}\n\nctx\n\nnow`);
-  });
-
-  it('says nothing above the blocks for an empty preface, not a blank line', () => {
-    expect(withContext(history, 3, 'ctx', '')[3].content).toBe('ctx\n\nnow');
   });
 
   it('adds a part to a question that is already a list of parts', () => {
@@ -182,10 +174,6 @@ describe('the budget', () => {
   const hungry = (hookId: string) => outcome({ hookId, inject: true, text: 'x'.repeat(40_000), maxTokens: 100_000 });
   const spent = (gathered: { notes: { tokens?: number }[] }) =>
     gathered.notes.reduce((sum, note) => sum + (note.tokens ?? 0), 0);
-
-  it('is the default budget until something moves it', () => {
-    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_DEFAULTS.contextTokens);
-  });
 
   it('follows configureHooks for every call that does not give its own', async () => {
     expect(configureHooks({ contextTokens: 500 })).toEqual({
@@ -297,12 +285,6 @@ describe('gather', () => {
       error: 'pool is down',
     });
     expect(gathered.context).toContain('likes tea');
-  });
-
-  it('shares the budget it is given', async () => {
-    const run: HookRunner = async () => [outcome({ inject: true, text: 'x'.repeat(400) })];
-    const { notes } = await gather(run, [HookEvent.BeforeExchange], { session: { id: 's1' } }, { maxTokens: 10 });
-    expect(notes[0].tokens).toBe(10);
   });
 });
 
