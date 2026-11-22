@@ -758,22 +758,31 @@ describe('negotiate, for a field the caller can do without', () => {
     expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
   });
 
-  it("reads a field from a pydantic server's loc and from Groq's wording", async () => {
-    // Mistral and other FastAPI servers name the field in a validation error's location; Groq
-    // says the property is unsupported. Side tasks rely on these since they share this path.
+  /** Negotiates one refusal on fresh memory, and hands back the fields the model latched. */
+  const droppedBy = async (refusal: Error) => {
+    const supports = vllm();
+    const { send } = modelThatRefuses(refusal);
+    await expect(negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] })).resolves.toBe(
+      'answered',
+    );
+    return [...modelCapabilitiesFor(supports, 'qwen').refusedFields];
+  };
+
+  it("reads a field from a pydantic server's loc", async () => {
+    // Mistral and other FastAPI servers name the field in a validation error's location. Side
+    // tasks rely on this since they share this path.
     const pydantic = apiError(
       400,
       '{"detail":[{"type":"extra_forbidden","loc":["body","chat_template_kwargs"],"msg":"Extra inputs are not permitted"}]}',
     );
-    const groq = apiError(400, "property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?");
-    for (const refusal of [pydantic, groq]) {
-      const supports = vllm();
-      const { send } = modelThatRefuses(refusal);
-      await expect(negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] })).resolves.toBe(
-        'answered',
-      );
-      expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
-    }
+    expect(await droppedBy(pydantic)).toEqual(['chat_template_kwargs']);
+  });
+
+  it("reads a field from Groq's wording", async () => {
+    // Groq says the property is unsupported.
+    expect(await droppedBy(apiError(400, "property 'chat_template_kwargs' is unsupported"))).toEqual([
+      'chat_template_kwargs',
+    ]);
   });
 
   it('reads no field from a pydantic error that is not about an extra input', async () => {

@@ -60,6 +60,28 @@ describe('sanitizeTools', () => {
     expect(properties.flag).toEqual({ type: SchemaType.Boolean });
   });
 
+  it('puts an object taking nothing where a schema belongs and something else is', () => {
+    const out = paramsOf(
+      sanitizeTools([tool({ type: SchemaType.Object, properties: { list: { type: SchemaType.Array, items: null } } })]),
+    );
+    const properties = out.properties as Record<string, Record<string, unknown>>;
+    expect(properties.list.items).toEqual({ type: SchemaType.Object, properties: {} });
+  });
+
+  it('reads a list type of null alone as null, marked nullable', () => {
+    const out = paramsOf(
+      sanitizeTools([tool({ type: SchemaType.Object, properties: { gone: { type: [SchemaType.Null] } } })]),
+    );
+    const properties = out.properties as Record<string, Record<string, unknown>>;
+    expect(properties.gone).toEqual({ nullable: true, type: SchemaType.Null });
+  });
+
+  it('leaves a tool that is not a function tool as it was', () => {
+    const custom: OpenAI.ChatCompletionTool = { type: 'custom', custom: { name: 'grammar_tool' } };
+    expect(sanitizeTools([custom])[0]).toBe(custom);
+    expect(relaxTools([custom])[0]).toBe(custom);
+  });
+
   it('forces a usable object at the top level', () => {
     expect(paramsOf(sanitizeTools([tool(undefined)]))).toEqual({ type: SchemaType.Object, properties: {} });
     // Combinators at the root are rejected outright by strict backends.
@@ -279,6 +301,22 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toEqual(['q']);
   });
 
+  it('skips a root allOf branch that resolves nowhere, and keeps the ones that do', () => {
+    const out = paramsOf(
+      sanitizeTools([
+        tool({
+          allOf: [{ $ref: '#/definitions/Missing' }, { $ref: '#/definitions/Args' }],
+          definitions: {
+            Args: { type: SchemaType.Object, properties: { q: { type: SchemaType.String } }, required: ['q'] },
+          },
+        }),
+      ]),
+    );
+
+    expect(out.properties).toEqual({ q: { type: SchemaType.String } });
+    expect(out.required).toEqual(['q']);
+  });
+
   it('never claims a required name for a root union branch that resolves nowhere', () => {
     for (const branch of [
       { $ref: '#/definitions/Missing' },
@@ -355,6 +393,35 @@ describe('sanitizeTools on definitions', () => {
     );
 
     expect(out.$defs).toBeUndefined();
+  });
+
+  it('keeps a definition that refers to itself once the body reaches it, and stops', () => {
+    const node = { type: SchemaType.Object, properties: { next: { $ref: '#/$defs/Node' } } };
+    const out = paramsOf(
+      sanitizeTools([
+        tool({ type: SchemaType.Object, properties: { head: { $ref: '#/$defs/Node' } }, $defs: { Node: node } }),
+      ]),
+    );
+
+    expect(out.$defs).toEqual({ Node: node });
+  });
+
+  it('reaches no definition through a pointer into another document or to a name it lacks', () => {
+    const out = paramsOf(
+      sanitizeTools([
+        tool({
+          type: SchemaType.Object,
+          properties: { far: { $ref: 'https://example.com/schema.json' }, gone: { $ref: '#/$defs/Gone' } },
+          $defs: { Other: { type: SchemaType.String } },
+        }),
+      ]),
+    );
+
+    expect(out.$defs).toBeUndefined();
+    expect(out.properties).toEqual({
+      far: { $ref: 'https://example.com/schema.json' },
+      gone: { $ref: '#/$defs/Gone' },
+    });
   });
 });
 
