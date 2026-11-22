@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { defineSpecColumns } from '../../src/spec/columns.ts';
 import { PROMPT_LAYOUTS, PROMPT_MODES, PROMPT_ROLES } from '../../src/spec/parts.ts';
-import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../../src/spec/spec.ts';
+import { AGENT_SPEC, type AgentSpec, resolveAgentSpec } from '../../src/spec/spec.ts';
+import { parsed } from '../helpers.ts';
 
 /** One column per marker a host stores today, beside the same columns with none. */
 interface Row {
@@ -17,16 +18,6 @@ const MARKED = defineSpecColumns<Row>({
   toolDiscovery: { path: 'tools.discovery', inherit: 'inherit' },
   temperature: { path: 'model.temperature', inherit: null },
 });
-
-/** The parsed spec, insisting the document survived so a test never asserts against null. */
-function parsed(document: unknown): AgentSpec {
-  const result = parseSpec(document);
-  expect(result.errors).toEqual([]);
-  if (!result.spec) {
-    throw new Error('unreachable');
-  }
-  return result.spec;
-}
 
 describe('defineSpecColumns', () => {
   // Each marker against the values a column holds that are easiest to mistake for it.

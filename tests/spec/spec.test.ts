@@ -21,6 +21,7 @@ import {
   upgradeSpec,
 } from '../../src/spec/spec.ts';
 import { plainPrompt } from '../../src/spec/stack.ts';
+import { parsed } from '../helpers.ts';
 
 /** A document that parses cleanly, which each test then bends in one direction. */
 const doc = (extra: Record<string, unknown> = {}) => ({ spec: AGENT_SPEC, ...extra });
@@ -35,16 +36,6 @@ const part = (name: string, content: string, extra: Record<string, unknown> = {}
   content,
   ...extra,
 });
-
-/** The parsed spec, insisting the document survived so a test never asserts against null. */
-function parsed(document: unknown, options?: Parameters<typeof parseSpec>[1]): AgentSpec {
-  const result = parseSpec(document, options);
-  expect(result.errors).toEqual([]);
-  if (!result.spec) {
-    throw new Error('unreachable');
-  }
-  return result.spec;
-}
 
 describe('parseSpec', () => {
   it('refuses a document it cannot identify, and nothing else', () => {

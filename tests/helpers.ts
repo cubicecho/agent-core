@@ -1,8 +1,9 @@
 import OpenAI from 'openai';
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
 import type { HookOutcome } from '../src/hooks/hooks.ts';
+import { type AgentSpec, parseSpec } from '../src/spec/spec.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
 import { toolName } from '../src/tools/tool-loading.ts';
 import { textOf } from '../src/wire/text.ts';
@@ -412,3 +413,19 @@ export const config = {
   temperature: 0.2,
   maxToolIterations: 4,
 };
+
+/**
+ * A parsed agent document, insisting it survived so a test never asserts against `null`.
+ *
+ * @param document - The document, as a host would read it.
+ * @param [options] - What `parseSpec` is told besides.
+ * @returns The spec. A document with errors fails the test where it is parsed.
+ */
+export function parsed(document: unknown, options?: Parameters<typeof parseSpec>[1]): AgentSpec {
+  const result = parseSpec(document, options);
+  expect(result.errors).toEqual([]);
+  if (!result.spec) {
+    throw new Error('unreachable');
+  }
+  return result.spec;
+}
