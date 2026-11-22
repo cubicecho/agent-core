@@ -148,4 +148,22 @@ describe('takeInput', () => {
     expect(question).toContain('hi');
     expect(input).toBe('user: use b instead');
   });
+
+  it('tells afterExchange the reply and no turn where the only user message came as input', async () => {
+    create.mockReturnValueOnce(says('done'));
+    const run = vi.fn<HookRunner>(async () => []);
+    const result = await runAgentLoop({
+      config,
+      messages: [],
+      dispatch: async () => '',
+      takeInput: inputOn(1, 'hi'),
+      hooks: { run, context: { session: { id: 's1' } } },
+    });
+    await result.afterExchange;
+    const told = run.mock.calls.find(([event]) => event === HookEvent.AfterExchange)?.[1];
+    expect(told).toMatchObject({ reply: 'done' });
+    expect(told).not.toHaveProperty('turn');
+    // Input is not the question, so nothing was put on it either.
+    expect(sent(0)).toEqual(['user: hi']);
+  });
 });

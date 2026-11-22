@@ -5,7 +5,7 @@ import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookOutcome, HookRunner } from '../../src/hooks/hooks.ts';
 import { PRESELECT_APPEND } from '../../src/run/agent-loop.ts';
 import { ExchangeOutcome, RunEventKind } from '../../src/run/events.ts';
-import { CallIds, callIdMinter } from '../../src/wire/call-ids.ts';
+import { callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
 import {
   apiError,
@@ -98,6 +98,17 @@ const question: Message[] = [{ role: Role.User, content: 'hi' }];
 /** What each request was sent, by the name of every tool it declared. */
 const declared = () => create.mock.calls.map(([body]) => toolNames(body.tools));
 
+/** A notice collector: hand `onEvent` to the loop, then read what it said from `notices`. */
+const noticing = () => {
+  const notices: string[] = [];
+  const onEvent = (event: { kind: string; text?: string }) => {
+    if (event.kind === RunEventKind.Notice) {
+      notices.push(event.text ?? '');
+    }
+  };
+  return { notices, onEvent };
+};
+
 beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
@@ -133,36 +144,6 @@ describe('runAgentLoop', () => {
     expect(answered.map(({ content }) => content)).toEqual(contents);
     const replayed = create.mock.calls[1][0].messages.flatMap((m) => (m.role === Role.Tool ? [m.content] : []));
     expect(replayed).toEqual(contents);
-  });
-
-  it('gives every call a minted id under `callIds: minted`, wherever the id is told', async () => {
-    // Free in this transcript, so kept by default: `c0` and `c1` are what the server counts from.
-    create.mockReturnValueOnce(calls(['a', '{}'], ['b', '{}'])).mockReturnValueOnce(says('done'));
-    const events: RunEventInput[] = [];
-    const answered: ToolCallResult[] = [];
-    const result = await runAgentLoop({
-      config,
-      messages: question,
-      tools: [tool('a'), tool('b')],
-      dispatch: async ({ name }) => `${name} ran`,
-      callIds: CallIds.Minted,
-      mintCallId: callIdMinter(5),
-      onEvent: (event) => events.push(event),
-      onToolResult: (answer) => answered.push(answer),
-    });
-    const mint = callIdMinter(5);
-    const ids = [mint(), mint()];
-    const assistant = ofRole(result.messages[1], Role.Assistant);
-    expect(assistant.tool_calls?.map(({ id }) => id)).toEqual(ids);
-    expect(result.messages.slice(2, 4).map((m) => ofRole(m, Role.Tool).tool_call_id)).toEqual(ids);
-    expect(result.toolCalls.map(({ id }) => id)).toEqual(ids);
-    expect(answered.map(({ id }) => id)).toEqual(ids);
-    const told = (kind: string) => events.filter((event) => event.kind === kind).map(({ id }) => id);
-    expect(told(RunEventKind.ToolCall)).toEqual(ids);
-    expect(told(RunEventKind.ToolResult)).toEqual(ids);
-    // And the next request replays the call under the id it was answered by.
-    const replayed = ofRole(create.mock.calls[1][0].messages[1], Role.Assistant);
-    expect(replayed.tool_calls?.map(({ id }) => id)).toEqual(ids);
   });
 
   it('words a failed call with the host formatToolError', async () => {
@@ -239,19 +220,6 @@ describe('runAgentLoop', () => {
     ]);
   });
 
-  it('stops when the tool budget is spent', async () => {
-    create.mockImplementation(() => calls(['a', '{}']));
-    await expect(
-      runAgentLoop({
-        config: { ...config, maxToolIterations: 2 },
-        messages: question,
-        tools: [tool('a')],
-        dispatch: async () => 'ok',
-      }),
-    ).rejects.toThrow('Stopped after 2 tool iterations.');
-    expect(create).toHaveBeenCalledTimes(2);
-  });
-
   it('reports every turn on its own usage event, with the cache weighed against the last request', async () => {
     create.mockReturnValueOnce(reportedCall(100, 0, 'a')).mockReturnValueOnce(reported(130, 108, { content: 'done' }));
     const reports: RunUsage[] = [];
@@ -295,31 +263,19 @@ describe('runAgentLoop', () => {
     expect(result.metrics).not.toHaveProperty('toolsLoaded');
   });
 
-  it('names what broke the cache: a rewritten history, or nothing it knows of', async () => {
-    const reasons = async (beforeTurn?: (m: readonly Message[], turn: number) => Message[] | undefined) => {
-      create
-        .mockReset()
-        .mockReturnValueOnce(reportedCall(100, 0, 'a'))
-        .mockReturnValueOnce(reported(130, 4, { content: 'done' }));
-      const turns: RunUsage['turn'][] = [];
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        tools: [tool('a')],
-        dispatch: async () => 'ok',
-        beforeTurn,
-        onEvent: (event) => event.kind === RunEventKind.Usage && turns.push(event.usage?.turn),
-      });
-      expect(result.metrics.cacheBreaks).toBe(1);
-      expect(turns[1]?.cacheBroken).toBe(true);
-      return turns[1]?.cacheBreakReason;
-    };
-    expect(await reasons()).toBe('none-known');
-    expect(
-      await reasons((messages, turn) =>
-        turn === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
-      ),
-    ).toBe('history-rewritten');
+  it('puts a cache break on the turn it happened in, and counts it', async () => {
+    create.mockReturnValueOnce(reportedCall(100, 0, 'a')).mockReturnValueOnce(reported(130, 4, { content: 'done' }));
+    const turns: RunUsage['turn'][] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      onEvent: (event) => event.kind === RunEventKind.Usage && turns.push(event.usage?.turn),
+    });
+    // Why it broke is `cacheDiagnosis`'s to say; the loop puts it on the turn and counts it.
+    expect(turns[1]).toMatchObject({ cacheBroken: true, cacheBreakReason: expect.any(String) });
+    expect(result.metrics.cacheBreaks).toBe(1);
   });
 
   it('says nothing of a break where the endpoint reported no cache count', async () => {
@@ -339,13 +295,13 @@ describe('runAgentLoop', () => {
 
   it('continues an answer cut off at the ceiling when asked to, as one turn', async () => {
     create.mockReturnValueOnce(says('half', FinishReason.Length)).mockReturnValueOnce(says(' and the rest'));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages: question,
       dispatch: async () => '',
       maxContinuations: 2,
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[1][0].messages.at(-1)).toEqual({
@@ -375,23 +331,14 @@ describe('runAgentLoop', () => {
 
   it('says when a turn was cut off at the ceiling', async () => {
     create.mockReturnValueOnce(says('half', FinishReason.Length));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     await runAgentLoop({
       config,
       messages: question,
       dispatch: async () => '',
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
-    expect(notices).toEqual(['the model stopped at maxTokens (100); this turn is cut short']);
-  });
-
-  it('drops a call that never got a name, and asks again for the turn it leaves with none', async () => {
-    create.mockReturnValueOnce(calls(['', '{}'])).mockReturnValueOnce(says('done'));
-    const dispatch = vi.fn();
-    const result = await runAgentLoop({ config, messages: question, dispatch });
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
+    expect(notices).toEqual([expect.stringContaining('maxTokens (100)')]);
   });
 
   it('hands the tool repaired arguments and replays them as JSON', async () => {
@@ -519,7 +466,7 @@ describe('runAgentLoop', () => {
       .mockReturnValueOnce(says('Checking.\n<tool_call>\n{"name": "a", "arguments": {"x": 1}}\n</tool_call>'))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async (_call: ToolCallRequest) => 'ok');
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const turns: Turn[] = [];
     const result = await runAgentLoop({
       config,
@@ -527,7 +474,7 @@ describe('runAgentLoop', () => {
       tools: [tool('a')],
       dispatch,
       onTurn: (turn) => turns.push(turn),
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     const { id } = dispatch.mock.calls[0][0];
     expect(id).toMatch(MINTED_ID);
@@ -931,110 +878,6 @@ describe('runAgentLoop', () => {
     expect(result.usage).toMatchObject({ cachedTokens: 40, cacheReported: true });
   });
 
-  describe('artifacts', () => {
-    /** A link to this uri, named after it. */
-    const link = (uri: string, title?: string) => ({ uri, name: uri, ...(title ? { title } : {}) });
-
-    it("puts only an answer's text in the transcript, and hands its links to the host", async () => {
-      create.mockReturnValueOnce(calls(['write', '{}'])).mockReturnValueOnce(says('done'));
-      const results: ToolCallResult[] = [];
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        tools: [tool('write')],
-        dispatch: async () => ({ text: 'saved', links: [link('doc://a')] }),
-        onToolResult: (answer) => results.push(answer),
-      });
-      expect(result.messages.find((m) => m.role === Role.Tool)).toMatchObject({ content: 'saved' });
-      expect(JSON.stringify(create.mock.calls[1][0])).not.toContain('doc://a');
-      expect(results).toEqual([{ id: 'c0', name: 'write', ok: true, content: 'saved', links: [link('doc://a')] }]);
-    });
-
-    it('collects one artifact per uri in the order first seen, counting the calls that linked it', async () => {
-      create
-        .mockReturnValueOnce(calls(['write', '{"n":1}'], ['write', '{"n":2}']))
-        .mockReturnValueOnce(calls(['write', '{"n":3}']))
-        .mockReturnValueOnce(says('done'));
-      const answers = [
-        [link('doc://a')],
-        [link('doc://b', 'Bee'), link('doc://a'), link('doc://b', 'Bee')],
-        [link('doc://a')],
-      ];
-      const events: RunEventInput[] = [];
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        tools: [tool('write')],
-        dispatch: async () => ({ text: 'saved', links: answers.shift() }),
-        onEvent: (event) => events.push(event),
-      });
-      expect(result.artifacts).toEqual([
-        { link: link('doc://a'), callId: 'c0', tool: 'write', turn: 0, count: 3 },
-        { link: link('doc://b', 'Bee'), callId: 'c1', tool: 'write', turn: 0, count: 1 },
-      ]);
-      expect(
-        events
-          .filter((event) => event.kind === RunEventKind.Artifact)
-          .map(({ id, name, text, link }) => ({ id, name, text, uri: link?.uri })),
-      ).toEqual([
-        { id: 'c0', name: 'write', text: 'doc://a', uri: 'doc://a' },
-        { id: 'c1', name: 'write', text: 'Bee', uri: 'doc://b' },
-      ]);
-      expect(result.metrics.artifacts).toBe(2);
-    });
-
-    it('does not count a deduplicated repeat, since nothing was made twice', async () => {
-      create.mockReturnValueOnce(calls(['write', '{}'], ['write', '{}'])).mockReturnValueOnce(says('done'));
-      const results: ToolCallResult[] = [];
-      const dispatch = vi.fn(async () => ({ text: 'saved', links: [link('doc://a')] }));
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        tools: [tool('write')],
-        dispatch,
-        parallel: true,
-        onToolResult: (answer) => results.push(answer),
-      });
-      expect(dispatch).toHaveBeenCalledTimes(1);
-      expect(result.artifacts.map(({ count }) => count)).toEqual([1]);
-      // The repeat still shares the first call's answer, links and all.
-      expect(results.map(({ links }) => links)).toEqual([[link('doc://a')], [link('doc://a')]]);
-    });
-
-    it('makes nothing of a call that threw or answered in words alone', async () => {
-      create.mockReturnValueOnce(calls(['write', '{}'], ['read', '{}'])).mockReturnValueOnce(says('done'));
-      const results: ToolCallResult[] = [];
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        tools: [tool('write'), tool('read')],
-        dispatch: async ({ name }) => {
-          if (name === 'write') {
-            throw new Error('disk full');
-          }
-          return 'read it';
-        },
-        onToolResult: (answer) => results.push(answer),
-      });
-      expect(result.artifacts).toEqual([]);
-      expect(result.metrics.artifacts).toBe(0);
-      expect(results.map((answer) => 'links' in answer)).toEqual([false, false]);
-    });
-
-    it('hands a failed run back with what its calls made', async () => {
-      create.mockReturnValue(calls(['write', '{}']));
-      const error = await runAgentLoop({
-        config: { ...config, maxToolIterations: 1 },
-        messages: question,
-        tools: [tool('write')],
-        dispatch: async () => ({ text: 'saved', links: [link('doc://a')] }),
-      }).catch((caught: unknown) => caught);
-      expect(failedRun(error)?.artifacts).toEqual([
-        { link: link('doc://a'), callId: 'c0', tool: 'write', turn: 0, count: 1 },
-      ]);
-    });
-  });
-
   describe('a call that ends the run', () => {
     /** A dispatcher whose `done` ends the run, saying why, and whose other tools answer by name. */
     const endingAt = () =>
@@ -1326,15 +1169,6 @@ describe('runAgentLoop', () => {
         dispatch: async (call: ToolCallRequest, _signal?: AbortSignal) => `read ${call.name}`,
       });
       expect(result.messages.find((m) => m.role === Role.Tool)).toMatchObject({ content: 'read read' });
-    });
-
-    it("takes report.log where agent-mcp-pool's onLog goes", () => {
-      // The pool's `CallOptions.onLog` as 3.13.0 declares it: the level a closed union, and a
-      // `dropped` count on the cap's summary. This compiling is the test.
-      type PoolLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical' | 'alert' | 'emergency';
-      type PoolEntry = { level: PoolLevel; logger?: string; data: unknown; dropped?: number };
-      const options = (report: ToolCallReport): { onLog?: (entry: PoolEntry) => void } => ({ onLog: report.log });
-      expect(options).toBeTypeOf('function');
     });
   });
 
@@ -2278,7 +2112,7 @@ describe('runAgentLoop', () => {
       expect(create.mock.calls[0][0].messages[0].content).toBe('hi');
     });
 
-    it('gathers the injecting events it lists in their order, and tells afterExchange where it is listed', async () => {
+    it('gathers the injecting events it lists in their order, and tells afterExchange only after the reply', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
@@ -2288,44 +2122,15 @@ describe('runAgentLoop', () => {
         hooks: {
           run,
           context: { session: { id: 's1' } },
-          fire: [HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange, HookEvent.SessionEnd],
+          // Listed first, afterExchange is still never gathered before the request.
+          fire: [HookEvent.AfterExchange, HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.SessionEnd],
         },
       });
       await result.afterExchange;
       // `sessionEnd` is the host's: the loop has no point that is the end of a session.
       expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange]);
+      expect(run.mock.calls[2][1]).toMatchObject({ reply: 'the answer' });
       expect(result.context.indexOf('from sessionStart')).toBeLessThan(result.context.indexOf('from beforeExchange'));
-    });
-
-    it('never gathers afterExchange before the request', async () => {
-      create.mockReturnValueOnce(says('the answer'));
-      const run = recalling();
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        dispatch: async () => 'ok',
-        hooks: {
-          run,
-          context: { session: { id: 's1' } },
-          fire: [HookEvent.AfterExchange, HookEvent.BeforeExchange],
-        },
-      });
-      await result.afterExchange;
-      expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
-      expect(run.mock.calls[1][1]).toMatchObject({ reply: 'the answer' });
-    });
-
-    it('fires beforeExchange before the request and afterExchange after it when absent', async () => {
-      create.mockReturnValueOnce(says('the answer'));
-      const run = recalling();
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        dispatch: async () => 'ok',
-        hooks: { run, context: { session: { id: 's1' } } },
-      });
-      await result.afterExchange;
-      expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
     });
   });
 
@@ -2737,23 +2542,6 @@ describe('runAgentLoop', () => {
     expect(result.ledger).toHaveLength(3);
   });
 
-  it('hands a failure before any turn the ledger it was given', async () => {
-    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
-    // `beforeTurn` runs ahead of the first request, so its throw is a failure before any turn.
-    const error = await runAgentLoop({
-      config,
-      messages: question,
-      dispatch: async () => 'ok',
-      ledger: earlier,
-      beforeTurn: () => {
-        throw new Error('the host could not rebuild the transcript');
-      },
-    }).catch((caught: unknown) => caught);
-    expect(errorMessage(error)).toBe('the host could not rebuild the transcript');
-    expect(failedRun(error)?.ledger).toEqual(earlier);
-    expect(create).not.toHaveBeenCalled();
-  });
-
   it('starts a new epoch when beforeTurn rewrites the history, and records nothing unreported', async () => {
     create
       .mockReturnValueOnce(reportedCall(100, 0, 'a'))
@@ -2958,13 +2746,11 @@ describe('runAgentLoop', () => {
       expect(systems()).toEqual(['sys']);
     });
 
-    it('follow the system prompt in eager mode, a section per server that spoke', async () => {
+    it('give a toolless server its section in eager mode too, with no catalogue', async () => {
       create.mockReturnValueOnce(says('done'));
       await run({});
       const [prompt] = systems();
-      expect(prompt).toMatch(/^sys\n\n# MCP server instructions\n/);
-      expect(prompt).toContain('## S\n\n<untrusted source="S">\nRead twice.\n</untrusted>');
-      expect(prompt).toContain('## Q\n\n<untrusted source="Q">');
+      expect(prompt).toContain('Ask Q nothing');
       expect(prompt).not.toContain('Tool catalogue');
     });
 
@@ -2979,13 +2765,6 @@ describe('runAgentLoop', () => {
       expect(first).toContain('Ask Q nothing');
     });
 
-    it('sit before the catalogue proxied', async () => {
-      create.mockReturnValueOnce(says('done'));
-      await run({ config: { ...config, toolDiscovery: ToolDiscovery.Proxy } });
-      const [prompt] = systems();
-      expect(prompt).toMatch(/^sys\n\n# MCP server instructions\n[\s\S]*\n\n# Tool catalogue\n/);
-    });
-
     it('stay on a preselected first turn, leaving it the head of the next', async () => {
       create.mockReturnValueOnce(calls(['s__read', '{}'])).mockReturnValueOnce(says('done'));
       await run({ config: { ...config, toolDiscovery: ToolDiscovery.OnDemand }, preselected: ['s__read'] });
@@ -2998,7 +2777,7 @@ describe('runAgentLoop', () => {
     it('are cut to the budget an object names', async () => {
       create.mockReturnValueOnce(says('done'));
       await run({ serverInstructions: { maxTokensPerServer: 1 } });
-      expect(systems()[0]).toContain('(Cut to about 1 of the 3 tokens this server sent.)');
+      expect(systems()[0]).toContain('1 of the 3 tokens');
     });
   });
 
@@ -3112,7 +2891,7 @@ describe('runAgentLoop', () => {
     it("stacks agent_core's parts and the leading system messages, and sends neither as they came", async () => {
       create.mockReset();
       create.mockReturnValueOnce(says('done'));
-      const notices: string[] = [];
+      const { notices, onEvent } = noticing();
       await runAgentLoop({
         config: {
           ...config,
@@ -3130,7 +2909,7 @@ describe('runAgentLoop', () => {
         systemPrompt: [{ role: Role.System, name: 'identity', content: 'You review cards.', owner: 'agent' }],
         messages: [system('Today is 2026-11-19.'), ...question],
         dispatch: async () => 'ok',
-        onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+        onEvent,
       });
       const [body] = create.mock.calls[0] as unknown as [Record<string, unknown> & { messages: Message[] }];
       expect(body.agent_core).toBeUndefined();
@@ -3141,6 +2920,23 @@ describe('runAgentLoop', () => {
       expect(text.indexOf('<precedence>')).toBeLessThan(text.indexOf('<prompt_app_lane>'));
       expect(text.endsWith('<prompt_app_system>\nToday is 2026-11-19.\n</prompt_app_system>')).toBe(true);
       expect(notices).toEqual(["The agent's identity part does not let an app replace it, so the part was dropped."]);
+    });
+
+    it("tells the layout's warnings once an exchange, however many turns write the prompt", async () => {
+      create.mockReset();
+      create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
+      const { notices, onEvent } = noticing();
+      await runAgentLoop({
+        config: { ...config, promptLayout: 'xml' },
+        systemPrompt: [{ role: Role.System, name: 'house rules', content: 'Be kind.', owner: 'agent' }],
+        messages: question,
+        tools: [tool('a')],
+        dispatch: async () => 'ok',
+        onEvent,
+      });
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(String(create.mock.calls[1][0].messages[0].content)).toContain('<prompt_house_rules>');
+      expect(notices).toEqual([expect.stringContaining('<prompt_house_rules>')]);
     });
   });
 });

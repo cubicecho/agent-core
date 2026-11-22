@@ -115,7 +115,7 @@ import {
   type TurnOutcome,
   writtenMessage,
 } from './run-calls.ts';
-import { stackRequest, withoutAgentCore, writeSystemPrompt } from './system-prompt.ts';
+import { type StackedRequest, stackRequest, withoutAgentCore, writeSystemPrompt } from './system-prompt.ts';
 
 /**
  * The loop above a turn: send, run the tools the model asked for, send again, until it stops
@@ -1454,10 +1454,13 @@ async function runTurns(
   const layout = config.promptLayout ?? PROMPT_LAYOUTS.plain;
   // A model that is not an agent never sees `agent_core`: its parts are written in here instead.
   const agentCore = remote === undefined ? config.extraBody?.[PROGRESS_FIELD] : undefined;
-  const stacked =
-    typeof systemPrompt !== 'string' || agentCore !== undefined
-      ? stackRequest(systemPrompt, agentCore, remote === undefined ? options.messages : [])
-      : undefined;
+  // Decided once, and one or the other: a string prompt with no `agent_core` is sent as given,
+  // and anything else is stacked.
+  const prompting: { plain: string; stacked?: undefined } | { plain?: undefined; stacked: StackedRequest } =
+    typeof systemPrompt === 'string' && agentCore === undefined
+      ? { plain: systemPrompt }
+      : { stacked: stackRequest(systemPrompt, agentCore, remote === undefined ? options.messages : []) };
+  const { stacked } = prompting;
   for (const warning of stacked?.warnings ?? []) {
     notice(warning);
   }
@@ -1682,9 +1685,9 @@ async function runTurns(
     const sections = [instructions, catalogued ? catalogue : ''].filter((text) => text !== '');
     const conversation = withContext(messages, questionAt(), gathered.context, preface);
     let prompt: string;
-    if (stacked) {
+    if (prompting.stacked) {
       // The leading system messages are `app_system` now, written after the loop's sections.
-      const written = writeSystemPrompt(stacked, layout, sections);
+      const written = writeSystemPrompt(prompting.stacked, layout, sections);
       prompt = written.text;
       if (isLayoutTold === false) {
         isLayoutTold = true;
@@ -1693,10 +1696,10 @@ async function runTurns(
         }
       }
     } else {
-      const given = typeof systemPrompt === 'string' ? systemPrompt : '';
+      const { plain } = prompting;
       // `systemPrompt` as it was given when nothing is added, so an app with neither sees no change.
       const isBare = catalogued === false && sections.length === 0;
-      prompt = isBare ? given : [given, ...sections].join('\n\n').trim();
+      prompt = isBare ? plain : [plain, ...sections].join('\n\n').trim();
     }
     const request = singleSystem([
       ...(prompt ? [{ role: Role.System, content: prompt }] : []),
