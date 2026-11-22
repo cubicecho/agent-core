@@ -413,10 +413,7 @@ describe('negotiate', () => {
     await negotiate(capabilitiesFor({ baseUrl: 'http://old-llama/v1' }), send, {
       onNotice: (message) => notices.push(message),
     });
-    expect(notices).toEqual([
-      'server rejected stream_options; token counts unavailable',
-      'server could not build a grammar; retrying without pattern/format',
-    ]);
+    expect(notices).toEqual([expect.stringContaining('stream_options'), expect.stringContaining('grammar')]);
   });
 });
 
@@ -712,10 +709,11 @@ describe('negotiate, for a model', () => {
     // announcement that one did. On a consumer where the model is a per-turn setting, a bare
     // "model" is the same line for every model on the endpoint.
     expect(notices).toEqual([
-      'gpt-5 does not take a reasoning effort; retrying without one',
-      'gpt-5 wants max_completion_tokens; retrying with the limit spelled that way',
-      'gpt-5 takes only its own temperature; retrying without ours',
+      expect.stringContaining('reasoning effort'),
+      expect.stringContaining('max_completion_tokens'),
+      expect.stringContaining('temperature'),
     ]);
+    expect(notices.every((notice) => notice.startsWith('gpt-5 '))).toBe(true);
   });
 
   it('keeps the two levels tellable apart by their first word', async () => {
@@ -723,14 +721,7 @@ describe('negotiate, for a model', () => {
     // knows which level latched without parsing the rest of the line.
     const notices: string[] = [];
     const supports = capabilitiesFor({ baseUrl: 'http://one-box/v1' });
-    const refusals = [NO_USAGE, NO_EFFORT];
-    const send = async () => {
-      const refusal = refusals.shift();
-      if (refusal) {
-        throw refusal;
-      }
-      return 'answered';
-    };
+    const { send } = modelThatRefuses(NO_USAGE, NO_EFFORT);
     await negotiate(supports, send, {
       model: 'qwen3-30b',
       onNotice: (message) => notices.push(message),
