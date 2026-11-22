@@ -16,7 +16,22 @@ import {
   withContext,
 } from '../../src/hooks/hooks.ts';
 import { FUNCTION_TOOL, PartType, Role } from '../../src/wire/wire.ts';
-import { outcome, partTexts, stringContent } from '../helpers.ts';
+import { type Message, outcome, stringContent } from '../helpers.ts';
+
+/**
+ * The text of each part of a message whose content is a list of parts, failing the test where it is a string.
+ *
+ * @param message - The message.
+ * @returns Each part's text, in order: `undefined` for a part that carries none.
+ */
+function partTexts(message: Message | undefined): (string | undefined)[] {
+  const content = message?.content;
+  const isParts = Array.isArray(content);
+  if (isParts) {
+    return content.map((part) => ('text' in part ? part.text : undefined));
+  }
+  throw new Error(`expected a list of parts, got ${JSON.stringify(content)}`);
+}
 
 /**
  * The host's side of hooks. Running them is a runner's job and is stubbed here; what is tested is

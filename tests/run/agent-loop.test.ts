@@ -13,7 +13,6 @@ import {
   callArguments,
   chunks,
   config,
-  functionTools,
   type Message,
   MINTED_ID,
   ofRole,
@@ -23,6 +22,15 @@ import {
   tool,
   toolNames,
 } from '../helpers.ts';
+
+/**
+ * The function tools of a request's tool list, which is what every test that reads a definition wants.
+ *
+ * @param [tools] - The list, as a body declares it. Absent reads as none.
+ * @returns The function tools, in order. A tool of any other type is left out.
+ */
+const functionTools = (tools: readonly OpenAI.ChatCompletionTool[] = []) =>
+  tools.filter((entry): entry is OpenAI.ChatCompletionFunctionTool => entry.type === FUNCTION_TOOL);
 
 const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */

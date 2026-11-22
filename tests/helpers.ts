@@ -177,15 +177,6 @@ export const tool = (name: string): OpenAI.ChatCompletionTool => ({
 });
 
 /**
- * The function tools of a request's tool list, which is what every test that reads a definition wants.
- *
- * @param [tools] - The list, as a body declares it. Absent reads as none.
- * @returns The function tools, in order. A tool of any other type is left out.
- */
-export const functionTools = (tools: readonly OpenAI.ChatCompletionTool[] = []) =>
-  tools.filter((entry): entry is OpenAI.ChatCompletionFunctionTool => entry.type === FUNCTION_TOOL);
-
-/**
  * The names a request's tool list declares.
  *
  * @param [tools] - The list, as a body declares it. Absent reads as none.
@@ -242,21 +233,6 @@ export function stringContent(message: Message | undefined): string {
     return content;
   }
   throw new Error(`expected string content, got ${JSON.stringify(content)}`);
-}
-
-/**
- * The text of each part of a message whose content is a list of parts, failing the test where it is a string.
- *
- * @param message - The message.
- * @returns Each part's text, in order: `undefined` for a part that carries none.
- */
-export function partTexts(message: Message | undefined): (string | undefined)[] {
-  const content = message?.content;
-  const isParts = Array.isArray(content);
-  if (isParts) {
-    return content.map((part) => ('text' in part ? part.text : undefined));
-  }
-  throw new Error(`expected a list of parts, got ${JSON.stringify(content)}`);
 }
 
 /**
