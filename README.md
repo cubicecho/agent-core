@@ -42,6 +42,7 @@ request — is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 | `run-turn` | `runTurn`: one request with the retry loop around the negotiation around the stream. The whole loop, for a caller that wants it rather than its parts. Sizes the request against an opt-in `contextLimit`. |
 | `agent-loop` | `runAgentLoop`: one exchange — `runTurn` per turn, the tools between, `load_tools` and preselection handled, until the model stops asking. |
 | `remote` | Running against a remote agent, a model that runs its own loop: the progress-chunk codec (`progressChunk`, `withProgress`, `progressEvent`, `progressEvents`) and `IDEMPOTENCY_HEADER`. `runAgentLoop` reads it under `remoteAgent: true`. |
+| `elicit` | A remote agent asking its caller for input: the reserved `ELICIT_TOOL` call, and the types of `onElicit`. |
 | `request-body` | `buildBody`: the one place a streamed request's body is decided from a config and what the model server and the model have refused. |
 | `run-calls` | The tool half of a turn: its calls read, run and written into the transcript, with every call answered whatever happens. `preview` cuts a long argument or result for a watcher, and `formatToolError` words a failed call for the model. |
 | `preselect` | Choosing an exchange's tools before it starts: `preselect` asks a small model, `preselectByKeywords` scores the request's own words against the tool names without one, and `preselectSystem`, `preselectInput` and `preselection` are the prompt and the reading of the reply for an app that makes the call itself. |
@@ -1438,6 +1439,43 @@ kind this version does not know. An event's `via` travels unchanged both ways, a
 makes the event malformed; the loop forwards a nested event whatever its kind, since its start and
 end are an inner run's and not the server's own. Each takes the field as its last argument,
 `PROGRESS_FIELD` where it is left out. A server numbering its own events makes each with `stamp`.
+
+### When a remote agent asks for input
+
+An MCP server can ask for input in the middle of a call (`elicitation/create`). Behind a router, only
+the app at the far end of the request can answer. The run ends its response with a handed-back call
+of the reserved name `agent_core_elicit` (`ELICIT_TOOL`), whose arguments are MCP's
+`ElicitRequestParams`, and takes an `ElicitResult` as that call's tool message.
+
+`runAgentLoop` answers it and resumes by itself. `onElicit` has the signature of `agent-mcp-pool`'s
+`ElicitHandler`, so one prompt serves an app's own servers and the agents behind a router. Its server
+id is the agent's model name.
+
+```ts
+const onElicit: OnElicit = async (serverId, params, { signal }) => {
+  const answer = await askThePerson(serverId, params, signal);
+  return answer ? { action: "accept", content: answer } : { action: "decline" };
+};
+
+await pool.call(name, input, { onElicit }); // the app's own MCP servers
+await runAgentLoop({ ...options, onElicit }); // an agent behind a router
+```
+
+- **With no `onElicit`,** every request is answered `decline`, so the server's tool carries on and an
+  app needs no change. A request with no readable `message` is declined without asking.
+- **A handler that throws,** or returns something that is no answer, is a `cancel`. Stopping the
+  exchange rejects it even where the handler ignores its `signal`.
+- **Each request costs a turn** of `maxToolIterations`, since the resume is another request.
+- **The name is reserved.** A tool of that name in `tools`, `hostTools` or the catalogue is dropped
+  with a notice, and a model that is not a remote agent is told it cannot call it. `handBack` is never
+  asked about it.
+
+What a person typed goes to the server and stays out of the run's events. The call is told as an
+`elicit` event, with the question as `text`, and an `elicit-answer`, with the action as `text` and the
+names of the form fields filled in as `fields`: never a value, and never a `url`, which can hold a
+token. It reaches no `onToolCall` or `onToolResult`, is not in the result's `toolCalls`, and a server's
+own tool events for it are not forwarded. **The answer is in the transcript**, because the server
+resumes from that tool message, so an app storing `messages` stores it.
 
 ## Fields this interface cannot spell
 

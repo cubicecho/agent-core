@@ -48,7 +48,7 @@ the concept it is part of. `tests/` has the same folders: the test for `src/endp
 | `tools` | which tools the model is shown, and what their servers say of them | `catalog` `discovery` `tool-loading` `preselect` `instructions` |
 | `hooks` | what a host is told, and what it may inject | `hooks` `hook-events` |
 | `context` | keeping a run inside its window | `ledger` `compaction` |
-| `run` | the loop, and watching it | `agent-loop` `dispatch` `run-calls` `failure` `artifacts` `request-body` `system-prompt` `events` `remote` |
+| `run` | the loop, and watching it | `agent-loop` `dispatch` `run-calls` `failure` `artifacts` `request-body` `system-prompt` `events` `remote` `elicit` |
 | `runtime` | the process's state: scoping it, clearing it, saving it | `runtime` `reset` `snapshot` |
 | `spec` | an agent as a document, and how its prompt is stacked and written | `parts` `spec` `stack` `layout` `columns` `entry` |
 
