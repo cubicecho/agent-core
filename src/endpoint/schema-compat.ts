@@ -594,9 +594,9 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) => through(san
  * Walked as a schema rather than as arbitrary JSON, because `pattern` and `format` are keyword
  * names and perfectly ordinary argument names at once.
  *
- * @param node - A schema position, or a list of them. Not mutated.
+ * @param node - A schema position. Not mutated; a list of schemas is `mapChildren`'s to walk.
  * @returns A copy without the `pattern` and `format` keywords, here and at every schema position
- * below. A value that is neither an array nor an object comes back as it is.
+ * below. A value that is not an object comes back as it is.
  *
  * @remarks
  * Matching on the key alone deleted a *property* called `format` along with the keyword, leaving
@@ -605,9 +605,6 @@ export const sanitizeTools = (tools: OpenAI.ChatCompletionTool[]) => through(san
  * walk out of `default`, `enum` and `const`, whose contents are data, not schema.
  */
 const strip = (node: unknown): unknown => {
-  if (Array.isArray(node)) {
-    return node.map(strip);
-  }
   if (!isRecord(node)) {
     return node;
   }
