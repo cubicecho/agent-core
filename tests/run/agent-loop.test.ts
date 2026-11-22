@@ -263,31 +263,19 @@ describe('runAgentLoop', () => {
     expect(result.metrics).not.toHaveProperty('toolsLoaded');
   });
 
-  it('names what broke the cache: a rewritten history, or nothing it knows of', async () => {
-    const reasons = async (beforeTurn?: (m: readonly Message[], turn: number) => Message[] | undefined) => {
-      create
-        .mockReset()
-        .mockReturnValueOnce(reportedCall(100, 0, 'a'))
-        .mockReturnValueOnce(reported(130, 4, { content: 'done' }));
-      const turns: RunUsage['turn'][] = [];
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        tools: [tool('a')],
-        dispatch: async () => 'ok',
-        beforeTurn,
-        onEvent: (event) => event.kind === RunEventKind.Usage && turns.push(event.usage?.turn),
-      });
-      expect(result.metrics.cacheBreaks).toBe(1);
-      expect(turns[1]?.cacheBroken).toBe(true);
-      return turns[1]?.cacheBreakReason;
-    };
-    expect(await reasons()).toBe('none-known');
-    expect(
-      await reasons((messages, turn) =>
-        turn === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
-      ),
-    ).toBe('history-rewritten');
+  it('puts a cache break on the turn it happened in, and counts it', async () => {
+    create.mockReturnValueOnce(reportedCall(100, 0, 'a')).mockReturnValueOnce(reported(130, 4, { content: 'done' }));
+    const turns: RunUsage['turn'][] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a')],
+      dispatch: async () => 'ok',
+      onEvent: (event) => event.kind === RunEventKind.Usage && turns.push(event.usage?.turn),
+    });
+    // Why it broke is `cacheDiagnosis`'s to say; the loop puts it on the turn and counts it.
+    expect(turns[1]).toMatchObject({ cacheBroken: true, cacheBreakReason: expect.any(String) });
+    expect(result.metrics.cacheBreaks).toBe(1);
   });
 
   it('says nothing of a break where the endpoint reported no cache count', async () => {
