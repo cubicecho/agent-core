@@ -760,17 +760,14 @@ const isAppName = (name: string) => name.split(NAME_WORDS).find(Boolean)?.toLowe
  *
  * @param report - Where what is dropped is written.
  * @param path - Where the part sits: `prompt[2]`.
- * @param held - What was held there.
- * @returns The part, or `undefined` where it is not an object or has no name or no content.
+ * @param held - What was held there, already known to be an object.
+ * @returns The part, or `undefined` where it has no name or no content.
  *
  * @remarks
  * A role that is missing or not one of `PROMPT_ROLES` is read as `system`, with a warning, since
  * every part has one and both are written alike. A mode that is not one of `PROMPT_MODES` is dropped.
  */
-function readPart(report: Report, path: string, held: unknown): AppPart | undefined {
-  if (!isRecord(held)) {
-    return void report.drop(path, 'must be an object');
-  }
+function readPart(report: Report, path: string, held: Readonly<Record<string, unknown>>): AppPart | undefined {
   const name = report.string(`${path}.name`, held.name);
   if (!name) {
     return void report.drop(path, 'has no name, and merging happens on the name');
@@ -835,6 +832,10 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
   const parts: PromptPart[] = [];
   for (const [index, held] of value.entries()) {
     const path = `prompt[${index}]`;
+    if (!isRecord(held)) {
+      report.drop(path, 'must be an object');
+      continue;
+    }
     const part = readPart(report, path, held);
     if (!part) {
       continue;
@@ -843,9 +844,7 @@ function parsePrompt(report: Report, value: unknown[]): PromptPart[] {
       report.fail(`${path}.name`, `"${part.name}" has "${APP_WORD}" as its first word, which only an app's parts may`);
       continue;
     }
-    const allowedModes = isRecord(held)
-      ? parseAllowedModes(report, `${path}.allowedModes`, held.allowedModes)
-      : undefined;
+    const allowedModes = parseAllowedModes(report, `${path}.allowedModes`, held.allowedModes);
     const deletesWithMode = part.content === '' && part.mode !== undefined;
     if (deletesWithMode) {
       report.drop(`${path}.mode`, 'means nothing beside an empty content, which deletes the part');
@@ -887,11 +886,15 @@ export function parseAppParts(value: unknown): ParsedAppParts {
   }
   for (const [index, held] of value.entries()) {
     const path = `prompt[${index}]`;
+    if (!isRecord(held)) {
+      report.drop(path, 'must be an object');
+      continue;
+    }
     const part = readPart(report, path, held);
     if (!part) {
       continue;
     }
-    const setsAllowedModes = isRecord(held) && isAbsent(held.allowedModes) === false;
+    const setsAllowedModes = isAbsent(held.allowedModes) === false;
     if (setsAllowedModes) {
       report.drop(`${path}.allowedModes`, "is the agent's to set");
     }
