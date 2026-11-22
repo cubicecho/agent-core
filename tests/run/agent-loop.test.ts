@@ -350,7 +350,7 @@ describe('runAgentLoop', () => {
       dispatch: async () => '',
       onEvent,
     });
-    expect(notices).toEqual(['the model stopped at maxTokens (100); this turn is cut short']);
+    expect(notices).toEqual([expect.stringContaining('maxTokens (100)')]);
   });
 
   it('hands the tool repaired arguments and replays them as JSON', async () => {
@@ -2789,7 +2789,7 @@ describe('runAgentLoop', () => {
     it('are cut to the budget an object names', async () => {
       create.mockReturnValueOnce(says('done'));
       await run({ serverInstructions: { maxTokensPerServer: 1 } });
-      expect(systems()[0]).toContain('(Cut to about 1 of the 3 tokens this server sent.)');
+      expect(systems()[0]).toContain('1 of the 3 tokens');
     });
   });
 

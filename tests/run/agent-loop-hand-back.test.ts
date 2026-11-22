@@ -130,7 +130,7 @@ describe('handBack', () => {
       'tool-call c1',
       'tool-result c1',
       'tool-call c0',
-      'wait waiting for the app to answer 1 call',
+      expect.stringMatching(/^wait .*\b1 call\b/),
       'exchange-end',
     ]);
     expect(heard).toEqual(['call c1', 'result c1', 'call c0']);

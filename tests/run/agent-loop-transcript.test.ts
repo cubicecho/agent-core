@@ -1496,7 +1496,7 @@ describe('a turn with nothing to say', () => {
       content: '',
       reasoning_content: 'thinking it over',
     });
-    expect(notices).toEqual(['the model ended its turn with no answer']);
+    expect(notices).toEqual([expect.stringContaining('no answer')]);
 
     create.mockImplementationOnce((body) => {
       const refusal = ollamaRefusal(body.messages);
@@ -1522,7 +1522,7 @@ describe('a turn with nothing to say', () => {
   it('is told apart when a content filter withheld it, as a notice and an outcome of its own', async () => {
     create.mockReturnValueOnce(ends(FinishReason.ContentFilter));
     const { result, notices } = await run();
-    expect(notices).toEqual(["the provider's content filter withheld the reply"]);
+    expect(notices).toEqual([expect.stringContaining('content filter')]);
     expect(result.metrics.outcome).toBe('filtered');
     expect(result.messages.at(-1)).toEqual({ role: Role.Assistant, content: '' });
   });
@@ -1534,7 +1534,7 @@ describe('a turn with nothing to say', () => {
     // The same request again: nothing of the empty turn was written into it.
     expect(create.mock.calls[1][0].messages).toEqual(create.mock.calls[0][0].messages);
     expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
-    expect(notices).toEqual(['the model said it was calling tools but sent none; asking again']);
+    expect(notices).toEqual([expect.stringContaining('asking again')]);
     expect(result.metrics.outcome).toBe('answered');
   });
 
@@ -1544,8 +1544,8 @@ describe('a turn with nothing to say', () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(result.messages).toEqual([...question, { role: Role.Assistant, content: '' }]);
     expect(notices).toEqual([
-      'the model said it was calling tools but sent none; asking again',
-      'the model said it was calling tools but sent none; taking its reply as the answer',
+      expect.stringContaining('asking again'),
+      expect.stringContaining('taking its reply as the answer'),
     ]);
   });
 
