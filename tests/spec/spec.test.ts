@@ -48,7 +48,8 @@ function parsed(document: unknown, options?: Parameters<typeof parseSpec>[1]): A
 
 describe('parseSpec', () => {
   it('refuses a document it cannot identify, and nothing else', () => {
-    // The four hard errors, each on its own document: everything outside this list drops a field.
+    // The hard errors about what the document is, each on its own document. The others — a part
+    // named as an app's, a requires entry — have tests of their own; everything else drops a field.
     expect(parseSpec(null).errors).toEqual(['spec: must be an object']);
     expect(parseSpec('{}').errors).toEqual(['spec: must be an object']);
     expect(parseSpec({}).errors).toEqual([`spec: must be "${AGENT_SPEC}"`]);

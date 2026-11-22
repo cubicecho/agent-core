@@ -43,9 +43,9 @@ describe('expandNames and loadResult', () => {
     });
   });
 
-  it('expand a wildcard, by prefix or by suffix', () => {
+  it('expand a wildcard by the start of a name', () => {
     expect(expandNames(['gmail__*'], catalog).matched).toHaveLength(3);
-    // The model dropped the server prefix; `__gmail` still finds the group.
+    // A stem that runs past the server prefix is a prefix match all the same.
     expect(expandNames(['files__read*'], catalog).matched).toEqual(['files__read_file']);
   });
 

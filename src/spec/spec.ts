@@ -26,9 +26,9 @@ import { type AppPart, numberedName, plainPrompt } from './stack.ts';
  *
  * The apps on this package each spelled "an agent" differently, to the point that `maxTokens: 0`
  * meant three different things; this is the shape they can all write and read, argued out in
- * `docs/agent-spec-v2.md`. Nothing outside `src/spec/` imports this module, and it imports nothing that
- * needs Node, so the loop has no opinion on where an agent comes from and an app can validate a
- * pasted document in a browser.
+ * `docs/agent-spec-v2.md`. The loop reaches into it only for `parseAppParts`, to read the parts an
+ * app sends, and it imports nothing that needs Node, so the loop has no opinion on where an agent
+ * comes from and an app can validate a pasted document in a browser.
  */
 
 /** The token a document declares itself with. A loader refuses anything else. */
