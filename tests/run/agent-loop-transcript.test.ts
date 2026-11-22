@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
-import { callIdMinter } from '../../src/wire/call-ids.ts';
+import { CallIds, callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import {
   answer,
@@ -12,6 +12,7 @@ import {
   config,
   type Message,
   MINTED_ID,
+  ofRole,
   pairsByPosition,
   says,
   singleCallRefusal,
@@ -39,6 +40,8 @@ type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
 type WrittenMessage = import('../../src/run/agent-loop.ts').WrittenMessage;
+type ToolCallResult = import('../../src/run/dispatch.ts').ToolCallResult;
+type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A turn that asks for these calls, thinking first where told to, and reports what it cost. */
 const calls = (list: [name: string, args: string][], reasoning = '') =>
@@ -1374,6 +1377,43 @@ describe('call ids', () => {
     }
   });
 
+  it('are all minted under `callIds: minted`, wherever an id is told', async () => {
+    // Free in this transcript, so kept by default: `c0` and `c1` are what the server counts from.
+    create
+      .mockReturnValueOnce(
+        calls([
+          ['a', '{}'],
+          ['b', '{}'],
+        ]),
+      )
+      .mockReturnValueOnce(says('done'));
+    const events: RunEventInput[] = [];
+    const answered: ToolCallResult[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a'), tool('b')],
+      dispatch: async ({ name }) => `${name} ran`,
+      callIds: CallIds.Minted,
+      mintCallId: callIdMinter(5),
+      onEvent: (event) => events.push(event),
+      onToolResult: (answer) => answered.push(answer),
+    });
+    const mint = callIdMinter(5);
+    const ids = [mint(), mint()];
+    const assistant = ofRole(result.messages[1], Role.Assistant);
+    expect(assistant.tool_calls?.map(({ id }) => id)).toEqual(ids);
+    expect(result.messages.slice(2, 4).map((m) => ofRole(m, Role.Tool).tool_call_id)).toEqual(ids);
+    expect(result.toolCalls.map(({ id }) => id)).toEqual(ids);
+    expect(answered.map(({ id }) => id)).toEqual(ids);
+    const told = (kind: string) => events.filter((event) => event.kind === kind).map(({ id }) => id);
+    expect(told(RunEventKind.ToolCall)).toEqual(ids);
+    expect(told(RunEventKind.ToolResult)).toEqual(ids);
+    // And the next request replays the call under the id it was answered by.
+    const replayed = ofRole(create.mock.calls[1][0].messages[1], Role.Assistant);
+    expect(replayed.tool_calls?.map(({ id }) => id)).toEqual(ids);
+  });
+
   it('pair every result with the call it answers, as the call is replayed', async () => {
     create.mockReturnValueOnce(unnamed()).mockReturnValueOnce(written()).mockReturnValueOnce(says('done'));
     const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch: async () => 'ok' });
@@ -1476,6 +1516,15 @@ describe('a turn with nothing to say', () => {
       'the model said it was calling tools but sent none; asking again',
       'the model said it was calling tools but sent none; taking its reply as the answer',
     ]);
+  });
+
+  it('is asked for again when its only call never got a name, which is dropped', async () => {
+    create.mockReturnValueOnce(calls([['', '{}']])).mockReturnValueOnce(says('done'));
+    const dispatch = vi.fn();
+    const result = await runAgentLoop({ config, messages: question, dispatch });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
   });
 
   it('is not asked for again where it said something, or where no turn is left to ask in', async () => {

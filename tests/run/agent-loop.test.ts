@@ -5,7 +5,7 @@ import { HookEvent } from '../../src/hooks/hook-events.ts';
 import type { HookOutcome, HookRunner } from '../../src/hooks/hooks.ts';
 import { PRESELECT_APPEND } from '../../src/run/agent-loop.ts';
 import { ExchangeOutcome, RunEventKind } from '../../src/run/events.ts';
-import { CallIds, callIdMinter } from '../../src/wire/call-ids.ts';
+import { callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
 import {
   apiError,
@@ -133,36 +133,6 @@ describe('runAgentLoop', () => {
     expect(answered.map(({ content }) => content)).toEqual(contents);
     const replayed = create.mock.calls[1][0].messages.flatMap((m) => (m.role === Role.Tool ? [m.content] : []));
     expect(replayed).toEqual(contents);
-  });
-
-  it('gives every call a minted id under `callIds: minted`, wherever the id is told', async () => {
-    // Free in this transcript, so kept by default: `c0` and `c1` are what the server counts from.
-    create.mockReturnValueOnce(calls(['a', '{}'], ['b', '{}'])).mockReturnValueOnce(says('done'));
-    const events: RunEventInput[] = [];
-    const answered: ToolCallResult[] = [];
-    const result = await runAgentLoop({
-      config,
-      messages: question,
-      tools: [tool('a'), tool('b')],
-      dispatch: async ({ name }) => `${name} ran`,
-      callIds: CallIds.Minted,
-      mintCallId: callIdMinter(5),
-      onEvent: (event) => events.push(event),
-      onToolResult: (answer) => answered.push(answer),
-    });
-    const mint = callIdMinter(5);
-    const ids = [mint(), mint()];
-    const assistant = ofRole(result.messages[1], Role.Assistant);
-    expect(assistant.tool_calls?.map(({ id }) => id)).toEqual(ids);
-    expect(result.messages.slice(2, 4).map((m) => ofRole(m, Role.Tool).tool_call_id)).toEqual(ids);
-    expect(result.toolCalls.map(({ id }) => id)).toEqual(ids);
-    expect(answered.map(({ id }) => id)).toEqual(ids);
-    const told = (kind: string) => events.filter((event) => event.kind === kind).map(({ id }) => id);
-    expect(told(RunEventKind.ToolCall)).toEqual(ids);
-    expect(told(RunEventKind.ToolResult)).toEqual(ids);
-    // And the next request replays the call under the id it was answered by.
-    const replayed = ofRole(create.mock.calls[1][0].messages[1], Role.Assistant);
-    expect(replayed.tool_calls?.map(({ id }) => id)).toEqual(ids);
   });
 
   it('words a failed call with the host formatToolError', async () => {
@@ -370,15 +340,6 @@ describe('runAgentLoop', () => {
       onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
     });
     expect(notices).toEqual(['the model stopped at maxTokens (100); this turn is cut short']);
-  });
-
-  it('drops a call that never got a name, and asks again for the turn it leaves with none', async () => {
-    create.mockReturnValueOnce(calls(['', '{}'])).mockReturnValueOnce(says('done'));
-    const dispatch = vi.fn();
-    const result = await runAgentLoop({ config, messages: question, dispatch });
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
   });
 
   it('hands the tool repaired arguments and replays them as JSON', async () => {
