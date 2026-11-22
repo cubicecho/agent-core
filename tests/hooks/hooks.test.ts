@@ -318,6 +318,11 @@ describe('notify', () => {
       { event: HookEvent.SessionDelete, source: '', hookId: '', error: 'sync' },
     ]);
   });
+
+  it('reads no veto, even off a hook that carried one', async () => {
+    const run: HookRunner = async () => [outcome({ event: HookEvent.BeforeCompact, veto: true })];
+    expect(await notify(run, HookEvent.BeforeCompact, { session: { id: 's1' } })).toEqual([]);
+  });
 });
 
 describe("a host's onNote that throws", () => {
@@ -392,10 +397,5 @@ describe('consult', () => {
       vetoed: false,
       notes: [{ event: HookEvent.BeforeCompact, source: '', hookId: '', error: 'sync' }],
     });
-  });
-
-  it('is ignored by notify', async () => {
-    const run: HookRunner = async () => [outcome({ event: HookEvent.BeforeCompact, veto: true })];
-    expect(await notify(run, HookEvent.BeforeCompact, { session: { id: 's1' } })).toEqual([]);
   });
 });
