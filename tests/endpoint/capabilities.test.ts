@@ -375,6 +375,23 @@ describe('negotiate', () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it('hands send the produced box its caller passed in', async () => {
+    // A caller with its own retry budget reads the flag after `negotiate` returns, so the box
+    // `send` writes to has to be the caller's own.
+    const produced = { any: false };
+    const given: Produced[] = [];
+    await negotiate(
+      capabilitiesFor({ baseUrl: 'http://ok/v1' }),
+      async (_supports, box) => {
+        given.push(box);
+        return 'answered';
+      },
+      { produced },
+    );
+    expect(given).toHaveLength(1);
+    expect(given[0]).toBe(produced);
+  });
+
   it('never re-sends once the server has started answering', async () => {
     // The tokens are already out and on their way to whoever is watching; a second attempt
     // would say everything twice.
