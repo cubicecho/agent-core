@@ -18,7 +18,10 @@ import { PROGRESS_FIELD } from './remote.ts';
 /** What joins a request's leading system messages into `app_system`. */
 const SYSTEM_JOIN = '\n\n';
 
-/** The roles whose leading messages become `app_system`. */
+/**
+ * The roles whose leading messages become `app_system`: `developer` is an app's system prompt under
+ * the newer name, and is the app's to say just as a `system` message is.
+ */
 const SYSTEM_ROLES: ReadonlySet<string> = new Set([Role.System, Role.Developer]);
 
 /** An app's prompt, stacked and ready to write. */

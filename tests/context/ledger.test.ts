@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { planCompaction } from '../../src/context/compaction.ts';
 import {
+  breakReason,
   estimateFrom,
   type LedgerRequest,
   rebaseLedger,
@@ -8,6 +9,7 @@ import {
   type TokenLedger,
   tokensBetween,
 } from '../../src/context/ledger.ts';
+import { CacheBreakReason } from '../../src/wire/stream.ts';
 import { messageChars } from '../../src/wire/tokens.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { assistant, type Message, result, user } from '../helpers.ts';
@@ -233,5 +235,14 @@ describe('rebaseLedger', () => {
 
   it('keeps nothing of a transcript replaced outright', () => {
     expect(rebaseLedger(kept, before, [user('new')])).toEqual([]);
+  });
+});
+
+describe('breakReason', () => {
+  it('reads a changed developer message at the head as the system prompt changing', () => {
+    const developer = (content: string): Message => ({ role: Role.Developer, content });
+    const before = { messages: [developer('be brief'), user('q')] };
+    const after = { messages: [developer('be thorough'), user('q')] };
+    expect(breakReason(before, after)).toBe(CacheBreakReason.SystemChanged);
   });
 });

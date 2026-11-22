@@ -36,7 +36,7 @@ import {
 export const CacheBreakReason = {
   /** The tool array is not the one the request before declared. */
   ToolsChanged: 'tools-changed',
-  /** The system messages the prompt opens with are not the ones it opened with before. */
+  /** The system or developer messages the prompt opens with are not the ones it opened with before. */
   SystemChanged: 'system-changed',
   /** A message the request before sent is gone or different. */
   HistoryRewritten: 'history-rewritten',
