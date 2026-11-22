@@ -9,6 +9,7 @@ import { callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
 import {
   apiError,
+  asksFor,
   type Create,
   callArguments,
   chunks,
@@ -56,23 +57,6 @@ type AgentLoopRequest = import('../../src/run/agent-loop.ts').AgentLoopRequest;
 type ToolCallResult = import('../../src/run/dispatch.ts').ToolCallResult;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 type RunUsage = import('../../src/run/events.ts').RunUsage;
-
-/** A turn that asks for these calls. */
-const calls = (...list: [name: string, args: string][]) =>
-  chunks({
-    choices: [
-      {
-        delta: {
-          tool_calls: list.map(([name, args], index) => ({
-            index,
-            id: `c${index}`,
-            function: { name, arguments: args },
-          })),
-        },
-        finish_reason: FinishReason.ToolCalls,
-      },
-    ],
-  });
 
 /** A turn that makes these deltas and reports this prompt, with a cache count, and ten tokens out. */
 const reported = (
@@ -123,7 +107,7 @@ afterEach(() => resetCapabilities());
 describe('runAgentLoop', () => {
   it('marks a failed call in the text the model reads, and never leaves a result empty', async () => {
     create
-      .mockReturnValueOnce(calls(['a', ''], ['b', ''], ['c', ''], ['d', '{nope']))
+      .mockReturnValueOnce(asksFor(['a', ''], ['b', ''], ['c', ''], ['d', '{nope']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async ({ name }: { name: string }) => {
       if (name === 'a') {
@@ -155,7 +139,7 @@ describe('runAgentLoop', () => {
   });
 
   it('words a failed call with the host formatToolError', async () => {
-    create.mockReturnValueOnce(calls(['a', ''])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', ''])).mockReturnValueOnce(says('done'));
     const result = await runAgentLoop({
       config,
       messages: question,
@@ -170,7 +154,7 @@ describe('runAgentLoop', () => {
   });
 
   it('runs the tools between turns and hands back the transcript', async () => {
-    create.mockReturnValueOnce(calls(['a', '{"x":1}'], ['b', ''])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', '{"x":1}'], ['b', ''])).mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async ({ name, args }: { name: string; args: unknown }) => {
       if (name === 'b') {
         throw new Error('b broke');
@@ -287,7 +271,7 @@ describe('runAgentLoop', () => {
   });
 
   it('says nothing of a break where the endpoint reported no cache count', async () => {
-    create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', '{}'])).mockReturnValueOnce(says('done'));
     const turns: RunUsage['turn'][] = [];
     await runAgentLoop({
       config,
@@ -350,7 +334,7 @@ describe('runAgentLoop', () => {
   });
 
   it('hands the tool repaired arguments and replays them as JSON', async () => {
-    create.mockReturnValueOnce(calls(['a', "{'x': True,}"], ['a', '{nope'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', "{'x': True,}"], ['a', '{nope'])).mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async (_call: ToolCallRequest) => 'ok');
     const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch });
     expect(dispatch).toHaveBeenCalledTimes(1);
@@ -365,7 +349,7 @@ describe('runAgentLoop', () => {
   });
 
   it('names each call by id on its events, so two calls to one tool can be told apart', async () => {
-    create.mockReturnValueOnce(calls(['a', '{"n":1}'], ['a', '{"n":2}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', '{"n":1}'], ['a', '{"n":2}'])).mockReturnValueOnce(says('done'));
     // The first call is held until the second has answered, so the results land out of order.
     let release = () => {};
     const held = new Promise<void>((resolve) => {
@@ -405,7 +389,7 @@ describe('runAgentLoop', () => {
   it('hands a host every call and its whole result, dispatched or not', async () => {
     const long = 'x'.repeat(5000);
     create
-      .mockReturnValueOnce(calls(['a', "{'x': True,}"], ['a', '{"x":true}'], ['a', '{nope']))
+      .mockReturnValueOnce(asksFor(['a', "{'x': True,}"], ['a', '{"x":true}'], ['a', '{nope']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async (_call: ToolCallRequest) => long);
     const asked: ToolCallRequest[] = [];
@@ -516,7 +500,7 @@ describe('runAgentLoop', () => {
 
   it('stops between calls once aborted', async () => {
     const controller = new AbortController();
-    create.mockReturnValueOnce(calls(['a', '{}'], ['a', '{"n":2}']));
+    create.mockReturnValueOnce(asksFor(['a', '{}'], ['a', '{"n":2}']));
     const dispatch = vi.fn(async () => {
       controller.abort();
       return 'ok';
@@ -534,7 +518,7 @@ describe('runAgentLoop', () => {
   });
 
   it("runs a turn's calls together, and an identical call once", async () => {
-    create.mockReturnValueOnce(calls(['a', '{}'], ['a', '{}'], ['a', '{"n":1}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', '{}'], ['a', '{}'], ['a', '{"n":1}'])).mockReturnValueOnce(says('done'));
     let running = 0;
     let most = 0;
     const dispatch = vi.fn(async () => {
@@ -557,8 +541,8 @@ describe('runAgentLoop', () => {
 
   it('makes a failed identical call again rather than replaying the failure', async () => {
     create
-      .mockReturnValueOnce(calls(['a', '{}']))
-      .mockReturnValueOnce(calls(['a', '{}']))
+      .mockReturnValueOnce(asksFor(['a', '{}']))
+      .mockReturnValueOnce(asksFor(['a', '{}']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn().mockRejectedValueOnce(new Error('flaky')).mockResolvedValue('ok');
     const result = await runAgentLoop({
@@ -598,7 +582,7 @@ describe('runAgentLoop', () => {
 
   it('answers an identical call once when the calls run one after another too', async () => {
     create
-      .mockReturnValueOnce(calls(['a', '{}'], ['a', '{"n": 1}'], ['a', '{"n":1}']))
+      .mockReturnValueOnce(asksFor(['a', '{}'], ['a', '{"n": 1}'], ['a', '{"n":1}']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async () => 'ok');
     const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch });
@@ -609,8 +593,8 @@ describe('runAgentLoop', () => {
 
   it('asks again in a later turn, where the tools between may have moved the world', async () => {
     create
-      .mockReturnValueOnce(calls(['a', '{}']))
-      .mockReturnValueOnce(calls(['a', '{}']))
+      .mockReturnValueOnce(asksFor(['a', '{}']))
+      .mockReturnValueOnce(asksFor(['a', '{}']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async () => 'ok');
     await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch });
@@ -618,7 +602,7 @@ describe('runAgentLoop', () => {
   });
 
   it('dispatches every call where the host turned deduping off', async () => {
-    create.mockReturnValueOnce(calls(['a', '{}'], ['a', '{}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', '{}'], ['a', '{}'])).mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async () => 'ok');
     await runAgentLoop({
       config,
@@ -632,7 +616,7 @@ describe('runAgentLoop', () => {
 
   it('lets a tool that does something rather than reads something opt out', async () => {
     create
-      .mockReturnValueOnce(calls(['send', '{}'], ['send', '{}'], ['read', '{}'], ['read', '{}']))
+      .mockReturnValueOnce(asksFor(['send', '{}'], ['send', '{}'], ['read', '{}'], ['read', '{}']))
       .mockReturnValueOnce(says('done'));
     const dispatched: string[] = [];
     const dispatch = vi.fn(async (call: ToolCallRequest) => {
@@ -668,7 +652,7 @@ describe('runAgentLoop', () => {
     it('runs consecutive reads together and each write alone, in the order asked', async () => {
       create
         .mockReturnValueOnce(
-          calls(
+          asksFor(
             ['read', '{"n":1}'],
             ['read', '{"n":2}'],
             ['write', '{"n":3}'],
@@ -709,7 +693,7 @@ describe('runAgentLoop', () => {
     });
 
     it('a read after a write sees the write', async () => {
-      create.mockReturnValueOnce(calls(['write', '{"n":1}'], ['read', '{"n":2}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['write', '{"n":1}'], ['read', '{"n":2}'])).mockReturnValueOnce(says('done'));
       let stored = 'before';
       const dispatch = async ({ name }: ToolCallRequest) => {
         if (name === 'write') {
@@ -731,7 +715,7 @@ describe('runAgentLoop', () => {
     });
 
     it('lands results out of order inside a batch, and the transcript in the order asked', async () => {
-      create.mockReturnValueOnce(calls(['read', '{"n":1}'], ['read', '{"n":2}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['read', '{"n":1}'], ['read', '{"n":2}'])).mockReturnValueOnce(says('done'));
       let release = () => {};
       const held = new Promise<void>((resolve) => {
         release = resolve;
@@ -760,7 +744,7 @@ describe('runAgentLoop', () => {
     it('puts to the predicate only the calls that would reach dispatch', async () => {
       create
         .mockReturnValueOnce(
-          calls(
+          asksFor(
             ['read', '{"n":1}'],
             ['broken', '{"n":'],
             ['read', '{"n":1}'],
@@ -791,7 +775,7 @@ describe('runAgentLoop', () => {
     it('counts a load_tools as a read', async () => {
       create
         .mockReturnValueOnce(
-          calls(['read', '{"n":1}'], [LOAD_TOOLS, '{"names":["read"]}'], ['read', '{"n":2}'], ['write', '{"n":3}']),
+          asksFor(['read', '{"n":1}'], [LOAD_TOOLS, '{"names":["read"]}'], ['read', '{"n":2}'], ['write', '{"n":3}']),
         )
         .mockReturnValueOnce(says('done'));
       const asked: string[] = [];
@@ -821,7 +805,7 @@ describe('runAgentLoop', () => {
     });
 
     it('answers every call of the turn when a write is stopped part-way', async () => {
-      create.mockReturnValueOnce(calls(['read', '{"n":1}'], ['write', '{"n":2}'], ['read', '{"n":3}']));
+      create.mockReturnValueOnce(asksFor(['read', '{"n":1}'], ['write', '{"n":2}'], ['read', '{"n":3}']));
       const controller = new AbortController();
       const dispatch = vi.fn(async ({ name }: ToolCallRequest, signal?: AbortSignal) => {
         if (name === 'write') {
@@ -869,7 +853,7 @@ describe('runAgentLoop', () => {
   });
 
   it('reads a run as cache reported once any turn of it was', async () => {
-    create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(reported(150, 40, { content: 'done' }));
+    create.mockReturnValueOnce(asksFor(['a', '{}'])).mockReturnValueOnce(reported(150, 40, { content: 'done' }));
     const usages: RunUsage[] = [];
     const result = await runAgentLoop({
       config,
@@ -934,7 +918,7 @@ describe('runAgentLoop', () => {
       for (const parallel of [false, true]) {
         create.mockReset();
         const ending = endingAt();
-        create.mockReturnValueOnce(calls(['done', '{}'], ['a', '{}'], ['b', '{}']));
+        create.mockReturnValueOnce(asksFor(['done', '{}'], ['a', '{}'], ['b', '{}']));
         const result = await runAgentLoop({
           config,
           messages: question,
@@ -954,7 +938,7 @@ describe('runAgentLoop', () => {
     });
 
     it('runs the batches after an end when parallel is a predicate', async () => {
-      create.mockReturnValueOnce(calls(['read', '{}'], ['done', '{}'], ['write', '{}'], ['read', '{"n":2}']));
+      create.mockReturnValueOnce(asksFor(['read', '{}'], ['done', '{}'], ['write', '{}'], ['read', '{"n":2}']));
       const ending = endingAt();
       const result = await runAgentLoop({
         config,
@@ -969,7 +953,7 @@ describe('runAgentLoop', () => {
     });
 
     it('names the first ending call in the order asked, not the first to finish', async () => {
-      create.mockReturnValueOnce(calls(['slow', '{}'], ['fast', '{}']));
+      create.mockReturnValueOnce(asksFor(['slow', '{}'], ['fast', '{}']));
       const result = await runAgentLoop({
         config,
         messages: question,
@@ -987,7 +971,7 @@ describe('runAgentLoop', () => {
     });
 
     it('ends on a deduplicated repeat once, under the call that was made', async () => {
-      create.mockReturnValueOnce(calls(['done', '{}'], ['done', '{}']));
+      create.mockReturnValueOnce(asksFor(['done', '{}'], ['done', '{}']));
       const ending = endingAt();
       const result = await runAgentLoop({
         config,
@@ -1004,7 +988,7 @@ describe('runAgentLoop', () => {
     });
 
     it('takes no end from a string answer, an end of false, or a call that threw', async () => {
-      create.mockReturnValueOnce(calls(['a', '{}'], ['b', '{}'], ['c', '{}'])).mockReturnValueOnce(says('finished'));
+      create.mockReturnValueOnce(asksFor(['a', '{}'], ['b', '{}'], ['c', '{}'])).mockReturnValueOnce(says('finished'));
       const result = await runAgentLoop({
         config,
         messages: question,
@@ -1022,7 +1006,7 @@ describe('runAgentLoop', () => {
     });
 
     it('resolves rather than throwing when the end comes in the last turn the budget allows', async () => {
-      create.mockReturnValueOnce(calls(['done', '{}']));
+      create.mockReturnValueOnce(asksFor(['done', '{}']));
       const result = await runAgentLoop({
         config: { ...config, maxToolIterations: 1 },
         messages: question,
@@ -1033,7 +1017,7 @@ describe('runAgentLoop', () => {
     });
 
     it('names the tool a call_tool reached, and folds nothing after the end', async () => {
-      create.mockReturnValueOnce(calls([CALL_TOOL, '{"name":"done","arguments":{}}']));
+      create.mockReturnValueOnce(asksFor([CALL_TOOL, '{"name":"done","arguments":{}}']));
       const beforeTurn = vi.fn(async () => undefined);
       const result = await runAgentLoop({
         config: { ...config, toolDiscovery: ToolDiscovery.Proxy },
@@ -1084,7 +1068,7 @@ describe('runAgentLoop', () => {
         .map(({ id, name, level, text }) => ({ id, name, level, text }));
 
     it("puts what a call's server logged between its call and its result, and never in the transcript", async () => {
-      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['read', '{}'])).mockReturnValueOnce(says('done'));
       const events: RunEventInput[] = [];
       const result = await runAgentLoop({
         config,
@@ -1114,7 +1098,7 @@ describe('runAgentLoop', () => {
     });
 
     it('cuts a long message the way a tool result is cut', async () => {
-      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['read', '{}'])).mockReturnValueOnce(says('done'));
       const events: RunEventInput[] = [];
       const long = 'x'.repeat(5000);
       await runAgentLoop({
@@ -1131,7 +1115,7 @@ describe('runAgentLoop', () => {
     });
 
     it('drops a message heard after the call has answered', async () => {
-      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['read', '{}'])).mockReturnValueOnce(says('done'));
       const events: RunEventInput[] = [];
       let kept: ToolCallReport['log'] | undefined;
       await runAgentLoop({
@@ -1149,7 +1133,7 @@ describe('runAgentLoop', () => {
     });
 
     it('hears nothing from a call the loop answers itself', async () => {
-      create.mockReturnValueOnce(calls(['read', '{"a":'], ['read', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['read', '{"a":'], ['read', '{}'])).mockReturnValueOnce(says('done'));
       const events: RunEventInput[] = [];
       const dispatch = vi.fn(
         async (_call: ToolCallRequest, _signal: AbortSignal | undefined, report: ToolCallReport) => {
@@ -1169,7 +1153,7 @@ describe('runAgentLoop', () => {
     });
 
     it('still runs a dispatcher written for two arguments', async () => {
-      create.mockReturnValueOnce(calls(['read', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['read', '{}'])).mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config,
         messages: question,
@@ -1196,8 +1180,8 @@ describe('runAgentLoop', () => {
 
     it('loads what the model asks for and declares it on the next turn', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
-        .mockReturnValueOnce(calls(['s__read', '{}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor(['s__read', '{}']))
         .mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async () => 'contents');
       const result = await runAgentLoop({
@@ -1221,7 +1205,7 @@ describe('runAgentLoop', () => {
 
     it('announces load_tools like any other call, with the whole answer', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}'], [LOAD_TOOLS, '{}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}'], [LOAD_TOOLS, '{}']))
         .mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async () => 'contents');
       const asked: ToolCallRequest[] = [];
@@ -1334,8 +1318,8 @@ describe('runAgentLoop', () => {
 
     it('declares loads in name order however they happened, and answers a repeat load', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__write"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read","s__write"]}']))
         .mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config: onDemand,
@@ -1354,7 +1338,7 @@ describe('runAgentLoop', () => {
     });
 
     it('loads and runs a catalogued tool called without loading it', async () => {
-      create.mockReturnValueOnce(calls(['s__write', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['s__write', '{}'])).mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async () => 'written');
       const result = await runAgentLoop({
         config: onDemand,
@@ -1369,7 +1353,7 @@ describe('runAgentLoop', () => {
     });
 
     it('opens a preselected run with those tools alone, and the catalogue after', async () => {
-      create.mockReturnValueOnce(calls(['s__read', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['s__read', '{}'])).mockReturnValueOnce(says('done'));
       await runAgentLoop({
         config: onDemand,
         systemPrompt: 'sys',
@@ -1396,7 +1380,7 @@ describe('runAgentLoop', () => {
       const bodies = () => create.mock.calls.map(([body]) => body);
 
       it('sends the first turn the head of every other turn', async () => {
-        create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}'])).mockReturnValueOnce(says('done'));
+        create.mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__write"]}'])).mockReturnValueOnce(says('done'));
         const result = await runAgentLoop({
           config: onDemand,
           systemPrompt: 'sys',
@@ -1438,7 +1422,7 @@ describe('runAgentLoop', () => {
       });
 
       it('sorts the shortlist in under toolOrder, which moves what sorts after it', async () => {
-        create.mockReturnValueOnce(calls(['s__list', '{}'])).mockReturnValueOnce(says('done'));
+        create.mockReturnValueOnce(asksFor(['s__list', '{}'])).mockReturnValueOnce(says('done'));
         await runAgentLoop({
           config: onDemand,
           systemPrompt: 'sys',
@@ -1513,7 +1497,7 @@ describe('runAgentLoop', () => {
 
     it('runs a `call_tool` left in the history as the tool it names, and loads it', async () => {
       create
-        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(asksFor([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
         .mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async (_call: ToolCallRequest) => 'contents');
       const result = await runAgentLoop({
@@ -1531,7 +1515,7 @@ describe('runAgentLoop', () => {
 
     it("leaves a host's own `call_tool` to the host", async () => {
       create
-        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{}}']))
+        .mockReturnValueOnce(asksFor([CALL_TOOL, '{"name":"s__read","arguments":{}}']))
         .mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async (_call: ToolCallRequest) => "the host's answer");
       await runAgentLoop({
@@ -1584,8 +1568,8 @@ describe('runAgentLoop', () => {
 
     it('declares `load_tools` and `call_tool` on every turn, whatever is loaded', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
-        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
         .mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async (_call: ToolCallRequest) => 'contents');
       const result = await runAgentLoop({
@@ -1660,7 +1644,7 @@ describe('runAgentLoop', () => {
 
     it('reports a `call_tool` to a watcher as the tool it ran', async () => {
       create
-        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__write","arguments":{"text":"x"}}']))
+        .mockReturnValueOnce(asksFor([CALL_TOOL, '{"name":"s__write","arguments":{"text":"x"}}']))
         .mockReturnValueOnce(says('done'));
       const events: { kind: string; name?: string; text?: string }[] = [];
       await runAgentLoop({
@@ -1680,7 +1664,7 @@ describe('runAgentLoop', () => {
     it('takes `arguments` as a JSON string, and refuses a name outside the catalogue', async () => {
       create
         .mockReturnValueOnce(
-          calls(
+          asksFor(
             [CALL_TOOL, JSON.stringify({ name: 's__read', arguments: '{"path":"b"}' })],
             [CALL_TOOL, '{"name":"rm_rf","arguments":{}}'],
             [CALL_TOOL, '{"arguments":{}}'],
@@ -1719,8 +1703,8 @@ describe('runAgentLoop', () => {
 
     it('answers a repeat load with a pointer back, not the definition a second time', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write","nope"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read","s__write","nope"]}']))
         .mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config: proxied,
@@ -1745,8 +1729,8 @@ describe('runAgentLoop', () => {
 
     it('sends the definition again once the transcript has been rewritten under it', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
         .mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config: proxied,
@@ -1762,8 +1746,8 @@ describe('runAgentLoop', () => {
 
     it('keeps a definition loaded across a rewrite that left it in the transcript', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
         .mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config: proxied,
@@ -1783,9 +1767,9 @@ describe('runAgentLoop', () => {
 
     it('forgets only the definitions a rewrite took out of the transcript', async () => {
       create
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read","s__write"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__write"]}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read","s__write"]}']))
         .mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config: proxied,
@@ -1804,7 +1788,7 @@ describe('runAgentLoop', () => {
 
     it('writes a preselection into the transcript as a load the model did not make', async () => {
       create
-        .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
+        .mockReturnValueOnce(asksFor([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}']))
         .mockReturnValueOnce(says('done'));
       const history: Message[] = [
         { role: Role.User, content: 'earlier' },
@@ -1882,7 +1866,7 @@ describe('runAgentLoop', () => {
     it("tells a host of a proxied call as the tool it names, and of a preselection's load", async () => {
       create
         .mockReturnValueOnce(
-          calls(
+          asksFor(
             [CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}'],
             [CALL_TOOL, '{"name":"s__ghost","arguments":{"path":"b"}}'],
           ),
@@ -1932,7 +1916,7 @@ describe('runAgentLoop', () => {
     });
 
     it('answers a load of something preselected with a pointer back', async () => {
-      create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}'])).mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config: proxied,
         messages: question,
@@ -1962,8 +1946,8 @@ describe('runAgentLoop', () => {
 
     it('runs a catalogued tool called natively, without calling it loaded', async () => {
       create
-        .mockReturnValueOnce(calls(['s__read', '{"path":"a"}']))
-        .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
+        .mockReturnValueOnce(asksFor(['s__read', '{"path":"a"}']))
+        .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
         .mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async (_call: ToolCallRequest) => 'contents');
       const result = await runAgentLoop({
@@ -1981,7 +1965,7 @@ describe('runAgentLoop', () => {
     it('shares one answer between a `call_tool` and the same call made natively', async () => {
       create
         .mockReturnValueOnce(
-          calls([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}'], ['s__read', '{"path":"a"}']),
+          asksFor([CALL_TOOL, '{"name":"s__read","arguments":{"path":"a"}}'], ['s__read', '{"path":"a"}']),
         )
         .mockReturnValueOnce(says('done'));
       const dispatch = vi.fn(async (_call: ToolCallRequest) => 'contents');
@@ -2001,7 +1985,7 @@ describe('runAgentLoop', () => {
     });
 
     it('does not call a tool loaded when the host gave no definition for it', async () => {
-      create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__write"]}'])).mockReturnValueOnce(says('done'));
       const result = await runAgentLoop({
         config: proxied,
         messages: question,
@@ -2022,7 +2006,7 @@ describe('runAgentLoop', () => {
   });
 
   it("puts the hooks' context on the question, and tells them the reply", async () => {
-    create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('the answer'));
+    create.mockReturnValueOnce(asksFor(['a', '{}'])).mockReturnValueOnce(says('the answer'));
     const run = vi.fn<HookRunner>(async (event) =>
       event === HookEvent.BeforeExchange
         ? [
@@ -2207,7 +2191,7 @@ describe('runAgentLoop', () => {
     });
 
     it('finds the question by role once beforeTurn has handed over new objects', async () => {
-      create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('the answer'));
+      create.mockReturnValueOnce(asksFor(['a', '{}'])).mockReturnValueOnce(says('the answer'));
       const run = remembering();
       const result = await runAgentLoop({
         config,
@@ -2261,7 +2245,7 @@ describe('runAgentLoop', () => {
 
     it("hands back what it put on the question, so the next turn's request only appends", async () => {
       create
-        .mockReturnValueOnce(calls(['a', '{}']))
+        .mockReturnValueOnce(asksFor(['a', '{}']))
         .mockReturnValueOnce(says('tea'))
         .mockReturnValueOnce(says('toast'));
       const first = await runAgentLoop({
@@ -2416,7 +2400,7 @@ describe('runAgentLoop', () => {
   });
 
   it('lets beforeTurn replace the transcript', async () => {
-    create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', '{}'])).mockReturnValueOnce(says('done'));
     const beforeTurn = vi.fn((messages: readonly Message[], turn: number) =>
       turn === 1 ? [{ role: Role.User, content: 'shorter' }, ...messages.slice(1)] : undefined,
     );
@@ -2554,7 +2538,7 @@ describe('runAgentLoop', () => {
     create
       .mockReturnValueOnce(reportedCall(100, 0, 'a'))
       .mockReturnValueOnce(reportedCall(90, 0, 'a'))
-      .mockReturnValueOnce(calls(['a', '{}']))
+      .mockReturnValueOnce(asksFor(['a', '{}']))
       .mockReturnValueOnce(reported(170, 0, { content: 'done' }));
     const result = await runAgentLoop({
       config,
@@ -2588,7 +2572,7 @@ describe('runAgentLoop', () => {
 
   it("hands the host each turn's request, as the client is about to be sent it", async () => {
     const order: string[] = [];
-    const replies = [calls([LOAD_TOOLS, '{"names":["s__read"]}']), says('done')];
+    const replies = [asksFor([LOAD_TOOLS, '{"names":["s__read"]}']), says('done')];
     create.mockImplementation(() => {
       order.push('sent');
       return replies.shift();
@@ -2705,7 +2689,7 @@ describe('runAgentLoop', () => {
   });
 
   it('estimates the breakdown where no prompt was reported, agreeing with toolSchemaTokens', async () => {
-    create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['a', '{}'])).mockReturnValueOnce(says('done'));
     const turns: RunUsage['turn'][] = [];
     await runAgentLoop({
       config,
@@ -2763,7 +2747,7 @@ describe('runAgentLoop', () => {
     });
 
     it('sit before the catalogue on demand, the same text on every turn, a toolless server included', async () => {
-      create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}'])).mockReturnValueOnce(says('done'));
       await run({ config: { ...config, toolDiscovery: ToolDiscovery.OnDemand } });
       const [first, second] = systems();
       expect(first).toBe(second);
@@ -2774,7 +2758,7 @@ describe('runAgentLoop', () => {
     });
 
     it('stay on a preselected first turn, leaving it the head of the next', async () => {
-      create.mockReturnValueOnce(calls(['s__read', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['s__read', '{}'])).mockReturnValueOnce(says('done'));
       await run({ config: { ...config, toolDiscovery: ToolDiscovery.OnDemand }, preselected: ['s__read'] });
       const [first, second] = systems();
       expect(first).toContain('# MCP server instructions');
@@ -2932,7 +2916,7 @@ describe('runAgentLoop', () => {
 
     it("tells the layout's warnings once an exchange, however many turns write the prompt", async () => {
       create.mockReset();
-      create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
+      create.mockReturnValueOnce(asksFor(['a', '{}'])).mockReturnValueOnce(says('done'));
       const { notices, onEvent } = noticing();
       await runAgentLoop({
         config: { ...config, promptLayout: 'xml' },

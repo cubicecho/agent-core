@@ -74,6 +74,28 @@ export const chunks = (...list: unknown[]) => ({
 });
 
 /**
+ * A streamed turn that asks for these calls, numbered `c0`, `c1`… in order.
+ *
+ * @param list - Each call's tool name and arguments text.
+ * @returns The stream.
+ */
+export const asksFor = (...list: [name: string, args: string][]) =>
+  chunks({
+    choices: [
+      {
+        delta: {
+          tool_calls: list.map(([name, args], index) => ({
+            index,
+            id: `c${index}`,
+            function: { name, arguments: args },
+          })),
+        },
+        finish_reason: FinishReason.ToolCalls,
+      },
+    ],
+  });
+
+/**
  * A streamed turn that answers in words, then reports ten tokens in and two out.
  *
  * @param content - What the model says.
