@@ -219,6 +219,38 @@ describe('parseSpec', () => {
       }).errors,
     ).toEqual([]);
   });
+
+  it('refuses a requires that is not an array, or holds anything but strings', () => {
+    expect(parseSpec(doc({ requires: 'com.example.sandbox' })).errors).toEqual(['requires: must be an array']);
+    expect(parseSpec(doc({ requires: ['com.example.sandbox', 3] })).errors).toEqual(['requires[1]: must be a string']);
+  });
+
+  it('drops a section that is not an object, rather than refusing the document', () => {
+    const result = parseSpec(doc({ model: 1, tools: [], retry: 'r', endpoint: 'e', extensions: [] }));
+    expect(result.spec).toEqual({ spec: AGENT_SPEC });
+    expect(result.warnings).toEqual([
+      'extensions: must be an object, and was dropped',
+      'endpoint: must be an object, and was dropped',
+      'model: must be an object, and was dropped',
+      'tools: must be an object, and was dropped',
+      'retry: must be an object, and was dropped',
+    ]);
+  });
+
+  it('reads an endpoint or a retry that said nothing usable as absent', () => {
+    const result = parseSpec(doc({ retry: {}, endpoint: { apiKey: 'sk-live-1' } }));
+    expect(result.spec).toEqual({ spec: AGENT_SPEC });
+  });
+
+  it('leaves out a task that is null', () => {
+    expect(parsed(doc({ tasks: { title: null } })).tasks).toEqual({});
+  });
+
+  it('names the lower bound of a number that has no upper one', () => {
+    expect(parseSpec(doc({ model: { maxTokens: -1 } })).warnings).toEqual([
+      'model.maxTokens: must be at least 0, and was dropped',
+    ]);
+  });
 });
 
 describe('parseSpec prompt', () => {
@@ -380,6 +412,18 @@ describe('parseSpec tools.servers', () => {
     expect(parsed(doc({ tools: { servers: ['git', 'fs'] } })).tools?.servers).toEqual(['git', 'fs']);
   });
 
+  it('drops a list that is not an array, and an entry that is empty or not a string', () => {
+    const notList = parseSpec(doc({ tools: { servers: 'git' } }));
+    expect(notList.spec?.tools).toEqual({});
+    expect(notList.warnings).toEqual(['tools.servers: must be an array of slugs, and was dropped']);
+    const entries = parseSpec(doc({ tools: { servers: ['git', '', 3] } }));
+    expect(entries.spec?.tools?.servers).toEqual(['git']);
+    expect(entries.warnings).toEqual([
+      'tools.servers[1]: is empty, and was dropped',
+      'tools.servers[2]: must be a string, and was dropped',
+    ]);
+  });
+
   it('round-trips all three through resolve and back into a document', () => {
     for (const servers of [undefined, [], ['git']]) {
       const tools = servers === undefined ? { maxIterations: 8 } : { servers };
@@ -458,6 +502,16 @@ describe('parseSpec hooks', () => {
     expect(result.warnings).toEqual(['hooks[0].on: "onTuesday" is not an event, and was dropped']);
   });
 
+  it('drops a hook that is not an object, or lacks an id, an event, a server or a tool', () => {
+    const result = parseSpec(doc({ hooks: [3, hook({}), hook({ id: '', on: HookEvent.SessionStart })] }));
+    expect(result.spec?.hooks).toEqual([]);
+    expect(result.warnings).toEqual([
+      'hooks[0]: must be an object, and was dropped',
+      'hooks[1]: needs an id, an event, a server and a tool, and was dropped',
+      'hooks[2]: needs an id, an event, a server and a tool, and was dropped',
+    ]);
+  });
+
   it('binds to the same events the host side fires', () => {
     // SPEC_EVENTS is HOOK_EVENTS from a leaf that pulls no `node:crypto`, so the two cannot drift.
     expect([...SPEC_EVENTS].sort()).toEqual([...HOOK_EVENTS].sort());
@@ -503,6 +557,21 @@ describe('parseSpec bundle', () => {
       'bundle.mcpServers[0]: needs an id or a slug, and was dropped',
       'bundle.mcpServers[2]: is a second server called "fs", and was dropped',
     ]);
+  });
+
+  it('drops a bundle or a server list of the wrong kind, and a server that is not an object', () => {
+    const read = (value: unknown) => parseSpec(doc({ bundle: value }), { bundle: true });
+    expect(read(3)).toMatchObject({
+      spec: { spec: AGENT_SPEC },
+      warnings: ['bundle: must be an object, and was dropped'],
+    });
+    expect(read({ mcpServers: {} }).warnings).toEqual(['bundle.mcpServers: must be an array, and was dropped']);
+    expect(read({ mcpServers: [3] })).toMatchObject({
+      spec: { bundle: { mcpServers: [] } },
+      warnings: ['bundle.mcpServers[0]: must be an object, and was dropped'],
+    });
+    // A bundle with no server list is no bundle, and nothing to warn about.
+    expect(read({})).toEqual({ spec: { spec: AGENT_SPEC }, errors: [], warnings: [] });
   });
 });
 
@@ -1177,6 +1246,11 @@ describe('model.lockedFields', () => {
     } catch (error) {
       expect(error instanceof LockedFieldsError && error.fields).toEqual(['temperature', 'seed']);
     }
+  });
+
+  it('says it of one locked field, and them of several', () => {
+    expect(new LockedFieldsError(['seed']).message).toMatch(/may not set it$/);
+    expect(new LockedFieldsError(['seed', 'top_p']).message).toMatch(/may not set them$/);
   });
 
   it('drops the locked fields and warns, when told to, leaving the request it was given alone', () => {
