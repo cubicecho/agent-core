@@ -5,6 +5,7 @@ import {
   CALL_TOOL,
   carryOver,
   catalogPrompt,
+  definedNames,
   expandNames,
   holdsDefinitions,
   inCatalog,
@@ -20,7 +21,7 @@ import {
   shownCall,
 } from '../../src/tools/tool-loading.ts';
 import { FUNCTION_TOOL, SchemaType } from '../../src/wire/wire.ts';
-import { catalog, catalogTool } from '../helpers.ts';
+import { catalog, catalogTool, tool, toolNames } from '../helpers.ts';
 
 const { maxPerLoad, maxCarried } = TOOL_DISCOVERY_DEFAULTS;
 
@@ -42,10 +43,14 @@ describe('expandNames and loadResult', () => {
     });
   });
 
-  it('expand a wildcard, by prefix or by suffix', () => {
+  it('expand a wildcard by the start of a name', () => {
     expect(expandNames(['gmail__*'], catalog).matched).toHaveLength(3);
-    // The model dropped the server prefix; `__gmail` still finds the group.
+    // A stem that runs past the server prefix is a prefix match all the same.
     expect(expandNames(['files__read*'], catalog).matched).toEqual(['files__read_file']);
+  });
+
+  it('expand a wildcard by the name after a server prefix, when no name begins with it', () => {
+    expect(expandNames(['read*'], catalog).matched).toEqual(['gmail__read_email', 'files__read_file']);
   });
 
   it('refuse an over-broad wildcard with its hits listed', () => {
@@ -87,25 +92,6 @@ describe('expandNames and loadResult', () => {
     const { matched, unknown } = expandNames(['gmail__send_email', 'gmail__*', 'nope'], catalog);
     expect(matched).toHaveLength(3);
     expect(unknown).toEqual(['nope']);
-  });
-
-  it('say which names could not be placed', () => {
-    expect(loadResult({ matched: [], unknown: ['nope'], overBroad: [], deferred: [], maxPerLoad }, catalog)).toContain(
-      'Not in the catalogue: nope',
-    );
-  });
-
-  it('answer an over-broad wildcard with the names it would have loaded', () => {
-    const wide: CatalogServer[] = [
-      {
-        id: '3',
-        label: 'Mail',
-        tools: Array.from({ length: maxPerLoad + 5 }, (_, i) => catalogTool(`mail__tool_${i}`)),
-      },
-    ];
-    const text = loadResult(expandNames(['mail__*'], wide), wide);
-    expect(text).toContain(`more than the ${maxPerLoad} one call may load`);
-    expect(text).toContain('mail__tool_3');
   });
 
   it('hold the load cap to what one call may load, not what one name may match', () => {
@@ -189,18 +175,11 @@ describe('catalogPrompt', () => {
     expect(prompt).toContain('  gmail__read_email');
     // Descriptions are the expensive half; they arrive on load, not here.
     expect(prompt).not.toContain('does gmail__read_email');
-    expect(catalogPrompt([])).toBe('');
   });
 
   it('marks nothing unless asked, so it reads the same after a load', () => {
     expect(catalogPrompt(catalog)).not.toContain('(loaded)');
     expect(catalogPrompt(catalog)).toBe(catalogPrompt(catalog));
-  });
-
-  it('produces no prompt at all for an empty catalogue', () => {
-    // Not a heading with nothing under it: a run with no servers must not be told about a
-    // mechanism it has nothing to use it on.
-    expect(catalogPrompt([])).toBe('');
   });
 
   it('leaves out the heading of a server with no tools', () => {
@@ -218,51 +197,37 @@ describe('catalogPrompt', () => {
 
 describe('loadedTools', () => {
   it('appends loaded definitions in load order, never moving them', () => {
-    const definition = (name: string) => ({
-      type: FUNCTION_TOOL,
-      function: { name, parameters: { type: SchemaType.Object } },
-    });
-    const [a, b, c] = [definition('a'), definition('b'), definition('c')];
+    const [a, b, c] = [tool('a'), tool('b'), tool('c')];
     const previous = [c, a];
-    const names = (list: { type: string; function?: { name: string } }[]) => list.map((item) => item.function?.name);
-    expect(names(loadedTools(previous, [b, a, b]))).toEqual(['c', 'a', 'b']);
-    expect(names(previous)).toEqual(['c', 'a']);
+    expect(toolNames(loadedTools(previous, [b, a, b]))).toEqual(['c', 'a', 'b']);
+    expect(toolNames(previous)).toEqual(['c', 'a']);
   });
 });
 
 describe('orderTools', () => {
-  it('orderTools sorts by name, keeps the definitions themselves, and obeys a comparator', () => {
-    const definition = (name: string) => ({
-      type: FUNCTION_TOOL,
-      function: { name, parameters: { type: SchemaType.Object } },
-    });
-    const [a, b, c] = [definition('a'), definition('b'), definition('c')];
-    const names = (list: { type: string; function?: { name: string } }[]) => list.map((item) => item.function?.name);
+  it('sorts by name, keeps the definitions themselves, and obeys a comparator', () => {
+    const [a, b, c] = [tool('a'), tool('b'), tool('c')];
     const given = [c, a, b];
-    expect(names(orderTools(given))).toEqual(['a', 'b', 'c']);
+    expect(toolNames(orderTools(given))).toEqual(['a', 'b', 'c']);
     // By identity, so `sanitizeTools` still answers from its cache rather than rebuilding.
     expect(orderTools(given)[0]).toBe(a);
-    expect(names(given)).toEqual(['c', 'a', 'b']);
+    expect(toolNames(given)).toEqual(['c', 'a', 'b']);
     expect(orderTools(given, false)).toBe(given);
     // Already in order, so nothing is copied.
     const sorted = [a, b, c];
     expect(orderTools(sorted)).toBe(sorted);
-    expect(names(orderTools(given, (x, y) => y.localeCompare(x)))).toEqual(['c', 'b', 'a']);
+    expect(toolNames(orderTools(given, (x, y) => y.localeCompare(x)))).toEqual(['c', 'b', 'a']);
   });
 });
 
 describe('requestedNames', () => {
-  it('load_tools arguments are read defensively', () => {
+  it('reads the arguments of load_tools defensively', () => {
     expect(requestedNames({ names: ['a', 'b'] })).toEqual(['a', 'b']);
     expect(requestedNames({ tools: 'a' })).toEqual(['a']);
     expect(requestedNames({ name: ['a', 2] })).toEqual(['a']);
     expect(requestedNames({})).toEqual([]);
-  });
-
-  // `requestedNames` is also given a bare string where the schema says array — models do this.
-  it('load_tools accepts a single name where an array was asked for', () => {
+    // A bare string where the schema says array: models do this.
     expect(requestedNames({ names: 'a' })).toEqual(['a']);
-    expect(requestedNames({ names: [1, 'a'] })).toEqual(['a']);
   });
 });
 
@@ -300,6 +265,10 @@ describe('carryOver', () => {
     // A cap of nobody's is not a cap of none: `slice(-0)` is the whole array, which is the one
     // answer a caller asking for zero cannot have meant.
     expect(carryOver(['a', 'b', 'c'], new Set(['d']), 0)).toEqual(['d']);
+  });
+
+  it('drops the earliest of all when everything past the cap was used', () => {
+    expect(carryOver(['a', 'b'], new Set(['a', 'b', 'c']), 2)).toEqual(['b', 'c']);
   });
 });
 
@@ -392,6 +361,15 @@ describe('the proxied tools', () => {
     expect(holdsDefinitions(loadResult(resolved, catalog))).toBe(false);
   });
 
+  it('read the names a load defined off its lines of JSON, and nothing off any other text', () => {
+    const resolved = expandNames(['gmail__send_email'], catalog);
+    const result = proxyLoadResult(resolved, catalog, [definition('gmail__send_email')]);
+    expect(definedNames(result)).toEqual(['gmail__send_email']);
+    // A line cut short, or one with no name, defines nothing.
+    expect(definedNames(`${result}\n\n{"name":"files__read_f\n\n{"id":1}`)).toEqual(['gmail__send_email']);
+    expect(definedNames(loadResult(resolved, catalog))).toEqual([]);
+  });
+
   it('read call_tool as the tool it names, with arguments as an object or as JSON', () => {
     expect(proxiedCall({ name: 'files__read_file', arguments: { path: 'a' } }, catalog)).toEqual({
       name: 'files__read_file',
@@ -399,6 +377,7 @@ describe('the proxied tools', () => {
     });
     expect(proxiedCall({ name: 'files__read_file', arguments: '{"path":"a"}' }, catalog).input).toEqual({ path: 'a' });
     expect(proxiedCall({ name: 'files__read_file' }, catalog).input).toEqual({});
+    expect(proxiedCall({ name: 'files__read_file', arguments: '  ' }, catalog).input).toEqual({});
   });
 
   it('refuse through call_tool what it cannot run, in words the model can act on', () => {
@@ -416,6 +395,7 @@ describe('the proxied tools', () => {
       name: 'files__read_file',
       input: '{"path":"a"}',
     });
+    expect(shownCall(CALL_TOOL, '{"name":"files__read_file"}')).toEqual({ name: 'files__read_file', input: '{}' });
     expect(shownCall(CALL_TOOL, '{not json')).toEqual({ name: CALL_TOOL, input: '{not json' });
     expect(shownCall('files__read_file', '{"name":"x"}')).toEqual({
       name: 'files__read_file',

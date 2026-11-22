@@ -191,7 +191,7 @@ describe('pruneThrough', () => {
     expect(pruneThrough(run(2), 99).map(chars)).toEqual([1, 29, 29]);
   });
 
-  it('the prefix is byte-identical across turns until the boundary moves', () => {
+  it('keeps the prefix byte-identical across turns until the boundary moves', () => {
     const gate = { estimate: chars, minShare: 0.19 };
     const window = 10_000;
     let messages = run(5);
@@ -226,12 +226,13 @@ describe('pruneThrough', () => {
 
 describe('pruneNotice', () => {
   it('says the counts, and why the boundary moved', () => {
-    expect(pruneNotice({ through: 3, cleared: 2, tokens: 12_345 })).toBe(
-      'cleared 2 old tool results (~12,345 tokens) as the context window filled',
-    );
-    expect(pruneNotice({ through: 3, cleared: 1, tokens: 900 }, true)).toBe(
-      'cleared 1 old tool result (~900 tokens) alongside a compaction',
-    );
+    const filling = pruneNotice({ through: 3, cleared: 2, tokens: 12_345 });
+    expect(filling).toContain('2 old tool results');
+    expect(filling).toContain('~12,345 tokens');
+    expect(filling).not.toContain('compaction');
+    const beside = pruneNotice({ through: 3, cleared: 1, tokens: 900 }, true);
+    expect(beside).toContain('1 old tool result ');
+    expect(beside).toContain('compaction');
   });
 });
 
@@ -345,6 +346,11 @@ describe('summaryInput', () => {
       ],
     });
     expect(text).toBe(`user: ${'y'.repeat(COMPACTION_DEFAULTS.summaryMessageChars)}\n\nassistant: read({})`);
+  });
+
+  it('leaves out a message with neither text nor calls', () => {
+    const empty: Message = { role: Role.Assistant, content: null };
+    expect(summaryInput({ from: 0, cut: 3, toSummarise: [user('a'), empty, user('b')] })).toBe('user: a\n\nuser: b');
   });
 });
 
@@ -736,16 +742,12 @@ describe('a fold inside one question', () => {
     content: `reading ${id}`,
     tool_calls: [{ id, type: FUNCTION_TOOL, function: { name: 'read', arguments: '{}' } }],
   });
-  /**
-   * The tool result answering `call(id)`.
-   *
-   * @param id - The call's id.
-   * @returns The message.
-   */
-  const answer = (id: string): Message => ({ role: Role.Tool, tool_call_id: id, content: `contents of ${id}` });
   /** The turns of a tool loop, a call and its result each. */
   const turns = (count: number, first = 0) =>
-    Array.from({ length: count }, (_, at) => [call(`c${at + first}`), answer(`c${at + first}`)]).flat();
+    Array.from({ length: count }, (_, at) => [
+      call(`c${at + first}`),
+      result(`contents of ${`c${at + first}`}`, `c${at + first}`),
+    ]).flat();
   const prompt: Message = { role: Role.System, content: 'prompt' };
   /** System, one question, then four turns: ten messages of ten each on a window of 100. */
   const loop: Message[] = [prompt, user('task'), ...turns(4)];
@@ -789,8 +791,18 @@ describe('a fold inside one question', () => {
   });
 
   it('plans nothing for a loop too short to fold, or a transcript with no question', () => {
-    expect(planCompaction([user('task'), call('c0'), answer('c0')], { limit: 10, estimate })).toBeUndefined();
+    expect(
+      planCompaction([user('task'), call('c0'), result(`contents of ${'c0'}`, 'c0')], { limit: 10, estimate }),
+    ).toBeUndefined();
     expect(planCompaction(turns(5), { limit: 100, estimate })).toBeUndefined();
+  });
+
+  it('plans nothing where the question alone overfills the window and the loop after it fits', () => {
+    // The cut lands on the first call, so all there is before it is the question, which is kept.
+    const weigh = (message: Message) => (message.role === Role.User ? 100 : 5);
+    expect(
+      planCompaction([user('task'), call('c0'), result(`contents of ${'c0'}`, 'c0')], { limit: 100, estimate: weigh }),
+    ).toBeUndefined();
   });
 
   it('sends the question after the summary, and the next fold continues the notes', async () => {

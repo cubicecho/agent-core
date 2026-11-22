@@ -20,12 +20,14 @@ const {
   firstTokenLimitMs,
   getClient,
   listModels,
+  loadingMs,
   NO_KEY,
   ProbeFailure,
   probeEndpoint,
   resetClients,
   resolveApiKey,
   servedSlots,
+  servedWindow,
 } = await import('../../src/endpoint/client.ts');
 const { normalizeBaseUrl } = await import('../../src/core/config.ts');
 
@@ -459,6 +461,42 @@ describe('contextLimitFor', () => {
   });
 });
 
+describe('servedWindow', () => {
+  beforeEach(() => {
+    resetClients();
+    list.mockReset();
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads llama.cpp's served window without asking for the listing", async () => {
+    vi.stubGlobal('fetch', routes({ '/props': { default_generation_settings: { n_ctx: 16384 } } }));
+    await expect(servedWindow({ ...endpoint, model: 'qwen' })).resolves.toBe(16384);
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('answers zero for a server it could not reach', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
+    await expect(servedWindow({ ...endpoint, model: 'qwen' })).resolves.toBe(0);
+  });
+
+  it('rejects with the reason of a signal that fires while it asks', async () => {
+    const fetch = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<never>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        }),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const stop = new AbortController();
+    const reason = new Error('run stopped');
+    const lookup = servedWindow({ ...endpoint, model: 'qwen' }, { signal: stop.signal });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    stop.abort(reason);
+    await expect(lookup).rejects.toBe(reason);
+  });
+});
+
 describe('servedSlots', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -558,6 +596,11 @@ describe('listModels', () => {
   it('reads an ai-router entry as a remote agent, and a plain one as before', async () => {
     list.mockResolvedValue(listing(AI_ROUTER_ENTRY, { id: 'qwen', object: 'model', owned_by: 'local' }));
     await expect(listModels(endpoint)).resolves.toEqual([{ id: 'qwen', contextLength: 0 }, AI_ROUTER_MODEL]);
+  });
+
+  it('skips a row with neither an id nor a name', async () => {
+    list.mockResolvedValue({ data: [{ object: 'model' }, 'junk', { id: 'qwen' }] });
+    await expect(listModels(endpoint)).resolves.toEqual([{ id: 'qwen', contextLength: 0 }]);
   });
 });
 
@@ -906,6 +949,22 @@ describe('probeEndpoint', () => {
     expect(fetch.mock.calls[0]?.[1].redirect).toBe('manual');
   });
 
+  it("reads a browser's opaque redirect as a redirect, with no status and nowhere named", async () => {
+    // A browser hands a refused redirect back as status zero and no headers, which no
+    // `Response` can be built with, so the two are laid over one.
+    const opaque = Object.defineProperties(new Response(null), {
+      type: { value: 'opaqueredirect' },
+      status: { value: 0 },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => opaque),
+    );
+    const { kind, status, message } = await failure(probeEndpoint({ baseUrl: 'http://local/v1' }));
+    expect({ kind, status }).toEqual({ kind: ProbeFailure.Redirected, status: undefined });
+    expect(message).not.toContain(' to ');
+  });
+
   it('refuses a URL that is not one before asking anybody', async () => {
     const fetch = answering('{}');
     for (const baseUrl of ['local/v1', 'ftp://local', 'http://user:pass@local/v1', 'http://local/v1?key=1']) {
@@ -1035,5 +1094,14 @@ describe('firstTokenLimitMs', () => {
   it('is no limit where there is none to multiply, or it is turned off', () => {
     expect(firstTokenLimitMs({})).toBeUndefined();
     expect(firstTokenLimitMs({ requestTimeoutSeconds: 60, firstTokenSeconds: 0 })).toBeUndefined();
+  });
+});
+
+describe('loadingMs', () => {
+  it('is the wait in milliseconds, zero for none or less, and absent where the config says nothing', () => {
+    expect(loadingMs({ loadingTimeoutSeconds: 2 })).toBe(2 * MS_PER_SECOND);
+    expect(loadingMs({ loadingTimeoutSeconds: 0 })).toBe(0);
+    expect(loadingMs({ loadingTimeoutSeconds: -1 })).toBe(0);
+    expect(loadingMs({})).toBeUndefined();
   });
 });

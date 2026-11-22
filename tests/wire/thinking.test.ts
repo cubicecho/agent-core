@@ -95,4 +95,13 @@ describe('stripThinking', () => {
     expect(stripThinking('<reasoning>x</reasoning>answer')).toBe('answer');
     expect(stripThinking('weighing</think>answer')).toBe('answer');
   });
+
+  it('leaves nothing of a fence that never closes', () => {
+    // Cut off mid-deliberation by `max_tokens`, so there is no answer to find.
+    expect(stripThinking('<think>weighing it up and running out of')).toBe('');
+  });
+
+  it('leaves an answer that has no fence in it alone', () => {
+    expect(stripThinking('Real Answer')).toBe('Real Answer');
+  });
 });

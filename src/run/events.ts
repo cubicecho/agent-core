@@ -229,8 +229,9 @@ export interface RunVia {
  * One thing that happened in a run, as a watcher receives it.
  *
  * @remarks
- * Every field but `id` and `link` is always present — the empty ones are `""` or `null` rather
- * than missing — so a client reads it without guarding each key.
+ * Every field but `id`, `link`, `level`, `loads`, `outcome`, `pending` and `via` is always present —
+ * the empty ones are `""` or `null` rather than missing — so a client reads it without guarding
+ * each key. Those seven belong to a few kinds each, and are absent on the rest.
  */
 export interface RunEvent {
   /** The run it belongs to. `emit` fills this in; a caller does not pass it. */
@@ -850,7 +851,7 @@ export interface RunMetrics {
    * against. Absent where no turn reported `pinned`.
    */
   unpinnedTurns?: number;
-  /** From the first event to the last, which a still-running run keeps moving. */
+  /** From the run's own first event to its last, which a still-running run keeps moving. */
   wallMs?: number;
   /** Prefill time summed over the turns. */
   promptMs?: number;
@@ -1028,11 +1029,16 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   // The last exchange's end, until another exchange begins, and whether a `done` said the run failed.
   let ending: RunEvent | undefined;
   let failed = false;
+  // The run's own first and last event, which `wallMs` spans: an inner run's are not its clock.
+  let first: RunEvent | undefined;
+  let last: RunEvent | undefined;
 
   for (const event of events) {
     if (isNested(event)) {
       continue;
     }
+    first ??= event;
+    last = event;
     if (event.kind === RunEventKind.Exchange) {
       metrics.exchanges++;
       ending = undefined;
@@ -1118,8 +1124,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   if (outcome) {
     metrics.outcome = outcome;
   }
-  if (events.length > 1) {
-    metrics.wallMs = events[events.length - 1].at - events[0].at;
+  if (first && last && first !== last) {
+    metrics.wallMs = last.at - first.at;
   }
   if (reportedPrompt > 0) {
     metrics.cacheHitRatio = reportedCached / reportedPrompt;

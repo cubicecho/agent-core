@@ -233,6 +233,18 @@ describe('watch', () => {
     // The run has not ended, so the next watcher still gets to read what it missed.
     expect(history('live')).toHaveLength(1);
   });
+
+  it("does not end a watcher on an inner run's done", async () => {
+    const childDone = stamp({ kind: RunEventKind.Done, ok: true }, 'child', 9, 100);
+    emit('parent', nestEvent(childDone, { runId: 'child', callId: 'call_1' }));
+    emit('parent', { kind: RunEventKind.Output, text: 'after' });
+    emit('parent', { kind: RunEventKind.Done, ok: true });
+    const seen: string[] = [];
+    for await (const event of watch('parent')) {
+      seen.push(`${event.kind}${isNested(event) ? ' (nested)' : ''}`);
+    }
+    expect(seen).toEqual(['done (nested)', 'output', 'done']);
+  });
 });
 
 describe('watch, cancelled', () => {
@@ -322,10 +334,12 @@ describe('cleanup', () => {
     expect(history('late')).toEqual([]);
   });
 
-  it('forgets a run on request', () => {
+  it('forgets a run on request, and ignores one it never heard of', () => {
     emit('doomed', { kind: RunEventKind.Output, text: 'a' });
     endRun('doomed');
     expect(history('doomed')).toEqual([]);
+    expect(() => endRun('never')).not.toThrow();
+    expect(history('never')).toEqual([]);
   });
 
   it('forgets a run that dies without ever saying done', () => {
@@ -419,6 +433,16 @@ describe('cleanup', () => {
     expect(history('live')).toHaveLength(1);
 
     await watcher.return(undefined);
+  });
+
+  it("keeps the outer run live through an inner run's done", () => {
+    vi.useFakeTimers();
+    emit('parent', { kind: RunEventKind.Turn });
+    const childDone = stamp({ kind: RunEventKind.Done, ok: true }, 'child', 9, 100);
+    emit('parent', nestEvent(childDone, { runId: 'child', callId: 'call_1' }));
+    // Past an ended run's retention, short of a live one's: a run read as ended would be gone.
+    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainMs * 2);
+    expect(history('parent')).toHaveLength(2);
   });
 });
 
@@ -517,6 +541,25 @@ describe('fold', () => {
       [RunEventKind.ToolResult, 'c1', 'one'],
     ]);
   });
+
+  it("keeps an inner run's text apart from the outer run's and from another inner run's", () => {
+    const thinking = (text: string, seq: number) => stamp({ kind: RunEventKind.Thinking, text }, 'parent', seq, seq);
+    const viaA = [{ runId: 'a', callId: 'call_a' }];
+    const viaB = [{ runId: 'b', callId: 'call_b' }];
+    const blocks = fold([
+      thinking('own ', 1),
+      { ...thinking('a1 ', 2), via: viaA },
+      { ...thinking('a2 ', 3), via: viaA },
+      { ...thinking('b1 ', 4), via: viaB },
+      thinking('own again', 5),
+    ]);
+    expect(blocks.map((block) => [block.text, block.via?.[0]?.runId])).toEqual([
+      ['own ', undefined],
+      ['a1 a2 ', 'a'],
+      ['b1 ', 'b'],
+      ['own again', undefined],
+    ]);
+  });
 });
 
 describe('runMetrics', () => {
@@ -552,6 +595,7 @@ describe('runMetrics', () => {
       emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', level, text: level });
     }
     emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', level: 'loud', text: 'unknown' });
+    emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', text: 'no level' });
     expect(runMetrics(history('r'))).toMatchObject({ serverWarnings: 2, serverErrors: 4, toolCalls: 0 });
   });
 
@@ -761,9 +805,46 @@ describe('runMetrics', () => {
     expect(runMetrics(history('plain'))).not.toHaveProperty('unpinnedTurns');
   });
 
+  it('files a broken cache that gave no reason under none-known', () => {
+    emit('r', {
+      kind: RunEventKind.Usage,
+      usage: {
+        promptTokens: 1,
+        completionTokens: 0,
+        totalTokens: 1,
+        turn: { prompt: 1, completion: 0, total: 1, cached: 0, finishReason: FinishReason.Stop, cacheBroken: true },
+      },
+    });
+    expect(runMetrics(history('r')).cacheBreakReasons).toEqual({ [CacheBreakReason.NoneKnown]: 1 });
+  });
+
   it('ignores usage a caller emitted without a turn report', () => {
     emit('r', { kind: RunEventKind.Usage, usage: { promptTokens: 10, completionTokens: 1, totalTokens: 11 } });
     expect(runMetrics(history('r'))).toMatchObject({ turns: 0, promptTokens: 0 });
+  });
+
+  it("leaves an inner run's events out of the outer run's metrics", () => {
+    const via = [{ runId: 'child', callId: 'call_1' }];
+    const metrics = runMetrics([
+      stamp({ kind: RunEventKind.Exchange, name: 'main' }, 'parent', 1, 0),
+      stamp({ kind: RunEventKind.Exchange, name: 'ask', via }, 'parent', 2, 1),
+      stamp({ kind: RunEventKind.ExchangeEnd, ok: false, outcome: ExchangeOutcome.Failed, via }, 'parent', 3, 2),
+      stamp({ kind: RunEventKind.Done, ok: false, via }, 'parent', 4, 3),
+      stamp({ kind: RunEventKind.ExchangeEnd, ok: true, outcome: ExchangeOutcome.Answered }, 'parent', 5, 4),
+    ]);
+    expect(metrics.exchanges).toBe(1);
+    expect(metrics.outcome).toBe(ExchangeOutcome.Answered);
+  });
+
+  it("times the outer run by its own events, not by an inner run's", () => {
+    const via = [{ runId: 'child', callId: 'call_1' }];
+    const metrics = runMetrics([
+      stamp({ kind: RunEventKind.Output, text: 'early', via }, 'parent', 1, 0),
+      stamp({ kind: RunEventKind.Exchange, name: 'main' }, 'parent', 2, 100),
+      stamp({ kind: RunEventKind.Done, ok: true }, 'parent', 3, 300),
+      stamp({ kind: RunEventKind.Output, text: 'late', via }, 'parent', 4, 5000),
+    ]);
+    expect(metrics.wallMs).toBe(200);
   });
 });
 
@@ -779,7 +860,6 @@ describe('nestEvent', () => {
       seq: 1,
       via: [{ runId: 'child', callId: 'call_1' }],
     });
-    expect(isNested(nested)).toBe(true);
     expect(childThinking.via).toBeUndefined();
   });
 
@@ -790,63 +870,12 @@ describe('nestEvent', () => {
       { runId: 'grandchild', callId: 'call_9' },
     ]);
   });
+});
 
-  it("reads a run's own events, with no via or an empty one, as not nested", () => {
+describe('isNested', () => {
+  it("reads an event with a hop as nested, and a run's own, with no via or an empty one, as not", () => {
+    expect(isNested({ via: [{ runId: 'child', callId: 'call_1' }] })).toBe(true);
     expect(isNested(stamp({ kind: RunEventKind.Output }, 'r', 1, 0))).toBe(false);
     expect(isNested({ via: [] })).toBe(false);
-  });
-
-  it("does not end a watcher on an inner run's done", async () => {
-    const childDone = stamp({ kind: RunEventKind.Done, ok: true }, 'child', 9, 100);
-    emit('parent', nestEvent(childDone, { runId: 'child', callId: 'call_1' }));
-    emit('parent', { kind: RunEventKind.Output, text: 'after' });
-    emit('parent', { kind: RunEventKind.Done, ok: true });
-    const seen: string[] = [];
-    for await (const event of watch('parent')) {
-      seen.push(`${event.kind}${isNested(event) ? ' (nested)' : ''}`);
-    }
-    expect(seen).toEqual(['done (nested)', 'output', 'done']);
-  });
-
-  it("keeps the outer run live through an inner run's wait and done", () => {
-    vi.useFakeTimers();
-    emit('parent', { kind: RunEventKind.Turn });
-    const childDone = stamp({ kind: RunEventKind.Done, ok: true }, 'child', 9, 100);
-    emit('parent', nestEvent(childDone, { runId: 'child', callId: 'call_1' }));
-    // Past an ended run's retention, short of a live one's: a run read as ended would be gone.
-    vi.advanceTimersByTime(EVENT_BUS_DEFAULTS.retainMs * 2);
-    expect(history('parent')).toHaveLength(2);
-  });
-
-  it("keeps an inner run's text apart from the outer run's and from another inner run's", () => {
-    const thinking = (text: string, seq: number) => stamp({ kind: RunEventKind.Thinking, text }, 'parent', seq, seq);
-    const viaA = [{ runId: 'a', callId: 'call_a' }];
-    const viaB = [{ runId: 'b', callId: 'call_b' }];
-    const blocks = fold([
-      thinking('own ', 1),
-      { ...thinking('a1 ', 2), via: viaA },
-      { ...thinking('a2 ', 3), via: viaA },
-      { ...thinking('b1 ', 4), via: viaB },
-      thinking('own again', 5),
-    ]);
-    expect(blocks.map((block) => [block.text, block.via?.[0]?.runId])).toEqual([
-      ['own ', undefined],
-      ['a1 a2 ', 'a'],
-      ['b1 ', 'b'],
-      ['own again', undefined],
-    ]);
-  });
-
-  it("leaves an inner run's events out of the outer run's metrics", () => {
-    const via = [{ runId: 'child', callId: 'call_1' }];
-    const metrics = runMetrics([
-      stamp({ kind: RunEventKind.Exchange, name: 'main' }, 'parent', 1, 0),
-      stamp({ kind: RunEventKind.Exchange, name: 'ask', via }, 'parent', 2, 1),
-      stamp({ kind: RunEventKind.ExchangeEnd, ok: false, outcome: ExchangeOutcome.Failed, via }, 'parent', 3, 2),
-      stamp({ kind: RunEventKind.Done, ok: false, via }, 'parent', 4, 3),
-      stamp({ kind: RunEventKind.ExchangeEnd, ok: true, outcome: ExchangeOutcome.Answered }, 'parent', 5, 4),
-    ]);
-    expect(metrics.exchanges).toBe(1);
-    expect(metrics.outcome).toBe(ExchangeOutcome.Answered);
   });
 });

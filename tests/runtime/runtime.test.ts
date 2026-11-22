@@ -3,6 +3,7 @@ import { CLIENT_POOL_DEFAULTS, EVENT_BUS_DEFAULTS, HOOK_DEFAULTS } from '../../s
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { type Create, endpoint, reply, says } from '../helpers.ts';
+import { NO_HINTS } from '../refusals.ts';
 
 const list = vi.fn();
 const create = vi.fn<Create>();
@@ -19,7 +20,6 @@ vi.mock('openai', async () => {
   return { default: Object.assign(Fake, actual.default) };
 });
 
-const OpenAI = (await import('openai')).default;
 const { configureClients, getClient } = await import('../../src/endpoint/client.ts');
 const { capabilitiesFor } = await import('../../src/endpoint/capabilities.ts');
 const { configureEvents, emit, history } = await import('../../src/run/events.ts');
@@ -29,14 +29,6 @@ const { resetAll } = await import('../../src/runtime/reset.ts');
 const { charsPerTokenFor } = await import('../../src/endpoint/calibration.ts');
 const { createRuntime, defaultRuntime } = await import('../../src/runtime/runtime.ts');
 
-/** The no-thinking hints refused by name. Built here, since this file mocks the SDK whole. */
-const refusal = () =>
-  new OpenAI.APIError(
-    400,
-    { message: 'Unrecognized request argument supplied: chat_template_kwargs' },
-    undefined,
-    undefined,
-  );
 /** Whether the no-thinking hints rode along on the nth call. */
 const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[nth][0];
 const body = {
@@ -72,7 +64,7 @@ describe('createRuntime', () => {
   it("latches the no-thinking hints for itself alone, across the retry's awaits", async () => {
     const one = createRuntime();
     const two = createRuntime();
-    create.mockRejectedValueOnce(refusal()).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     await one.ask(endpoint, 'qwen', 'system', 'user');
     // The refused call and its retry. The latch was written after an `await`, in `one`.
     expect(create).toHaveBeenCalledTimes(2);
@@ -108,14 +100,16 @@ describe('createRuntime', () => {
     configureHooks({ preface: "the process's" });
     const runtime = createRuntime({
       clients: { maxClients: 7 },
+      events: { maxEvents: 3 },
       hooks: { contextTokens: 50 },
     });
     // Not inherited from the default runtime: the part left out is the package's default.
     expect(runtime.configureClients()).toEqual({ ...CLIENT_POOL_DEFAULTS, maxClients: 7 });
-    expect(runtime.configureEvents().maxEvents).toBe(EVENT_BUS_DEFAULTS.maxEvents);
+    expect(runtime.configureEvents()).toEqual({ ...EVENT_BUS_DEFAULTS, maxEvents: 3 });
     expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_DEFAULTS.preface });
     // And nothing it was given reached the process.
     expect(configureClients().maxClients).toBe(2);
+    expect(configureEvents().maxEvents).toBe(5);
     expect(configureHooks()).toEqual({ contextTokens: HOOK_DEFAULTS.contextTokens, preface: "the process's" });
   });
 
@@ -225,7 +219,7 @@ describe("a runtime's context", () => {
 
   it('stays with a summariser that is called from outside the runtime', async () => {
     const runtime = createRuntime();
-    create.mockRejectedValueOnce(refusal()).mockResolvedValue(reply);
+    create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
     const summarise = runtime.summariser(endpoint, 'qwen');
     expect(await summarise('a transcript')).toBe('ok');
     // The refusal was latched where the summariser was made, not where it was called.

@@ -244,15 +244,18 @@ function valueEnd(text: string, start: number): number {
  * there.
  *
  * @remarks
- * An unclosed one runs to the end of the text; one that does not parse even repaired is undefined.
+ * One still open where the text ends is undefined, since the repair closes strings and not
+ * brackets; so is one that does not parse even repaired.
  */
 function readValue(text: string, at: number): { value: unknown; end: number } | undefined {
   const start = at + (text.slice(at).match(/^\s*/)?.[0].length ?? 0);
   if (text[start] !== '{' && text[start] !== '[') {
     return undefined;
   }
-  const closed = valueEnd(text, start);
-  const end = closed < 0 ? text.length : closed;
+  const end = valueEnd(text, start);
+  if (end < 0) {
+    return undefined;
+  }
   const value = looseJson(text.slice(start, end));
   return value === undefined ? undefined : { value, end };
 }

@@ -3,6 +3,7 @@ import { CLIENT_POOL_DEFAULTS, HOOK_DEFAULTS } from '../../src/core/defaults.ts'
 import { RunEventKind } from '../../src/run/events.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { type Create, endpoint, reply } from '../helpers.ts';
+import { NO_HINTS } from '../refusals.ts';
 
 const list = vi.fn();
 const create = vi.fn<Create>();
@@ -19,7 +20,6 @@ vi.mock('openai', async () => {
   return { default: Object.assign(Fake, actual.default) };
 });
 
-const OpenAI = (await import('openai')).default;
 const { configureClients, getClient } = await import('../../src/endpoint/client.ts');
 const { capabilitiesFor } = await import('../../src/endpoint/capabilities.ts');
 const { emit, history } = await import('../../src/run/events.ts');
@@ -34,14 +34,7 @@ const sentHints = (nth: number) => 'chat_template_kwargs' in create.mock.calls[n
 
 /** Teaches the process one latched refusal per module, so there is something to forget. */
 const latchEverything = async () => {
-  // The no-thinking hints refused by name. Built here, since this file mocks the SDK whole.
-  const refusal = new OpenAI.APIError(
-    400,
-    { message: 'Unrecognized request argument supplied: chat_template_kwargs' },
-    undefined,
-    undefined,
-  );
-  create.mockRejectedValueOnce(refusal).mockResolvedValue(reply);
+  create.mockRejectedValueOnce(NO_HINTS).mockResolvedValue(reply);
   await ask(endpoint, 'qwen', 'system', 'user');
   capabilitiesFor(endpoint).usageInStream = false;
   emit('run-a', { kind: RunEventKind.Output, text: 'one' });

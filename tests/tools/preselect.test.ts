@@ -19,23 +19,33 @@ beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
 describe('preselect', () => {
-  const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
+  /** One server of one tool, which is all a model's pick needs to be checked against. */
+  const oneTool = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
+  /**
+   * Four servers whose tools share no word. A term is only distinctive against other terms, so one
+   * tool alone can never be a confident match, and does not need to be.
+   */
+  const fourServers = [
+    { id: 's', label: 'S', tools: [{ name: 's__read', description: 'Read a file' }] },
+    { id: 'd', label: 'D', tools: [{ name: 'd__query', description: 'Query the database' }] },
+    { id: 'c', label: 'C', tools: [{ name: 'c__event', description: 'Add a calendar event' }] },
+    { id: 'w', label: 'W', tools: [{ name: 'w__fetch', description: 'Fetch a URL' }] },
+  ];
 
   it('hands back the catalogued names the small model picked', async () => {
     create.mockResolvedValue(answer('["s__read", "nope"]'));
-    expect(await preselect(config, 'small', catalog, 'read it')).toEqual(['s__read']);
+    expect(await preselect(config, 'small', oneTool, 'read it')).toEqual(['s__read']);
     expect(create.mock.calls[0][0]).toMatchObject({
       response_format: { type: JSON_SCHEMA_FORMAT, json_schema: { name: 'preselection' } },
     });
     create.mockResolvedValue(answer('{"tools": ["s__read"]}'));
-    expect(await preselect(config, 'small', catalog, 'read it')).toEqual(['s__read']);
+    expect(await preselect(config, 'small', oneTool, 'read it')).toEqual(['s__read']);
   });
 
-  it('picks nothing without a model, and nothing when the call fails', async () => {
-    expect(await preselect(config, '', catalog, 'read it')).toEqual([]);
+  it('picks nothing when the call fails', async () => {
     const notices: string[] = [];
     create.mockRejectedValueOnce(new Error('boom'));
-    const got = await preselect(config, 'small', catalog, 'x', {
+    const got = await preselect(config, 'small', oneTool, 'x', {
       onNotice: (n) => notices.push(n),
     });
     expect(got).toEqual([]);
@@ -48,7 +58,7 @@ describe('preselect', () => {
     controller.abort(reason);
     const notices: string[] = [];
     create.mockRejectedValueOnce(reason);
-    const picking = preselect(config, 'small', catalog, 'x', {
+    const picking = preselect(config, 'small', oneTool, 'x', {
       signal: controller.signal,
       onNotice: (n) => notices.push(n),
     });
@@ -57,16 +67,8 @@ describe('preselect', () => {
   });
 
   it("spends no round trip when the request's own words name the tool", async () => {
-    // A catalogue with something to discriminate between: a term is only distinctive against
-    // other terms, so one tool alone can never be a confident match, and does not need to be.
-    const desks = [
-      { id: 's', label: 'S', tools: [{ name: 's__read', description: 'Read a file' }] },
-      { id: 'd', label: 'D', tools: [{ name: 'd__query', description: 'Query the database' }] },
-      { id: 'c', label: 'C', tools: [{ name: 'c__event', description: 'Add a calendar event' }] },
-      { id: 'w', label: 'W', tools: [{ name: 'w__fetch', description: 'Fetch a URL' }] },
-    ];
     const notices: string[] = [];
-    const got = await preselect(config, 'small', desks, 'read the file', {
+    const got = await preselect(config, 'small', fourServers, 'read the file', {
       keywords: true,
       onNotice: (n) => notices.push(n),
     });
@@ -77,21 +79,15 @@ describe('preselect', () => {
   });
 
   it('holds the words to the ceiling, which their own cap can lower and cannot raise', async () => {
-    const desks = [
-      { id: 's', label: 'S', tools: [{ name: 's__read', description: 'Read a file' }] },
-      { id: 'd', label: 'D', tools: [{ name: 'd__query', description: 'Query the database' }] },
-      { id: 'c', label: 'C', tools: [{ name: 'c__event', description: 'Add a calendar event' }] },
-      { id: 'w', label: 'W', tools: [{ name: 'w__fetch', description: 'Fetch a URL' }] },
-    ];
     const prompt = 'read the file, query the database and fetch the url';
     // Sure of itself whatever it finds, so what is counted is the cap and nothing else.
     const sure = { minScore: 0, dropoff: Number.POSITIVE_INFINITY };
-    const raised = await preselect(config, 'small', desks, prompt, {
+    const raised = await preselect(config, 'small', fourServers, prompt, {
       maxPerLoad: 2,
       keywords: { ...sure, maxPerLoad: 3 },
     });
     expect(raised).toHaveLength(2);
-    const lowered = await preselect(config, 'small', desks, prompt, {
+    const lowered = await preselect(config, 'small', fourServers, prompt, {
       maxPerLoad: 2,
       keywords: { ...sure, maxPerLoad: 1 },
     });
@@ -101,13 +97,13 @@ describe('preselect', () => {
 
   it('falls through to the model when the words settle nothing', async () => {
     create.mockResolvedValue(answer('{"tools": ["s__read"]}'));
-    expect(await preselect(config, 'small', catalog, 'sing me a song', { keywords: true })).toEqual(['s__read']);
+    expect(await preselect(config, 'small', oneTool, 'sing me a song', { keywords: true })).toEqual(['s__read']);
     expect(create).toHaveBeenCalledTimes(1);
   });
 
   it('asks for no preselection at all without a model, words or not', async () => {
     // `toolSelectModel: ""` means don't preselect, and the cheap path does not reinterpret it.
-    expect(await preselect(config, '', catalog, 'read the file', { keywords: true })).toEqual([]);
+    expect(await preselect(config, '', oneTool, 'read the file', { keywords: true })).toEqual([]);
     expect(create).not.toHaveBeenCalled();
   });
 });
@@ -268,14 +264,14 @@ describe('preselectByKeywords', () => {
       },
     ];
     const reversed = [{ ...twins[0], tools: [...twins[0].tools].reverse() }];
-    const names = (catalog: CatalogServer[]) =>
-      preselectByKeywords(catalog, 'fetch the ledger').ranked.map((hit) => hit.name);
+    const names = (listed: CatalogServer[]) =>
+      preselectByKeywords(listed, 'fetch the ledger').ranked.map((hit) => hit.name);
     // A locale's order would put `desk__alpha` first; which locale is the host's to say.
     expect(names(twins)).toEqual(['desk__Zed', 'desk__alpha']);
     expect(names(reversed)).toEqual(['desk__Zed', 'desk__alpha']);
   });
 
-  it('words the catalogue does not use pick nothing, and say so', () => {
+  it('picks nothing for words the catalogue does not use, and says so', () => {
     // The words cannot tell a request that needs no tools from one whose words are not in the
     // catalogue, so neither is a confident answer and both go to the model.
     for (const prompt of ['Sing me a song about autumn', 'Could you have a look at that for me']) {
@@ -300,13 +296,19 @@ describe('preselectByKeywords', () => {
     expect(backwards.names).toEqual(forwards.names);
   });
 
-  it('plurals and camelCase meet the names they are asking for', () => {
+  it('meets the names a request asks for through plurals and camelCase', () => {
     // "files" against `fs__read_file`, and a camelCase catalogue split the same way as a snake one.
     expect(preselectByKeywords(desks, 'list the files in src').names).toContain('fs__list_directory');
     const camel: CatalogServer[] = [
       { id: '1', label: 'Notes', tools: [{ name: 'notes__createNote', description: 'Add a note' }] },
     ];
     expect(preselectByKeywords(camel, 'create a note').names).toEqual(['notes__createNote']);
+  });
+
+  it('picks nothing, and is not confident, with no tools or no words to weigh', () => {
+    const none = { names: [], confident: false, ranked: [] };
+    expect(preselectByKeywords([], 'read the file')).toEqual(none);
+    expect(preselectByKeywords(desks, '')).toEqual(none);
   });
 
   it('reads the request only as far as the preselector reads it', () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { formatToolError, oneCallPerMessage, preview, splitCalls } from '../../src/run/run-calls.ts';
-import { FUNCTION_TOOL, REASONING_CONTENT, Role } from '../../src/wire/wire.ts';
-import { assistant, type Message, pairsByPosition, singleCallRefusal, user } from '../helpers.ts';
+import { dropReasoning, formatToolError, oneCallPerMessage, preview, splitCalls } from '../../src/run/run-calls.ts';
+import { REASONING_CONTENT, Role } from '../../src/wire/wire.ts';
+import { assistant, pairsByPosition, result, singleCallRefusal, toolCall, user } from '../helpers.ts';
 
 describe('preview', () => {
   it('cuts long text and says how long it was', () => {
@@ -28,23 +28,24 @@ describe('formatToolError', () => {
   });
 });
 
-/** A call under an id, of a tool named the same. */
-const call = (id: string) => ({ id, type: FUNCTION_TOOL, function: { name: id, arguments: '{}' } });
-/** A tool's answer to one call. */
-const answer = (id: string): Message => ({ role: Role.Tool, tool_call_id: id, content: `${id} ran` });
 /** An assistant message making these calls, with something said and thought beside them. */
 const asking = (...ids: string[]) => ({
   role: Role.Assistant,
   content: 'Reading both.',
   [REASONING_CONTENT]: 'both files',
-  tool_calls: ids.map(call),
+  tool_calls: ids.map((id) => toolCall(id)),
 });
 
 describe('splitCalls', () => {
   it('writes one message per call, keeping the text and the scratchpad on the first', () => {
     expect(splitCalls(asking('a', 'b'))).toEqual([
-      { role: Role.Assistant, content: 'Reading both.', [REASONING_CONTENT]: 'both files', tool_calls: [call('a')] },
-      { role: Role.Assistant, content: null, tool_calls: [call('b')] },
+      {
+        role: Role.Assistant,
+        content: 'Reading both.',
+        [REASONING_CONTENT]: 'both files',
+        tool_calls: [toolCall('a')],
+      },
+      { role: Role.Assistant, content: null, tool_calls: [toolCall('b')] },
     ]);
   });
 
@@ -57,7 +58,13 @@ describe('splitCalls', () => {
 
 describe('oneCallPerMessage', () => {
   it('replays a message of two calls as two pairs that a single-call template renders', () => {
-    const transcript = [user('read a and b'), asking('a', 'b'), answer('a'), answer('b'), assistant('done')];
+    const transcript = [
+      user('read a and b'),
+      asking('a', 'b'),
+      result('a ran', 'a'),
+      result('b ran', 'b'),
+      assistant('done'),
+    ];
     expect(singleCallRefusal(transcript)).toBe('This model only supports single tool-calls at once!');
     const split = oneCallPerMessage(transcript);
     expect(singleCallRefusal(split)).toBeUndefined();
@@ -71,21 +78,37 @@ describe('oneCallPerMessage', () => {
   });
 
   it('pairs each result with its call by id, whatever order the results were written in', () => {
-    const split = oneCallPerMessage([user('go'), asking('a', 'b', 'c'), answer('c'), answer('a'), answer('b')]);
+    const split = oneCallPerMessage([
+      user('go'),
+      asking('a', 'b', 'c'),
+      result('c ran', 'c'),
+      result('a ran', 'a'),
+      result('b ran', 'b'),
+    ]);
     expect(pairsByPosition(split)).toBe(true);
   });
 
   it('keeps a result that answers none of the calls, after the last pair', () => {
-    const stray = answer('x');
-    const split = oneCallPerMessage([user('go'), asking('a', 'b'), answer('a'), stray, answer('b')]);
+    const stray = result('x ran', 'x');
+    const split = oneCallPerMessage([user('go'), asking('a', 'b'), result('a ran', 'a'), stray, result('b ran', 'b')]);
     expect(split.at(-1)).toBe(stray);
     expect(split).toHaveLength(6);
   });
 
   it('hands back the transcript itself when nothing needs splitting, and a split one unchanged', () => {
-    const transcript = [user('go'), asking('a'), answer('a'), assistant('done')];
+    const transcript = [user('go'), asking('a'), result('a ran', 'a'), assistant('done')];
     expect(oneCallPerMessage(transcript)).toBe(transcript);
-    const split = oneCallPerMessage([user('go'), asking('a', 'b'), answer('a'), answer('b')]);
+    const split = oneCallPerMessage([user('go'), asking('a', 'b'), result('a ran', 'a'), result('b ran', 'b')]);
     expect(oneCallPerMessage(split)).toBe(split);
+  });
+});
+
+describe('dropReasoning', () => {
+  it('copies only the messages that carry a scratchpad, and hands back a transcript with none as it is', () => {
+    const transcript = [user('go'), asking('a'), result('a ran', 'a')];
+    const dropped = dropReasoning(transcript);
+    expect(dropped[1]).not.toHaveProperty(REASONING_CONTENT);
+    expect(dropped[2]).toBe(transcript[2]);
+    expect(dropReasoning(dropped)).toBe(dropped);
   });
 });

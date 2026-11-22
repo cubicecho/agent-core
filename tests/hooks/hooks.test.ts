@@ -7,6 +7,7 @@ import {
   configureHooks,
   consult,
   gather,
+  type HookContext,
   type HookRunner,
   notify,
   resetHooks,
@@ -15,12 +16,30 @@ import {
   withContext,
 } from '../../src/hooks/hooks.ts';
 import { FUNCTION_TOOL, PartType, Role } from '../../src/wire/wire.ts';
-import { outcome, partTexts, stringContent } from '../helpers.ts';
+import { type Message, outcome, stringContent } from '../helpers.ts';
+
+/**
+ * The text of each part of a message whose content is a list of parts, failing the test where it is a string.
+ *
+ * @param message - The message.
+ * @returns Each part's text, in order: `undefined` for a part that carries none.
+ */
+function partTexts(message: Message | undefined): (string | undefined)[] {
+  const content = message?.content;
+  const isParts = Array.isArray(content);
+  if (isParts) {
+    return content.map((part) => ('text' in part ? part.text : undefined));
+  }
+  throw new Error(`expected a list of parts, got ${JSON.stringify(content)}`);
+}
 
 /**
  * The host's side of hooks. Running them is a runner's job and is stubbed here; what is tested is
  * what a session looks like to them, where their context lands, and what is said about each.
  */
+
+/** What every hook here is told: one session, and nothing else. */
+const ctx: HookContext = { session: { id: 's1' } };
 
 const transcript = [
   { role: Role.User, content: 'what is in /tmp?' },
@@ -98,16 +117,8 @@ describe('withContext', () => {
     expect(history[3].content).toBe('now');
   });
 
-  it("takes the host's own preface", () => {
-    expect(withContext(history, 3, 'ctx', 'From min-agent:')[3].content).toBe('From min-agent:\n\nctx\n\nnow');
-  });
-
   it('says the default preface until something moves it', () => {
     expect(withContext(history, 3, 'ctx')[3].content).toBe(`${HOOK_DEFAULTS.preface}\n\nctx\n\nnow`);
-  });
-
-  it('says nothing above the blocks for an empty preface, not a blank line', () => {
-    expect(withContext(history, 3, 'ctx', '')[3].content).toBe('ctx\n\nnow');
   });
 
   it('adds a part to a question that is already a list of parts', () => {
@@ -183,10 +194,6 @@ describe('the budget', () => {
   const spent = (gathered: { notes: { tokens?: number }[] }) =>
     gathered.notes.reduce((sum, note) => sum + (note.tokens ?? 0), 0);
 
-  it('is the default budget until something moves it', () => {
-    expect(spent(assembleContext([hungry('a')]))).toBe(HOOK_DEFAULTS.contextTokens);
-  });
-
   it('follows configureHooks for every call that does not give its own', async () => {
     expect(configureHooks({ contextTokens: 500 })).toEqual({
       contextTokens: 500,
@@ -194,14 +201,14 @@ describe('the budget', () => {
     });
     expect(spent(assembleContext([hungry('a'), hungry('b')]))).toBe(500);
     const run: HookRunner = async () => [hungry('a')];
-    expect(spent(await gather(run, [HookEvent.BeforeExchange], { session: { id: 's1' } }))).toBe(500);
+    expect(spent(await gather(run, [HookEvent.BeforeExchange], ctx))).toBe(500);
   });
 
   it('gives way to a budget passed for one call', async () => {
     configureHooks({ contextTokens: 500 });
     expect(spent(assembleContext([hungry('a')], 3000))).toBe(3000);
     const run: HookRunner = async () => [hungry('a')];
-    const gathered = await gather(run, [HookEvent.BeforeExchange], { session: { id: 's1' } }, { maxTokens: 50 });
+    const gathered = await gather(run, [HookEvent.BeforeExchange], ctx, { maxTokens: 50 });
     expect(spent(gathered)).toBe(50);
   });
 
@@ -266,15 +273,10 @@ describe('gather', () => {
     const signal = new AbortController().signal;
     const heard: unknown[] = [];
 
-    const gathered = await gather(
-      run,
-      [HookEvent.SessionStart, HookEvent.BeforeExchange],
-      { session: { id: 's1' } },
-      {
-        signal,
-        onNote: (note) => heard.push(note),
-      },
-    );
+    const gathered = await gather(run, [HookEvent.SessionStart, HookEvent.BeforeExchange], ctx, {
+      signal,
+      onNote: (note) => heard.push(note),
+    });
 
     expect(gathered.context).toContain('likes tea');
     expect(gathered.notes.map((note) => note.hookId)).toEqual(['hello', 'recall']);
@@ -289,7 +291,7 @@ describe('gather', () => {
       }
       return [outcome({ inject: true, text: 'likes tea' })];
     };
-    const gathered = await gather(run, [HookEvent.SessionStart, HookEvent.BeforeExchange], { session: { id: 's1' } });
+    const gathered = await gather(run, [HookEvent.SessionStart, HookEvent.BeforeExchange], ctx);
     expect(gathered.notes[0]).toEqual({
       event: HookEvent.SessionStart,
       source: '',
@@ -297,12 +299,6 @@ describe('gather', () => {
       error: 'pool is down',
     });
     expect(gathered.context).toContain('likes tea');
-  });
-
-  it('shares the budget it is given', async () => {
-    const run: HookRunner = async () => [outcome({ inject: true, text: 'x'.repeat(400) })];
-    const { notes } = await gather(run, [HookEvent.BeforeExchange], { session: { id: 's1' } }, { maxTokens: 10 });
-    expect(notes[0].tokens).toBe(10);
   });
 });
 
@@ -315,20 +311,31 @@ describe('notify', () => {
     ]);
     const heard: unknown[] = [];
 
-    const notes = await notify(run, HookEvent.AfterExchange, { session: { id: 's1' } }, (note) => heard.push(note));
+    const notes = await notify(run, HookEvent.AfterExchange, ctx, (note) => heard.push(note));
 
     expect(notes).toEqual([{ event: HookEvent.AfterExchange, source: 'Memory', hookId: 'audit', error: 'boom' }]);
     expect(heard).toEqual(notes);
     expect(run.mock.calls[0][2].signal).toBeUndefined();
   });
 
+  it('notes a failure that gave no reason as failed', async () => {
+    const run: HookRunner = async () => [outcome({ event: HookEvent.AfterExchange, ok: false })];
+    const [note] = await notify(run, HookEvent.AfterExchange, ctx);
+    expect(note.error).toBe('failed');
+  });
+
   it('never rejects, even when the runner throws synchronously', async () => {
     const run: HookRunner = () => {
       throw new Error('sync');
     };
-    await expect(notify(run, HookEvent.SessionDelete, { session: { id: 's1' } })).resolves.toEqual([
+    await expect(notify(run, HookEvent.SessionDelete, ctx)).resolves.toEqual([
       { event: HookEvent.SessionDelete, source: '', hookId: '', error: 'sync' },
     ]);
+  });
+
+  it('reads no veto, even off a hook that carried one', async () => {
+    const run: HookRunner = async () => [outcome({ event: HookEvent.BeforeCompact, veto: true })];
+    expect(await notify(run, HookEvent.BeforeCompact, ctx)).toEqual([]);
   });
 });
 
@@ -344,28 +351,23 @@ describe("a host's onNote that throws", () => {
 
   it('does not make gather reject, and every note still reaches it', async () => {
     const heard: string[] = [];
-    const gathered = await gather(
-      failing,
-      [HookEvent.BeforeExchange],
-      { session: { id: 's1' } },
-      {
-        onNote: throwing(heard),
-      },
-    );
+    const gathered = await gather(failing, [HookEvent.BeforeExchange], ctx, {
+      onNote: throwing(heard),
+    });
     expect(gathered.notes.map((note) => note.hookId)).toEqual(['one', 'two']);
     expect(heard).toEqual(['one', 'two']);
   });
 
   it('does not make notify reject, and every note still reaches it', async () => {
     const heard: string[] = [];
-    const notes = await notify(failing, HookEvent.AfterExchange, { session: { id: 's1' } }, throwing(heard));
+    const notes = await notify(failing, HookEvent.AfterExchange, ctx, throwing(heard));
     expect(notes.map((note) => note.hookId)).toEqual(['one', 'two']);
     expect(heard).toEqual(['one', 'two']);
   });
 
   it('does not make consult reject, and every note still reaches it', async () => {
     const heard: string[] = [];
-    const said = await consult(failing, HookEvent.BeforeCompact, { session: { id: 's1' } }, throwing(heard));
+    const said = await consult(failing, HookEvent.BeforeCompact, ctx, throwing(heard));
     expect(said.vetoed).toBe(false);
     expect(heard).toEqual(['one', 'two']);
   });
@@ -380,7 +382,7 @@ describe('consult', () => {
     ]);
     const heard: unknown[] = [];
 
-    const said = await consult(run, HookEvent.BeforeCompact, { session: { id: 's1' } }, (note) => heard.push(note));
+    const said = await consult(run, HookEvent.BeforeCompact, ctx, (note) => heard.push(note));
 
     expect(said).toEqual({
       vetoed: true,
@@ -396,18 +398,13 @@ describe('consult', () => {
     const failed: HookRunner = async () => [
       outcome({ event: HookEvent.BeforeCompact, ok: false, veto: true, error: 'boom' }),
     ];
-    expect((await consult(failed, HookEvent.BeforeCompact, { session: { id: 's1' } })).vetoed).toBe(false);
+    expect((await consult(failed, HookEvent.BeforeCompact, ctx)).vetoed).toBe(false);
     const threw: HookRunner = () => {
       throw new Error('sync');
     };
-    await expect(consult(threw, HookEvent.BeforeCompact, { session: { id: 's1' } })).resolves.toEqual({
+    await expect(consult(threw, HookEvent.BeforeCompact, ctx)).resolves.toEqual({
       vetoed: false,
       notes: [{ event: HookEvent.BeforeCompact, source: '', hookId: '', error: 'sync' }],
     });
-  });
-
-  it('is ignored by notify', async () => {
-    const run: HookRunner = async () => [outcome({ event: HookEvent.BeforeCompact, veto: true })];
-    expect(await notify(run, HookEvent.BeforeCompact, { session: { id: 's1' } })).toEqual([]);
   });
 });

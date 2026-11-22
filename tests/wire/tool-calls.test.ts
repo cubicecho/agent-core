@@ -3,12 +3,55 @@ import { callIdMinter } from '../../src/wire/call-ids.ts';
 import {
   ARGUMENTS_MALFORMED,
   ARGUMENTS_TRUNCATED,
+  looseJson,
   parseToolArguments,
   recoverToolCalls,
   ToolArgumentsError,
 } from '../../src/wire/tool-calls.ts';
 import { FinishReason, FUNCTION_TOOL } from '../../src/wire/wire.ts';
 import { MINTED_ID } from '../helpers.ts';
+
+describe('looseJson', () => {
+  it('reads JSON as written, leaving what a repair would change alone', () => {
+    expect(looseJson('{"note": "True, None and a, ] are text here"}')).toEqual({
+      note: 'True, None and a, ] are text here',
+    });
+    expect(looseJson('null')).toBeNull();
+  });
+
+  it('repairs the almost-JSON local models write', () => {
+    expect(looseJson("{'path': 'a.txt', 'force': True, 'depth': None,}")).toEqual({
+      path: 'a.txt',
+      force: true,
+      depth: null,
+    });
+    expect(looseJson('{path: "it\'s", list: [1, 2,],}')).toEqual({ path: "it's", list: [1, 2] });
+    expect(looseJson(`{'say': 'a "quoted" word'}`)).toEqual({ say: 'a "quoted" word' });
+    expect(looseJson("['a', 'b',]")).toEqual(['a', 'b']);
+  });
+
+  it('reads a quote escaped inside single quotes as the quote alone', () => {
+    expect(looseJson("{'say': 'it\\'s'}")).toEqual({ say: "it's" });
+  });
+
+  it('leaves what is inside a string alone', () => {
+    expect(looseJson(`{'text': 'True, } None: x'}`)).toEqual({ text: 'True, } None: x' });
+  });
+
+  it('opens JSON a string was holding, once', () => {
+    expect(looseJson(JSON.stringify('{"a":1}'))).toEqual({ a: 1 });
+    expect(looseJson(JSON.stringify(JSON.stringify('{"a":1}')))).toBe(JSON.stringify('{"a":1}'));
+  });
+
+  it('keeps a string that holds no JSON, or JSON that does not parse, as the string', () => {
+    expect(looseJson('"hello"')).toBe('hello');
+    expect(looseJson(JSON.stringify('{"a":1'))).toBe('{"a":1');
+  });
+
+  it('gives undefined where neither the text nor its repair parses', () => {
+    expect(looseJson('{nope')).toBeUndefined();
+  });
+});
 
 describe('parseToolArguments', () => {
   it('reads an object, and reads empty as none', () => {
@@ -23,38 +66,19 @@ describe('parseToolArguments', () => {
     expect(parseToolArguments(args)).toBe(args);
   });
 
-  it('opens JSON a string was holding', () => {
-    expect(parseToolArguments(JSON.stringify('{"a":1}'))).toEqual({ a: 1 });
+  it('reads a value a server parsed into something other than an object as its JSON', () => {
+    expect(() => parseToolArguments(42)).toThrow(expect.objectContaining({ kind: ARGUMENTS_MALFORMED }));
+    expect(() => parseToolArguments(true)).toThrow('not an object: true');
   });
 
-  it('repairs the almost-JSON local models write', () => {
-    expect(parseToolArguments("{'path': 'a.txt', 'force': True, 'depth': None,}")).toEqual({
-      path: 'a.txt',
-      force: true,
-      depth: null,
-    });
-    expect(parseToolArguments('{path: "it\'s", list: [1, 2,],}')).toEqual({
-      path: "it's",
-      list: [1, 2],
-    });
-    expect(parseToolArguments(`{'say': 'a "quoted" word'}`)).toEqual({ say: 'a "quoted" word' });
-  });
-
-  it('leaves what is inside a string alone', () => {
-    expect(parseToolArguments(`{'text': 'True, } None: x'}`)).toEqual({ text: 'True, } None: x' });
+  it('reads the arguments as looseJson does, repairs included', () => {
+    expect(parseToolArguments("{'path': 'a.txt', 'force': True,}")).toEqual({ path: 'a.txt', force: true });
   });
 
   it('refuses what is not an object, as malformed', () => {
     for (const raw of ['[1]', '{nope', '42']) {
-      const error = (() => {
-        try {
-          parseToolArguments(raw);
-        } catch (caught) {
-          return caught;
-        }
-      })();
-      expect(error).toBeInstanceOf(ToolArgumentsError);
-      expect((error as ToolArgumentsError).kind).toBe(ARGUMENTS_MALFORMED);
+      expect(() => parseToolArguments(raw)).toThrow(ToolArgumentsError);
+      expect(() => parseToolArguments(raw)).toThrow(expect.objectContaining({ kind: ARGUMENTS_MALFORMED }));
     }
     expect(() => parseToolArguments('[1]')).toThrow('not an object');
     expect(() => parseToolArguments('{nope')).toThrow('invalid tool arguments');
@@ -193,6 +217,30 @@ describe('recoverToolCalls', () => {
     expect(recoverToolCalls('The answer is {x}.', { names })).toEqual({
       content: 'The answer is {x}.',
       toolCalls: [],
+    });
+  });
+
+  it('leaves a marker with no readable call after it as text', () => {
+    for (const text of [
+      '<tool_call>"read"</tool_call>',
+      '<tool_call>{"name": 3}</tool_call>',
+      '<tool_call>{"name": "read", "arguments": {"path": "a"}',
+      '[TOOL_CALLS]read[ARGS][1]',
+      '<|python_tag|>nothing',
+      '[{"name": "read"}, 3]',
+      '{"name": "read"} and then some prose',
+      '```json\nnot a call\n```',
+      '```\n{"name": "read"} trailing\n```',
+    ]) {
+      expect(recoverToolCalls(text, { names })).toEqual({ content: text, toolCalls: [] });
+    }
+  });
+
+  it("takes a marker inside another call's arguments as part of that call", () => {
+    const text = '<tool_call>{"name": "read", "arguments": "[TOOL_CALLS]write[ARGS]{}"}</tool_call>';
+    expect(recoverToolCalls(text, { names })).toMatchObject({
+      content: '',
+      toolCalls: [{ function: { name: 'read', arguments: '[TOOL_CALLS]write[ARGS]{}' } }],
     });
   });
 });

@@ -12,6 +12,7 @@ import {
   type Create,
   type Message,
   outcome,
+  resolvedAgent,
   says,
   summarised,
   templateRefusal,
@@ -35,15 +36,12 @@ const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
 const { PRESELECTED_NOTICE } = await import('../../src/tools/discovery.ts');
 const { failedRun } = await import('../../src/run/failure.ts');
 const { preselect } = await import('../../src/tools/preselect.ts');
-const { capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
+const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { NO_KEY } = await import('../../src/endpoint/client.ts');
 const { SUMMARY_LEAD, summariser } = await import('../../src/context/compaction.ts');
 const { ask, askJson, taskCall } = await import('../../src/turn/side-task.ts');
 const { resetHints } = await import('../../src/index.ts');
-const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../../src/spec/spec.ts');
 
-type AgentSpec = import('../../src/spec/spec.ts').AgentSpec;
-type SideTask = import('../../src/turn/side-task.ts').SideTask;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A streamed turn that asks for one call. */
@@ -63,19 +61,6 @@ const calls = (name: string) => ({
 /** What the nth request put in its body. */
 const body = (nth: number) => create.mock.calls[nth][0];
 
-/** An agent whose own sampling is nothing a side task should pick up. */
-const agent = (tasks: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
-  const { spec, errors } = parseSpec({
-    spec: AGENT_SPEC,
-    endpoint: { baseUrl: 'http://main/v1' },
-    model: { model: 'big', temperature: 1, maxTokens: 4096, reasoningEffort: 'high' },
-    tasks,
-    ...extra,
-  });
-  expect(errors).toEqual([]);
-  return resolveAgentSpec([spec as AgentSpec]);
-};
-
 const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
 
 beforeEach(() => {
@@ -87,97 +72,10 @@ afterEach(() => {
   resetHints();
 });
 
-describe('taskCall', () => {
-  const endpoint = { baseUrl: 'http://side/v1', apiKey: '' };
-
-  it("hands back the task's own settings over the host's, and the host's where it has none", () => {
-    const signal = new AbortController().signal;
-    const task: SideTask = { model: 'small', endpoint, temperature: 0, reasoningEffort: 'low' };
-    const call = taskCall(task, { signal, maxTokens: 64, temperature: 0.9 });
-    expect(call.model).toBe('small');
-    expect(call.endpoint).toBe(endpoint);
-    expect(call.options).toEqual({ signal, maxTokens: 64, temperature: 0, reasoningEffort: 'low' });
-  });
-
-  it("leaves out what neither states, so the entry point's default is what applies", () => {
-    const call = taskCall({ model: 'small', endpoint });
-    expect(call.options).toEqual({});
-    // Zero is a value: no ceiling, and deterministic.
-    expect(taskCall({ model: 'small', endpoint, maxTokens: 0, temperature: 0 }).options).toEqual({
-      maxTokens: 0,
-      temperature: 0,
-    });
-  });
-
-  it("lays a task's extraBody over the host's key by key", () => {
-    const task: SideTask = { model: 'small', endpoint, extraBody: { top_k: 20, top_p: 0.8 } };
-    const call = taskCall(task, { extraBody: { top_p: 0.95, min_p: 0.05 } });
-    expect(call.options.extraBody).toEqual({ top_p: 0.8, min_p: 0.05, top_k: 20 });
-    // A task with none leaves the host's as it was given.
-    const host = { extraBody: { min_p: 0.05 } };
-    expect(taskCall({ model: 'small', endpoint }, host).options.extraBody).toBe(host.extraBody);
-  });
-
-  it('takes a resolved task as it comes', () => {
-    const { tasks } = agent({ title: { model: 'tiny', maxTokens: 32 } });
-    const call = taskCall(tasks.title);
-    expect(call).toEqual({
-      endpoint: { baseUrl: 'http://main/v1', apiKey: '' },
-      model: 'tiny',
-      options: { maxTokens: 32 },
-    });
-  });
-
-  it("keys a task on the agent's endpoint as the agent is keyed", () => {
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main' };
-    // The trailing slash is the same endpoint to a person and a different one to a cache.
-    const same = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1/', apiKey: '' } }, {}, main);
-    expect(same.endpoint).toEqual({ baseUrl: 'http://main/v1', apiKey: 'sk-main' });
-    // One entry for the endpoint, so a refusal the main turn learned is known to the side task.
-    expect(capabilitiesFor(same.endpoint)).toBe(capabilitiesFor(main));
-    // Without the agent the endpoint is sent as it stands, and that is a second entry.
-    const alone = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1', apiKey: '' } });
-    expect(capabilitiesFor(alone.endpoint)).not.toBe(capabilitiesFor(main));
-  });
-
-  it("never sends the agent's key to another endpoint, and keeps a key the task has", () => {
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main' };
-    const elsewhere = taskCall({ model: 'tiny', endpoint }, {}, main);
-    expect(elsewhere.endpoint).toEqual({ baseUrl: 'http://side/v1', apiKey: NO_KEY });
-    const keyed = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1', apiKey: 'sk-own' } }, {}, main);
-    expect(keyed.endpoint.apiKey).toBe('sk-own');
-  });
-
-  it("carries the endpoint's timeouts through", () => {
-    const slow = { baseUrl: 'http://side/v1', apiKey: '', requestTimeoutSeconds: 90 };
-    const call = taskCall({ model: 'tiny', endpoint: slow }, {}, { baseUrl: 'http://main/v1' });
-    expect(call.endpoint).toEqual({ ...slow, apiKey: NO_KEY });
-  });
-
-  it("gives the agent's fetch to a task on the agent's endpoint, as it gives the key", () => {
-    const fetch = async () => new Response('{}');
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main', fetch };
-    // A resolved task on the agent's own endpoint, which names no function.
-    const { tasks } = agent({ title: { model: 'tiny' } });
-    expect(taskCall(tasks.title, {}, main).endpoint).toEqual(main);
-  });
-
-  it("never gives the agent's fetch to another endpoint, and keeps a fetch the task has", () => {
-    const agentFetch = async () => new Response('{}');
-    const taskFetch = async () => new Response('{}');
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main', fetch: agentFetch };
-    expect(taskCall({ model: 'tiny', endpoint }, {}, main).endpoint).toEqual({ ...endpoint, apiKey: NO_KEY });
-    const own = { ...endpoint, fetch: taskFetch };
-    expect(taskCall({ model: 'tiny', endpoint: own }, {}, main).endpoint.fetch).toBe(taskFetch);
-    const sameOwn = { baseUrl: 'http://main/v1', apiKey: '', fetch: taskFetch };
-    expect(taskCall({ model: 'tiny', endpoint: sameOwn }, {}, main).endpoint.fetch).toBe(taskFetch);
-  });
-});
-
 describe("a side task's own settings", () => {
   it("sends the side task's defaults, not the agent's, for what a task leaves out", async () => {
     // The agent runs at temperature 1, 4096 tokens and high effort. None of it is the titler's.
-    const resolved = agent({
+    const resolved = resolvedAgent({
       title: { model: 'tiny' },
       compaction: { model: 'tiny' },
       toolSelect: { model: 'tiny' },
@@ -223,7 +121,7 @@ describe("a side task's own settings", () => {
       reasoningEffort: 'low',
       extraBody: { top_k: 20, presence_penalty: 1.5 },
     };
-    const resolved = agent({ title: stated, compaction: stated, toolSelect: stated });
+    const resolved = resolvedAgent({ title: stated, compaction: stated, toolSelect: stated });
     create.mockResolvedValue(answer('ok'));
 
     const title = taskCall(resolved.tasks.title, {}, resolved);
@@ -320,7 +218,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       ...extra,
     });
   const onDemand = (tasks: Record<string, unknown>) => ({
-    ...agent(tasks, { tools: { discovery: ToolDiscovery.OnDemand } }),
+    ...resolvedAgent(tasks, { tools: { discovery: ToolDiscovery.OnDemand } }),
     apiKey: 'sk-main',
   });
   /** The names of the tools the nth request declared. */
@@ -602,7 +500,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
 
   it("folds by tasks.compaction on the task's own settings", async () => {
     const config = {
-      ...agent({
+      ...resolvedAgent({
         compaction: { model: 'tiny', temperature: 0, endpoint: { baseUrl: 'http://side/v1' } },
       }),
       contextLength: 1000,
@@ -641,7 +539,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const events: RunEventInput[] = [];
     create.mockResolvedValueOnce(answer('read a to d')).mockResolvedValueOnce(says('done'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: loop,
       tools: [tool('s__read')],
       dispatch: async () => 'done',
@@ -674,7 +572,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   it('sends one system message, first, once a fold has happened', async () => {
     create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       systemPrompt: 'be brief',
       messages: long,
       dispatch: async () => 'done',
@@ -697,7 +595,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       ...long,
     ];
     await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       systemPrompt: 'be brief',
       messages: stored,
       dispatch: async () => 'done',
@@ -717,7 +615,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const run = vi.fn(async () => []);
     create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -731,7 +629,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const run = vi.fn(async () => []);
     create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -751,7 +649,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     );
     const folding = (extra: Partial<AgentLoopHooks>, events: RunEventInput[] = []) =>
       runAgentLoop({
-        config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+        config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
         messages: long,
         dispatch: async () => 'done',
         compact: true,
@@ -784,7 +682,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   it('does not fold without the task, however full the window', async () => {
     create.mockResolvedValue(says('hello'));
     await runAgentLoop({
-      config: { ...agent({ title: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ title: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -807,7 +705,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       .mockResolvedValueOnce(answer('what was said'))
       .mockResolvedValueOnce(says('hello'));
     await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: short,
       tools: [tool('s__read')],
       dispatch: async () => 'done',
@@ -822,7 +720,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const events: RunEventInput[] = [];
     create.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(says('hello'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -833,5 +731,24 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     expect(events.filter((event) => event.kind === RunEventKind.Notice).map((event) => event.text)).toEqual([
       expect.stringContaining('boom'),
     ]);
+  });
+
+  it('asks about a question sent in parts by its text parts alone, joined by lines', async () => {
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    await run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      messages: [
+        {
+          role: Role.User,
+          content: [
+            { type: 'text', text: 'read it' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: 'text', text: 'and the next one' },
+          ],
+        },
+      ],
+    });
+    expect(shown(0)).toContain('read it\\nand the next one');
+    expect(shown(0)).not.toContain('data:image/png');
   });
 });

@@ -1,11 +1,14 @@
 import OpenAI from 'openai';
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
 import type { HookOutcome } from '../src/hooks/hooks.ts';
+import { PART_OWNERS, PROMPT_ROLES, type StackedPart } from '../src/spec/parts.ts';
+import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../src/spec/spec.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
 import { toolName } from '../src/tools/tool-loading.ts';
 import { textOf } from '../src/wire/text.ts';
+import type { ToolCall } from '../src/wire/tool-calls.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire/wire.ts';
 
 /**
@@ -69,6 +72,28 @@ export const chunks = (...list: unknown[]) => ({
     yield* list.map(chunk);
   },
 });
+
+/**
+ * A streamed turn that asks for these calls, numbered `c0`, `c1`… in order.
+ *
+ * @param list - Each call's tool name and arguments text.
+ * @returns The stream.
+ */
+export const asksFor = (...list: [name: string, args: string][]) =>
+  chunks({
+    choices: [
+      {
+        delta: {
+          tool_calls: list.map(([name, args], index) => ({
+            index,
+            id: `c${index}`,
+            function: { name, arguments: args },
+          })),
+        },
+        finish_reason: FinishReason.ToolCalls,
+      },
+    ],
+  });
 
 /**
  * A streamed turn that answers in words, then reports ten tokens in and two out.
@@ -174,15 +199,6 @@ export const tool = (name: string): OpenAI.ChatCompletionTool => ({
 });
 
 /**
- * The function tools of a request's tool list, which is what every test that reads a definition wants.
- *
- * @param [tools] - The list, as a body declares it. Absent reads as none.
- * @returns The function tools, in order. A tool of any other type is left out.
- */
-export const functionTools = (tools: readonly OpenAI.ChatCompletionTool[] = []) =>
-  tools.filter((entry): entry is OpenAI.ChatCompletionFunctionTool => entry.type === FUNCTION_TOOL);
-
-/**
  * The names a request's tool list declares.
  *
  * @param [tools] - The list, as a body declares it. Absent reads as none.
@@ -242,21 +258,6 @@ export function stringContent(message: Message | undefined): string {
 }
 
 /**
- * The text of each part of a message whose content is a list of parts, failing the test where it is a string.
- *
- * @param message - The message.
- * @returns Each part's text, in order: `undefined` for a part that carries none.
- */
-export function partTexts(message: Message | undefined): (string | undefined)[] {
-  const content = message?.content;
-  const isParts = Array.isArray(content);
-  if (isParts) {
-    return content.map((part) => ('text' in part ? part.text : undefined));
-  }
-  throw new Error(`expected a list of parts, got ${JSON.stringify(content)}`);
-}
-
-/**
  * A tool as a catalogue lists it.
  *
  * @param name - The tool's name.
@@ -294,9 +295,10 @@ export const assistant = (content: string): Message => ({ role: Role.Assistant, 
  * A tool result.
  *
  * @param content - What the tool gave back.
- * @returns The message, answering a call with the id `c`.
+ * @param [id] - The id of the call it answers.
+ * @returns The message.
  */
-export const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
+export const result = (content: string, id = 'c'): Message => ({ role: Role.Tool, tool_call_id: id, content });
 
 /**
  * A fold's summary as `applyCompaction` writes it.
@@ -412,3 +414,79 @@ export const config = {
   temperature: 0.2,
   maxToolIterations: 4,
 };
+
+/**
+ * A parsed agent document, insisting it survived so a test never asserts against `null`.
+ *
+ * @param document - The document, as a host would read it.
+ * @param [options] - What `parseSpec` is told besides.
+ * @returns The spec. A document with errors fails the test where it is parsed.
+ */
+export function parsed(document: unknown, options?: Parameters<typeof parseSpec>[1]): AgentSpec {
+  const result = parseSpec(document, options);
+  expect(result.errors).toEqual([]);
+  if (!result.spec) {
+    throw new Error('unreachable');
+  }
+  return result.spec;
+}
+
+/**
+ * An agent's part, as stacking leaves it.
+ *
+ * @param name - Its name.
+ * @param content - Its text.
+ * @param [mark] - The part it adds to or replaces, where it does.
+ * @returns The part.
+ */
+export const stackedAgent = (name: string, content: string, mark?: StackedPart['mark']): StackedPart => ({
+  role: PROMPT_ROLES.system,
+  name,
+  content,
+  owner: PART_OWNERS.agent,
+  ...(mark && { mark }),
+});
+
+/**
+ * An app's part, as stacking leaves it.
+ *
+ * @param name - Its name, prefix included.
+ * @param content - Its text.
+ * @param [mark] - The part it adds to or replaces, where it does.
+ * @returns The part.
+ */
+export const stackedApp = (name: string, content: string, mark?: StackedPart['mark']): StackedPart => ({
+  ...stackedAgent(name, content, mark),
+  owner: PART_OWNERS.app,
+});
+
+/**
+ * A call off an assistant message, of a tool named for its id unless told otherwise.
+ *
+ * @param id - The call's id, which its result answers.
+ * @param [name] - The tool's name.
+ * @returns The call, with empty arguments.
+ */
+export const toolCall = (id: string, name = id): ToolCall => ({
+  id,
+  type: FUNCTION_TOOL,
+  function: { name, arguments: '{}' },
+});
+
+/**
+ * An agent resolved from one document, whose own sampling is nothing a side task should pick up.
+ *
+ * @param tasks - The document's `tasks`.
+ * @param [extra] - Other top-level fields, laid over the defaults.
+ * @returns The resolved agent.
+ */
+export const resolvedAgent = (tasks: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  resolveAgentSpec([
+    parsed({
+      spec: AGENT_SPEC,
+      endpoint: { baseUrl: 'http://main/v1' },
+      model: { model: 'big', temperature: 1, maxTokens: 4096, reasoningEffort: 'high' },
+      tasks,
+      ...extra,
+    }),
+  ]);

@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { nestEvent, RunEventKind, stamp } from '../../src/run/events.ts';
+import { ToolDiscovery } from '../../src/core/config.ts';
+import type { AgentLoopOptions } from '../../src/run/agent-loop.ts';
+import { nestEvent, type RunEvent, type RunEventInput, RunEventKind, stamp } from '../../src/run/events.ts';
 import {
+  asRemoteAgent,
   IDEMPOTENCY_HEADER,
   PROGRESS_FIELD,
   progressChunk,
   progressEvent,
   progressEvents,
   progressWarnings,
+  REMOTE_AGENT_NOTICE,
   remoteRun,
   withProgress,
 } from '../../src/run/remote.ts';
+import { CallIds } from '../../src/wire/call-ids.ts';
+import { catalog, config, user } from '../helpers.ts';
 
 /** The head every chunk of ai-router's stream for run `r1` carries. */
 const head = { id: 'chatcmpl-r1', created: 1_700_000_000, model: 'helper' };
@@ -58,6 +64,17 @@ describe('progressChunk and progressEvent', () => {
     const { exchange: _exchange, ...unplaced } = called;
     expect(progressEvent({ [PROGRESS_FIELD]: { event: unplaced } })).toBeUndefined();
   });
+
+  it("reads back a nested event's via, the hops it came by, unchanged", () => {
+    const nested = { ...called, via: [{ runId: 'inner', callId: 'Srv000000' }] };
+    expect(progressEvent(overTheWire(progressChunk(nested, head)))).toEqual(nested);
+  });
+
+  it('reads nothing off an event whose via is not a list of hops', () => {
+    for (const via of ['inner', [{ runId: 'inner' }], [{ runId: 'inner', callId: 7 }]]) {
+      expect(progressEvent({ [PROGRESS_FIELD]: { event: { ...called, via } } })).toBeUndefined();
+    }
+  });
 });
 
 describe('withProgress and progressEvents', () => {
@@ -92,6 +109,12 @@ describe('withProgress and progressEvents', () => {
 });
 
 describe('remoteRun', () => {
+  /** A remote half over `extraBody`, with every event it tells collected. */
+  const listening = (extraBody?: Record<string, unknown>, options?: Parameters<typeof remoteRun>[2]) => {
+    const told: (RunEventInput | RunEvent)[] = [];
+    return { remote: remoteRun(extraBody, (event) => told.push(event), options), told };
+  };
+
   it("asks for progress under the host's own router fields, and keeps a host's progress: false", () => {
     expect(remoteRun({ top_k: 20, agent_core: { task: 'triage' } }, () => {}).extraBody).toEqual({
       top_k: 20,
@@ -103,8 +126,7 @@ describe('remoteRun', () => {
   });
 
   it("forwards the server's events but its done, and holds back the loop's own for the server's steps", () => {
-    const told: unknown[] = [];
-    const remote = remoteRun(undefined, (event) => told.push(event));
+    const { remote, told } = listening();
     remote.onChunk(progressChunk(called, head));
     remote.onChunk(progressChunk(stamp({ kind: RunEventKind.Done, ok: true }, 'r1', 8, 43), head));
     remote.emit({ kind: RunEventKind.ToolCall, id: 'Srv000001', name: 'ask_user' });
@@ -114,8 +136,7 @@ describe('remoteRun', () => {
   });
 
   it("raises the server's warnings about the app's parts as notices", () => {
-    const told: unknown[] = [];
-    const remote = remoteRun(undefined, (event) => told.push(event));
+    const { remote, told } = listening();
     const warned = {
       agent_core: {
         warnings: [{ part: 'rules', rule: 'replace-not-allowed', message: 'Dropped rules.' }, { part: 'x' }],
@@ -128,15 +149,13 @@ describe('remoteRun', () => {
   });
 
   it('says every event of its own where the host turned progress off', () => {
-    const told: unknown[] = [];
-    const remote = remoteRun({ agent_core: { progress: false } }, (event) => told.push(event));
+    const { remote, told } = listening({ agent_core: { progress: false } });
     remote.emit({ kind: RunEventKind.Turn, text: 'turn 1' });
     expect(told).toEqual([{ kind: RunEventKind.Turn, text: 'turn 1' }]);
   });
 
   it('asks for progress and forwards it under the field it is given', () => {
-    const told: unknown[] = [];
-    const remote = remoteRun({ agent_run: { task: 'triage' } }, (event) => told.push(event), { field: 'agent_run' });
+    const { remote, told } = listening({ agent_run: { task: 'triage' } }, { field: 'agent_run' });
     expect(remote.extraBody).toEqual({ agent_run: { progress: true, task: 'triage' } });
     remote.onChunk(progressChunk(called, head));
     remote.onChunk(progressChunk(called, head, 'agent_run'));
@@ -149,29 +168,62 @@ describe('remoteRun', () => {
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-1' });
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-2' });
   });
-});
-
-describe('nested events over the wire', () => {
-  /** The server's tool call, republished from an inner run under the call it answers. */
-  const nested = { ...called, via: [{ runId: 'inner', callId: 'Srv000000' }] };
-
-  it('carries via through a chunk and an answer unchanged', () => {
-    expect(progressEvent(overTheWire(progressChunk(nested, head)))).toEqual(nested);
-    expect(progressEvents(overTheWire(withProgress({}, 'r1', [nested])))?.events).toEqual([nested]);
-  });
-
-  it('reads nothing off an event whose via is not a list of hops', () => {
-    for (const via of ['inner', [{ runId: 'inner' }], [{ runId: 'inner', callId: 7 }]]) {
-      expect(progressEvent(progressChunk({ ...called, via } as never, head))).toBeUndefined();
-    }
-  });
 
   it("forwards an inner run's done, which is not the server's own", () => {
-    const told: unknown[] = [];
-    const remote = remoteRun(undefined, (event) => told.push(event));
+    const { remote, told } = listening();
     const innerDone = stamp({ kind: RunEventKind.Done, ok: true }, 'inner', 3, 40);
     const event = stamp(nestEvent(innerDone, { runId: 'inner', callId: 'Srv000000' }), 'r1', 8, 41);
     remote.onChunk(progressChunk(event, head));
     expect(told).toEqual([event]);
+  });
+});
+
+describe('asRemoteAgent', () => {
+  /** An exchange's options against a remote agent, with whatever the test asks for laid on, and what it noticed. */
+  const remote = (given: Partial<AgentLoopOptions> = {}, extra: Partial<AgentLoopOptions['config']> = {}) => {
+    const notices: string[] = [];
+    const options: AgentLoopOptions = {
+      config: { ...config, remoteAgent: true, contextLength: 8192, ...extra },
+      messages: [user('hi')],
+      dispatch: async () => 'ok',
+      onEvent: (event: RunEventInput) => notices.push(event.text ?? ''),
+      ...given,
+    };
+    return { options, notices, set: asRemoteAgent(options) };
+  };
+
+  it('hands back the options themselves for a model that is not a remote agent', () => {
+    const options: AgentLoopOptions = { config, messages: [user('hi')], dispatch: async () => 'ok', compact: true };
+    expect(asRemoteAgent(options)).toBe(options);
+  });
+
+  it("sets aside what is the server's to do, and names in one notice what the app asked for", () => {
+    const asked = { compact: true, prune: true, preselect: true, maxContinuations: 2, catalog };
+    const { set, notices } = remote(
+      { ...asked, recoverToolCalls: true, callIds: CallIds.Minted },
+      { toolDiscovery: ToolDiscovery.OnDemand },
+    );
+    expect(set).toMatchObject({ compact: false, prune: false, preselect: false, maxContinuations: 0 });
+    expect(set.recoverToolCalls).toBe(false);
+    expect(set.config).toMatchObject({ toolDiscovery: ToolDiscovery.Eager, contextLength: 0 });
+    expect(notices).toHaveLength(1);
+    expect(notices[0].startsWith(REMOTE_AGENT_NOTICE)).toBe(true);
+    for (const name of [
+      'compact',
+      'prune',
+      'preselect',
+      'toolDiscovery',
+      'maxContinuations',
+      'recoverToolCalls',
+      'callIds',
+    ]) {
+      expect(notices[0]).toContain(name);
+    }
+  });
+
+  it('says nothing where the app asked for none of it, on-demand discovery with no catalogue included', () => {
+    const { set, notices } = remote({}, { toolDiscovery: ToolDiscovery.OnDemand });
+    expect(notices).toEqual([]);
+    expect(set.config.toolDiscovery).toBe(ToolDiscovery.Eager);
   });
 });

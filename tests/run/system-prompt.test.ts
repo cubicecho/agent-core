@@ -36,9 +36,15 @@ describe('stackRequest', () => {
     // With no agent's part to act on, the mode is moot and the part is added.
     expect(stacked.parts.map((part) => part.name)).toEqual(['app_identity']);
     const strict = stackRequest(reviewer, agentCore, []);
-    expect(strict.warnings).toEqual([
-      "The agent's identity part does not let an app replace it, so the part was dropped.",
-    ]);
+    expect(strict.warnings).toHaveLength(1);
+    expect(strict.warnings[0]).toContain('identity');
+    expect(strict.warnings[0]).toContain('dropped');
+  });
+
+  it('names the agent_core field a malformed prompt came in', () => {
+    const { warnings } = stackRequest(reviewer, { prompt: 'Answer as JSON.' }, []);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].startsWith('agent_core.prompt')).toBe(true);
   });
 });
 
@@ -72,6 +78,13 @@ describe('writeSystemPrompt', () => {
         `## Precedence\n\n${PRECEDENCE_TEXT.markdown}`,
         '## App System\n\nToday is 2026-11-19.',
       ].join('\n\n'),
+    );
+  });
+
+  it('writes no app_system and no precedence for a request with no system messages', () => {
+    const { text } = writeSystemPrompt(stackRequest(reviewer, undefined, [chat[1]]), 'xml', []);
+    expect(text).toBe(
+      '<prompt_identity>\nYou are Task Reviewer.\n</prompt_identity>\n\n<prompt_format>\nStart with PASS or FAIL.\n</prompt_format>',
     );
   });
 

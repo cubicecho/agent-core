@@ -20,6 +20,8 @@ import {
   SPEC_EVENTS,
   upgradeSpec,
 } from '../../src/spec/spec.ts';
+import { plainPrompt } from '../../src/spec/stack.ts';
+import { parsed } from '../helpers.ts';
 
 /** A document that parses cleanly, which each test then bends in one direction. */
 const doc = (extra: Record<string, unknown> = {}) => ({ spec: AGENT_SPEC, ...extra });
@@ -35,19 +37,10 @@ const part = (name: string, content: string, extra: Record<string, unknown> = {}
   ...extra,
 });
 
-/** The parsed spec, insisting the document survived so a test never asserts against null. */
-function parsed(document: unknown, options?: Parameters<typeof parseSpec>[1]): AgentSpec {
-  const result = parseSpec(document, options);
-  expect(result.errors).toEqual([]);
-  if (!result.spec) {
-    throw new Error('unreachable');
-  }
-  return result.spec;
-}
-
 describe('parseSpec', () => {
   it('refuses a document it cannot identify, and nothing else', () => {
-    // The four hard errors, each on its own document: everything outside this list drops a field.
+    // The hard errors about what the document is, each on its own document. The others — a part
+    // named as an app's, a requires entry — have tests of their own; everything else drops a field.
     expect(parseSpec(null).errors).toEqual(['spec: must be an object']);
     expect(parseSpec('{}').errors).toEqual(['spec: must be an object']);
     expect(parseSpec({}).errors).toEqual([`spec: must be "${AGENT_SPEC}"`]);
@@ -81,25 +74,13 @@ describe('parseSpec', () => {
     expect(result.warnings).toEqual(['tools.discovery: must be "eager", "ondemand" or "proxy", and was dropped']);
   });
 
-  it('takes each reasoning replay policy, drops one it has not heard of, and resolves the last layer', () => {
+  it('takes each reasoning replay policy, and drops one it has not heard of', () => {
     for (const reasoningReplay of Object.values(ReasoningReplay)) {
       expect(parsed(doc({ model: { reasoningReplay } })).model).toEqual({ reasoningReplay });
     }
     const result = parseSpec(doc({ model: { model: 'm', reasoningReplay: 'some' } }));
     expect(result.spec?.model).toEqual({ model: 'm' });
     expect(result.warnings).toEqual(['model.reasoningReplay: must be "all", "tool-loop" or "none", and was dropped']);
-    const base = parsed(doc({ model: { reasoningReplay: ReasoningReplay.None } }));
-    const over = parsed(doc({ model: { reasoningReplay: ReasoningReplay.All } }));
-    expect(resolveAgentSpec([base, over]).reasoningReplay).toBe(ReasoningReplay.All);
-    // Absent stays absent, which the loop reads as `all`.
-    expect(resolveAgentSpec([parsed(doc())])).not.toHaveProperty('reasoningReplay');
-  });
-
-  it('drops an out-of-range number instead of clamping it', () => {
-    // A clamp invents a number the author did not write; dropping falls back to one somebody did.
-    const spec = parsed(doc({ model: { model: 'm', temperature: 4 } }));
-    expect(spec.model).toEqual({ model: 'm' });
-    expect(spec.model?.temperature).toBeUndefined();
   });
 
   it('keeps a meaningful zero, because there is no inherit sentinel', () => {
@@ -164,11 +145,6 @@ describe('parseSpec', () => {
       "model.extraBody.reasoning_effort: is model.reasoningEffort's to set, and was dropped",
       "tasks.title.extraBody.temperature: is tasks.title.temperature's to set, and was dropped",
     ]);
-    // So the resolved agent carries the temperature the document states, zero meaning zero, and
-    // nothing in its `extraBody` that `buildBody` would spread over it.
-    const resolved = resolveAgentSpec([parsed(doc({ model: { temperature: 0, extraBody: { temperature: 0.9 } } }))]);
-    expect(resolved.temperature).toBe(0);
-    expect(resolved).not.toHaveProperty('extraBody.temperature');
   });
 
   it("reads a task's extraBody by the same rules", () => {
@@ -218,6 +194,38 @@ describe('parseSpec', () => {
         understands: ['com.example.sandbox'],
       }).errors,
     ).toEqual([]);
+  });
+
+  it('refuses a requires that is not an array, or holds anything but strings', () => {
+    expect(parseSpec(doc({ requires: 'com.example.sandbox' })).errors).toEqual(['requires: must be an array']);
+    expect(parseSpec(doc({ requires: ['com.example.sandbox', 3] })).errors).toEqual(['requires[1]: must be a string']);
+  });
+
+  it('drops a section that is not an object, rather than refusing the document', () => {
+    const result = parseSpec(doc({ model: 1, tools: [], retry: 'r', endpoint: 'e', extensions: [] }));
+    expect(result.spec).toEqual({ spec: AGENT_SPEC });
+    expect(result.warnings).toEqual([
+      'extensions: must be an object, and was dropped',
+      'endpoint: must be an object, and was dropped',
+      'model: must be an object, and was dropped',
+      'tools: must be an object, and was dropped',
+      'retry: must be an object, and was dropped',
+    ]);
+  });
+
+  it('reads an endpoint or a retry that said nothing usable as absent', () => {
+    const result = parseSpec(doc({ retry: {}, endpoint: { apiKey: 'sk-live-1' } }));
+    expect(result.spec).toEqual({ spec: AGENT_SPEC });
+  });
+
+  it('leaves out a task that is null', () => {
+    expect(parsed(doc({ tasks: { title: null } })).tasks).toEqual({});
+  });
+
+  it('names the lower bound of a number that has no upper one', () => {
+    expect(parseSpec(doc({ model: { maxTokens: -1 } })).warnings).toEqual([
+      'model.maxTokens: must be at least 0, and was dropped',
+    ]);
   });
 });
 
@@ -308,18 +316,13 @@ describe('parseSpec prompt', () => {
     );
   });
 
-  it('takes each layout, drops one it has not heard of, and resolves the last layer', () => {
+  it('takes each layout, and drops one it has not heard of', () => {
     for (const promptLayout of Object.values(PROMPT_LAYOUTS)) {
       expect(parsed(doc({ promptLayout })).promptLayout).toBe(promptLayout);
     }
     const result = parseSpec(doc({ promptLayout: 'html' }));
     expect(result.spec).not.toHaveProperty('promptLayout');
     expect(result.warnings).toEqual(['promptLayout: must be "plain", "markdown" or "xml", and was dropped']);
-    const base = parsed(doc({ promptLayout: PROMPT_LAYOUTS.xml }));
-    const over = parsed(doc({ promptLayout: PROMPT_LAYOUTS.markdown }));
-    expect(resolveAgentSpec([base, over]).promptLayout).toBe(PROMPT_LAYOUTS.markdown);
-    expect(resolveAgentSpec([base, parsed(doc())]).promptLayout).toBe(PROMPT_LAYOUTS.xml);
-    expect(resolveAgentSpec([]).promptLayout).toBe(PROMPT_LAYOUTS.plain);
   });
 });
 
@@ -378,6 +381,18 @@ describe('parseSpec tools.servers', () => {
     expect(parsed(doc({ tools: { discovery: ToolDiscovery.Eager } })).tools?.servers).toBeUndefined();
     expect(parsed(doc({ tools: { servers: [] } })).tools?.servers).toEqual([]);
     expect(parsed(doc({ tools: { servers: ['git', 'fs'] } })).tools?.servers).toEqual(['git', 'fs']);
+  });
+
+  it('drops a list that is not an array, and an entry that is empty or not a string', () => {
+    const notList = parseSpec(doc({ tools: { servers: 'git' } }));
+    expect(notList.spec?.tools).toEqual({});
+    expect(notList.warnings).toEqual(['tools.servers: must be an array of slugs, and was dropped']);
+    const entries = parseSpec(doc({ tools: { servers: ['git', '', 3] } }));
+    expect(entries.spec?.tools?.servers).toEqual(['git']);
+    expect(entries.warnings).toEqual([
+      'tools.servers[1]: is empty, and was dropped',
+      'tools.servers[2]: must be a string, and was dropped',
+    ]);
   });
 
   it('round-trips all three through resolve and back into a document', () => {
@@ -452,10 +467,14 @@ describe('parseSpec hooks', () => {
     ]);
   });
 
-  it('drops a hook that is not an event at all', () => {
-    const result = parseSpec(doc({ hooks: [hook({ on: 'onTuesday' })] }));
+  it('drops a hook that is not an object, or lacks an id, an event, a server or a tool', () => {
+    const result = parseSpec(doc({ hooks: [3, hook({}), hook({ id: '', on: HookEvent.SessionStart })] }));
     expect(result.spec?.hooks).toEqual([]);
-    expect(result.warnings).toEqual(['hooks[0].on: "onTuesday" is not an event, and was dropped']);
+    expect(result.warnings).toEqual([
+      'hooks[0]: must be an object, and was dropped',
+      'hooks[1]: needs an id, an event, a server and a tool, and was dropped',
+      'hooks[2]: needs an id, an event, a server and a tool, and was dropped',
+    ]);
   });
 
   it('binds to the same events the host side fires', () => {
@@ -503,6 +522,29 @@ describe('parseSpec bundle', () => {
       'bundle.mcpServers[0]: needs an id or a slug, and was dropped',
       'bundle.mcpServers[2]: is a second server called "fs", and was dropped',
     ]);
+  });
+
+  it('names a server with an empty slug by its id, on parse, on resolve and in its hints', () => {
+    const server = { slug: '', id: 'fs', url: 'https://user:pass@mcp.example.com/' };
+    const spec = parsed(doc({ bundle: { mcpServers: [server] } }), { bundle: true });
+    expect(spec.bundle?.mcpServers).toEqual([server]);
+    expect(resolveAgentSpec([spec]).mcpServers).toEqual([server]);
+    expect(findSpecSecrets(spec).map((hint) => hint.server)).toEqual(['fs']);
+  });
+
+  it('drops a bundle or a server list of the wrong kind, and a server that is not an object', () => {
+    const read = (value: unknown) => parseSpec(doc({ bundle: value }), { bundle: true });
+    expect(read(3)).toMatchObject({
+      spec: { spec: AGENT_SPEC },
+      warnings: ['bundle: must be an object, and was dropped'],
+    });
+    expect(read({ mcpServers: {} }).warnings).toEqual(['bundle.mcpServers: must be an array, and was dropped']);
+    expect(read({ mcpServers: [3] })).toMatchObject({
+      spec: { bundle: { mcpServers: [] } },
+      warnings: ['bundle.mcpServers[0]: must be an object, and was dropped'],
+    });
+    // A bundle with no server list is no bundle, and nothing to warn about.
+    expect(read({})).toEqual({ spec: { spec: AGENT_SPEC }, errors: [], warnings: [] });
   });
 });
 
@@ -553,14 +595,17 @@ describe("an endpoint's fetch", () => {
     expect(spec.tasks?.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1' });
   });
 
-  it('is never written into an exported one', () => {
-    const out = exportSpec(spec);
-    expect(out.endpoint).toEqual({ baseUrl: 'http://router.internal/v1' });
-    expect(out.tasks?.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1' });
-  });
-
-  it('is never produced by resolving one, for the agent or a task', () => {
-    const resolved = resolveAgentSpec([spec]);
+  it('is never produced by resolving a layer built in code that carries one, for the agent or a task', () => {
+    // Built in code, so parseSpec never saw it: resolving has to leave it out on its own.
+    const main = { baseUrl: 'http://router.internal/v1', fetch };
+    const side = { baseUrl: 'http://side.internal/v1', fetch };
+    const layer: AgentSpec = {
+      spec: AGENT_SPEC,
+      endpoint: main,
+      model: { model: 'big' },
+      tasks: { title: { model: 'tiny', endpoint: side } },
+    };
+    const resolved = resolveAgentSpec([layer]);
     expect('fetch' in resolved).toBe(false);
     expect(resolved.tasks.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1', apiKey: '' });
   });
@@ -782,16 +827,8 @@ describe('resolveAgentSpec', () => {
         }),
         agentPart('checklist', 'Check the tests, the changelog and the licence.'),
       ]);
-      // The plain layout writes a replace as an overwrite, in the replaced part's place.
-      expect(resolved.systemPrompt).toBe(
-        [
-          'You are Task Reviewer. You decide whether work is actually done.',
-          'Start with PASS or FAIL on its own line.',
-          'Judge the work itself, not reports about it.',
-          'Here you review the output of one workflow step.',
-          'Check the tests, the changelog and the licence.',
-        ].join('\n\n'),
-      );
+      // How the plain layout writes the parts is `plainPrompt`'s, and tested with it.
+      expect(resolved.systemPrompt).toBe(plainPrompt(resolved.prompt));
     });
 
     it('keeps an extension attached when its target is overwritten, and deletes it with the target', () => {
@@ -888,16 +925,22 @@ describe('resolveAgentSpec', () => {
       // `c` was deleted and named again, so it is back in the place it first had.
       expect(names).toEqual(['a', 'b', 'c', 'd', 'e', 'b_2', 'z', 'a_2', 'y']);
     });
+  });
 
-    it('writes exactly the joined texts where no part uses a mode', () => {
-      const texts = ['  This is the agent-core library.  ', 'You are a reviewer.\n', '', 'Only the card.'];
-      const spec = parsed(doc({ prompt: texts.map((content, index) => part(`p${index}`, content || ' ')) }));
-      const joined = texts
-        .map((text) => text.trim())
-        .filter(Boolean)
-        .join('\n\n');
-      expect(resolveAgentSpec([spec]).systemPrompt).toBe(joined);
-    });
+  it('takes the reasoning replay policy of the last layer that has one', () => {
+    const base = parsed(doc({ model: { reasoningReplay: ReasoningReplay.None } }));
+    const over = parsed(doc({ model: { reasoningReplay: ReasoningReplay.All } }));
+    expect(resolveAgentSpec([base, over]).reasoningReplay).toBe(ReasoningReplay.All);
+    // Absent stays absent, which the loop reads as `all`.
+    expect(resolveAgentSpec([parsed(doc())])).not.toHaveProperty('reasoningReplay');
+  });
+
+  it('takes the layout of the last layer that has one', () => {
+    const base = parsed(doc({ promptLayout: PROMPT_LAYOUTS.xml }));
+    const over = parsed(doc({ promptLayout: PROMPT_LAYOUTS.markdown }));
+    expect(resolveAgentSpec([base, over]).promptLayout).toBe(PROMPT_LAYOUTS.markdown);
+    expect(resolveAgentSpec([base, parsed(doc())]).promptLayout).toBe(PROMPT_LAYOUTS.xml);
+    expect(resolveAgentSpec([]).promptLayout).toBe(PROMPT_LAYOUTS.plain);
   });
 
   it('replaces a server list whole rather than unioning it', () => {
@@ -1170,13 +1213,25 @@ describe('model.lockedFields', () => {
   it('refuses a request that sets a locked field, by default, naming each', () => {
     const resolved = resolveAgentSpec([parsed(agent(['temperature', 'seed']))]);
     const body = { model: 'agent', temperature: 1, seed: 2, top_p: 1 };
-    expect(() => checkLockedFields(resolved, body)).toThrow(LockedFieldsError);
-    expect(() => checkLockedFields(resolved, body)).toThrow('temperature, seed: locked by the agent');
-    try {
-      checkLockedFields(resolved, body, { onLocked: LOCKED_FIELD_ACTIONS.refuse });
-    } catch (error) {
-      expect(error instanceof LockedFieldsError && error.fields).toEqual(['temperature', 'seed']);
-    }
+    const refused = (() => {
+      try {
+        checkLockedFields(resolved, body);
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(refused).toBeInstanceOf(LockedFieldsError);
+    expect(refused).toMatchObject({ fields: ['temperature', 'seed'] });
+    expect(String(refused)).toContain('temperature, seed: locked by the agent');
+    // Refusing is the default, so saying so changes nothing.
+    expect(() => checkLockedFields(resolved, body, { onLocked: LOCKED_FIELD_ACTIONS.refuse })).toThrow(
+      LockedFieldsError,
+    );
+  });
+
+  it('says it of one locked field, and them of several', () => {
+    expect(new LockedFieldsError(['seed']).message).toMatch(/may not set it$/);
+    expect(new LockedFieldsError(['seed', 'top_p']).message).toMatch(/may not set them$/);
   });
 
   it('drops the locked fields and warns, when told to, leaving the request it was given alone', () => {

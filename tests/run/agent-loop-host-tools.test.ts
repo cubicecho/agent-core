@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
-import { FinishReason, Role } from '../../src/wire/wire.ts';
-import { type Create, chunks, config, type Message, ofRole, says, tool, toolNames } from '../helpers.ts';
+import { Role } from '../../src/wire/wire.ts';
+import { asksFor, type Create, config, type Message, ofRole, says, tool, toolNames } from '../helpers.ts';
 
 const create = vi.fn<Create>();
 /** Only the SDK-touching half is replaced; the rest of the client module is pure. */
@@ -15,23 +15,6 @@ const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts')
 const { CALL_TOOL, LOAD_TOOLS } = await import('../../src/tools/tool-loading.ts');
 
 type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
-
-/** A turn that asks for these calls. */
-const calls = (...list: [name: string, args: string][]) =>
-  chunks({
-    choices: [
-      {
-        delta: {
-          tool_calls: list.map(([name, args], index) => ({
-            index,
-            id: `c${index}`,
-            function: { name, arguments: args },
-          })),
-        },
-        finish_reason: FinishReason.ToolCalls,
-      },
-    ],
-  });
 
 const question: Message[] = [{ role: Role.User, content: 'hi' }];
 const bodies = () => create.mock.calls.map(([body]) => body);
@@ -62,7 +45,7 @@ afterEach(() => resetCapabilities());
 
 describe('hostTools', () => {
   it('are declared after the tools in eager mode, and dispatched like them', async () => {
-    create.mockReturnValueOnce(calls(['ask_person', '{}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['ask_person', '{}'])).mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async (_call: ToolCallRequest) => 'yes');
     const result = await runAgentLoop({
       config,
@@ -82,8 +65,8 @@ describe('hostTools', () => {
 
   it('sit after `load_tools` on demand, ahead of every load, and are never counted as loads', async () => {
     create
-      .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__write"]}']))
-      .mockReturnValueOnce(calls(['ask_person', '{}']))
+      .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__write"]}']))
+      .mockReturnValueOnce(asksFor(['ask_person', '{}']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async (_call: ToolCallRequest) => 'yes');
     const result = await runAgentLoop({
@@ -114,7 +97,7 @@ describe('hostTools', () => {
   });
 
   it('cannot be loaded on demand, and a load naming one is told it is not in the catalogue', async () => {
-    create.mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["ask_person"]}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["ask_person"]}'])).mockReturnValueOnce(says('done'));
     const result = await runAgentLoop({
       config: onDemand,
       messages: question,
@@ -130,8 +113,8 @@ describe('hostTools', () => {
 
   it('are declared after `PROXY_TOOLS` on every turn proxied, the same array each time', async () => {
     create
-      .mockReturnValueOnce(calls([LOAD_TOOLS, '{"names":["s__read"]}']))
-      .mockReturnValueOnce(calls(['ask_person', '{}'], [CALL_TOOL, '{"name":"s__read","arguments":{}}']))
+      .mockReturnValueOnce(asksFor([LOAD_TOOLS, '{"names":["s__read"]}']))
+      .mockReturnValueOnce(asksFor(['ask_person', '{}'], [CALL_TOOL, '{"name":"s__read","arguments":{}}']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async (call: ToolCallRequest) => `${call.name} answered`);
     const result = await runAgentLoop({
@@ -158,7 +141,7 @@ describe('hostTools', () => {
   });
 
   it('are sorted in with `PROXY_TOOLS` under toolOrder, and stay put from turn to turn', async () => {
-    create.mockReturnValueOnce(calls(['ask_person', '{}'])).mockReturnValueOnce(says('done'));
+    create.mockReturnValueOnce(asksFor(['ask_person', '{}'])).mockReturnValueOnce(says('done'));
     await runAgentLoop({
       config: proxied,
       messages: question,
@@ -175,7 +158,7 @@ describe('hostTools', () => {
 
   it('cannot be reached through `call_tool`, and the refusal says to call it directly', async () => {
     create
-      .mockReturnValueOnce(calls([CALL_TOOL, '{"name":"ask_person","arguments":{}}']))
+      .mockReturnValueOnce(asksFor([CALL_TOOL, '{"name":"ask_person","arguments":{}}']))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async () => 'yes');
     const result = await runAgentLoop({

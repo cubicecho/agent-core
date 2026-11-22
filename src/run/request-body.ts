@@ -35,6 +35,8 @@ const SYSTEM_JOIN = '\n\n';
  * said after.
  */
 export function singleSystem(messages: OpenAI.ChatCompletionMessageParam[]): OpenAI.ChatCompletionMessageParam[] {
+  // `system` alone: the templates this is for raise on a second `system`, and a `developer` merged
+  // into one would be sent as a role the app did not write.
   const end = messages.findIndex((message) => message.role !== Role.System);
   const lead = end === -1 ? messages.length : end;
   if (lead < 2) {

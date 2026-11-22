@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { defineSpecColumns } from '../../src/spec/columns.ts';
 import { PROMPT_LAYOUTS, PROMPT_MODES, PROMPT_ROLES } from '../../src/spec/parts.ts';
-import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../../src/spec/spec.ts';
+import { AGENT_SPEC, type AgentSpec, resolveAgentSpec } from '../../src/spec/spec.ts';
+import { parsed } from '../helpers.ts';
 
 /** One column per marker a host stores today, beside the same columns with none. */
 interface Row {
@@ -17,16 +18,6 @@ const MARKED = defineSpecColumns<Row>({
   toolDiscovery: { path: 'tools.discovery', inherit: 'inherit' },
   temperature: { path: 'model.temperature', inherit: null },
 });
-
-/** The parsed spec, insisting the document survived so a test never asserts against null. */
-function parsed(document: unknown): AgentSpec {
-  const result = parseSpec(document);
-  expect(result.errors).toEqual([]);
-  if (!result.spec) {
-    throw new Error('unreachable');
-  }
-  return result.spec;
-}
 
 describe('defineSpecColumns', () => {
   // Each marker against the values a column holds that are easiest to mistake for it.
@@ -122,18 +113,6 @@ describe('defineSpecColumns', () => {
     });
     expect(table.toLayer({ model: '  ', maxTokens: -5 })).toEqual({ spec: AGENT_SPEC });
     expect(table.toLayer({ model: ' qwen ', maxTokens: 0 }).model).toEqual({ model: 'qwen', maxTokens: 0 });
-  });
-
-  it('cannot override a stated temperature through an extraBody column', () => {
-    const table = defineSpecColumns<{ temperature: number; extraBody: Record<string, unknown> }>({
-      temperature: { path: 'model.temperature', inherit: -1 },
-      extraBody: { path: 'model.extraBody' },
-    });
-    // toLayer writes the row as it is, and resolving is what holds the rule.
-    const layer = table.toLayer({ temperature: 0, extraBody: { temperature: 0.9, top_k: 40 } });
-    const resolved = resolveAgentSpec([layer]);
-    expect(resolved.temperature).toBe(0);
-    expect(resolved.extraBody).toEqual({ top_k: 40 });
   });
 
   it("writes task-server's profile layer as its hand-written projection does", () => {
@@ -285,6 +264,10 @@ describe('defineSpecColumns', () => {
           { role: PROMPT_ROLES.system, name: 'rules', content: 'Judge the work.' },
         ],
       };
+      expect(table.toLayer({ identity: 'Be brief.', rules: 'Judge the work.' }).prompt).toEqual([
+        { role: PROMPT_ROLES.system, name: 'identity', content: 'Be brief.' },
+        { role: PROMPT_ROLES.system, name: 'rules', content: 'Judge the work.' },
+      ]);
       expect(table.fromLayer(spec)).toEqual({ identity: 'Be brief.', rules: 'Judge the work.' });
       expect(table.dropped(spec)).toEqual([
         { path: 'prompt[0]', value: project },
@@ -328,6 +311,21 @@ describe('defineSpecColumns', () => {
         extensions: { 'com.example.host': { anything: true } },
       });
       expect(table.dropped(spec)).toEqual([{ path: 'tools.maxIterations', value: 4 }]);
+    });
+
+    it('leaves alone a prompt part the host reads by hand', () => {
+      const table = defineSpecColumns<Row>(
+        { model: { path: 'model.model', inherit: '' } },
+        { handled: ['prompt.lane'] },
+      );
+      const spec = parsed({
+        spec: AGENT_SPEC,
+        prompt: [
+          { role: PROMPT_ROLES.system, name: 'lane', content: 'Review.' },
+          { role: PROMPT_ROLES.system, name: 'rules', content: 'Judge.' },
+        ],
+      });
+      expect(table.dropped(spec).map((drop) => drop.path)).toEqual(['prompt[1]']);
     });
 
     it('reports a key from a later version of the format, which the parser carried through', () => {

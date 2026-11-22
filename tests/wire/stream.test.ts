@@ -96,20 +96,6 @@ describe('streamTurn', () => {
     expect(turn.content).toBe('answer');
   });
 
-  it('keeps a scratchpad cut off at the ceiling out of the answer', async () => {
-    const turn = await streamTurn(
-      clientOf(() =>
-        chunks(text('<think>still weighing'), chunk({ choices: [{ delta: {}, finish_reason: FinishReason.Length }] })),
-      ),
-      body,
-    );
-    expect(turn).toMatchObject({
-      content: '',
-      reasoning: 'still weighing',
-      finishReason: FinishReason.Length,
-    });
-  });
-
   it('starts in the scratchpad when the template opened the fence', async () => {
     const output: string[] = [];
     const turn = await streamTurn(

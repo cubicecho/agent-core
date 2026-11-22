@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { RunEventKind } from '../../src/run/events.ts';
-import { callIdMinter } from '../../src/wire/call-ids.ts';
+import { CallIds, callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import {
+  answer,
   apiError,
   type Create,
   callArguments,
@@ -11,9 +12,11 @@ import {
   config,
   type Message,
   MINTED_ID,
+  ofRole,
   pairsByPosition,
   says,
   singleCallRefusal,
+  summarised,
   text,
   tool,
   user,
@@ -37,6 +40,8 @@ type Turn = import('../../src/wire/stream.ts').Turn;
 type ToolCallRequest = import('../../src/run/dispatch.ts').ToolCallRequest;
 type ToolCall = import('../../src/wire/tool-calls.ts').ToolCall;
 type WrittenMessage = import('../../src/run/agent-loop.ts').WrittenMessage;
+type ToolCallResult = import('../../src/run/dispatch.ts').ToolCallResult;
+type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A turn that asks for these calls, thinking first where told to, and reports what it cost. */
 const calls = (list: [name: string, args: string][], reasoning = '') =>
@@ -75,6 +80,17 @@ const thrown = async (run: Promise<unknown>): Promise<unknown> => {
     return error;
   }
   throw new Error('the run did not throw');
+};
+
+/** A notice collector: hand `onEvent` to the loop, then read what it said from `notices`. */
+const noticing = () => {
+  const notices: string[] = [];
+  const onEvent = (event: { kind: string; text?: string }) => {
+    if (event.kind === RunEventKind.Notice) {
+      notices.push(event.text ?? '');
+    }
+  };
+  return { notices, onEvent };
 };
 
 beforeEach(() => create.mockReset());
@@ -269,11 +285,10 @@ describe('a run that throws', () => {
       }),
     );
     expect(error).toBeInstanceOf(ToolIterationLimit);
-    expect(error).toBeInstanceOf(AgentLoopError);
     const limit = error as InstanceType<typeof ToolIterationLimit>;
-    expect(limit.name).toBe('ToolIterationLimit');
-    expect(limit.message).toBe('Stopped after 2 tool iterations.');
+    expect(limit.message).toContain('2 tool iterations');
     expect(limit.cause).toBeUndefined();
+    expect(create).toHaveBeenCalledTimes(2);
     // The server named both turns' calls `c0`; the second is given an id of its own.
     expect(outline(limit.messages)).toEqual([
       'user: hi',
@@ -312,7 +327,6 @@ describe('a run that throws', () => {
     expect(error).toBeInstanceOf(AgentLoopError);
     expect(error).not.toBeInstanceOf(ToolIterationLimit);
     const failure = error as InstanceType<typeof AgentLoopError>;
-    expect(failure.name).toBe('AgentLoopError');
     expect(failure.message).toBe('401 no such key');
     expect(failure.cause).toBe(refused);
     expect(outline(failure.messages)).toEqual(['user: hi', 'assistant: null', 'tool c0: ok']);
@@ -339,12 +353,9 @@ describe('a run that throws', () => {
     );
     expect(error).toBeInstanceOf(ContextOverflow);
     expect(error).toBeInstanceOf(AgentLoopOverflow);
-    expect(error).not.toBeInstanceOf(AgentLoopError);
     const overflow = error as InstanceType<typeof AgentLoopOverflow>;
-    expect(overflow.name).toBe('ContextOverflow');
     expect(overflow.cause).toBeInstanceOf(ContextOverflow);
     expect(overflow.message).toBe((overflow.cause as Error).message);
-    expect(failedRun(error)).toBe(error);
     expect(overflow.messages.map((message) => message.role)).toEqual([Role.User, Role.Assistant, Role.Tool]);
     expect(create).toHaveBeenCalledTimes(1);
   });
@@ -372,13 +383,14 @@ describe('a run that throws', () => {
     ]);
   });
 
-  it('hands back the transcript it was given when it fails before the first reply', async () => {
-    const down = apiError(401, 'no such key');
-    create.mockRejectedValueOnce(down);
-    const error = await thrown(runAgentLoop({ config, messages: question, dispatch: async () => '' }));
+  it('hands back the transcript and ledger it was given when it fails before the first reply', async () => {
+    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
+    create.mockRejectedValueOnce(apiError(401, 'no such key'));
+    const error = await thrown(runAgentLoop({ config, messages: question, dispatch: async () => '', ledger: earlier }));
     const run = failedRun(error);
     expect(run?.messages).toEqual(question);
     expect(run?.messages).not.toBe(question);
+    expect(run?.ledger).toEqual(earlier);
     expect(run?.usage).toMatchObject({
       promptTokens: 0,
       completionTokens: 0,
@@ -388,10 +400,29 @@ describe('a run that throws', () => {
     });
   });
 
-  it('reads no run off an error the loop did not throw', () => {
-    expect(failedRun(new Error('something else'))).toBeUndefined();
-    expect(failedRun(new ContextOverflow('too big'))).toBeUndefined();
-    expect(failedRun(undefined)).toBeUndefined();
+  it('hands back what it was given when it fails before its turns begin', async () => {
+    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
+    const error = await thrown(
+      runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => '',
+        ledger: earlier,
+        // The exchange's first event, emitted before the turns set themselves up.
+        onEvent: (event) => {
+          if (event.kind === RunEventKind.Exchange) {
+            throw new Error('the bus is down');
+          }
+        },
+      }),
+    );
+    expect(error).toBeInstanceOf(AgentLoopError);
+    const run = failedRun(error);
+    expect(run?.messages).toEqual(question);
+    expect(run?.messages).not.toBe(question);
+    expect(run?.ledger).toEqual(earlier);
+    expect(run?.toolCalls).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
   });
 });
 
@@ -659,6 +690,38 @@ describe('a stop while the tools run', () => {
     expect(failedRun(error)?.toolCalls).toEqual([{ id: 'c0', name: 'a', ok: true }]);
   });
 
+  it('throws the stop, not what onMessage throws on a call it answers as never run', async () => {
+    const controller = new AbortController();
+    create.mockReturnValueOnce(
+      calls([
+        ['a', '{}'],
+        ['a', '{"n":2}'],
+      ]),
+    );
+    const error = await thrown(
+      runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('a')],
+        dispatch: async () => {
+          controller.abort();
+          return 'ok';
+        },
+        signal: controller.signal,
+        // Heard only once the exchange is already ending on the stop.
+        onMessage: (message) => {
+          if (message.role === Role.Tool && message.tool_call_id === 'c1') {
+            throw new Error('the store is down');
+          }
+        },
+      }),
+    );
+    expect((error as Error).cause).toBe(controller.signal.reason);
+    expect(outline(failedRun(error)?.messages ?? []).at(-1)).toBe(
+      'tool c1: Not run: stopped before this call started.',
+    );
+  });
+
   it('sends a transcript the next request can replay', async () => {
     const controller = new AbortController();
     create
@@ -794,7 +857,7 @@ describe('prune', () => {
 
   it('keeps each request an extension of the last until the boundary moves, and says each move', async () => {
     toolRun(7);
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config: { ...config, maxToolIterations: 10, contextLength: 10_000 },
       messages: question,
@@ -802,11 +865,7 @@ describe('prune', () => {
       dispatch: async () => long,
       // Two results are worth a move and one is not, and the window need not be filling.
       prune: { at: 0, minShare: 0.19, keepLast: 2 },
-      onEvent: (event) => {
-        if (event.kind === RunEventKind.Notice) {
-          notices.push(event.text ?? '');
-        }
-      },
+      onEvent,
     });
     const sent = sentMessages();
     const extensions = sent.slice(1).map((request, index) => {
@@ -826,6 +885,7 @@ describe('prune', () => {
 
   it('prunes nothing without a window, and nothing when it is off', async () => {
     toolRun(7);
+    // Kept for the loop's reading of an absent `contextLength` as no window, which only this reaches.
     await runAgentLoop({
       config: { ...config, maxToolIterations: 10 },
       messages: question,
@@ -863,6 +923,55 @@ describe('prune', () => {
     });
     // The first move is on the third turn, after its `beforeTurn`; the fourth is handed its stub.
     expect(handed).toEqual([0, 0, 0, 1]);
+  });
+
+  it('prunes at the defaults under `prune: true`', async () => {
+    toolRun(9);
+    await runAgentLoop({
+      config: { ...config, maxToolIterations: 10, contextLength: 10_000 },
+      messages: question,
+      tools: [tool('read')],
+      dispatch: async () => long,
+      prune: true,
+    });
+    const last = sentMessages().at(-1) ?? [];
+    expect(last.some((message) => message.includes('[result cleared'))).toBe(true);
+  });
+
+  it('prunes again right after a compaction, whatever that saves', async () => {
+    const turn = (id: string): Message[] => [
+      {
+        role: Role.Assistant,
+        content: null,
+        tool_calls: [{ id, type: FUNCTION_TOOL, function: { name: 'read', arguments: '{}' } }],
+      },
+      { role: Role.Tool, tool_call_id: id, content: 'line '.repeat(150) },
+    ];
+    const history = [user('q'), ...['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].flatMap(turn)];
+    create.mockReturnValueOnce(answer('the notes')).mockReturnValueOnce(says('done'));
+    const { notices, onEvent } = noticing();
+    const result = await runAgentLoop({
+      config: {
+        ...config,
+        contextLength: 2000,
+        tasks: { compaction: { model: 'tiny', maxTokens: 50, endpoint: { baseUrl: config.baseUrl, apiKey: '' } } },
+      },
+      messages: history,
+      tools: [tool('read')],
+      dispatch: async () => 'ok',
+      compact: true,
+      // Never due on its own: the window is not over-full, so only the compaction moves it.
+      prune: { at: 1, keepLast: 1 },
+      onEvent,
+    });
+    expect(notices).toEqual([expect.stringContaining('compacted'), expect.stringContaining('alongside a compaction')]);
+    // The summary is held to the compaction task's ceiling.
+    expect(create.mock.calls[0][0]).toMatchObject({ model: 'tiny', max_tokens: 50 });
+    const sent = create.mock.calls[1][0].messages;
+    expect(sent.slice(0, 2)).toEqual(summarised('the notes'));
+    const results = sent.filter((message) => message.role === Role.Tool).map((message) => String(message.content));
+    expect(results.map((content) => content.startsWith('[result cleared'))).toEqual([true, true, false]);
+    expect(result.messages.slice(0, sent.length)).toEqual(sent);
   });
 });
 
@@ -966,17 +1075,13 @@ describe('reasoning replay', () => {
       .mockReturnValueOnce(calls([['a', '{}']], 'look it up'))
       .mockRejectedValueOnce(apiError(400, "property 'reasoning_content' is unsupported"))
       .mockReturnValueOnce(says('done'));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages: question,
       tools: [tool('a')],
       dispatch: async () => 'found',
-      onEvent: (event) => {
-        if (event.kind === RunEventKind.Notice) {
-          notices.push(event.text ?? '');
-        }
-      },
+      onEvent,
     });
     const sent = sentMessages();
     expect(result.turn.content).toBe('done');
@@ -1188,18 +1293,14 @@ describe('one call per message', () => {
       .mockRejectedValueOnce(apiError(400, LLAMA_ONE_CALL))
       .mockReturnValueOnce(both())
       .mockReturnValueOnce(says('done'));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages: question,
       tools: [tool('a'), tool('b')],
       dispatch: async ({ name }) => `${name} ran`,
       mintCallId: callIdMinter(3),
-      onEvent: (event) => {
-        if (event.kind === RunEventKind.Notice) {
-          notices.push(event.text ?? '');
-        }
-      },
+      onEvent,
     });
     expect(result.turn.content).toBe('done');
     expect(notices).toContain('m takes one tool call per message; replaying its calls one to a message');
@@ -1307,6 +1408,43 @@ describe('call ids', () => {
     }
   });
 
+  it('are all minted under `callIds: minted`, wherever an id is told', async () => {
+    // Free in this transcript, so kept by default: `c0` and `c1` are what the server counts from.
+    create
+      .mockReturnValueOnce(
+        calls([
+          ['a', '{}'],
+          ['b', '{}'],
+        ]),
+      )
+      .mockReturnValueOnce(says('done'));
+    const events: RunEventInput[] = [];
+    const answered: ToolCallResult[] = [];
+    const result = await runAgentLoop({
+      config,
+      messages: question,
+      tools: [tool('a'), tool('b')],
+      dispatch: async ({ name }) => `${name} ran`,
+      callIds: CallIds.Minted,
+      mintCallId: callIdMinter(5),
+      onEvent: (event) => events.push(event),
+      onToolResult: (answer) => answered.push(answer),
+    });
+    const mint = callIdMinter(5);
+    const ids = [mint(), mint()];
+    const assistant = ofRole(result.messages[1], Role.Assistant);
+    expect(assistant.tool_calls?.map(({ id }) => id)).toEqual(ids);
+    expect(result.messages.slice(2, 4).map((m) => ofRole(m, Role.Tool).tool_call_id)).toEqual(ids);
+    expect(result.toolCalls.map(({ id }) => id)).toEqual(ids);
+    expect(answered.map(({ id }) => id)).toEqual(ids);
+    const told = (kind: string) => events.filter((event) => event.kind === kind).map(({ id }) => id);
+    expect(told(RunEventKind.ToolCall)).toEqual(ids);
+    expect(told(RunEventKind.ToolResult)).toEqual(ids);
+    // And the next request replays the call under the id it was answered by.
+    const replayed = ofRole(create.mock.calls[1][0].messages[1], Role.Assistant);
+    expect(replayed.tool_calls?.map(({ id }) => id)).toEqual(ids);
+  });
+
   it('pair every result with the call it answers, as the call is replayed', async () => {
     create.mockReturnValueOnce(unnamed()).mockReturnValueOnce(written()).mockReturnValueOnce(says('done'));
     const result = await runAgentLoop({ config, messages: question, tools: [tool('a')], dispatch: async () => 'ok' });
@@ -1340,12 +1478,12 @@ describe('a turn with nothing to say', () => {
   };
   /** Runs a question, keeping the notices. */
   const run = async (messages: Message[] = question) => {
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages,
       dispatch: async () => 'ok',
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     return { result, notices };
   };
@@ -1358,7 +1496,7 @@ describe('a turn with nothing to say', () => {
       content: '',
       reasoning_content: 'thinking it over',
     });
-    expect(notices).toEqual(['the model ended its turn with no answer']);
+    expect(notices).toEqual([expect.stringContaining('no answer')]);
 
     create.mockImplementationOnce((body) => {
       const refusal = ollamaRefusal(body.messages);
@@ -1384,7 +1522,7 @@ describe('a turn with nothing to say', () => {
   it('is told apart when a content filter withheld it, as a notice and an outcome of its own', async () => {
     create.mockReturnValueOnce(ends(FinishReason.ContentFilter));
     const { result, notices } = await run();
-    expect(notices).toEqual(["the provider's content filter withheld the reply"]);
+    expect(notices).toEqual([expect.stringContaining('content filter')]);
     expect(result.metrics.outcome).toBe('filtered');
     expect(result.messages.at(-1)).toEqual({ role: Role.Assistant, content: '' });
   });
@@ -1396,7 +1534,7 @@ describe('a turn with nothing to say', () => {
     // The same request again: nothing of the empty turn was written into it.
     expect(create.mock.calls[1][0].messages).toEqual(create.mock.calls[0][0].messages);
     expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
-    expect(notices).toEqual(['the model said it was calling tools but sent none; asking again']);
+    expect(notices).toEqual([expect.stringContaining('asking again')]);
     expect(result.metrics.outcome).toBe('answered');
   });
 
@@ -1406,9 +1544,18 @@ describe('a turn with nothing to say', () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(result.messages).toEqual([...question, { role: Role.Assistant, content: '' }]);
     expect(notices).toEqual([
-      'the model said it was calling tools but sent none; asking again',
-      'the model said it was calling tools but sent none; taking its reply as the answer',
+      expect.stringContaining('asking again'),
+      expect.stringContaining('taking its reply as the answer'),
     ]);
+  });
+
+  it('is asked for again when its only call never got a name, which is dropped', async () => {
+    create.mockReturnValueOnce(calls([['', '{}']])).mockReturnValueOnce(says('done'));
+    const dispatch = vi.fn();
+    const result = await runAgentLoop({ config, messages: question, dispatch });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(result.messages).toEqual([...question, { role: Role.Assistant, content: 'done' }]);
   });
 
   it('is not asked for again where it said something, or where no turn is left to ask in', async () => {

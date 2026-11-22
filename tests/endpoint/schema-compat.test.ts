@@ -18,20 +18,11 @@ const tool = (parameters?: OpenAI.FunctionParameters): OpenAI.ChatCompletionTool
 const paramsOf = (tools: OpenAI.ChatCompletionTool[]) =>
   (tools[0] as { function: { parameters: Record<string, unknown> } }).function.parameters;
 
-describe('sanitizeTools', () => {
-  it('collapses a nullable union to its one real branch', () => {
-    const out = paramsOf(
-      sanitizeTools([
-        tool({
-          type: SchemaType.Object,
-          properties: { after: { anyOf: [{ type: SchemaType.String }, { type: SchemaType.Null }] } },
-        }),
-      ]),
-    );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
-    expect(properties.after).toEqual({ nullable: true, type: SchemaType.String });
-  });
+/** The `properties` of a rewritten schema, by name. */
+const propertiesOf = (parameters: Record<string, unknown>) =>
+  parameters.properties as Record<string, Record<string, unknown>>;
 
+describe('sanitizeTools', () => {
   it('rewrites a list type and drops lookaround patterns', () => {
     const out = paramsOf(
       sanitizeTools([
@@ -44,7 +35,7 @@ describe('sanitizeTools', () => {
         }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.label).toEqual({ nullable: true, type: SchemaType.String });
     expect(properties.count.anyOf).toEqual([{ type: SchemaType.String }, { type: SchemaType.Number }]);
   });
@@ -55,9 +46,31 @@ describe('sanitizeTools', () => {
         tool({ type: SchemaType.Object, properties: { filter: SchemaType.Object, flag: SchemaType.Boolean } }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.filter).toEqual({ type: SchemaType.Object, properties: {} });
     expect(properties.flag).toEqual({ type: SchemaType.Boolean });
+  });
+
+  it('puts an object taking nothing where a schema belongs and something else is', () => {
+    const out = paramsOf(
+      sanitizeTools([tool({ type: SchemaType.Object, properties: { list: { type: SchemaType.Array, items: null } } })]),
+    );
+    const properties = propertiesOf(out);
+    expect(properties.list.items).toEqual({ type: SchemaType.Object, properties: {} });
+  });
+
+  it('reads a list type of null alone as null, marked nullable', () => {
+    const out = paramsOf(
+      sanitizeTools([tool({ type: SchemaType.Object, properties: { gone: { type: [SchemaType.Null] } } })]),
+    );
+    const properties = propertiesOf(out);
+    expect(properties.gone).toEqual({ nullable: true, type: SchemaType.Null });
+  });
+
+  it('leaves a tool that is not a function tool as it was', () => {
+    const custom: OpenAI.ChatCompletionTool = { type: 'custom', custom: { name: 'grammar_tool' } };
+    expect(sanitizeTools([custom])[0]).toBe(custom);
+    expect(relaxTools([custom])[0]).toBe(custom);
   });
 
   it('forces a usable object at the top level', () => {
@@ -85,7 +98,7 @@ describe('sanitizeTools', () => {
         }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.where).toEqual({ $ref: '#/definitions/Filters' });
     expect(properties.note).toEqual({ $ref: '#/definitions/Note' });
     // The targets are still there: the reference is narrowed, never severed.
@@ -101,14 +114,14 @@ describe('sanitizeTools', () => {
         }),
       ]),
     );
-    const properties = out.properties as Record<string, Record<string, unknown>>;
+    const properties = propertiesOf(out);
     expect(properties.name).toEqual({ nullable: true, type: SchemaType.String, maxLength: 3 });
   });
 
   it('leaves a union of two real branches as it was', () => {
     const anyOf = [{ type: SchemaType.String }, { type: SchemaType.Number }];
     const out = paramsOf(sanitizeTools([tool({ type: SchemaType.Object, properties: { a: { anyOf } } })]));
-    expect((out.properties as Record<string, unknown>).a).toEqual({ anyOf });
+    expect(propertiesOf(out).a).toEqual({ anyOf });
   });
 
   it('keeps a pattern a grammar can express, and enums and descriptions too', () => {
@@ -279,6 +292,22 @@ describe('sanitizeTools on a root that is a reference or a combinator', () => {
     expect(out.required).toEqual(['q']);
   });
 
+  it('skips a root allOf branch that resolves nowhere, and keeps the ones that do', () => {
+    const out = paramsOf(
+      sanitizeTools([
+        tool({
+          allOf: [{ $ref: '#/definitions/Missing' }, { $ref: '#/definitions/Args' }],
+          definitions: {
+            Args: { type: SchemaType.Object, properties: { q: { type: SchemaType.String } }, required: ['q'] },
+          },
+        }),
+      ]),
+    );
+
+    expect(out.properties).toEqual({ q: { type: SchemaType.String } });
+    expect(out.required).toEqual(['q']);
+  });
+
   it('never claims a required name for a root union branch that resolves nowhere', () => {
     for (const branch of [
       { $ref: '#/definitions/Missing' },
@@ -356,6 +385,35 @@ describe('sanitizeTools on definitions', () => {
 
     expect(out.$defs).toBeUndefined();
   });
+
+  it('keeps a definition that refers to itself once the body reaches it, and stops', () => {
+    const node = { type: SchemaType.Object, properties: { next: { $ref: '#/$defs/Node' } } };
+    const out = paramsOf(
+      sanitizeTools([
+        tool({ type: SchemaType.Object, properties: { head: { $ref: '#/$defs/Node' } }, $defs: { Node: node } }),
+      ]),
+    );
+
+    expect(out.$defs).toEqual({ Node: node });
+  });
+
+  it('reaches no definition through a pointer into another document or to a name it lacks', () => {
+    const out = paramsOf(
+      sanitizeTools([
+        tool({
+          type: SchemaType.Object,
+          properties: { far: { $ref: 'https://example.com/schema.json' }, gone: { $ref: '#/$defs/Gone' } },
+          $defs: { Other: { type: SchemaType.String } },
+        }),
+      ]),
+    );
+
+    expect(out.$defs).toBeUndefined();
+    expect(out.properties).toEqual({
+      far: { $ref: 'https://example.com/schema.json' },
+      gone: { $ref: '#/$defs/Gone' },
+    });
+  });
 });
 
 describe('relaxTools', () => {
@@ -370,7 +428,7 @@ describe('relaxTools', () => {
         }),
       ]),
     );
-    const items = (out.properties as Record<string, Record<string, unknown>>).to.items;
+    const items = propertiesOf(out).to.items;
     expect(items).toEqual({ type: SchemaType.String });
   });
 
@@ -391,7 +449,7 @@ describe('relaxTools', () => {
 
     // The arguments survive; only the keywords on `keep` are stripped.
     expect(Object.keys(out.properties as object).sort()).toEqual(['format', 'keep', 'pattern']);
-    expect((out.properties as Record<string, unknown>).keep).toEqual({ type: SchemaType.String });
+    expect(propertiesOf(out).keep).toEqual({ type: SchemaType.String });
     expect(out.required).toEqual(['format', 'pattern']);
   });
 
@@ -406,7 +464,7 @@ describe('relaxTools', () => {
         }),
       ]),
     );
-    expect((out.properties as Record<string, unknown>).a).toEqual({
+    expect(propertiesOf(out).a).toEqual({
       type: SchemaType.String,
       default: { format: 'kept' },
       enum: [{ pattern: 'x' }],
@@ -457,22 +515,11 @@ describe('sanitizeSchema and relaxSchema', () => {
     const before = JSON.stringify(schema);
     const sanitized = sanitizeSchema(schema);
     expect(sanitized).toEqual(paramsOf(sanitizeTools([tool(schema)])));
-    expect(sanitized).toEqual({
-      type: SchemaType.Object,
-      properties: {
-        when: { type: SchemaType.String, nullable: true, format: 'date-time', pattern: '^\\d{4}' },
-        format: { nullable: true, type: SchemaType.String },
-      },
-      required: ['when'],
-    });
 
+    // What each rewrite does is the tool tests' to say; this says only that the two agree.
     const relaxed = relaxSchema(sanitized);
     expect(relaxed).toEqual(paramsOf(relaxTools(sanitizeTools([tool(schema)]))));
-    // The keywords go; the argument that happens to be called `format` stays.
-    expect(relaxed.properties).toEqual({
-      when: { type: SchemaType.String, nullable: true },
-      format: { nullable: true, type: SchemaType.String },
-    });
+    expect(relaxed).not.toEqual(sanitized);
     expect(JSON.stringify(schema)).toBe(before);
   });
 

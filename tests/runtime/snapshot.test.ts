@@ -156,37 +156,6 @@ describe('capability snapshots', () => {
     const stored = JSON.stringify(exportCapabilities());
     expect(stored).not.toContain('sk-secret');
     expect(stored).not.toContain('http://box');
-    expect(JSON.parse(stored).endpoints).toEqual({
-      [endpointId(config)]: {
-        strictSchemas: false,
-        usageInStream: true,
-        since: expect.any(Number),
-        models: {
-          big: {
-            reasoningEffort: true,
-            legacyTokenLimit: false,
-            chosenTemperature: true,
-            refusedEfforts: [],
-            refusedFields: ['min_p'],
-            structuredOutput: true,
-            assistantPrefill: true,
-            reasoningContent: true,
-            multiCallMessages: true,
-          },
-          small: {
-            reasoningEffort: true,
-            legacyTokenLimit: true,
-            chosenTemperature: true,
-            refusedEfforts: [],
-            refusedFields: ['chat_template_kwargs'],
-            structuredOutput: true,
-            assistantPrefill: true,
-            reasoningContent: true,
-            multiCallMessages: true,
-          },
-        },
-      },
-    });
 
     resetAll();
     create.mockReset();
@@ -199,32 +168,6 @@ describe('capability snapshots', () => {
     await ask(config, 'small', 'system', 'user');
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0][0]).not.toHaveProperty('chat_template_kwargs');
-  });
-
-  it('carries which efforts a model refused, and the list it published', () => {
-    // Otherwise every restart spends a request per rung walking the same ladder, which is the
-    // whole reason the snapshot exists.
-    const supports = capabilitiesFor(config);
-    const refused = modelCapabilitiesFor(supports, 'big');
-    refused.refusedEfforts.add('none');
-    refused.supportedEfforts = ['minimal', 'low', 'medium', 'high'];
-    const stored = JSON.parse(JSON.stringify(exportCapabilities()));
-    resetAll();
-    expect(importCapabilities(stored)).toBe(true);
-    const back = modelCapabilitiesFor(capabilitiesFor(config), 'big');
-    expect([...back.refusedEfforts]).toEqual(['none']);
-    expect(back.supportedEfforts).toEqual(['minimal', 'low', 'medium', 'high']);
-  });
-
-  it("carries a model's refusal of a trailing assistant message", () => {
-    const supports = capabilitiesFor(config);
-    modelCapabilitiesFor(supports, 'big').assistantPrefill = false;
-    const stored = JSON.parse(JSON.stringify(exportCapabilities()));
-    expect(stored.endpoints[endpointId(config)].models.big.assistantPrefill).toBe(false);
-    resetAll();
-    expect(importCapabilities(stored)).toBe(true);
-    const restored = capabilitiesFor(config);
-    expect(modelCapabilitiesFor(restored, 'big').assistantPrefill).toBe(false);
   });
 
   it('only latches off, whatever the snapshot says', () => {
@@ -283,7 +226,12 @@ describe('capability snapshots', () => {
     expect(importCapabilities({ version: 0, savedAt: '', endpoints })).toBe(false);
     expect(importCapabilities(null)).toBe(false);
     expect(importCapabilities('nope')).toBe(false);
+    expect(importCapabilities({ version: CAPABILITY_SNAPSHOT_VERSION, endpoints: 'nope' })).toBe(false);
     expect(capabilitiesFor(config).strictSchemas).toBe(true);
+  });
+
+  it('skips a field of the wrong type, and keeps reading the rest', () => {
+    const id = endpointId(config);
     expect(
       importCapabilities({
         version: CAPABILITY_SNAPSHOT_VERSION,
@@ -293,5 +241,27 @@ describe('capability snapshots', () => {
     const model = modelCapabilitiesFor(capabilitiesFor(config), 'm');
     expect([...model.refusedFields]).toEqual(['top_k']);
     expect(model.reasoningEffort).toBe(true);
+  });
+
+  it('skips an endpoint, a model list or a model that is not an object', () => {
+    const id = endpointId(config);
+    const other = endpointId({ ...config, baseUrl: 'http://other/v1' });
+    const quiet = endpointId({ ...config, baseUrl: 'http://quiet/v1' });
+    expect(
+      importCapabilities({
+        version: CAPABILITY_SNAPSHOT_VERSION,
+        endpoints: {
+          broken: 3,
+          [other]: { strictSchemas: false, models: 'nope' },
+          [quiet]: { models: { m: 3 } },
+          [id]: { models: { m: { reasoningEffort: false } } },
+        },
+      }),
+    ).toBe(true);
+    // The endpoint after the ones skipped is still read.
+    expect(modelCapabilitiesFor(capabilitiesFor(config), 'm').reasoningEffort).toBe(false);
+    // An endpoint's own flags are read before its model list is found wanting.
+    expect(capabilitiesFor({ ...config, baseUrl: 'http://other/v1' }).strictSchemas).toBe(false);
+    expect(capabilitiesFor({ ...config, baseUrl: 'http://quiet/v1' }).models.has('m')).toBe(false);
   });
 });

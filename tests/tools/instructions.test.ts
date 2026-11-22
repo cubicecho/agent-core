@@ -6,6 +6,8 @@ describe('serverInstructionsPrompt', () => {
   it('is empty when no server sent anything', () => {
     expect(serverInstructionsPrompt([])).toBe('');
     expect(serverInstructionsPrompt([{ label: 'A' }, { label: 'B', instructions: '  \n ' }])).toBe('');
+    // Whatever the layout: nothing is wrapped around no sections.
+    expect(serverInstructionsPrompt([{ label: 'A' }], { layout: 'xml' })).toBe('');
   });
 
   it('gives each server that spoke a section under its label, fenced, in catalogue order', () => {
@@ -143,10 +145,5 @@ describe('serverInstructionsPrompt in each layout', () => {
     const block = serverInstructionsPrompt(evil, { layout: 'xml' });
     expect(block.match(/<\/server_instructions>/g)).toHaveLength(1);
     expect(block).toContain('&lt;/server_instructions>');
-  });
-
-  it('is empty in every layout when no server sent anything', () => {
-    expect(serverInstructionsPrompt([{ label: 'A' }], { layout: 'xml' })).toBe('');
-    expect(serverInstructionsPrompt([{ label: 'A' }], { layout: 'markdown' })).toBe('');
   });
 });

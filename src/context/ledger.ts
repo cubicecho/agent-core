@@ -128,15 +128,20 @@ const appended = (previous: RequestShape, next: RequestShape) =>
   sameTools(previous, next) && keptMessages(previous.messages, next.messages);
 
 /**
+ * The roles a request's head is made of. `developer` is one because it is the system prompt under
+ * another name, so a change to it is the system prompt changing, as `stackRequest` reads it too.
+ */
+const HEAD_ROLES: ReadonlySet<string> = new Set([Role.System, Role.Developer]);
+
+/**
  * The system messages a request opens with, which a template renders ahead of the history.
  *
  * @param messages - The request's messages. Not written to.
- * @returns A new array of the messages ahead of the first that is not `system`: empty when the
- * request does not open with one, and all of them when it holds nothing else. A `developer` message
- * ends the run.
+ * @returns A new array of the messages ahead of the first that is neither `system` nor `developer`:
+ * empty when the request does not open with one, and all of them when it holds nothing else.
  */
 const leadingSystem = (messages: Message[]) => {
-  const end = messages.findIndex((message) => message.role !== Role.System);
+  const end = messages.findIndex((message) => HEAD_ROLES.has(message.role) === false);
   return messages.slice(0, end === -1 ? messages.length : end);
 };
 

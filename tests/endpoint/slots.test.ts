@@ -95,6 +95,14 @@ describe('slotAllocator', () => {
     expect(regrown.acquire('g')).toBe(2);
   });
 
+  it('frees nothing for a session that holds no slot', () => {
+    // What the loop does for an exchange that asked for a slot and was given none.
+    const slots = slotAllocator(endpoint, 'm', 1);
+    slots.acquire('a');
+    slots.release('b');
+    expect(slots.acquire('c')).toBeUndefined();
+  });
+
   it('hands out nothing on a server with no slots', () => {
     expect(slotAllocator(endpoint, 'm', 0).acquire('a')).toBeUndefined();
   });

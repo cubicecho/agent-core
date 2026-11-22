@@ -375,6 +375,23 @@ describe('negotiate', () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it('hands send the produced box its caller passed in', async () => {
+    // A caller with its own retry budget reads the flag after `negotiate` returns, so the box
+    // `send` writes to has to be the caller's own.
+    const produced = { any: false };
+    const given: Produced[] = [];
+    await negotiate(
+      capabilitiesFor({ baseUrl: 'http://ok/v1' }),
+      async (_supports, box) => {
+        given.push(box);
+        return 'answered';
+      },
+      { produced },
+    );
+    expect(given).toHaveLength(1);
+    expect(given[0]).toBe(produced);
+  });
+
   it('never re-sends once the server has started answering', async () => {
     // The tokens are already out and on their way to whoever is watching; a second attempt
     // would say everything twice.
@@ -396,10 +413,7 @@ describe('negotiate', () => {
     await negotiate(capabilitiesFor({ baseUrl: 'http://old-llama/v1' }), send, {
       onNotice: (message) => notices.push(message),
     });
-    expect(notices).toEqual([
-      'server rejected stream_options; token counts unavailable',
-      'server could not build a grammar; retrying without pattern/format',
-    ]);
+    expect(notices).toEqual([expect.stringContaining('stream_options'), expect.stringContaining('grammar')]);
   });
 });
 
@@ -695,10 +709,11 @@ describe('negotiate, for a model', () => {
     // announcement that one did. On a consumer where the model is a per-turn setting, a bare
     // "model" is the same line for every model on the endpoint.
     expect(notices).toEqual([
-      'gpt-5 does not take a reasoning effort; retrying without one',
-      'gpt-5 wants max_completion_tokens; retrying with the limit spelled that way',
-      'gpt-5 takes only its own temperature; retrying without ours',
+      expect.stringContaining('reasoning effort'),
+      expect.stringContaining('max_completion_tokens'),
+      expect.stringContaining('temperature'),
     ]);
+    expect(notices.every((notice) => notice.startsWith('gpt-5 '))).toBe(true);
   });
 
   it('keeps the two levels tellable apart by their first word', async () => {
@@ -706,14 +721,7 @@ describe('negotiate, for a model', () => {
     // knows which level latched without parsing the rest of the line.
     const notices: string[] = [];
     const supports = capabilitiesFor({ baseUrl: 'http://one-box/v1' });
-    const refusals = [NO_USAGE, NO_EFFORT];
-    const send = async () => {
-      const refusal = refusals.shift();
-      if (refusal) {
-        throw refusal;
-      }
-      return 'answered';
-    };
+    const { send } = modelThatRefuses(NO_USAGE, NO_EFFORT);
     await negotiate(supports, send, {
       model: 'qwen3-30b',
       onNotice: (message) => notices.push(message),
@@ -758,22 +766,42 @@ describe('negotiate, for a field the caller can do without', () => {
     expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
   });
 
-  it("reads a field from a pydantic server's loc and from Groq's wording", async () => {
-    // Mistral and other FastAPI servers name the field in a validation error's location; Groq
-    // says the property is unsupported. Side tasks rely on these since they share this path.
+  /** Negotiates one refusal on fresh memory, and hands back the fields the model latched. */
+  const droppedBy = async (refusal: Error) => {
+    const supports = vllm();
+    const { send } = modelThatRefuses(refusal);
+    await expect(negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] })).resolves.toBe(
+      'answered',
+    );
+    return [...modelCapabilitiesFor(supports, 'qwen').refusedFields];
+  };
+
+  it("reads a field from a pydantic server's loc", async () => {
+    // Mistral and other FastAPI servers name the field in a validation error's location. Side
+    // tasks rely on this since they share this path.
     const pydantic = apiError(
       400,
       '{"detail":[{"type":"extra_forbidden","loc":["body","chat_template_kwargs"],"msg":"Extra inputs are not permitted"}]}',
     );
-    const groq = apiError(400, "property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?");
-    for (const refusal of [pydantic, groq]) {
-      const supports = vllm();
-      const { send } = modelThatRefuses(refusal);
-      await expect(negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] })).resolves.toBe(
-        'answered',
-      );
-      expect([...modelCapabilitiesFor(supports, 'qwen').refusedFields]).toEqual(['chat_template_kwargs']);
-    }
+    expect(await droppedBy(pydantic)).toEqual(['chat_template_kwargs']);
+  });
+
+  it("reads a field from Groq's wording", async () => {
+    // Groq says the property is unsupported.
+    expect(await droppedBy(apiError(400, "property 'chat_template_kwargs' is unsupported"))).toEqual([
+      'chat_template_kwargs',
+    ]);
+  });
+
+  it('drops the field a refusal names, not the response_format it suggests instead', async () => {
+    const supports = vllm();
+    const { send } = modelThatRefuses(
+      apiError(400, "property 'chat_template_kwargs' is unsupported, did you mean 'response_format'?"),
+    );
+    await negotiate(supports, send, { model: 'qwen', droppable: ['chat_template_kwargs'] });
+    const refused = modelCapabilitiesFor(supports, 'qwen');
+    expect([...refused.refusedFields]).toEqual(['chat_template_kwargs']);
+    expect(refused.structuredOutput).toBe(true);
   });
 
   it('reads no field from a pydantic error that is not about an extra input', async () => {
