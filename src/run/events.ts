@@ -229,8 +229,9 @@ export interface RunVia {
  * One thing that happened in a run, as a watcher receives it.
  *
  * @remarks
- * Every field but `id` and `link` is always present — the empty ones are `""` or `null` rather
- * than missing — so a client reads it without guarding each key.
+ * Every field but `id`, `link`, `level`, `loads`, `outcome`, `pending` and `via` is always present —
+ * the empty ones are `""` or `null` rather than missing — so a client reads it without guarding
+ * each key. Those seven belong to a few kinds each, and are absent on the rest.
  */
 export interface RunEvent {
   /** The run it belongs to. `emit` fills this in; a caller does not pass it. */
