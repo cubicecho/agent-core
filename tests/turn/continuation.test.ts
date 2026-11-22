@@ -2,9 +2,9 @@ import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFor, modelCapabilitiesFor, resetCapabilities } from '../../src/endpoint/capabilities.ts';
 import { continueTurn, isContinuable } from '../../src/turn/continuation.ts';
-import type { Turn } from '../../src/wire/stream.ts';
+import type { InFlight, Turn } from '../../src/wire/stream.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
-import { apiError, type Body, type Create, chunks, clientOf } from '../helpers.ts';
+import { apiError, type Body, type Create, chunks, clientOf, text } from '../helpers.ts';
 
 /** A reply that says this, stops for this reason, and reports these counts and timings. */
 const replies = (content: string, finish: FinishReason = FinishReason.Stop, timings?: Record<string, number>) =>
@@ -273,6 +273,39 @@ describe('continueTurn', () => {
     // No room is not a refusal of the prefill, so the next turn may still be continued.
     expect(modelCapabilitiesFor(supports(), 'm').assistantPrefill).toBe(true);
     expect(notices).toEqual([expect.stringContaining('no room')]);
+  });
+
+  it('keeps the cut-off answer, and says why, when the continuation fails for any other reason', async () => {
+    const notices: string[] = [];
+    const create = vi.fn<Create>().mockRejectedValue(apiError(500, 'backend crashed'));
+    const turn = await continueTurn(clientOf(create), supports(), request, cut(), {
+      model: 'm',
+      onNotice: (n) => notices.push(n),
+    });
+    expect(turn.content).toBe('The sky is blue because');
+    expect(turn.finishReason).toBe(FinishReason.Length);
+    // A server failing is not a refusal of the prefill.
+    expect(modelCapabilitiesFor(supports(), 'm').assistantPrefill).toBe(true);
+    expect(notices).toEqual([expect.stringContaining('backend crashed')]);
+  });
+
+  it("shows the caller's inFlight box the whole answer, not only the piece in flight", async () => {
+    const inFlight: InFlight = {};
+    let finish = () => {};
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const create = vi.fn<Create>().mockReturnValue({
+      async *[Symbol.asyncIterator]() {
+        yield text(' of light');
+        await held;
+      },
+    });
+    const turn = continueTurn(clientOf(create), supports(), request, cut(), { model: 'm', inFlight });
+    await vi.waitFor(() => expect(inFlight.read?.()?.content).toBe('The sky is blue because of light'));
+    expect(inFlight.read?.()).toMatchObject({ reasoning: 'thought' });
+    finish();
+    await turn;
   });
 
   it('throws a stop rather than keeping the answer', async () => {

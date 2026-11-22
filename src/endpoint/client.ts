@@ -569,10 +569,13 @@ const slotCounts = perFetch(() => new Map<string, { slots: number; at: number; g
  * @param config - Read for `fetch` alone, which picks the copy of `slotCounts` written to.
  * @param key - The model server and model, by `modelKey`.
  * @param props - How `/props` answered, as `probe` hands it over.
+ * @returns The slot count remembered, zero where `/props` did not say.
  */
-function noteSlots(config: Pick<Endpoint, 'fetch'>, key: string, props: { missing: boolean; body?: unknown }) {
+function noteSlots(config: Pick<Endpoint, 'fetch'>, key: string, props: { missing: boolean; body?: unknown }): number {
   const { total_slots } = (props.body ?? {}) as { total_slots?: unknown };
-  slotCounts(config.fetch).set(key, { slots: positive(total_slots), at: Date.now(), gone: props.missing });
+  const slots = positive(total_slots);
+  slotCounts(config.fetch).set(key, { slots, at: Date.now(), gone: props.missing });
+  return slots;
 }
 
 /**
@@ -831,11 +834,10 @@ async function readSlots(config: Endpoint & { model: string }, within: AbortSign
     return known.slots;
   }
   try {
-    noteSlots(config, key, await probe(config, propsPath(config.model), within));
+    return noteSlots(config, key, await probe(config, propsPath(config.model), within));
   } catch {
     return 0;
   }
-  return slotCounts(config.fetch).get(key)?.slots ?? 0;
 }
 
 /**

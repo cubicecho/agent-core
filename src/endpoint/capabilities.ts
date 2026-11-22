@@ -425,14 +425,20 @@ const REJECTS_USAGE = /stream_options/i;
  * `response_format` or its `json_schema` type refused, rather than the schema in it.
  *
  * @param detail - The server's error text.
- * @returns `true` where the text names either; `false` where it also says `invalid schema`.
+ * @returns `true` where the text names either; `false` where it also says `invalid schema`, or
+ * where it refuses some other field by name.
  *
  * @remarks
  * A server that validates the schema and finds it wanting — `Invalid schema for response_format`
  * — is telling the caller about their schema, and falling back to words for good would hide that.
+ * And a refusal of another field can mention `response_format` in passing — Groq's `did you mean
+ * 'response_format'?` — which made this row, asked before the dropped fields are, latch
+ * structured output off and leave the field it refused in place.
  */
 const rejectsResponseFormat = (detail: string) =>
-  /response_format|json_schema/i.test(detail) && !/invalid schema/i.test(detail);
+  /response_format|json_schema/i.test(detail) &&
+  !/invalid schema/i.test(detail) &&
+  unknownFields(detail).every((field) => field === 'response_format');
 
 /**
  * A refusal of the *value* rather than of the field, which names the field either way.

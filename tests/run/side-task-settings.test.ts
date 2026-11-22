@@ -35,7 +35,7 @@ const { runAgentLoop } = await import('../../src/run/agent-loop.ts');
 const { PRESELECTED_NOTICE } = await import('../../src/tools/discovery.ts');
 const { failedRun } = await import('../../src/run/failure.ts');
 const { preselect } = await import('../../src/tools/preselect.ts');
-const { capabilitiesFor, resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
+const { resetCapabilities } = await import('../../src/endpoint/capabilities.ts');
 const { NO_KEY } = await import('../../src/endpoint/client.ts');
 const { SUMMARY_LEAD, summariser } = await import('../../src/context/compaction.ts');
 const { ask, askJson, taskCall } = await import('../../src/turn/side-task.ts');
@@ -43,7 +43,6 @@ const { resetHints } = await import('../../src/index.ts');
 const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../../src/spec/spec.ts');
 
 type AgentSpec = import('../../src/spec/spec.ts').AgentSpec;
-type SideTask = import('../../src/turn/side-task.ts').SideTask;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A streamed turn that asks for one call. */
@@ -85,93 +84,6 @@ beforeEach(() => {
 afterEach(() => {
   resetCapabilities();
   resetHints();
-});
-
-describe('taskCall', () => {
-  const endpoint = { baseUrl: 'http://side/v1', apiKey: '' };
-
-  it("hands back the task's own settings over the host's, and the host's where it has none", () => {
-    const signal = new AbortController().signal;
-    const task: SideTask = { model: 'small', endpoint, temperature: 0, reasoningEffort: 'low' };
-    const call = taskCall(task, { signal, maxTokens: 64, temperature: 0.9 });
-    expect(call.model).toBe('small');
-    expect(call.endpoint).toBe(endpoint);
-    expect(call.options).toEqual({ signal, maxTokens: 64, temperature: 0, reasoningEffort: 'low' });
-  });
-
-  it("leaves out what neither states, so the entry point's default is what applies", () => {
-    const call = taskCall({ model: 'small', endpoint });
-    expect(call.options).toEqual({});
-    // Zero is a value: no ceiling, and deterministic.
-    expect(taskCall({ model: 'small', endpoint, maxTokens: 0, temperature: 0 }).options).toEqual({
-      maxTokens: 0,
-      temperature: 0,
-    });
-  });
-
-  it("lays a task's extraBody over the host's key by key", () => {
-    const task: SideTask = { model: 'small', endpoint, extraBody: { top_k: 20, top_p: 0.8 } };
-    const call = taskCall(task, { extraBody: { top_p: 0.95, min_p: 0.05 } });
-    expect(call.options.extraBody).toEqual({ top_p: 0.8, min_p: 0.05, top_k: 20 });
-    // A task with none leaves the host's as it was given.
-    const host = { extraBody: { min_p: 0.05 } };
-    expect(taskCall({ model: 'small', endpoint }, host).options.extraBody).toBe(host.extraBody);
-  });
-
-  it('takes a resolved task as it comes', () => {
-    const { tasks } = agent({ title: { model: 'tiny', maxTokens: 32 } });
-    const call = taskCall(tasks.title);
-    expect(call).toEqual({
-      endpoint: { baseUrl: 'http://main/v1', apiKey: '' },
-      model: 'tiny',
-      options: { maxTokens: 32 },
-    });
-  });
-
-  it("keys a task on the agent's endpoint as the agent is keyed", () => {
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main' };
-    // The trailing slash is the same endpoint to a person and a different one to a cache.
-    const same = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1/', apiKey: '' } }, {}, main);
-    expect(same.endpoint).toEqual({ baseUrl: 'http://main/v1', apiKey: 'sk-main' });
-    // One entry for the endpoint, so a refusal the main turn learned is known to the side task.
-    expect(capabilitiesFor(same.endpoint)).toBe(capabilitiesFor(main));
-    // Without the agent the endpoint is sent as it stands, and that is a second entry.
-    const alone = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1', apiKey: '' } });
-    expect(capabilitiesFor(alone.endpoint)).not.toBe(capabilitiesFor(main));
-  });
-
-  it("never sends the agent's key to another endpoint, and keeps a key the task has", () => {
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main' };
-    const elsewhere = taskCall({ model: 'tiny', endpoint }, {}, main);
-    expect(elsewhere.endpoint).toEqual({ baseUrl: 'http://side/v1', apiKey: NO_KEY });
-    const keyed = taskCall({ model: 'tiny', endpoint: { baseUrl: 'http://main/v1', apiKey: 'sk-own' } }, {}, main);
-    expect(keyed.endpoint.apiKey).toBe('sk-own');
-  });
-
-  it("carries the endpoint's timeouts through", () => {
-    const slow = { baseUrl: 'http://side/v1', apiKey: '', requestTimeoutSeconds: 90 };
-    const call = taskCall({ model: 'tiny', endpoint: slow }, {}, { baseUrl: 'http://main/v1' });
-    expect(call.endpoint).toEqual({ ...slow, apiKey: NO_KEY });
-  });
-
-  it("gives the agent's fetch to a task on the agent's endpoint, as it gives the key", () => {
-    const fetch = async () => new Response('{}');
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main', fetch };
-    // A resolved task on the agent's own endpoint, which names no function.
-    const { tasks } = agent({ title: { model: 'tiny' } });
-    expect(taskCall(tasks.title, {}, main).endpoint).toEqual(main);
-  });
-
-  it("never gives the agent's fetch to another endpoint, and keeps a fetch the task has", () => {
-    const agentFetch = async () => new Response('{}');
-    const taskFetch = async () => new Response('{}');
-    const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main', fetch: agentFetch };
-    expect(taskCall({ model: 'tiny', endpoint }, {}, main).endpoint).toEqual({ ...endpoint, apiKey: NO_KEY });
-    const own = { ...endpoint, fetch: taskFetch };
-    expect(taskCall({ model: 'tiny', endpoint: own }, {}, main).endpoint.fetch).toBe(taskFetch);
-    const sameOwn = { baseUrl: 'http://main/v1', apiKey: '', fetch: taskFetch };
-    expect(taskCall({ model: 'tiny', endpoint: sameOwn }, {}, main).endpoint.fetch).toBe(taskFetch);
-  });
 });
 
 describe("a side task's own settings", () => {

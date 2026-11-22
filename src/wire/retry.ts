@@ -186,8 +186,8 @@ export const backoffMs = (attempt: number) =>
  *
  * @param ms - How long to wait.
  * @param [signal] - Abandons the wait. One already aborted rejects without waiting at all.
- * @returns A promise that resolves once `ms` has passed, or rejects with the signal's reason — an
- * `Error` of its own where the signal carries none.
+ * @returns A promise that resolves once `ms` has passed, or rejects with the signal's reason, which
+ * an aborted signal always has: an `AbortError` where it was aborted with none.
  */
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -197,7 +197,7 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
-      reject(signal?.reason ?? new Error('aborted'));
+      reject(signal?.reason);
     };
     if (signal?.aborted) {
       return onAbort();

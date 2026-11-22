@@ -273,6 +273,23 @@ describe('runTurn', () => {
     expect(modelCapabilitiesFor(known, 'gpt-5').legacyTokenLimit).toBe(false);
   });
 
+  it('latches nothing on an endpoint that falls silent', async () => {
+    // A silent endpoint is not a capability refusal, so the negotiation lets it pass untouched.
+    vi.useFakeTimers();
+    const create = vi.fn<Create>(
+      (_body, options) =>
+        new Promise<never>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+        }),
+    );
+    const known = capabilitiesFor({ baseUrl: 'http://quiet/v1' });
+    const turn = runTurn(clientOf(create), known, body, { idleMs: 30_000 });
+    const settled = expect(turn).rejects.toThrow(EndpointSilent);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settled;
+    expect(known).toMatchObject({ strictSchemas: true, usageInStream: true });
+  });
+
   it('waits out a lost request that arrives in the middle of a negotiation', async () => {
     vi.useFakeTimers();
     const create = vi

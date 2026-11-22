@@ -9,7 +9,15 @@ import {
   requestTokens,
   toolsChars,
 } from '../../src/wire/tokens.ts';
+import type { ToolCall } from '../../src/wire/tool-calls.ts';
 import { FUNCTION_TOOL, PartType, Role, SchemaType } from '../../src/wire/wire.ts';
+
+/** A message as a caller replays it, with the scratchpad fields the SDK's types leave out. */
+type Replayed = OpenAI.ChatCompletionMessageParam & {
+  reasoning_content?: string;
+  reasoning?: string;
+  reasoning_details?: unknown;
+};
 
 describe('requestTokens', () => {
   it('sizes a request from what is actually sent, tools included', () => {
@@ -86,7 +94,7 @@ describe('requestTokens', () => {
     const serialized = (messages: OpenAI.ChatCompletionMessageParam[]) => estimateTokens(JSON.stringify(messages));
     // A hundred of a shape, so a per-message constant is worth whole tokens rather than a
     // rounding the ceiling swallows.
-    const many = (message: OpenAI.ChatCompletionMessageParam) => Array.from({ length: 100 }, () => message);
+    const many = (message: Replayed) => Array.from({ length: 100 }, () => message);
 
     // Each key, priced against the same message without it: the difference the walk sees has to
     // be the difference the serialisation sees.
@@ -99,21 +107,18 @@ describe('requestTokens', () => {
     expect(sized(result) - sized(bare)).toBe(serialized(result) - serialized(bare));
 
     // The scratchpad a caller passes back to gpt-oss or DeepSeek, in either spelling.
-    const thought = many({ role: Role.Assistant, content: 'hi', reasoning_content: 'because' } as never);
+    const thought = many({ role: Role.Assistant, content: 'hi', reasoning_content: 'because' });
     const plain = many({ role: Role.Assistant, content: 'hi' });
     expect(sized(thought) - sized(plain)).toBe(serialized(thought) - serialized(plain));
-    const routed = many({ role: Role.Assistant, content: 'hi', reasoning: 'because' } as never);
+    const routed = many({ role: Role.Assistant, content: 'hi', reasoning: 'because' });
     expect(sized(routed) - sized(plain)).toBe(serialized(routed) - serialized(plain));
     // OpenRouter's blocks, and Gemini's signature on a call, which are opaque and priced as JSON.
     const blocks = [{ type: 'reasoning.encrypted', data: 'x'.repeat(64), index: 0 }];
-    const detailed = many({ role: Role.Assistant, content: 'hi', reasoning_details: blocks } as never);
+    const detailed = many({ role: Role.Assistant, content: 'hi', reasoning_details: blocks });
     expect(sized(detailed) - sized(plain)).toBe(serialized(detailed) - serialized(plain));
-    const call = { id: 'c', type: FUNCTION_TOOL, function: { name: 'a', arguments: '{}' } };
-    const signed = many({
-      role: Role.Assistant,
-      content: null,
-      tool_calls: [{ ...call, extra_content: { google: { thought_signature: 'sig' } } }],
-    } as never);
+    const call: ToolCall = { id: 'c', type: FUNCTION_TOOL, function: { name: 'a', arguments: '{}' } };
+    const signedCall: ToolCall = { ...call, extra_content: { google: { thought_signature: 'sig' } } };
+    const signed = many({ role: Role.Assistant, content: null, tool_calls: [signedCall] });
     const unsigned = many({ role: Role.Assistant, content: null, tool_calls: [call] });
     expect(sized(signed) - sized(unsigned)).toBe(serialized(signed) - serialized(unsigned));
 
