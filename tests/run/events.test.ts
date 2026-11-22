@@ -849,4 +849,15 @@ describe('nestEvent', () => {
     expect(metrics.exchanges).toBe(1);
     expect(metrics.outcome).toBe(ExchangeOutcome.Answered);
   });
+
+  it("times the outer run by its own events, not by an inner run's", () => {
+    const via = [{ runId: 'child', callId: 'call_1' }];
+    const metrics = runMetrics([
+      stamp({ kind: RunEventKind.Output, text: 'early', via }, 'parent', 1, 0),
+      stamp({ kind: RunEventKind.Exchange, name: 'main' }, 'parent', 2, 100),
+      stamp({ kind: RunEventKind.Done, ok: true }, 'parent', 3, 300),
+      stamp({ kind: RunEventKind.Output, text: 'late', via }, 'parent', 4, 5000),
+    ]);
+    expect(metrics.wallMs).toBe(200);
+  });
 });

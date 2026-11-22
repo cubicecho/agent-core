@@ -850,7 +850,7 @@ export interface RunMetrics {
    * against. Absent where no turn reported `pinned`.
    */
   unpinnedTurns?: number;
-  /** From the first event to the last, which a still-running run keeps moving. */
+  /** From the run's own first event to its last, which a still-running run keeps moving. */
   wallMs?: number;
   /** Prefill time summed over the turns. */
   promptMs?: number;
@@ -1028,11 +1028,16 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   // The last exchange's end, until another exchange begins, and whether a `done` said the run failed.
   let ending: RunEvent | undefined;
   let failed = false;
+  // The run's own first and last event, which `wallMs` spans: an inner run's are not its clock.
+  let first: RunEvent | undefined;
+  let last: RunEvent | undefined;
 
   for (const event of events) {
     if (isNested(event)) {
       continue;
     }
+    first ??= event;
+    last = event;
     if (event.kind === RunEventKind.Exchange) {
       metrics.exchanges++;
       ending = undefined;
@@ -1118,8 +1123,8 @@ export function runMetrics(events: RunEvent[], { contextLength }: RunMetricsOpti
   if (outcome) {
     metrics.outcome = outcome;
   }
-  if (events.length > 1) {
-    metrics.wallMs = events[events.length - 1].at - events[0].at;
+  if (first && last && first !== last) {
+    metrics.wallMs = last.at - first.at;
   }
   if (reportedPrompt > 0) {
     metrics.cacheHitRatio = reportedCached / reportedPrompt;
