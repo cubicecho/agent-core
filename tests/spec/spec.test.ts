@@ -82,18 +82,13 @@ describe('parseSpec', () => {
     expect(result.warnings).toEqual(['tools.discovery: must be "eager", "ondemand" or "proxy", and was dropped']);
   });
 
-  it('takes each reasoning replay policy, drops one it has not heard of, and resolves the last layer', () => {
+  it('takes each reasoning replay policy, and drops one it has not heard of', () => {
     for (const reasoningReplay of Object.values(ReasoningReplay)) {
       expect(parsed(doc({ model: { reasoningReplay } })).model).toEqual({ reasoningReplay });
     }
     const result = parseSpec(doc({ model: { model: 'm', reasoningReplay: 'some' } }));
     expect(result.spec?.model).toEqual({ model: 'm' });
     expect(result.warnings).toEqual(['model.reasoningReplay: must be "all", "tool-loop" or "none", and was dropped']);
-    const base = parsed(doc({ model: { reasoningReplay: ReasoningReplay.None } }));
-    const over = parsed(doc({ model: { reasoningReplay: ReasoningReplay.All } }));
-    expect(resolveAgentSpec([base, over]).reasoningReplay).toBe(ReasoningReplay.All);
-    // Absent stays absent, which the loop reads as `all`.
-    expect(resolveAgentSpec([parsed(doc())])).not.toHaveProperty('reasoningReplay');
   });
 
   it('keeps a meaningful zero, because there is no inherit sentinel', () => {
@@ -329,18 +324,13 @@ describe('parseSpec prompt', () => {
     );
   });
 
-  it('takes each layout, drops one it has not heard of, and resolves the last layer', () => {
+  it('takes each layout, and drops one it has not heard of', () => {
     for (const promptLayout of Object.values(PROMPT_LAYOUTS)) {
       expect(parsed(doc({ promptLayout })).promptLayout).toBe(promptLayout);
     }
     const result = parseSpec(doc({ promptLayout: 'html' }));
     expect(result.spec).not.toHaveProperty('promptLayout');
     expect(result.warnings).toEqual(['promptLayout: must be "plain", "markdown" or "xml", and was dropped']);
-    const base = parsed(doc({ promptLayout: PROMPT_LAYOUTS.xml }));
-    const over = parsed(doc({ promptLayout: PROMPT_LAYOUTS.markdown }));
-    expect(resolveAgentSpec([base, over]).promptLayout).toBe(PROMPT_LAYOUTS.markdown);
-    expect(resolveAgentSpec([base, parsed(doc())]).promptLayout).toBe(PROMPT_LAYOUTS.xml);
-    expect(resolveAgentSpec([]).promptLayout).toBe(PROMPT_LAYOUTS.plain);
   });
 });
 
@@ -943,6 +933,22 @@ describe('resolveAgentSpec', () => {
       // `c` was deleted and named again, so it is back in the place it first had.
       expect(names).toEqual(['a', 'b', 'c', 'd', 'e', 'b_2', 'z', 'a_2', 'y']);
     });
+  });
+
+  it('takes the reasoning replay policy of the last layer that has one', () => {
+    const base = parsed(doc({ model: { reasoningReplay: ReasoningReplay.None } }));
+    const over = parsed(doc({ model: { reasoningReplay: ReasoningReplay.All } }));
+    expect(resolveAgentSpec([base, over]).reasoningReplay).toBe(ReasoningReplay.All);
+    // Absent stays absent, which the loop reads as `all`.
+    expect(resolveAgentSpec([parsed(doc())])).not.toHaveProperty('reasoningReplay');
+  });
+
+  it('takes the layout of the last layer that has one', () => {
+    const base = parsed(doc({ promptLayout: PROMPT_LAYOUTS.xml }));
+    const over = parsed(doc({ promptLayout: PROMPT_LAYOUTS.markdown }));
+    expect(resolveAgentSpec([base, over]).promptLayout).toBe(PROMPT_LAYOUTS.markdown);
+    expect(resolveAgentSpec([base, parsed(doc())]).promptLayout).toBe(PROMPT_LAYOUTS.xml);
+    expect(resolveAgentSpec([]).promptLayout).toBe(PROMPT_LAYOUTS.plain);
   });
 
   it('replaces a server list whole rather than unioning it', () => {
