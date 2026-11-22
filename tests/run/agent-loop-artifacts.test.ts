@@ -58,6 +58,97 @@ describe('artifacts', () => {
     expect(declared()[0]).not.toContain(RECORD_ARTIFACT);
   });
 
+  describe('links', () => {
+    /** A link to this uri, named after it. */
+    const link = (uri: string, title?: string) => ({ uri, name: uri, ...(title ? { title } : {}) });
+
+    it("puts only an answer's text in the transcript, and hands its links to the host", async () => {
+      create.mockReturnValueOnce(calls(['write', {}])).mockReturnValueOnce(says('done'));
+      const heard: ToolCallResult[] = [];
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('write')],
+        dispatch: async () => ({ text: 'saved', links: [link('doc://a')] }),
+        onToolResult: (answer) => heard.push(answer),
+      });
+      expect(result.messages.find((m) => m.role === Role.Tool)).toMatchObject({ content: 'saved' });
+      expect(JSON.stringify(create.mock.calls[1][0])).not.toContain('doc://a');
+      expect(heard).toEqual([{ id: 'c0', name: 'write', ok: true, content: 'saved', links: [link('doc://a')] }]);
+    });
+
+    it('collects one artifact per uri in the order first seen, counting the calls that linked it', async () => {
+      create
+        .mockReturnValueOnce(calls(['write', { n: 1 }], ['write', { n: 2 }]))
+        .mockReturnValueOnce(calls(['write', { n: 3 }]))
+        .mockReturnValueOnce(says('done'));
+      const answers = [
+        [link('doc://a')],
+        [link('doc://b', 'Bee'), link('doc://a'), link('doc://b', 'Bee')],
+        [link('doc://a')],
+      ];
+      const events: RunEventInput[] = [];
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('write')],
+        dispatch: async () => ({ text: 'saved', links: answers.shift() }),
+        onEvent: (event) => events.push(event),
+      });
+      expect(result.artifacts).toEqual([
+        { link: link('doc://a'), callId: 'c0', tool: 'write', turn: 0, count: 3 },
+        { link: link('doc://b', 'Bee'), callId: 'c1', tool: 'write', turn: 0, count: 1 },
+      ]);
+      expect(
+        events
+          .filter((event) => event.kind === RunEventKind.Artifact)
+          .map(({ id, name, text, link }) => ({ id, name, text, uri: link?.uri })),
+      ).toEqual([
+        { id: 'c0', name: 'write', text: 'doc://a', uri: 'doc://a' },
+        { id: 'c1', name: 'write', text: 'Bee', uri: 'doc://b' },
+      ]);
+      expect(result.metrics.artifacts).toBe(2);
+    });
+
+    it('does not count a deduplicated repeat, since nothing was made twice', async () => {
+      create.mockReturnValueOnce(calls(['write', {}], ['write', {}])).mockReturnValueOnce(says('done'));
+      const heard: ToolCallResult[] = [];
+      const dispatch = vi.fn(async () => ({ text: 'saved', links: [link('doc://a')] }));
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('write')],
+        dispatch,
+        parallel: true,
+        onToolResult: (answer) => heard.push(answer),
+      });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(result.artifacts.map(({ count }) => count)).toEqual([1]);
+      // The repeat still shares the first call's answer, links and all.
+      expect(heard.map(({ links }) => links)).toEqual([[link('doc://a')], [link('doc://a')]]);
+    });
+
+    it('makes nothing of a call that threw or answered in words alone', async () => {
+      create.mockReturnValueOnce(calls(['write', {}], ['read', {}])).mockReturnValueOnce(says('done'));
+      const heard: ToolCallResult[] = [];
+      const result = await runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('write'), tool('read')],
+        dispatch: async ({ name }) => {
+          if (name === 'write') {
+            throw new Error('disk full');
+          }
+          return 'read it';
+        },
+        onToolResult: (answer) => heard.push(answer),
+      });
+      expect(result.artifacts).toEqual([]);
+      expect(result.metrics.artifacts).toBe(0);
+      expect(heard.map((answer) => 'links' in answer)).toEqual([false, false]);
+    });
+  });
+
   describe('detect', () => {
     it('reads a successful write as an artifact, telling watchers once', async () => {
       create
