@@ -98,6 +98,17 @@ const question: Message[] = [{ role: Role.User, content: 'hi' }];
 /** What each request was sent, by the name of every tool it declared. */
 const declared = () => create.mock.calls.map(([body]) => toolNames(body.tools));
 
+/** A notice collector: hand `onEvent` to the loop, then read what it said from `notices`. */
+const noticing = () => {
+  const notices: string[] = [];
+  const onEvent = (event: { kind: string; text?: string }) => {
+    if (event.kind === RunEventKind.Notice) {
+      notices.push(event.text ?? '');
+    }
+  };
+  return { notices, onEvent };
+};
+
 beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
@@ -296,13 +307,13 @@ describe('runAgentLoop', () => {
 
   it('continues an answer cut off at the ceiling when asked to, as one turn', async () => {
     create.mockReturnValueOnce(says('half', FinishReason.Length)).mockReturnValueOnce(says(' and the rest'));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages: question,
       dispatch: async () => '',
       maxContinuations: 2,
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[1][0].messages.at(-1)).toEqual({
@@ -332,12 +343,12 @@ describe('runAgentLoop', () => {
 
   it('says when a turn was cut off at the ceiling', async () => {
     create.mockReturnValueOnce(says('half', FinishReason.Length));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     await runAgentLoop({
       config,
       messages: question,
       dispatch: async () => '',
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     expect(notices).toEqual(['the model stopped at maxTokens (100); this turn is cut short']);
   });
@@ -467,7 +478,7 @@ describe('runAgentLoop', () => {
       .mockReturnValueOnce(says('Checking.\n<tool_call>\n{"name": "a", "arguments": {"x": 1}}\n</tool_call>'))
       .mockReturnValueOnce(says('done'));
     const dispatch = vi.fn(async (_call: ToolCallRequest) => 'ok');
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const turns: Turn[] = [];
     const result = await runAgentLoop({
       config,
@@ -475,7 +486,7 @@ describe('runAgentLoop', () => {
       tools: [tool('a')],
       dispatch,
       onTurn: (turn) => turns.push(turn),
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     const { id } = dispatch.mock.calls[0][0];
     expect(id).toMatch(MINTED_ID);
@@ -2892,7 +2903,7 @@ describe('runAgentLoop', () => {
     it("stacks agent_core's parts and the leading system messages, and sends neither as they came", async () => {
       create.mockReset();
       create.mockReturnValueOnce(says('done'));
-      const notices: string[] = [];
+      const { notices, onEvent } = noticing();
       await runAgentLoop({
         config: {
           ...config,
@@ -2910,7 +2921,7 @@ describe('runAgentLoop', () => {
         systemPrompt: [{ role: Role.System, name: 'identity', content: 'You review cards.', owner: 'agent' }],
         messages: [system('Today is 2026-11-19.'), ...question],
         dispatch: async () => 'ok',
-        onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+        onEvent,
       });
       const [body] = create.mock.calls[0] as unknown as [Record<string, unknown> & { messages: Message[] }];
       expect(body.agent_core).toBeUndefined();
@@ -2926,14 +2937,14 @@ describe('runAgentLoop', () => {
     it("tells the layout's warnings once an exchange, however many turns write the prompt", async () => {
       create.mockReset();
       create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
-      const notices: string[] = [];
+      const { notices, onEvent } = noticing();
       await runAgentLoop({
         config: { ...config, promptLayout: 'xml' },
         systemPrompt: [{ role: Role.System, name: 'house rules', content: 'Be kind.', owner: 'agent' }],
         messages: question,
         tools: [tool('a')],
         dispatch: async () => 'ok',
-        onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+        onEvent,
       });
       expect(create).toHaveBeenCalledTimes(2);
       expect(String(create.mock.calls[1][0].messages[0].content)).toContain('<prompt_house_rules>');

@@ -82,6 +82,17 @@ const thrown = async (run: Promise<unknown>): Promise<unknown> => {
   throw new Error('the run did not throw');
 };
 
+/** A notice collector: hand `onEvent` to the loop, then read what it said from `notices`. */
+const noticing = () => {
+  const notices: string[] = [];
+  const onEvent = (event: { kind: string; text?: string }) => {
+    if (event.kind === RunEventKind.Notice) {
+      notices.push(event.text ?? '');
+    }
+  };
+  return { notices, onEvent };
+};
+
 beforeEach(() => create.mockReset());
 afterEach(() => resetCapabilities());
 
@@ -814,7 +825,7 @@ describe('prune', () => {
 
   it('keeps each request an extension of the last until the boundary moves, and says each move', async () => {
     toolRun(7);
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config: { ...config, maxToolIterations: 10, contextLength: 10_000 },
       messages: question,
@@ -822,11 +833,7 @@ describe('prune', () => {
       dispatch: async () => long,
       // Two results are worth a move and one is not, and the window need not be filling.
       prune: { at: 0, minShare: 0.19, keepLast: 2 },
-      onEvent: (event) => {
-        if (event.kind === RunEventKind.Notice) {
-          notices.push(event.text ?? '');
-        }
-      },
+      onEvent,
     });
     const sent = sentMessages();
     const extensions = sent.slice(1).map((request, index) => {
@@ -910,7 +917,7 @@ describe('prune', () => {
     ];
     const history = [user('q'), ...['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].flatMap(turn)];
     create.mockReturnValueOnce(answer('the notes')).mockReturnValueOnce(says('done'));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config: {
         ...config,
@@ -923,7 +930,7 @@ describe('prune', () => {
       compact: true,
       // Never due on its own: the window is not over-full, so only the compaction moves it.
       prune: { at: 1, keepLast: 1 },
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     expect(notices).toEqual([expect.stringContaining('compacted'), expect.stringContaining('alongside a compaction')]);
     // The summary is held to the compaction task's ceiling.
@@ -1036,17 +1043,13 @@ describe('reasoning replay', () => {
       .mockReturnValueOnce(calls([['a', '{}']], 'look it up'))
       .mockRejectedValueOnce(apiError(400, "property 'reasoning_content' is unsupported"))
       .mockReturnValueOnce(says('done'));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages: question,
       tools: [tool('a')],
       dispatch: async () => 'found',
-      onEvent: (event) => {
-        if (event.kind === RunEventKind.Notice) {
-          notices.push(event.text ?? '');
-        }
-      },
+      onEvent,
     });
     const sent = sentMessages();
     expect(result.turn.content).toBe('done');
@@ -1258,18 +1261,14 @@ describe('one call per message', () => {
       .mockRejectedValueOnce(apiError(400, LLAMA_ONE_CALL))
       .mockReturnValueOnce(both())
       .mockReturnValueOnce(says('done'));
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages: question,
       tools: [tool('a'), tool('b')],
       dispatch: async ({ name }) => `${name} ran`,
       mintCallId: callIdMinter(3),
-      onEvent: (event) => {
-        if (event.kind === RunEventKind.Notice) {
-          notices.push(event.text ?? '');
-        }
-      },
+      onEvent,
     });
     expect(result.turn.content).toBe('done');
     expect(notices).toContain('m takes one tool call per message; replaying its calls one to a message');
@@ -1447,12 +1446,12 @@ describe('a turn with nothing to say', () => {
   };
   /** Runs a question, keeping the notices. */
   const run = async (messages: Message[] = question) => {
-    const notices: string[] = [];
+    const { notices, onEvent } = noticing();
     const result = await runAgentLoop({
       config,
       messages,
       dispatch: async () => 'ok',
-      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      onEvent,
     });
     return { result, notices };
   };
