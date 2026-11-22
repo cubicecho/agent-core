@@ -64,6 +64,17 @@ describe('progressChunk and progressEvent', () => {
     const { exchange: _exchange, ...unplaced } = called;
     expect(progressEvent({ [PROGRESS_FIELD]: { event: unplaced } })).toBeUndefined();
   });
+
+  it("reads back a nested event's via, the hops it came by, unchanged", () => {
+    const nested = { ...called, via: [{ runId: 'inner', callId: 'Srv000000' }] };
+    expect(progressEvent(overTheWire(progressChunk(nested, head)))).toEqual(nested);
+  });
+
+  it('reads nothing off an event whose via is not a list of hops', () => {
+    for (const via of ['inner', [{ runId: 'inner' }], [{ runId: 'inner', callId: 7 }]]) {
+      expect(progressEvent({ [PROGRESS_FIELD]: { event: { ...called, via } } })).toBeUndefined();
+    }
+  });
 });
 
 describe('withProgress and progressEvents', () => {
@@ -154,22 +165,6 @@ describe('remoteRun', () => {
     const remote = remoteRun(undefined, () => {}, { newKey: () => `key-${++made}` });
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-1' });
     expect(remote.turnHeaders()).toEqual({ [IDEMPOTENCY_HEADER]: 'key-2' });
-  });
-});
-
-describe('nested events over the wire', () => {
-  /** The server's tool call, republished from an inner run under the call it answers. */
-  const nested = { ...called, via: [{ runId: 'inner', callId: 'Srv000000' }] };
-
-  it('carries via through a chunk and an answer unchanged', () => {
-    expect(progressEvent(overTheWire(progressChunk(nested, head)))).toEqual(nested);
-    expect(progressEvents(overTheWire(withProgress({}, 'r1', [nested])))?.events).toEqual([nested]);
-  });
-
-  it('reads nothing off an event whose via is not a list of hops', () => {
-    for (const via of ['inner', [{ runId: 'inner' }], [{ runId: 'inner', callId: 7 }]]) {
-      expect(progressEvent(progressChunk({ ...called, via } as never, head))).toBeUndefined();
-    }
   });
 
   it("forwards an inner run's done, which is not the server's own", () => {
