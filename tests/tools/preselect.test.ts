@@ -271,7 +271,7 @@ describe('preselectByKeywords', () => {
     expect(names(reversed)).toEqual(['desk__Zed', 'desk__alpha']);
   });
 
-  it('words the catalogue does not use pick nothing, and say so', () => {
+  it('picks nothing for words the catalogue does not use, and says so', () => {
     // The words cannot tell a request that needs no tools from one whose words are not in the
     // catalogue, so neither is a confident answer and both go to the model.
     for (const prompt of ['Sing me a song about autumn', 'Could you have a look at that for me']) {
@@ -296,7 +296,7 @@ describe('preselectByKeywords', () => {
     expect(backwards.names).toEqual(forwards.names);
   });
 
-  it('plurals and camelCase meet the names they are asking for', () => {
+  it('meets the names a request asks for through plurals and camelCase', () => {
     // "files" against `fs__read_file`, and a camelCase catalogue split the same way as a snake one.
     expect(preselectByKeywords(desks, 'list the files in src').names).toContain('fs__list_directory');
     const camel: CatalogServer[] = [

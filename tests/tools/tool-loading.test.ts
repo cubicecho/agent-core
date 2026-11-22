@@ -210,7 +210,7 @@ describe('loadedTools', () => {
 });
 
 describe('orderTools', () => {
-  it('orderTools sorts by name, keeps the definitions themselves, and obeys a comparator', () => {
+  it('sorts by name, keeps the definitions themselves, and obeys a comparator', () => {
     const definition = (name: string) => ({
       type: FUNCTION_TOOL,
       function: { name, parameters: { type: SchemaType.Object } },
@@ -231,7 +231,7 @@ describe('orderTools', () => {
 });
 
 describe('requestedNames', () => {
-  it('load_tools arguments are read defensively', () => {
+  it('reads the arguments of load_tools defensively', () => {
     expect(requestedNames({ names: ['a', 'b'] })).toEqual(['a', 'b']);
     expect(requestedNames({ tools: 'a' })).toEqual(['a']);
     expect(requestedNames({ name: ['a', 2] })).toEqual(['a']);
