@@ -108,14 +108,16 @@ describe('createRuntime', () => {
     configureHooks({ preface: "the process's" });
     const runtime = createRuntime({
       clients: { maxClients: 7 },
+      events: { maxEvents: 3 },
       hooks: { contextTokens: 50 },
     });
     // Not inherited from the default runtime: the part left out is the package's default.
     expect(runtime.configureClients()).toEqual({ ...CLIENT_POOL_DEFAULTS, maxClients: 7 });
-    expect(runtime.configureEvents().maxEvents).toBe(EVENT_BUS_DEFAULTS.maxEvents);
+    expect(runtime.configureEvents()).toEqual({ ...EVENT_BUS_DEFAULTS, maxEvents: 3 });
     expect(runtime.configureHooks()).toEqual({ contextTokens: 50, preface: HOOK_DEFAULTS.preface });
     // And nothing it was given reached the process.
     expect(configureClients().maxClients).toBe(2);
+    expect(configureEvents().maxEvents).toBe(5);
     expect(configureHooks()).toEqual({ contextTokens: HOOK_DEFAULTS.contextTokens, preface: "the process's" });
   });
 
