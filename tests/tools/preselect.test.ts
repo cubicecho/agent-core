@@ -309,6 +309,12 @@ describe('preselectByKeywords', () => {
     expect(preselectByKeywords(camel, 'create a note').names).toEqual(['notes__createNote']);
   });
 
+  it('picks nothing, and is not confident, with no tools or no words to weigh', () => {
+    const none = { names: [], confident: false, ranked: [] };
+    expect(preselectByKeywords([], 'read the file')).toEqual(none);
+    expect(preselectByKeywords(desks, '')).toEqual(none);
+  });
+
   it('reads the request only as far as the preselector reads it', () => {
     const buried = `${'filler words '.repeat(300)}commit the changes`;
     expect(preselectByKeywords(desks, buried).names).not.toContain('git__commit');

@@ -285,6 +285,10 @@ describe('defineSpecColumns', () => {
           { role: PROMPT_ROLES.system, name: 'rules', content: 'Judge the work.' },
         ],
       };
+      expect(table.toLayer({ identity: 'Be brief.', rules: 'Judge the work.' }).prompt).toEqual([
+        { role: PROMPT_ROLES.system, name: 'identity', content: 'Be brief.' },
+        { role: PROMPT_ROLES.system, name: 'rules', content: 'Judge the work.' },
+      ]);
       expect(table.fromLayer(spec)).toEqual({ identity: 'Be brief.', rules: 'Judge the work.' });
       expect(table.dropped(spec)).toEqual([
         { path: 'prompt[0]', value: project },
@@ -328,6 +332,21 @@ describe('defineSpecColumns', () => {
         extensions: { 'com.example.host': { anything: true } },
       });
       expect(table.dropped(spec)).toEqual([{ path: 'tools.maxIterations', value: 4 }]);
+    });
+
+    it('leaves alone a prompt part the host reads by hand', () => {
+      const table = defineSpecColumns<Row>(
+        { model: { path: 'model.model', inherit: '' } },
+        { handled: ['prompt.lane'] },
+      );
+      const spec = parsed({
+        spec: AGENT_SPEC,
+        prompt: [
+          { role: PROMPT_ROLES.system, name: 'lane', content: 'Review.' },
+          { role: PROMPT_ROLES.system, name: 'rules', content: 'Judge.' },
+        ],
+      });
+      expect(table.dropped(spec).map((drop) => drop.path)).toEqual(['prompt[1]']);
     });
 
     it('reports a key from a later version of the format, which the parser carried through', () => {
