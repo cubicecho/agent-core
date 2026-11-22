@@ -300,6 +300,10 @@ describe('partHeadings', () => {
   it('keeps the rest of each word as it was', () => {
     expect(partHeadings(['taskList', '__odd--name  here']).labels).toEqual(['TaskList', 'Odd Name Here']);
   });
+
+  it('writes a name with no words in it as it is', () => {
+    expect(partHeadings(['_', '--']).labels).toEqual(['_', '--']);
+  });
 });
 
 describe('loopSection', () => {

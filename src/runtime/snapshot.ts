@@ -79,12 +79,15 @@ export interface CapabilitySnapshot {
   endpoints: Record<string, EndpointSnapshot>;
 }
 
+/** A model's snapshot as `exportCapabilities` writes one, which always says what efforts were refused. */
+type WrittenModel = ModelSnapshot & Required<Pick<ModelSnapshot, 'refusedEfforts'>>;
+
 /**
  * A model's snapshot as it starts out: every flag on, and both refused lists empty.
  *
  * @returns A fresh object each time, since `exportCapabilities` writes onto what it is given.
  */
-const optimisticModel = (): ModelSnapshot => ({
+const optimisticModel = (): WrittenModel => ({
   ...OPTIMISTIC_MODEL,
   refusedFields: [],
   refusedEfforts: [],
@@ -97,8 +100,8 @@ const optimisticModel = (): ModelSnapshot => ({
  * nothing.
  * @returns `true` where a flag is off, the hints included, or either refused list has an entry.
  */
-const refusedAnything = (model: ModelSnapshot) =>
-  MODEL_FLAGS.some((flag) => !model[flag]) || model.refusedFields.length > 0 || (model.refusedEfforts?.length ?? 0) > 0;
+const refusedAnything = (model: WrittenModel) =>
+  MODEL_FLAGS.some((flag) => !model[flag]) || model.refusedFields.length > 0 || model.refusedEfforts.length > 0;
 
 /**
  * The strings in a stored list, skipping what is not a list of them.
