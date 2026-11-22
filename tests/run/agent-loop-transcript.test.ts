@@ -690,6 +690,38 @@ describe('a stop while the tools run', () => {
     expect(failedRun(error)?.toolCalls).toEqual([{ id: 'c0', name: 'a', ok: true }]);
   });
 
+  it('throws the stop, not what onMessage throws on a call it answers as never run', async () => {
+    const controller = new AbortController();
+    create.mockReturnValueOnce(
+      calls([
+        ['a', '{}'],
+        ['a', '{"n":2}'],
+      ]),
+    );
+    const error = await thrown(
+      runAgentLoop({
+        config,
+        messages: question,
+        tools: [tool('a')],
+        dispatch: async () => {
+          controller.abort();
+          return 'ok';
+        },
+        signal: controller.signal,
+        // Heard only once the exchange is already ending on the stop.
+        onMessage: (message) => {
+          if (message.role === Role.Tool && message.tool_call_id === 'c1') {
+            throw new Error('the store is down');
+          }
+        },
+      }),
+    );
+    expect((error as Error).cause).toBe(controller.signal.reason);
+    expect(outline(failedRun(error)?.messages ?? []).at(-1)).toBe(
+      'tool c1: Not run: stopped before this call started.',
+    );
+  });
+
   it('sends a transcript the next request can replay', async () => {
     const controller = new AbortController();
     create
