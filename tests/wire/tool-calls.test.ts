@@ -23,6 +23,11 @@ describe('parseToolArguments', () => {
     expect(parseToolArguments(args)).toBe(args);
   });
 
+  it('reads a value a server parsed into something other than an object as its JSON', () => {
+    expect(() => parseToolArguments(42)).toThrow(expect.objectContaining({ kind: ARGUMENTS_MALFORMED }));
+    expect(() => parseToolArguments(true)).toThrow('not an object: true');
+  });
+
   it('opens JSON a string was holding', () => {
     expect(parseToolArguments(JSON.stringify('{"a":1}'))).toEqual({ a: 1 });
   });
@@ -193,6 +198,30 @@ describe('recoverToolCalls', () => {
     expect(recoverToolCalls('The answer is {x}.', { names })).toEqual({
       content: 'The answer is {x}.',
       toolCalls: [],
+    });
+  });
+
+  it('leaves a marker with no readable call after it as text', () => {
+    for (const text of [
+      '<tool_call>"read"</tool_call>',
+      '<tool_call>{"name": 3}</tool_call>',
+      '<tool_call>{"name": "read", "arguments": {"path": "a"}',
+      '[TOOL_CALLS]read[ARGS][1]',
+      '<|python_tag|>nothing',
+      '[{"name": "read"}, 3]',
+      '{"name": "read"} and then some prose',
+      '```json\nnot a call\n```',
+      '```\n{"name": "read"} trailing\n```',
+    ]) {
+      expect(recoverToolCalls(text, { names })).toEqual({ content: text, toolCalls: [] });
+    }
+  });
+
+  it("takes a marker inside another call's arguments as part of that call", () => {
+    const text = '<tool_call>{"name": "read", "arguments": "[TOOL_CALLS]write[ARGS]{}"}</tool_call>';
+    expect(recoverToolCalls(text, { names })).toMatchObject({
+      content: '',
+      toolCalls: [{ function: { name: 'read', arguments: '[TOOL_CALLS]write[ARGS]{}' } }],
     });
   });
 });
