@@ -283,7 +283,12 @@ describe('capability snapshots', () => {
     expect(importCapabilities({ version: 0, savedAt: '', endpoints })).toBe(false);
     expect(importCapabilities(null)).toBe(false);
     expect(importCapabilities('nope')).toBe(false);
+    expect(importCapabilities({ version: CAPABILITY_SNAPSHOT_VERSION, endpoints: 'nope' })).toBe(false);
     expect(capabilitiesFor(config).strictSchemas).toBe(true);
+  });
+
+  it('skips a field of the wrong type, and keeps reading the rest', () => {
+    const id = endpointId(config);
     expect(
       importCapabilities({
         version: CAPABILITY_SNAPSHOT_VERSION,
@@ -293,5 +298,27 @@ describe('capability snapshots', () => {
     const model = modelCapabilitiesFor(capabilitiesFor(config), 'm');
     expect([...model.refusedFields]).toEqual(['top_k']);
     expect(model.reasoningEffort).toBe(true);
+  });
+
+  it('skips an endpoint, a model list or a model that is not an object', () => {
+    const id = endpointId(config);
+    const other = endpointId({ ...config, baseUrl: 'http://other/v1' });
+    const quiet = endpointId({ ...config, baseUrl: 'http://quiet/v1' });
+    expect(
+      importCapabilities({
+        version: CAPABILITY_SNAPSHOT_VERSION,
+        endpoints: {
+          broken: 3,
+          [other]: { strictSchemas: false, models: 'nope' },
+          [quiet]: { models: { m: 3 } },
+          [id]: { models: { m: { reasoningEffort: false } } },
+        },
+      }),
+    ).toBe(true);
+    // The endpoint after the ones skipped is still read.
+    expect(modelCapabilitiesFor(capabilitiesFor(config), 'm').reasoningEffort).toBe(false);
+    // An endpoint's own flags are read before its model list is found wanting.
+    expect(capabilitiesFor({ ...config, baseUrl: 'http://other/v1' }).strictSchemas).toBe(false);
+    expect(capabilitiesFor({ ...config, baseUrl: 'http://quiet/v1' }).models.has('m')).toBe(false);
   });
 });
