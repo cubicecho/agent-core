@@ -166,7 +166,8 @@ export interface ToolsSpec {
   /** The hard stop on a tool loop. At least one. */
   maxIterations?: number;
   /**
-   * The MCP servers this agent may reach, by effective slug (`row.slug ?? row.id`).
+   * The MCP servers this agent may reach, by effective slug: a server's non-empty `slug`, or else
+   * its `id`.
    * Absent is every server the app offers, `[]` is none, and a list is exactly those.
    * Three different answers, and a loader must never collapse one into another.
    */
@@ -1092,6 +1093,22 @@ function parseHooks(report: Report, value: unknown[], events: readonly string[])
 }
 
 /**
+ * The name a bundled server goes by: its slug, or its id where it has no slug.
+ *
+ * @param server - The server as the document holds it.
+ * @returns The slug where it is a non-empty string, else the id where that is, else `undefined`.
+ *
+ * @remarks
+ * The one rule `parseBundle`, `resolveAgentSpec` and `findSpecSecrets` all name a server by, so a
+ * server kept under its id on parse is merged and reported under its id too. A `slug ?? id` would
+ * read an empty slug as the name, and lose the server on resolve.
+ */
+function effectiveSlug(server: Readonly<Record<string, unknown>>): string | undefined {
+  const named = (value: unknown) => (typeof value === 'string' && value !== '' ? value : undefined);
+  return named(server.slug) ?? named(server.id);
+}
+
+/**
  * Reads the `bundle` section, which `parseSpec` hands over only once an app has opted in.
  *
  * @param report - Where what is dropped is written.
@@ -1125,9 +1142,7 @@ function parseBundle(report: Report, value: unknown): SpecBundle | undefined {
       report.drop(path, 'must be an object');
       continue;
     }
-    const slug = typeof held.slug === 'string' && held.slug ? held.slug : undefined;
-    const id = typeof held.id === 'string' && held.id ? held.id : undefined;
-    const effective = slug ?? id;
+    const effective = effectiveSlug(held);
     if (!effective) {
       report.drop(path, 'needs an id or a slug');
       continue;
@@ -1680,7 +1695,7 @@ export function resolveAgentSpec(layers: readonly AgentSpec[]): ResolvedAgent {
   });
   const servers = mergeById(
     layers.flatMap((layer) => layer.bundle?.mcpServers ?? []),
-    (server) => (server.slug ?? server.id) || undefined,
+    effectiveSlug,
   );
 
   const extensions: Record<string, unknown> = {};
@@ -1915,7 +1930,7 @@ function argumentSigns(words: readonly unknown[]): [index: number, sign: SecretS
  * @returns The hints in the order `url`, `command`, `args`, then the server's other keys.
  */
 function serverSecrets(server: SpecServer, path: string): SecretHint[] {
-  const name = server.slug ?? server.id ?? '';
+  const name = effectiveSlug(server) ?? '';
   const hints: SecretHint[] = [];
   const hint = (at: string, sign: SecretSign | undefined) => {
     if (sign) {

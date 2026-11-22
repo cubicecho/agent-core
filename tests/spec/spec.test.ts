@@ -559,6 +559,14 @@ describe('parseSpec bundle', () => {
     ]);
   });
 
+  it('names a server with an empty slug by its id, on parse, on resolve and in its hints', () => {
+    const server = { slug: '', id: 'fs', url: 'https://user:pass@mcp.example.com/' };
+    const spec = parsed(doc({ bundle: { mcpServers: [server] } }), { bundle: true });
+    expect(spec.bundle?.mcpServers).toEqual([server]);
+    expect(resolveAgentSpec([spec]).mcpServers).toEqual([server]);
+    expect(findSpecSecrets(spec).map((hint) => hint.server)).toEqual(['fs']);
+  });
+
   it('drops a bundle or a server list of the wrong kind, and a server that is not an object', () => {
     const read = (value: unknown) => parseSpec(doc({ bundle: value }), { bundle: true });
     expect(read(3)).toMatchObject({
