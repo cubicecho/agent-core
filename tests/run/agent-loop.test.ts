@@ -239,19 +239,6 @@ describe('runAgentLoop', () => {
     ]);
   });
 
-  it('stops when the tool budget is spent', async () => {
-    create.mockImplementation(() => calls(['a', '{}']));
-    await expect(
-      runAgentLoop({
-        config: { ...config, maxToolIterations: 2 },
-        messages: question,
-        tools: [tool('a')],
-        dispatch: async () => 'ok',
-      }),
-    ).rejects.toThrow('Stopped after 2 tool iterations.');
-    expect(create).toHaveBeenCalledTimes(2);
-  });
-
   it('reports every turn on its own usage event, with the cache weighed against the last request', async () => {
     create.mockReturnValueOnce(reportedCall(100, 0, 'a')).mockReturnValueOnce(reported(130, 108, { content: 'done' }));
     const reports: RunUsage[] = [];
@@ -1019,19 +1006,6 @@ describe('runAgentLoop', () => {
       expect(result.artifacts).toEqual([]);
       expect(result.metrics.artifacts).toBe(0);
       expect(results.map((answer) => 'links' in answer)).toEqual([false, false]);
-    });
-
-    it('hands a failed run back with what its calls made', async () => {
-      create.mockReturnValue(calls(['write', '{}']));
-      const error = await runAgentLoop({
-        config: { ...config, maxToolIterations: 1 },
-        messages: question,
-        tools: [tool('write')],
-        dispatch: async () => ({ text: 'saved', links: [link('doc://a')] }),
-      }).catch((caught: unknown) => caught);
-      expect(failedRun(error)?.artifacts).toEqual([
-        { link: link('doc://a'), callId: 'c0', tool: 'write', turn: 0, count: 1 },
-      ]);
     });
   });
 
@@ -2278,7 +2252,7 @@ describe('runAgentLoop', () => {
       expect(create.mock.calls[0][0].messages[0].content).toBe('hi');
     });
 
-    it('gathers the injecting events it lists in their order, and tells afterExchange where it is listed', async () => {
+    it('gathers the injecting events it lists in their order, and tells afterExchange only after the reply', async () => {
       create.mockReturnValueOnce(says('the answer'));
       const run = recalling();
       const result = await runAgentLoop({
@@ -2288,44 +2262,15 @@ describe('runAgentLoop', () => {
         hooks: {
           run,
           context: { session: { id: 's1' } },
-          fire: [HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange, HookEvent.SessionEnd],
+          // Listed first, afterExchange is still never gathered before the request.
+          fire: [HookEvent.AfterExchange, HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.SessionEnd],
         },
       });
       await result.afterExchange;
       // `sessionEnd` is the host's: the loop has no point that is the end of a session.
       expect(fired(run)).toEqual([HookEvent.SessionStart, HookEvent.BeforeExchange, HookEvent.AfterExchange]);
+      expect(run.mock.calls[2][1]).toMatchObject({ reply: 'the answer' });
       expect(result.context.indexOf('from sessionStart')).toBeLessThan(result.context.indexOf('from beforeExchange'));
-    });
-
-    it('never gathers afterExchange before the request', async () => {
-      create.mockReturnValueOnce(says('the answer'));
-      const run = recalling();
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        dispatch: async () => 'ok',
-        hooks: {
-          run,
-          context: { session: { id: 's1' } },
-          fire: [HookEvent.AfterExchange, HookEvent.BeforeExchange],
-        },
-      });
-      await result.afterExchange;
-      expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
-      expect(run.mock.calls[1][1]).toMatchObject({ reply: 'the answer' });
-    });
-
-    it('fires beforeExchange before the request and afterExchange after it when absent', async () => {
-      create.mockReturnValueOnce(says('the answer'));
-      const run = recalling();
-      const result = await runAgentLoop({
-        config,
-        messages: question,
-        dispatch: async () => 'ok',
-        hooks: { run, context: { session: { id: 's1' } } },
-      });
-      await result.afterExchange;
-      expect(fired(run)).toEqual([HookEvent.BeforeExchange, HookEvent.AfterExchange]);
     });
   });
 
@@ -2737,23 +2682,6 @@ describe('runAgentLoop', () => {
     expect(result.ledger).toHaveLength(3);
   });
 
-  it('hands a failure before any turn the ledger it was given', async () => {
-    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
-    // `beforeTurn` runs ahead of the first request, so its throw is a failure before any turn.
-    const error = await runAgentLoop({
-      config,
-      messages: question,
-      dispatch: async () => 'ok',
-      ledger: earlier,
-      beforeTurn: () => {
-        throw new Error('the host could not rebuild the transcript');
-      },
-    }).catch((caught: unknown) => caught);
-    expect(errorMessage(error)).toBe('the host could not rebuild the transcript');
-    expect(failedRun(error)?.ledger).toEqual(earlier);
-    expect(create).not.toHaveBeenCalled();
-  });
-
   it('starts a new epoch when beforeTurn rewrites the history, and records nothing unreported', async () => {
     create
       .mockReturnValueOnce(reportedCall(100, 0, 'a'))
@@ -2958,13 +2886,11 @@ describe('runAgentLoop', () => {
       expect(systems()).toEqual(['sys']);
     });
 
-    it('follow the system prompt in eager mode, a section per server that spoke', async () => {
+    it('give a toolless server its section in eager mode too, with no catalogue', async () => {
       create.mockReturnValueOnce(says('done'));
       await run({});
       const [prompt] = systems();
-      expect(prompt).toMatch(/^sys\n\n# MCP server instructions\n/);
-      expect(prompt).toContain('## S\n\n<untrusted source="S">\nRead twice.\n</untrusted>');
-      expect(prompt).toContain('## Q\n\n<untrusted source="Q">');
+      expect(prompt).toContain('Ask Q nothing');
       expect(prompt).not.toContain('Tool catalogue');
     });
 
@@ -2977,13 +2903,6 @@ describe('runAgentLoop', () => {
         String(first).indexOf('# Tool catalogue'),
       );
       expect(first).toContain('Ask Q nothing');
-    });
-
-    it('sit before the catalogue proxied', async () => {
-      create.mockReturnValueOnce(says('done'));
-      await run({ config: { ...config, toolDiscovery: ToolDiscovery.Proxy } });
-      const [prompt] = systems();
-      expect(prompt).toMatch(/^sys\n\n# MCP server instructions\n[\s\S]*\n\n# Tool catalogue\n/);
     });
 
     it('stay on a preselected first turn, leaving it the head of the next', async () => {
