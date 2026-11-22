@@ -322,10 +322,12 @@ describe('cleanup', () => {
     expect(history('late')).toEqual([]);
   });
 
-  it('forgets a run on request', () => {
+  it('forgets a run on request, and ignores one it never heard of', () => {
     emit('doomed', { kind: RunEventKind.Output, text: 'a' });
     endRun('doomed');
     expect(history('doomed')).toEqual([]);
+    expect(() => endRun('never')).not.toThrow();
+    expect(history('never')).toEqual([]);
   });
 
   it('forgets a run that dies without ever saying done', () => {
@@ -552,6 +554,7 @@ describe('runMetrics', () => {
       emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', level, text: level });
     }
     emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', level: 'loud', text: 'unknown' });
+    emit('r', { kind: RunEventKind.ServerLog, id: 'c0', name: 'read', text: 'no level' });
     expect(runMetrics(history('r'))).toMatchObject({ serverWarnings: 2, serverErrors: 4, toolCalls: 0 });
   });
 
@@ -759,6 +762,19 @@ describe('runMetrics', () => {
     expect(runMetrics(history('pinned')).unpinnedTurns).toBe(2);
     emit('plain', turn());
     expect(runMetrics(history('plain'))).not.toHaveProperty('unpinnedTurns');
+  });
+
+  it('files a broken cache that gave no reason under none-known', () => {
+    emit('r', {
+      kind: RunEventKind.Usage,
+      usage: {
+        promptTokens: 1,
+        completionTokens: 0,
+        totalTokens: 1,
+        turn: { prompt: 1, completion: 0, total: 1, cached: 0, finishReason: FinishReason.Stop, cacheBroken: true },
+      },
+    });
+    expect(runMetrics(history('r')).cacheBreakReasons).toEqual({ [CacheBreakReason.NoneKnown]: 1 });
   });
 
   it('ignores usage a caller emitted without a turn report', () => {

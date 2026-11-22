@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatToolError, oneCallPerMessage, preview, splitCalls } from '../../src/run/run-calls.ts';
+import { dropReasoning, formatToolError, oneCallPerMessage, preview, splitCalls } from '../../src/run/run-calls.ts';
 import { FUNCTION_TOOL, REASONING_CONTENT, Role } from '../../src/wire/wire.ts';
 import { assistant, type Message, pairsByPosition, singleCallRefusal, user } from '../helpers.ts';
 
@@ -87,5 +87,15 @@ describe('oneCallPerMessage', () => {
     expect(oneCallPerMessage(transcript)).toBe(transcript);
     const split = oneCallPerMessage([user('go'), asking('a', 'b'), answer('a'), answer('b')]);
     expect(oneCallPerMessage(split)).toBe(split);
+  });
+});
+
+describe('dropReasoning', () => {
+  it('copies only the messages that carry a scratchpad, and hands back a transcript with none as it is', () => {
+    const transcript = [user('go'), asking('a'), answer('a')];
+    const dropped = dropReasoning(transcript);
+    expect(dropped[1]).not.toHaveProperty(REASONING_CONTENT);
+    expect(dropped[2]).toBe(transcript[2]);
+    expect(dropReasoning(dropped)).toBe(dropped);
   });
 });

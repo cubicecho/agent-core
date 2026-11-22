@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { planCompaction } from '../../src/context/compaction.ts';
 import {
   breakReason,
+  cacheDiagnosis,
   estimateFrom,
   type LedgerRequest,
   rebaseLedger,
@@ -9,7 +10,7 @@ import {
   type TokenLedger,
   tokensBetween,
 } from '../../src/context/ledger.ts';
-import { CacheBreakReason } from '../../src/wire/stream.ts';
+import { CacheBreakReason, type TurnUsage } from '../../src/wire/stream.ts';
 import { messageChars } from '../../src/wire/tokens.ts';
 import { Role } from '../../src/wire/wire.ts';
 import { assistant, type Message, result, user } from '../helpers.ts';
@@ -239,10 +240,70 @@ describe('rebaseLedger', () => {
 });
 
 describe('breakReason', () => {
+  const system = (content: string): Message => ({ role: Role.System, content });
+  const before = { messages: [system('rules'), user('q'), assistant('a')], tools: ['read'] };
+
+  it('names the earliest change in the prompt: the tools, then the system prompt, then the history', () => {
+    const everything = { messages: [system('new rules'), user('other')], tools: ['write'] };
+    expect(breakReason(before, everything)).toBe(CacheBreakReason.ToolsChanged);
+    const reordered = { ...before, tools: ['read', 'write'] };
+    expect(breakReason(before, reordered)).toBe(CacheBreakReason.ToolsChanged);
+    const prompted = { ...before, messages: [system('new rules'), user('other')] };
+    expect(breakReason(before, prompted)).toBe(CacheBreakReason.SystemChanged);
+    const added = { ...before, messages: [system('rules'), system('more'), user('q'), assistant('a')] };
+    expect(breakReason(before, added)).toBe(CacheBreakReason.SystemChanged);
+    const rewritten = { ...before, messages: [system('rules'), user('other'), assistant('a')] };
+    expect(breakReason(before, rewritten)).toBe(CacheBreakReason.HistoryRewritten);
+  });
+
+  it('knows of nothing where the request only appended', () => {
+    const appended = { ...before, messages: [...before.messages, user('next')] };
+    expect(breakReason(before, appended)).toBe(CacheBreakReason.NoneKnown);
+    // Absent tools are none, on either side.
+    expect(breakReason({ messages: [user('q')] }, { messages: [user('q')], tools: [] })).toBe(
+      CacheBreakReason.NoneKnown,
+    );
+    // A request of nothing but system messages is all head.
+    expect(breakReason({ messages: [system('a')] }, { messages: [system('b')] })).toBe(CacheBreakReason.SystemChanged);
+  });
+
   it('reads a changed developer message at the head as the system prompt changing', () => {
     const developer = (content: string): Message => ({ role: Role.Developer, content });
     const before = { messages: [developer('be brief'), user('q')] };
     const after = { messages: [developer('be thorough'), user('q')] };
     expect(breakReason(before, after)).toBe(CacheBreakReason.SystemChanged);
+  });
+});
+
+describe('cacheDiagnosis', () => {
+  const previous = { messages: [user('q')], tools: ['read'], prompt: 100, completion: 20 };
+  const next = { messages: [user('q'), assistant('a'), user('next')], tools: ['read'] };
+  /** One turn's report, with what it said of its cache. */
+  const usage = (cached: number, uncached?: number): TurnUsage => ({
+    prompt: 150,
+    completion: 5,
+    total: 155,
+    cached,
+    uncached,
+  });
+
+  it('diagnoses nothing without a request before it that reported a prompt', () => {
+    expect(cacheDiagnosis(undefined, next, usage(0, 150))).toEqual({});
+    expect(cacheDiagnosis({ ...previous, prompt: 0 }, next, usage(0, 150))).toEqual({});
+  });
+
+  it('says what to expect, and judges only a turn that reported its cache', () => {
+    expect(cacheDiagnosis(previous, next, usage(0))).toEqual({ cacheExpected: 120 });
+    expect(cacheDiagnosis(previous, next, usage(95, 55))).toEqual({ cacheExpected: 120, cacheBroken: false });
+  });
+
+  it('names why a cache that fell short broke', () => {
+    expect(cacheDiagnosis(previous, next, usage(10, 140))).toEqual({
+      cacheExpected: 120,
+      cacheBroken: true,
+      cacheBreakReason: CacheBreakReason.NoneKnown,
+    });
+    const retooled = { ...next, tools: ['write'] };
+    expect(cacheDiagnosis(previous, retooled, usage(10, 140)).cacheBreakReason).toBe(CacheBreakReason.ToolsChanged);
   });
 });

@@ -346,6 +346,11 @@ describe('summaryInput', () => {
     });
     expect(text).toBe(`user: ${'y'.repeat(COMPACTION_DEFAULTS.summaryMessageChars)}\n\nassistant: read({})`);
   });
+
+  it('leaves out a message with neither text nor calls', () => {
+    const empty: Message = { role: Role.Assistant, content: null };
+    expect(summaryInput({ from: 0, cut: 3, toSummarise: [user('a'), empty, user('b')] })).toBe('user: a\n\nuser: b');
+  });
 });
 
 describe('a message whose content is a list of parts', () => {
@@ -791,6 +796,12 @@ describe('a fold inside one question', () => {
   it('plans nothing for a loop too short to fold, or a transcript with no question', () => {
     expect(planCompaction([user('task'), call('c0'), answer('c0')], { limit: 10, estimate })).toBeUndefined();
     expect(planCompaction(turns(5), { limit: 100, estimate })).toBeUndefined();
+  });
+
+  it('plans nothing where the question alone overfills the window and the loop after it fits', () => {
+    // The cut lands on the first call, so all there is before it is the question, which is kept.
+    const weigh = (message: Message) => (message.role === Role.User ? 100 : 5);
+    expect(planCompaction([user('task'), call('c0'), answer('c0')], { limit: 100, estimate: weigh })).toBeUndefined();
   });
 
   it('sends the question after the summary, and the next fold continues the notes', async () => {

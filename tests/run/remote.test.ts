@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { nestEvent, RunEventKind, stamp } from '../../src/run/events.ts';
+import { ToolDiscovery } from '../../src/core/config.ts';
+import type { AgentLoopOptions } from '../../src/run/agent-loop.ts';
+import { nestEvent, type RunEventInput, RunEventKind, stamp } from '../../src/run/events.ts';
 import {
+  asRemoteAgent,
   IDEMPOTENCY_HEADER,
   PROGRESS_FIELD,
   progressChunk,
   progressEvent,
   progressEvents,
   progressWarnings,
+  REMOTE_AGENT_NOTICE,
   remoteRun,
   withProgress,
 } from '../../src/run/remote.ts';
+import { CallIds } from '../../src/wire/call-ids.ts';
+import { catalog, config, user } from '../helpers.ts';
 
 /** The head every chunk of ai-router's stream for run `r1` carries. */
 const head = { id: 'chatcmpl-r1', created: 1_700_000_000, model: 'helper' };
@@ -173,5 +179,55 @@ describe('nested events over the wire', () => {
     const event = stamp(nestEvent(innerDone, { runId: 'inner', callId: 'Srv000000' }), 'r1', 8, 41);
     remote.onChunk(progressChunk(event, head));
     expect(told).toEqual([event]);
+  });
+});
+
+describe('asRemoteAgent', () => {
+  /** An exchange's options against a remote agent, with whatever the test asks for laid on, and what it noticed. */
+  const remote = (given: Partial<AgentLoopOptions> = {}, extra: Partial<AgentLoopOptions['config']> = {}) => {
+    const notices: string[] = [];
+    const options: AgentLoopOptions = {
+      config: { ...config, remoteAgent: true, contextLength: 8192, ...extra },
+      messages: [user('hi')],
+      dispatch: async () => 'ok',
+      onEvent: (event: RunEventInput) => notices.push(event.text ?? ''),
+      ...given,
+    };
+    return { options, notices, set: asRemoteAgent(options) };
+  };
+
+  it('hands back the options themselves for a model that is not a remote agent', () => {
+    const options: AgentLoopOptions = { config, messages: [user('hi')], dispatch: async () => 'ok', compact: true };
+    expect(asRemoteAgent(options)).toBe(options);
+  });
+
+  it("sets aside what is the server's to do, and names in one notice what the app asked for", () => {
+    const asked = { compact: true, prune: true, preselect: true, maxContinuations: 2, catalog };
+    const { set, notices } = remote(
+      { ...asked, recoverToolCalls: true, callIds: CallIds.Minted },
+      { toolDiscovery: ToolDiscovery.OnDemand },
+    );
+    expect(set).toMatchObject({ compact: false, prune: false, preselect: false, maxContinuations: 0 });
+    expect(set.recoverToolCalls).toBe(false);
+    expect(set.config).toMatchObject({ toolDiscovery: ToolDiscovery.Eager, contextLength: 0 });
+    expect(notices).toHaveLength(1);
+    expect(notices[0].startsWith(REMOTE_AGENT_NOTICE)).toBe(true);
+    for (const name of [
+      'compact',
+      'prune',
+      'preselect',
+      'toolDiscovery',
+      'maxContinuations',
+      'recoverToolCalls',
+      'callIds',
+    ]) {
+      expect(notices[0]).toContain(name);
+    }
+  });
+
+  it('says nothing where the app asked for none of it, on-demand discovery with no catalogue included', () => {
+    const { set, notices } = remote({}, { toolDiscovery: ToolDiscovery.OnDemand });
+    expect(notices).toEqual([]);
+    expect(set.config.toolDiscovery).toBe(ToolDiscovery.Eager);
   });
 });

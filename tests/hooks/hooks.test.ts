@@ -322,6 +322,12 @@ describe('notify', () => {
     expect(run.mock.calls[0][2].signal).toBeUndefined();
   });
 
+  it('notes a failure that gave no reason as failed', async () => {
+    const run: HookRunner = async () => [outcome({ event: HookEvent.AfterExchange, ok: false })];
+    const [note] = await notify(run, HookEvent.AfterExchange, { session: { id: 's1' } });
+    expect(note.error).toBe('failed');
+  });
+
   it('never rejects, even when the runner throws synchronously', async () => {
     const run: HookRunner = () => {
       throw new Error('sync');

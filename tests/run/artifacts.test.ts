@@ -150,6 +150,9 @@ describe('RunArtifacts', () => {
     log.witness({}, 'ok', [{ uri: 'doc://linked', name: 'l' }], at('c2', 'save'));
     expect(log.seen('doc://linked')).toEqual(at('c2', 'save'));
     expect(log.seen('  ')).toBeUndefined();
+    log.witness({ files: [{ path: 'notes/a.md' }, 'notes/b.md'] }, 'ok', [], at('c3', 'write_many'));
+    expect(log.seen('notes/a.md')).toEqual(at('c3', 'write_many'));
+    expect(log.seen('notes/b.md')).toEqual(at('c3', 'write_many'));
   });
 
   it('puts a declaration down to the latest call that touched its location', () => {
