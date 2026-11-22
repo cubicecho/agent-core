@@ -1202,7 +1202,7 @@ Implements: M12. Needs: B41.
 
 Baseline at `109355d`: `biome ci` clean, `tsc --noEmit` clean, 1295 tests in 60 files pass; coverage 98.36% lines, 94.5% branches, 99.06% functions. Surveyed in four parts (loop; run/hooks/context; wire/turn/endpoint; tools/spec/runtime/core). The three bugs were reproduced by script. The domain model matched the code in scope (it was updated in #248), so it is unchanged.
 
-Result, 2026-11-22: every approved item is done. 1331 tests in 60 files pass (1295 before: 62 added, 26 removed or merged), `biome ci` and `tsc` clean, `llms.txt` unchanged. Coverage 99.86% lines, 97.75% branches, 100% functions. Left uncovered on purpose, as fallbacks the types force or trivial: compaction.ts:68/93/149, artifacts.ts:274/350-352, request-body.ts:41/114, remote.ts:183/199, discovery.ts:66, spec.ts:492/1109, agent-loop.ts:872 (a failure before the turns with no ledger passed). The transcript:827 "no window" half of T16 stayed, as the only test of the loop's `contextLength ?? 0` gate.
+Result, 2026-11-22: every approved item is done. 1331 tests in 60 files pass (1295 before), `biome ci` and `tsc` clean, `llms.txt` unchanged. Coverage 99.86% lines, 97.75% branches, 100% functions. Seven statement lines were uncovered in the last run: capabilities.ts:729, client.ts:103 (a FinalizationRegistry callback, so it depends on garbage collection) and :1039, run-calls.ts:462, spec.ts:493 and :1129, discovery.ts:66; 78 branches also remain. The transcript:827 "no window" half of T16 stayed, as the only test of the loop's `contextLength ?? 0` gate.
 
 ### B43 — Bug
 
