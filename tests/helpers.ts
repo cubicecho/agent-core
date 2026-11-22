@@ -3,6 +3,7 @@ import { expect, vi } from 'vitest';
 import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
 import type { HookOutcome } from '../src/hooks/hooks.ts';
+import { PART_OWNERS, PROMPT_ROLES, type StackedPart } from '../src/spec/parts.ts';
 import { type AgentSpec, parseSpec } from '../src/spec/spec.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
 import { toolName } from '../src/tools/tool-loading.ts';
@@ -429,3 +430,32 @@ export function parsed(document: unknown, options?: Parameters<typeof parseSpec>
   }
   return result.spec;
 }
+
+/**
+ * An agent's part, as stacking leaves it.
+ *
+ * @param name - Its name.
+ * @param content - Its text.
+ * @param [mark] - The part it adds to or replaces, where it does.
+ * @returns The part.
+ */
+export const stackedAgent = (name: string, content: string, mark?: StackedPart['mark']): StackedPart => ({
+  role: PROMPT_ROLES.system,
+  name,
+  content,
+  owner: PART_OWNERS.agent,
+  ...(mark && { mark }),
+});
+
+/**
+ * An app's part, as stacking leaves it.
+ *
+ * @param name - Its name, prefix included.
+ * @param content - Its text.
+ * @param [mark] - The part it adds to or replaces, where it does.
+ * @returns The part.
+ */
+export const stackedApp = (name: string, content: string, mark?: StackedPart['mark']): StackedPart => ({
+  ...stackedAgent(name, content, mark),
+  owner: PART_OWNERS.app,
+});

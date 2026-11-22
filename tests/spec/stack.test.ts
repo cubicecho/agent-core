@@ -8,15 +8,7 @@ import {
   type StackedPart,
 } from '../../src/spec/parts.ts';
 import { type AppPart, numberedName, plainPrompt, stackAppParts } from '../../src/spec/stack.ts';
-
-/** A stacked agent's part, marked against another where `mark` says. */
-const stacked = (name: string, content: string, mark?: StackedPart['mark']): StackedPart => ({
-  role: PROMPT_ROLES.system,
-  name,
-  content,
-  owner: PART_OWNERS.agent,
-  ...(mark && { mark }),
-});
+import { stackedAgent, stackedApp } from '../helpers.ts';
 
 const extend = (target: string) => ({ mode: PROMPT_MODES.extend, target });
 const replace = (target: string) => ({ mode: PROMPT_MODES.replace, target });
@@ -29,18 +21,12 @@ const appPart = (name: string, content: string, mode?: AppPart['mode']): AppPart
   ...(mode && { mode }),
 });
 
-/** A part as stacking leaves an app's. */
-const stackedApp = (name: string, content: string, mark?: StackedPart['mark']): StackedPart => ({
-  ...stacked(name, content, mark),
-  owner: PART_OWNERS.app,
-});
-
 /** Task Reviewer, as the prompt spec's section 3 writes it: only `format` may be replaced. */
 const TASK_REVIEWER: readonly StackedPart[] = [
-  stacked('identity', 'You are Task Reviewer. You decide whether work is actually done.'),
-  stacked('rules', 'Judge the work itself, not reports about it.'),
+  stackedAgent('identity', 'You are Task Reviewer. You decide whether work is actually done.'),
+  stackedAgent('rules', 'Judge the work itself, not reports about it.'),
   {
-    ...stacked('format', 'Start with PASS or FAIL on its own line.'),
+    ...stackedAgent('format', 'Start with PASS or FAIL on its own line.'),
     allowedModes: [PROMPT_MODES.extend, PROMPT_MODES.replace],
   },
 ];
@@ -109,9 +95,9 @@ describe('stackAppParts', () => {
 
   it("holds each mode to the agent part's allowedModes, absent meaning extend only", () => {
     const agent = [
-      stacked('identity', 'You are X.'),
-      { ...stacked('rules', 'Be careful.'), allowedModes: [] },
-      { ...stacked('format', 'Prose.'), allowedModes: [PROMPT_MODES.replace] },
+      stackedAgent('identity', 'You are X.'),
+      { ...stackedAgent('rules', 'Be careful.'), allowedModes: [] },
+      { ...stackedAgent('format', 'Prose.'), allowedModes: [PROMPT_MODES.replace] },
     ];
     const { parts, warnings } = stackAppParts(agent, [
       appPart('identity', 'Here, review.', PROMPT_MODES.extend),
@@ -205,50 +191,50 @@ describe('numberedName', () => {
 
 describe('plainPrompt', () => {
   it('joins the trimmed contents with blank lines, leaving out the empty ones', () => {
-    const parts = [stacked('a', '  A.  '), stacked('b', ' \n '), stacked('c', 'C.\n')];
+    const parts = [stackedAgent('a', '  A.  '), stackedAgent('b', ' \n '), stackedAgent('c', 'C.\n')];
     expect(plainPrompt(parts)).toBe('A.\n\nC.');
     expect(plainPrompt([])).toBe('');
   });
 
   it("writes a replacer's content in the place of the part it replaces, and not again", () => {
     const parts = [
-      stacked('format', 'Prose.'),
-      stacked('rules', 'Be careful.'),
-      stacked('format_2', 'PASS or FAIL.', replace('format')),
-      stacked('lane', 'Review.'),
+      stackedAgent('format', 'Prose.'),
+      stackedAgent('rules', 'Be careful.'),
+      stackedAgent('format_2', 'PASS or FAIL.', replace('format')),
+      stackedAgent('lane', 'Review.'),
     ];
     expect(plainPrompt(parts)).toBe('PASS or FAIL.\n\nBe careful.\n\nReview.');
   });
 
   it('lets the last replacer win, and follows a replacer that is itself replaced', () => {
     const twice = [
-      stacked('format', 'Prose.'),
-      stacked('format_2', 'PASS or FAIL.', replace('format')),
-      stacked('format_3', 'JSON.', replace('format')),
+      stackedAgent('format', 'Prose.'),
+      stackedAgent('format_2', 'PASS or FAIL.', replace('format')),
+      stackedAgent('format_3', 'JSON.', replace('format')),
     ];
     expect(plainPrompt(twice)).toBe('JSON.');
     const chained = [
-      stacked('format', 'Prose.'),
-      stacked('format_2', 'PASS or FAIL.', replace('format')),
-      stacked('format_2_2', 'JSON.', replace('format_2')),
+      stackedAgent('format', 'Prose.'),
+      stackedAgent('format_2', 'PASS or FAIL.', replace('format')),
+      stackedAgent('format_2_2', 'JSON.', replace('format_2')),
     ];
     expect(plainPrompt(chained)).toBe('JSON.');
   });
 
   it('writes an extension where it stands', () => {
     const parts = [
-      stacked('identity', 'You are X.'),
-      stacked('format', 'Prose.'),
-      stacked('identity_2', 'Here, review.', extend('identity')),
+      stackedAgent('identity', 'You are X.'),
+      stackedAgent('format', 'Prose.'),
+      stackedAgent('identity_2', 'Here, review.', extend('identity')),
     ];
     expect(plainPrompt(parts)).toBe('You are X.\n\nProse.\n\nHere, review.');
   });
 
   it('writes a replacer in its own place when the part it names is not before it', () => {
     const parts = [
-      stacked('format_2', 'PASS or FAIL.', replace('format')),
-      stacked('format', 'Prose.'),
-      stacked('lane_2', 'Review.', replace('lane')),
+      stackedAgent('format_2', 'PASS or FAIL.', replace('format')),
+      stackedAgent('format', 'Prose.'),
+      stackedAgent('lane_2', 'Review.', replace('lane')),
     ];
     expect(plainPrompt(parts)).toBe('PASS or FAIL.\n\nProse.\n\nReview.');
   });
