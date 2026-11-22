@@ -21,7 +21,7 @@ import {
   shownCall,
 } from '../../src/tools/tool-loading.ts';
 import { FUNCTION_TOOL, SchemaType } from '../../src/wire/wire.ts';
-import { catalog, catalogTool } from '../helpers.ts';
+import { catalog, catalogTool, tool, toolNames } from '../helpers.ts';
 
 const { maxPerLoad, maxCarried } = TOOL_DISCOVERY_DEFAULTS;
 
@@ -197,36 +197,26 @@ describe('catalogPrompt', () => {
 
 describe('loadedTools', () => {
   it('appends loaded definitions in load order, never moving them', () => {
-    const definition = (name: string) => ({
-      type: FUNCTION_TOOL,
-      function: { name, parameters: { type: SchemaType.Object } },
-    });
-    const [a, b, c] = [definition('a'), definition('b'), definition('c')];
+    const [a, b, c] = [tool('a'), tool('b'), tool('c')];
     const previous = [c, a];
-    const names = (list: { type: string; function?: { name: string } }[]) => list.map((item) => item.function?.name);
-    expect(names(loadedTools(previous, [b, a, b]))).toEqual(['c', 'a', 'b']);
-    expect(names(previous)).toEqual(['c', 'a']);
+    expect(toolNames(loadedTools(previous, [b, a, b]))).toEqual(['c', 'a', 'b']);
+    expect(toolNames(previous)).toEqual(['c', 'a']);
   });
 });
 
 describe('orderTools', () => {
   it('sorts by name, keeps the definitions themselves, and obeys a comparator', () => {
-    const definition = (name: string) => ({
-      type: FUNCTION_TOOL,
-      function: { name, parameters: { type: SchemaType.Object } },
-    });
-    const [a, b, c] = [definition('a'), definition('b'), definition('c')];
-    const names = (list: { type: string; function?: { name: string } }[]) => list.map((item) => item.function?.name);
+    const [a, b, c] = [tool('a'), tool('b'), tool('c')];
     const given = [c, a, b];
-    expect(names(orderTools(given))).toEqual(['a', 'b', 'c']);
+    expect(toolNames(orderTools(given))).toEqual(['a', 'b', 'c']);
     // By identity, so `sanitizeTools` still answers from its cache rather than rebuilding.
     expect(orderTools(given)[0]).toBe(a);
-    expect(names(given)).toEqual(['c', 'a', 'b']);
+    expect(toolNames(given)).toEqual(['c', 'a', 'b']);
     expect(orderTools(given, false)).toBe(given);
     // Already in order, so nothing is copied.
     const sorted = [a, b, c];
     expect(orderTools(sorted)).toBe(sorted);
-    expect(names(orderTools(given, (x, y) => y.localeCompare(x)))).toEqual(['c', 'b', 'a']);
+    expect(toolNames(orderTools(given, (x, y) => y.localeCompare(x)))).toEqual(['c', 'b', 'a']);
   });
 });
 
