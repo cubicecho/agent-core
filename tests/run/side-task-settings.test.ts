@@ -834,4 +834,23 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       expect.stringContaining('boom'),
     ]);
   });
+
+  it('asks about a question sent in parts by its text parts alone, joined by lines', async () => {
+    create.mockResolvedValueOnce(answer('["s__read"]')).mockResolvedValueOnce(says('hello'));
+    await run(onDemand({ toolSelect: { model: 'tiny' } }), {
+      preselect: true,
+      messages: [
+        {
+          role: Role.User,
+          content: [
+            { type: 'text', text: 'read it' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: 'text', text: 'and the next one' },
+          ],
+        },
+      ],
+    });
+    expect(shown(0)).toContain('read it\\nand the next one');
+    expect(shown(0)).not.toContain('data:image/png');
+  });
 });
