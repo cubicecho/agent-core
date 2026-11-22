@@ -1215,13 +1215,20 @@ describe('model.lockedFields', () => {
   it('refuses a request that sets a locked field, by default, naming each', () => {
     const resolved = resolveAgentSpec([parsed(agent(['temperature', 'seed']))]);
     const body = { model: 'agent', temperature: 1, seed: 2, top_p: 1 };
-    expect(() => checkLockedFields(resolved, body)).toThrow(LockedFieldsError);
-    expect(() => checkLockedFields(resolved, body)).toThrow('temperature, seed: locked by the agent');
-    try {
-      checkLockedFields(resolved, body, { onLocked: LOCKED_FIELD_ACTIONS.refuse });
-    } catch (error) {
-      expect(error instanceof LockedFieldsError && error.fields).toEqual(['temperature', 'seed']);
-    }
+    const refused = (() => {
+      try {
+        checkLockedFields(resolved, body);
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(refused).toBeInstanceOf(LockedFieldsError);
+    expect(refused).toMatchObject({ fields: ['temperature', 'seed'] });
+    expect(String(refused)).toContain('temperature, seed: locked by the agent');
+    // Refusing is the default, so saying so changes nothing.
+    expect(() => checkLockedFields(resolved, body, { onLocked: LOCKED_FIELD_ACTIONS.refuse })).toThrow(
+      LockedFieldsError,
+    );
   });
 
   it('says it of one locked field, and them of several', () => {
