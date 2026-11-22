@@ -191,7 +191,7 @@ describe('pruneThrough', () => {
     expect(pruneThrough(run(2), 99).map(chars)).toEqual([1, 29, 29]);
   });
 
-  it('the prefix is byte-identical across turns until the boundary moves', () => {
+  it('keeps the prefix byte-identical across turns until the boundary moves', () => {
     const gate = { estimate: chars, minShare: 0.19 };
     const window = 10_000;
     let messages = run(5);
