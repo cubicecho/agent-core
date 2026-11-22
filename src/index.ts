@@ -196,6 +196,13 @@ export {
   type ToolCallResult,
 } from './run/dispatch.ts';
 export {
+  ELICIT_TOOL,
+  ElicitAction,
+  type ElicitAnswer,
+  type ElicitParams,
+  type OnElicit,
+} from './run/elicit.ts';
+export {
   configureEvents,
   type EventBusOptions,
   ExchangeOutcome,

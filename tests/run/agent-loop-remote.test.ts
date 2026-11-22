@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolDiscovery } from '../../src/core/config.ts';
 import { type AgentLoopOptions, runAgentLoop } from '../../src/run/agent-loop.ts';
+import { ELICIT_TOOL, ElicitAction } from '../../src/run/elicit.ts';
 import { type RunEvent, type RunEventInput, RunEventKind, stamp } from '../../src/run/events.ts';
 import { IDEMPOTENCY_HEADER, PROGRESS_FIELD, progressChunk, REMOTE_AGENT_NOTICE } from '../../src/run/remote.ts';
 import { resetAll } from '../../src/runtime/reset.ts';
@@ -8,7 +9,7 @@ import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../../s
 import { toolName } from '../../src/tools/tool-loading.ts';
 import { CallIds } from '../../src/wire/call-ids.ts';
 import { HttpStatus, Role } from '../../src/wire/wire.ts';
-import { answeredBy, type Body, catalog, respond, streamed, tool, user } from '../helpers.ts';
+import { answeredBy, type Body, catalog, catalogTool, respond, streamed, tool, user } from '../helpers.ts';
 
 /** The remote agent's run, as ai-router names it in every event and chunk. */
 const RUN = 'run-1';
@@ -404,5 +405,138 @@ describe('a run on a plain OpenAI server, with no flag', () => {
     expect(events.filter((event) => event.kind === RunEventKind.ToolCall).map((event) => event.id)).toEqual([HANDED]);
     expect(dispatched).toEqual([{ id: HANDED, name: 'ask_user' }]);
     expect(result.remoteRunId).toBeUndefined();
+  });
+});
+
+describe('runAgentLoop asked for input by a remote agent', () => {
+  const params = {
+    message: 'Which colour?',
+    requestedSchema: { type: 'object', properties: { colour: { type: 'string' } } },
+  };
+  const elicits = (args: unknown = params): Stretch => ({
+    events: [],
+    handBack: [{ id: HANDED, name: ELICIT_TOOL, arguments: typeof args === 'string' ? args : JSON.stringify(args) }],
+  });
+  const finishes: Stretch = { events: [], content: 'Blue it is.' };
+  /** The tool message the second request answered the reserved call with. */
+  const answerSent = (received: Received[]) =>
+    received[1].body.messages.find((message) => message.role === Role.Tool && message.tool_call_id === HANDED);
+
+  it('answers through onElicit and resumes by itself, the call told to no tool callback', async () => {
+    const { fetch, received } = remoteAgent([elicits(), finishes]);
+    const events: (RunEventInput | RunEvent)[] = [];
+    const onToolCall = vi.fn();
+    const onToolResult = vi.fn();
+    const onElicit = vi.fn(() => ({ action: ElicitAction.Accept, content: { colour: 'blue' } }));
+    const result = await runAgentLoop({
+      config: remoteConfig(fetch),
+      messages: [user('paint it')],
+      dispatch: async () => 'unused',
+      onElicit,
+      onToolCall,
+      onToolResult,
+      onEvent: (event) => events.push(event),
+    });
+    expect(onElicit).toHaveBeenCalledWith('helper', params, { signal: expect.any(AbortSignal) });
+    expect(JSON.parse(String(answerSent(received)?.content))).toEqual({
+      action: 'accept',
+      content: { colour: 'blue' },
+    });
+    expect(result.turn.content).toBe('Blue it is.');
+    expect(result.pending).toBeUndefined();
+    expect(result.toolCalls).toEqual([]);
+    expect(onToolCall).not.toHaveBeenCalled();
+    expect(onToolResult).not.toHaveBeenCalled();
+    const told = events.filter((event) => event.kind === RunEventKind.ElicitAnswer);
+    expect(told).toEqual([{ kind: RunEventKind.ElicitAnswer, id: HANDED, text: 'accept', fields: ['colour'] }]);
+    expect(JSON.stringify(events)).not.toContain('blue');
+  });
+
+  it('declines with no onElicit, so an app needs no change', async () => {
+    const { fetch, received } = remoteAgent([elicits(), finishes]);
+    await runAgentLoop({ config: remoteConfig(fetch), messages: [user('go')], dispatch: async () => 'unused' });
+    expect(JSON.parse(String(answerSent(received)?.content))).toEqual({ action: 'decline' });
+  });
+
+  it('declines arguments it cannot read rather than sending the parse error', async () => {
+    const { fetch, received } = remoteAgent([elicits('{not json'), finishes]);
+    const onElicit = vi.fn(() => ({ action: ElicitAction.Accept }));
+    await runAgentLoop({
+      config: remoteConfig(fetch),
+      messages: [user('go')],
+      dispatch: async () => 'unused',
+      onElicit,
+    });
+    expect(onElicit).not.toHaveBeenCalled();
+    expect(JSON.parse(String(answerSent(received)?.content))).toEqual({ action: 'decline' });
+  });
+
+  it('never hands the reserved call back', async () => {
+    const { fetch } = remoteAgent([elicits(), finishes]);
+    const handBack = vi.fn(() => true);
+    const result = await runAgentLoop({
+      config: remoteConfig(fetch),
+      messages: [user('go')],
+      dispatch: async () => 'unused',
+      handBack,
+    });
+    expect(handBack).not.toHaveBeenCalled();
+    expect(result.pending).toBeUndefined();
+  });
+
+  it("keeps a server's own tool events for the reserved call out of the app's", async () => {
+    const echoed: Stretch = {
+      ...finishes,
+      events: [
+        { kind: RunEventKind.ToolCall, id: HANDED, name: ELICIT_TOOL, text: '{}' },
+        { kind: RunEventKind.ToolResult, id: HANDED, name: ELICIT_TOOL, ok: true, text: 'hunter2' },
+        { kind: RunEventKind.ElicitAnswer, id: HANDED, text: 'hunter2' },
+      ],
+    };
+    const { fetch } = remoteAgent([elicits(), echoed]);
+    const events: (RunEventInput | RunEvent)[] = [];
+    await runAgentLoop({
+      config: remoteConfig(fetch),
+      messages: [user('go')],
+      dispatch: async () => 'unused',
+      onEvent: (event) => events.push(event),
+    });
+    expect(JSON.stringify(events)).not.toContain('hunter2');
+  });
+
+  it('refuses the name from a model that is no remote agent, without asking or dispatching', async () => {
+    const { fetch, received } = remoteAgent([elicits(), finishes]);
+    const { remoteAgent: _remote, ...plainModel } = remoteConfig(fetch);
+    const onElicit = vi.fn(() => ({ action: ElicitAction.Accept }));
+    const dispatch = vi.fn(async () => 'unused');
+    await runAgentLoop({
+      config: { ...plainModel, temperature: 0, maxTokens: 100 },
+      messages: [user('go')],
+      dispatch,
+      onElicit,
+    });
+    expect(onElicit).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(String(answerSent(received)?.content)).toContain('reserved');
+  });
+
+  it('offers the model no tool of the reserved name, wherever it was given', async () => {
+    const { fetch, received } = remoteAgent([finishes]);
+    const notices: string[] = [];
+    await runAgentLoop({
+      config: remoteConfig(fetch),
+      messages: [user('go')],
+      tools: [tool(ELICIT_TOOL), tool('search')],
+      hostTools: [tool(ELICIT_TOOL)],
+      catalog: [{ id: 's', label: 'S', tools: [catalogTool(ELICIT_TOOL), catalogTool('search')] }],
+      dispatch: async () => 'unused',
+      onEvent: (event) => {
+        if (event.kind === RunEventKind.Notice) {
+          notices.push(event.text ?? '');
+        }
+      },
+    });
+    expect((received[0].body.tools ?? []).map(toolName)).not.toContain(ELICIT_TOOL);
+    expect(notices.filter((text) => text.includes(ELICIT_TOOL))).toHaveLength(1);
   });
 });

@@ -109,6 +109,16 @@ export const RunEventKind = {
    */
   ServerLog: 'server-log',
   /**
+   * A remote agent asked the app for input. `id` is the reserved call's and `text` the question,
+   * empty where the request could not be read. Its URL and form are not carried.
+   */
+  Elicit: 'elicit',
+  /**
+   * The request for input was answered. `id` is the call's, `text` the action, and `fields` the names
+   * of the form fields filled in. Never what was typed: it can be a password.
+   */
+  ElicitAnswer: 'elicit-answer',
+  /**
    * What the exchange has cost so far, at the end of every turn, and what that one turn did. Sent
    * whether or not the model server reported tokens, since the timings and the cache comparison are
    * measured either way.
@@ -229,9 +239,9 @@ export interface RunVia {
  * One thing that happened in a run, as a watcher receives it.
  *
  * @remarks
- * Every field but `id`, `link`, `level`, `loads`, `outcome`, `pending` and `via` is always present —
- * the empty ones are `""` or `null` rather than missing — so a client reads it without guarding
- * each key. Those seven belong to a few kinds each, and are absent on the rest.
+ * Every field but `id`, `link`, `level`, `loads`, `outcome`, `pending`, `fields` and `via` is always
+ * present — the empty ones are `""` or `null` rather than missing — so a client reads it without
+ * guarding each key. Those eight belong to a few kinds each, and are absent on the rest.
  */
 export interface RunEvent {
   /** The run it belongs to. `emit` fills this in; a caller does not pass it. */
@@ -293,6 +303,11 @@ export interface RunEvent {
    * asked. Optional for the reason `id` is.
    */
   pending?: string[];
+  /**
+   * The names of the form fields an answer filled in, on `elicit-answer` and on no other kind, and
+   * absent where it filled in none. Optional for the reason `id` is.
+   */
+  fields?: string[];
   /**
    * Where an event from a run inside this one came from, outermost first: the run that called it and
    * the call, then any run that run called in turn. Absent, or empty, on the run's own events. Optional

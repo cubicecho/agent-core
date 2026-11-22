@@ -3,6 +3,7 @@ import { ToolDiscovery } from '../core/config.ts';
 import { isRecord } from '../core/guards.ts';
 import { CallIds } from '../wire/call-ids.ts';
 import type { AgentLoopOptions } from './agent-loop.ts';
+import { ELICIT_TOOL } from './elicit.ts';
 import { isNested, type RunEvent, type RunEventInput, RunEventKind, type RunVia } from './events.ts';
 
 /**
@@ -52,7 +53,23 @@ const SERVER_OWNED: ReadonlySet<string> = new Set([
  * The kinds of event a remote agent's progress says of its own run and exchange, which are not
  * forwarded: the loop's own start and end describe the app's exchange, and the run's end is the app's.
  */
-const UNFORWARDED: ReadonlySet<string> = new Set([RunEventKind.Exchange, RunEventKind.ExchangeEnd, RunEventKind.Done]);
+const UNFORWARDED: ReadonlySet<string> = new Set([
+  RunEventKind.Exchange,
+  RunEventKind.ExchangeEnd,
+  RunEventKind.Done,
+  RunEventKind.Elicit,
+  RunEventKind.ElicitAnswer,
+]);
+
+/**
+ * Whether a server's event tells of the reserved call as a tool call, which would put what a person
+ * typed into the app's stored events. The loop says the question and the answer itself.
+ *
+ * @param event - The server's event.
+ * @returns True of a `tool-call` or `tool-result` naming `ELICIT_TOOL`, nested or not.
+ */
+const talksOfElicit = ({ kind, name }: RunEvent) =>
+  name === ELICIT_TOOL && (kind === RunEventKind.ToolCall || kind === RunEventKind.ToolResult);
 
 /** Every kind a `RunEvent` may be, for telling one off the wire from something else. */
 const KINDS: ReadonlySet<string> = new Set(Object.values(RunEventKind));
@@ -259,8 +276,9 @@ interface RemoteRun {
  * With progress on, the server says the `turn`, `thinking`, `output`, `tool-call`, `tool-result`
  * and `usage` of each of its turns, its handed-back calls included, so the loop says none of those
  * itself. The server's `exchange`, `exchange-end` and `done` are not forwarded: the loop's own start
- * and end say the app's exchange, and the run's end is the app's to say. A nested event, one with a
- * `via`, is forwarded whatever its kind. With progress off, the
+ * and end say the app's exchange, and the run's end is the app's to say. Neither are its words on a
+ * request for input, which the loop says itself. A nested event, one with a `via`, is forwarded
+ * whatever its kind, except a tool event of the reserved `ELICIT_TOOL` call. With progress off, the
  * loop's own events are all there is, and all are said.
  */
 export function remoteRun(
@@ -291,7 +309,7 @@ export function remoteRun(
       runId = event.runId;
       // A nested event is a run inside the server's, under one of its calls, so its start and end
       // are that run's to show rather than the server's own.
-      const isForwarded = isNested(event) || UNFORWARDED.has(event.kind) === false;
+      const isForwarded = talksOfElicit(event) === false && (isNested(event) || UNFORWARDED.has(event.kind) === false);
       if (isForwarded) {
         told(event);
       }
