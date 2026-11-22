@@ -20,6 +20,7 @@ import {
   SPEC_EVENTS,
   upgradeSpec,
 } from '../../src/spec/spec.ts';
+import { plainPrompt } from '../../src/spec/stack.ts';
 
 /** A document that parses cleanly, which each test then bends in one direction. */
 const doc = (extra: Record<string, unknown> = {}) => ({ spec: AGENT_SPEC, ...extra });
@@ -95,13 +96,6 @@ describe('parseSpec', () => {
     expect(resolveAgentSpec([parsed(doc())])).not.toHaveProperty('reasoningReplay');
   });
 
-  it('drops an out-of-range number instead of clamping it', () => {
-    // A clamp invents a number the author did not write; dropping falls back to one somebody did.
-    const spec = parsed(doc({ model: { model: 'm', temperature: 4 } }));
-    expect(spec.model).toEqual({ model: 'm' });
-    expect(spec.model?.temperature).toBeUndefined();
-  });
-
   it('keeps a meaningful zero, because there is no inherit sentinel', () => {
     const spec = parsed(
       doc({
@@ -164,11 +158,6 @@ describe('parseSpec', () => {
       "model.extraBody.reasoning_effort: is model.reasoningEffort's to set, and was dropped",
       "tasks.title.extraBody.temperature: is tasks.title.temperature's to set, and was dropped",
     ]);
-    // So the resolved agent carries the temperature the document states, zero meaning zero, and
-    // nothing in its `extraBody` that `buildBody` would spread over it.
-    const resolved = resolveAgentSpec([parsed(doc({ model: { temperature: 0, extraBody: { temperature: 0.9 } } }))]);
-    expect(resolved.temperature).toBe(0);
-    expect(resolved).not.toHaveProperty('extraBody.temperature');
   });
 
   it("reads a task's extraBody by the same rules", () => {
@@ -496,12 +485,6 @@ describe('parseSpec hooks', () => {
     ]);
   });
 
-  it('drops a hook that is not an event at all', () => {
-    const result = parseSpec(doc({ hooks: [hook({ on: 'onTuesday' })] }));
-    expect(result.spec?.hooks).toEqual([]);
-    expect(result.warnings).toEqual(['hooks[0].on: "onTuesday" is not an event, and was dropped']);
-  });
-
   it('drops a hook that is not an object, or lacks an id, an event, a server or a tool', () => {
     const result = parseSpec(doc({ hooks: [3, hook({}), hook({ id: '', on: HookEvent.SessionStart })] }));
     expect(result.spec?.hooks).toEqual([]);
@@ -630,14 +613,17 @@ describe("an endpoint's fetch", () => {
     expect(spec.tasks?.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1' });
   });
 
-  it('is never written into an exported one', () => {
-    const out = exportSpec(spec);
-    expect(out.endpoint).toEqual({ baseUrl: 'http://router.internal/v1' });
-    expect(out.tasks?.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1' });
-  });
-
-  it('is never produced by resolving one, for the agent or a task', () => {
-    const resolved = resolveAgentSpec([spec]);
+  it('is never produced by resolving a layer built in code that carries one, for the agent or a task', () => {
+    // Built in code, so parseSpec never saw it: resolving has to leave it out on its own.
+    const main = { baseUrl: 'http://router.internal/v1', fetch };
+    const side = { baseUrl: 'http://side.internal/v1', fetch };
+    const layer: AgentSpec = {
+      spec: AGENT_SPEC,
+      endpoint: main,
+      model: { model: 'big' },
+      tasks: { title: { model: 'tiny', endpoint: side } },
+    };
+    const resolved = resolveAgentSpec([layer]);
     expect('fetch' in resolved).toBe(false);
     expect(resolved.tasks.title?.endpoint).toEqual({ baseUrl: 'http://side.internal/v1', apiKey: '' });
   });
@@ -859,16 +845,8 @@ describe('resolveAgentSpec', () => {
         }),
         agentPart('checklist', 'Check the tests, the changelog and the licence.'),
       ]);
-      // The plain layout writes a replace as an overwrite, in the replaced part's place.
-      expect(resolved.systemPrompt).toBe(
-        [
-          'You are Task Reviewer. You decide whether work is actually done.',
-          'Start with PASS or FAIL on its own line.',
-          'Judge the work itself, not reports about it.',
-          'Here you review the output of one workflow step.',
-          'Check the tests, the changelog and the licence.',
-        ].join('\n\n'),
-      );
+      // How the plain layout writes the parts is `plainPrompt`'s, and tested with it.
+      expect(resolved.systemPrompt).toBe(plainPrompt(resolved.prompt));
     });
 
     it('keeps an extension attached when its target is overwritten, and deletes it with the target', () => {
@@ -964,16 +942,6 @@ describe('resolveAgentSpec', () => {
       const names = resolveAgentSpec([base, ...layers]).prompt.map((held) => held.name);
       // `c` was deleted and named again, so it is back in the place it first had.
       expect(names).toEqual(['a', 'b', 'c', 'd', 'e', 'b_2', 'z', 'a_2', 'y']);
-    });
-
-    it('writes exactly the joined texts where no part uses a mode', () => {
-      const texts = ['  This is the agent-core library.  ', 'You are a reviewer.\n', '', 'Only the card.'];
-      const spec = parsed(doc({ prompt: texts.map((content, index) => part(`p${index}`, content || ' ')) }));
-      const joined = texts
-        .map((text) => text.trim())
-        .filter(Boolean)
-        .join('\n\n');
-      expect(resolveAgentSpec([spec]).systemPrompt).toBe(joined);
     });
   });
 

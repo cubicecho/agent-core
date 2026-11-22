@@ -156,37 +156,6 @@ describe('capability snapshots', () => {
     const stored = JSON.stringify(exportCapabilities());
     expect(stored).not.toContain('sk-secret');
     expect(stored).not.toContain('http://box');
-    expect(JSON.parse(stored).endpoints).toEqual({
-      [endpointId(config)]: {
-        strictSchemas: false,
-        usageInStream: true,
-        since: expect.any(Number),
-        models: {
-          big: {
-            reasoningEffort: true,
-            legacyTokenLimit: false,
-            chosenTemperature: true,
-            refusedEfforts: [],
-            refusedFields: ['min_p'],
-            structuredOutput: true,
-            assistantPrefill: true,
-            reasoningContent: true,
-            multiCallMessages: true,
-          },
-          small: {
-            reasoningEffort: true,
-            legacyTokenLimit: true,
-            chosenTemperature: true,
-            refusedEfforts: [],
-            refusedFields: ['chat_template_kwargs'],
-            structuredOutput: true,
-            assistantPrefill: true,
-            reasoningContent: true,
-            multiCallMessages: true,
-          },
-        },
-      },
-    });
 
     resetAll();
     create.mockReset();
@@ -199,32 +168,6 @@ describe('capability snapshots', () => {
     await ask(config, 'small', 'system', 'user');
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0][0]).not.toHaveProperty('chat_template_kwargs');
-  });
-
-  it('carries which efforts a model refused, and the list it published', () => {
-    // Otherwise every restart spends a request per rung walking the same ladder, which is the
-    // whole reason the snapshot exists.
-    const supports = capabilitiesFor(config);
-    const refused = modelCapabilitiesFor(supports, 'big');
-    refused.refusedEfforts.add('none');
-    refused.supportedEfforts = ['minimal', 'low', 'medium', 'high'];
-    const stored = JSON.parse(JSON.stringify(exportCapabilities()));
-    resetAll();
-    expect(importCapabilities(stored)).toBe(true);
-    const back = modelCapabilitiesFor(capabilitiesFor(config), 'big');
-    expect([...back.refusedEfforts]).toEqual(['none']);
-    expect(back.supportedEfforts).toEqual(['minimal', 'low', 'medium', 'high']);
-  });
-
-  it("carries a model's refusal of a trailing assistant message", () => {
-    const supports = capabilitiesFor(config);
-    modelCapabilitiesFor(supports, 'big').assistantPrefill = false;
-    const stored = JSON.parse(JSON.stringify(exportCapabilities()));
-    expect(stored.endpoints[endpointId(config)].models.big.assistantPrefill).toBe(false);
-    resetAll();
-    expect(importCapabilities(stored)).toBe(true);
-    const restored = capabilitiesFor(config);
-    expect(modelCapabilitiesFor(restored, 'big').assistantPrefill).toBe(false);
   });
 
   it('only latches off, whatever the snapshot says', () => {

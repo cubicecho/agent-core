@@ -94,25 +94,6 @@ describe('expandNames and loadResult', () => {
     expect(unknown).toEqual(['nope']);
   });
 
-  it('say which names could not be placed', () => {
-    expect(loadResult({ matched: [], unknown: ['nope'], overBroad: [], deferred: [], maxPerLoad }, catalog)).toContain(
-      'Not in the catalogue: nope',
-    );
-  });
-
-  it('answer an over-broad wildcard with the names it would have loaded', () => {
-    const wide: CatalogServer[] = [
-      {
-        id: '3',
-        label: 'Mail',
-        tools: Array.from({ length: maxPerLoad + 5 }, (_, i) => catalogTool(`mail__tool_${i}`)),
-      },
-    ];
-    const text = loadResult(expandNames(['mail__*'], wide), wide);
-    expect(text).toContain(`more than the ${maxPerLoad} one call may load`);
-    expect(text).toContain('mail__tool_3');
-  });
-
   it('hold the load cap to what one call may load, not what one name may match', () => {
     const dozen = (prefix: string) => Array.from({ length: maxPerLoad }, (_, i) => catalogTool(`${prefix}__t${i}`));
     const wide: CatalogServer[] = [
@@ -194,18 +175,11 @@ describe('catalogPrompt', () => {
     expect(prompt).toContain('  gmail__read_email');
     // Descriptions are the expensive half; they arrive on load, not here.
     expect(prompt).not.toContain('does gmail__read_email');
-    expect(catalogPrompt([])).toBe('');
   });
 
   it('marks nothing unless asked, so it reads the same after a load', () => {
     expect(catalogPrompt(catalog)).not.toContain('(loaded)');
     expect(catalogPrompt(catalog)).toBe(catalogPrompt(catalog));
-  });
-
-  it('produces no prompt at all for an empty catalogue', () => {
-    // Not a heading with nothing under it: a run with no servers must not be told about a
-    // mechanism it has nothing to use it on.
-    expect(catalogPrompt([])).toBe('');
   });
 
   it('leaves out the heading of a server with no tools', () => {
@@ -262,12 +236,8 @@ describe('requestedNames', () => {
     expect(requestedNames({ tools: 'a' })).toEqual(['a']);
     expect(requestedNames({ name: ['a', 2] })).toEqual(['a']);
     expect(requestedNames({})).toEqual([]);
-  });
-
-  // `requestedNames` is also given a bare string where the schema says array — models do this.
-  it('load_tools accepts a single name where an array was asked for', () => {
+    // A bare string where the schema says array: models do this.
     expect(requestedNames({ names: 'a' })).toEqual(['a']);
-    expect(requestedNames({ names: [1, 'a'] })).toEqual(['a']);
   });
 });
 

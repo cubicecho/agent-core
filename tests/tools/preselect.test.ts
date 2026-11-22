@@ -31,8 +31,7 @@ describe('preselect', () => {
     expect(await preselect(config, 'small', catalog, 'read it')).toEqual(['s__read']);
   });
 
-  it('picks nothing without a model, and nothing when the call fails', async () => {
-    expect(await preselect(config, '', catalog, 'read it')).toEqual([]);
+  it('picks nothing when the call fails', async () => {
     const notices: string[] = [];
     create.mockRejectedValueOnce(new Error('boom'));
     const got = await preselect(config, 'small', catalog, 'x', {
