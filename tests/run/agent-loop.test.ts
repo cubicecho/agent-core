@@ -3142,5 +3142,22 @@ describe('runAgentLoop', () => {
       expect(text.endsWith('<prompt_app_system>\nToday is 2026-11-19.\n</prompt_app_system>')).toBe(true);
       expect(notices).toEqual(["The agent's identity part does not let an app replace it, so the part was dropped."]);
     });
+
+    it("tells the layout's warnings once an exchange, however many turns write the prompt", async () => {
+      create.mockReset();
+      create.mockReturnValueOnce(calls(['a', '{}'])).mockReturnValueOnce(says('done'));
+      const notices: string[] = [];
+      await runAgentLoop({
+        config: { ...config, promptLayout: 'xml' },
+        systemPrompt: [{ role: Role.System, name: 'house rules', content: 'Be kind.', owner: 'agent' }],
+        messages: question,
+        tools: [tool('a')],
+        dispatch: async () => 'ok',
+        onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+      });
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(String(create.mock.calls[1][0].messages[0].content)).toContain('<prompt_house_rules>');
+      expect(notices).toEqual([expect.stringContaining('<prompt_house_rules>')]);
+    });
   });
 });

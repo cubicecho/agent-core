@@ -4,6 +4,7 @@ import { RunEventKind } from '../../src/run/events.ts';
 import { callIdMinter } from '../../src/wire/call-ids.ts';
 import { FinishReason, FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
 import {
+  answer,
   apiError,
   type Create,
   callArguments,
@@ -14,6 +15,7 @@ import {
   pairsByPosition,
   says,
   singleCallRefusal,
+  summarised,
   text,
   tool,
   user,
@@ -386,6 +388,31 @@ describe('a run that throws', () => {
       cachedTokens: 0,
       cacheReported: false,
     });
+  });
+
+  it('hands back what it was given when it fails before its turns begin', async () => {
+    const earlier = [{ through: 0, prompt: 40, epoch: 3 }];
+    const error = await thrown(
+      runAgentLoop({
+        config,
+        messages: question,
+        dispatch: async () => '',
+        ledger: earlier,
+        // The exchange's first event, emitted before the turns set themselves up.
+        onEvent: (event) => {
+          if (event.kind === RunEventKind.Exchange) {
+            throw new Error('the bus is down');
+          }
+        },
+      }),
+    );
+    expect(error).toBeInstanceOf(AgentLoopError);
+    const run = failedRun(error);
+    expect(run?.messages).toEqual(question);
+    expect(run?.messages).not.toBe(question);
+    expect(run?.ledger).toEqual(earlier);
+    expect(run?.toolCalls).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('reads no run off an error the loop did not throw', () => {
@@ -863,6 +890,55 @@ describe('prune', () => {
     });
     // The first move is on the third turn, after its `beforeTurn`; the fourth is handed its stub.
     expect(handed).toEqual([0, 0, 0, 1]);
+  });
+
+  it('prunes at the defaults under `prune: true`', async () => {
+    toolRun(9);
+    await runAgentLoop({
+      config: { ...config, maxToolIterations: 10, contextLength: 10_000 },
+      messages: question,
+      tools: [tool('read')],
+      dispatch: async () => long,
+      prune: true,
+    });
+    const last = sentMessages().at(-1) ?? [];
+    expect(last.some((message) => message.includes('[result cleared'))).toBe(true);
+  });
+
+  it('prunes again right after a compaction, whatever that saves', async () => {
+    const turn = (id: string): Message[] => [
+      {
+        role: Role.Assistant,
+        content: null,
+        tool_calls: [{ id, type: FUNCTION_TOOL, function: { name: 'read', arguments: '{}' } }],
+      },
+      { role: Role.Tool, tool_call_id: id, content: 'line '.repeat(150) },
+    ];
+    const history = [user('q'), ...['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].flatMap(turn)];
+    create.mockReturnValueOnce(answer('the notes')).mockReturnValueOnce(says('done'));
+    const notices: string[] = [];
+    const result = await runAgentLoop({
+      config: {
+        ...config,
+        contextLength: 2000,
+        tasks: { compaction: { model: 'tiny', maxTokens: 50, endpoint: { baseUrl: config.baseUrl, apiKey: '' } } },
+      },
+      messages: history,
+      tools: [tool('read')],
+      dispatch: async () => 'ok',
+      compact: true,
+      // Never due on its own: the window is not over-full, so only the compaction moves it.
+      prune: { at: 1, keepLast: 1 },
+      onEvent: (event) => event.kind === RunEventKind.Notice && notices.push(event.text ?? ''),
+    });
+    expect(notices).toEqual([expect.stringContaining('compacted'), expect.stringContaining('alongside a compaction')]);
+    // The summary is held to the compaction task's ceiling.
+    expect(create.mock.calls[0][0]).toMatchObject({ model: 'tiny', max_tokens: 50 });
+    const sent = create.mock.calls[1][0].messages;
+    expect(sent.slice(0, 2)).toEqual(summarised('the notes'));
+    const results = sent.filter((message) => message.role === Role.Tool).map((message) => String(message.content));
+    expect(results.map((content) => content.startsWith('[result cleared'))).toEqual([true, true, false]);
+    expect(result.messages.slice(0, sent.length)).toEqual(sent);
   });
 });
 

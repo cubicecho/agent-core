@@ -375,6 +375,23 @@ describe('a run on a remote agent', () => {
     expect(result.remoteRunId).toBeUndefined();
   });
 
+  it("writes the app's parts itself, and leaves the transcript's system messages as they came", async () => {
+    const { fetch, received } = remoteAgent([{ events: [], content: 'Blue it is.' }]);
+    await ask(
+      { ...remoteConfig(fetch), promptLayout: 'xml' },
+      {
+        systemPrompt: [{ role: Role.System, name: 'identity', content: 'You pick colours.', owner: 'agent' }],
+        messages: [{ role: Role.System, content: 'Today is Monday.' }, user('pick a colour')],
+      },
+    );
+    const [system, ...rest] = received[0].body.messages;
+    expect(String(system.content)).toContain('<prompt_identity>\nYou pick colours.\n</prompt_identity>');
+    // The server stacks its own: the loop does not take them in as `app_system`.
+    expect(String(system.content)).not.toContain('prompt_app_system');
+    expect(String(system.content).endsWith('\n\nToday is Monday.')).toBe(true);
+    expect(rest).toEqual([user('pick a colour')]);
+  });
+
   it('names the remote run on what it throws', async () => {
     const { fetch } = remoteAgent([asking]);
     // The second request finds no stretch left, and the fake throws.
