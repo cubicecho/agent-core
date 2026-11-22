@@ -8,6 +8,7 @@ import { type AgentSpec, parseSpec } from '../src/spec/spec.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
 import { toolName } from '../src/tools/tool-loading.ts';
 import { textOf } from '../src/wire/text.ts';
+import type { ToolCall } from '../src/wire/tool-calls.ts';
 import { FinishReason, FUNCTION_TOOL, HttpStatus, Role, SchemaType } from '../src/wire/wire.ts';
 
 /**
@@ -296,9 +297,10 @@ export const assistant = (content: string): Message => ({ role: Role.Assistant, 
  * A tool result.
  *
  * @param content - What the tool gave back.
- * @returns The message, answering a call with the id `c`.
+ * @param [id] - The id of the call it answers.
+ * @returns The message.
  */
-export const result = (content: string): Message => ({ role: Role.Tool, tool_call_id: 'c', content });
+export const result = (content: string, id = 'c'): Message => ({ role: Role.Tool, tool_call_id: id, content });
 
 /**
  * A fold's summary as `applyCompaction` writes it.
@@ -458,4 +460,17 @@ export const stackedAgent = (name: string, content: string, mark?: StackedPart['
 export const stackedApp = (name: string, content: string, mark?: StackedPart['mark']): StackedPart => ({
   ...stackedAgent(name, content, mark),
   owner: PART_OWNERS.app,
+});
+
+/**
+ * A call off an assistant message, of a tool named for its id unless told otherwise.
+ *
+ * @param id - The call's id, which its result answers.
+ * @param [name] - The tool's name.
+ * @returns The call, with empty arguments.
+ */
+export const toolCall = (id: string, name = id): ToolCall => ({
+  id,
+  type: FUNCTION_TOOL,
+  function: { name, arguments: '{}' },
 });

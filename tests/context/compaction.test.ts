@@ -742,16 +742,12 @@ describe('a fold inside one question', () => {
     content: `reading ${id}`,
     tool_calls: [{ id, type: FUNCTION_TOOL, function: { name: 'read', arguments: '{}' } }],
   });
-  /**
-   * The tool result answering `call(id)`.
-   *
-   * @param id - The call's id.
-   * @returns The message.
-   */
-  const answer = (id: string): Message => ({ role: Role.Tool, tool_call_id: id, content: `contents of ${id}` });
   /** The turns of a tool loop, a call and its result each. */
   const turns = (count: number, first = 0) =>
-    Array.from({ length: count }, (_, at) => [call(`c${at + first}`), answer(`c${at + first}`)]).flat();
+    Array.from({ length: count }, (_, at) => [
+      call(`c${at + first}`),
+      result(`contents of ${`c${at + first}`}`, `c${at + first}`),
+    ]).flat();
   const prompt: Message = { role: Role.System, content: 'prompt' };
   /** System, one question, then four turns: ten messages of ten each on a window of 100. */
   const loop: Message[] = [prompt, user('task'), ...turns(4)];
@@ -795,14 +791,18 @@ describe('a fold inside one question', () => {
   });
 
   it('plans nothing for a loop too short to fold, or a transcript with no question', () => {
-    expect(planCompaction([user('task'), call('c0'), answer('c0')], { limit: 10, estimate })).toBeUndefined();
+    expect(
+      planCompaction([user('task'), call('c0'), result(`contents of ${'c0'}`, 'c0')], { limit: 10, estimate }),
+    ).toBeUndefined();
     expect(planCompaction(turns(5), { limit: 100, estimate })).toBeUndefined();
   });
 
   it('plans nothing where the question alone overfills the window and the loop after it fits', () => {
     // The cut lands on the first call, so all there is before it is the question, which is kept.
     const weigh = (message: Message) => (message.role === Role.User ? 100 : 5);
-    expect(planCompaction([user('task'), call('c0'), answer('c0')], { limit: 100, estimate: weigh })).toBeUndefined();
+    expect(
+      planCompaction([user('task'), call('c0'), result(`contents of ${'c0'}`, 'c0')], { limit: 100, estimate: weigh }),
+    ).toBeUndefined();
   });
 
   it('sends the question after the summary, and the next fold continues the notes', async () => {

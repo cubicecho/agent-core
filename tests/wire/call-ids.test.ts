@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CallIds, callIdMinter, callIdsIn, distinctCallIds, freshCallId, mintCallId } from '../../src/wire/call-ids.ts';
-import type { ToolCall } from '../../src/wire/tool-calls.ts';
-import { FUNCTION_TOOL, Role } from '../../src/wire/wire.ts';
-import { type Message, MINTED_ID } from '../helpers.ts';
-
-/** A call to `t` under this id. */
-const call = (id: string): ToolCall => ({ id, type: FUNCTION_TOOL, function: { name: 't', arguments: '{}' } });
+import { Role } from '../../src/wire/wire.ts';
+import { type Message, MINTED_ID, toolCall } from '../helpers.ts';
 
 describe('callIdMinter', () => {
   it('gives nine alphanumerics every time, and ten thousand of them are all different', () => {
@@ -28,7 +24,7 @@ describe('callIdMinter', () => {
 describe('distinctCallIds', () => {
   const history: Message[] = [
     { role: Role.User, content: 'hi' },
-    { role: Role.Assistant, content: null, tool_calls: [call('c0')] },
+    { role: Role.Assistant, content: null, tool_calls: [toolCall('c0')] },
     { role: Role.Tool, tool_call_id: 'c0', content: 'ok' },
     // A result whose call a host trimmed away still holds its id.
     { role: Role.Tool, tool_call_id: 'orphan', content: 'ok' },
@@ -39,14 +35,14 @@ describe('distinctCallIds', () => {
   });
 
   it("keeps a server's id that is free as sent, whatever its shape", () => {
-    const calls = [call('chatcmpl-tool-0123456789abcdef'), call('call_x')];
+    const calls = [toolCall('chatcmpl-tool-0123456789abcdef'), toolCall('call_x')];
     const kept = distinctCallIds(calls, history);
     expect(kept[0]).toBe(calls[0]);
     expect(kept[1]).toBe(calls[1]);
   });
 
   it('replaces an empty id, one the transcript uses, and one an earlier call in the turn has', () => {
-    const calls = [call(''), call('c0'), call('orphan'), call('dup'), call('dup')];
+    const calls = [toolCall(''), toolCall('c0'), toolCall('orphan'), toolCall('dup'), toolCall('dup')];
     const ids = distinctCallIds(calls, history).map(({ id }) => id);
     expect(ids[3]).toBe('dup');
     for (const at of [0, 1, 2, 4]) {
@@ -58,7 +54,7 @@ describe('distinctCallIds', () => {
   });
 
   it('mints every id under `minted`, a free one included, and still keeps them apart', () => {
-    const calls = [call('call_x'), call(''), call('c0')];
+    const calls = [toolCall('call_x'), toolCall(''), toolCall('c0')];
     const mint = callIdMinter(7);
     const ids = distinctCallIds(calls, history, mint, CallIds.Minted).map(({ id }) => id);
     const expected = callIdMinter(7);
@@ -70,7 +66,7 @@ describe('distinctCallIds', () => {
   it('asks again where the minter gives an id already taken', () => {
     const given = ['c0', 'c0', 'fresh0001'];
     const mint = () => given.shift() ?? 'unused000';
-    expect(distinctCallIds([call('')], history, mint)[0]?.id).toBe('fresh0001');
+    expect(distinctCallIds([toolCall('')], history, mint)[0]?.id).toBe('fresh0001');
   });
 
   it('gives up on a minter that only repeats itself', () => {
