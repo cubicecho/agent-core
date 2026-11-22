@@ -4,7 +4,7 @@ import { SUMMARY_ACK, SUMMARY_LEAD } from '../src/context/compaction.ts';
 import { HookEvent } from '../src/hooks/hook-events.ts';
 import type { HookOutcome } from '../src/hooks/hooks.ts';
 import { PART_OWNERS, PROMPT_ROLES, type StackedPart } from '../src/spec/parts.ts';
-import { type AgentSpec, parseSpec } from '../src/spec/spec.ts';
+import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../src/spec/spec.ts';
 import type { CatalogServer } from '../src/tools/catalog.ts';
 import { toolName } from '../src/tools/tool-loading.ts';
 import { textOf } from '../src/wire/text.ts';
@@ -472,3 +472,21 @@ export const toolCall = (id: string, name = id): ToolCall => ({
   type: FUNCTION_TOOL,
   function: { name, arguments: '{}' },
 });
+
+/**
+ * An agent resolved from one document, whose own sampling is nothing a side task should pick up.
+ *
+ * @param tasks - The document's `tasks`.
+ * @param [extra] - Other top-level fields, laid over the defaults.
+ * @returns The resolved agent.
+ */
+export const resolvedAgent = (tasks: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  resolveAgentSpec([
+    parsed({
+      spec: AGENT_SPEC,
+      endpoint: { baseUrl: 'http://main/v1' },
+      model: { model: 'big', temperature: 1, maxTokens: 4096, reasoningEffort: 'high' },
+      tasks,
+      ...extra,
+    }),
+  ]);

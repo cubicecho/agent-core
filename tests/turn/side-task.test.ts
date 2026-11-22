@@ -2,10 +2,10 @@ import OpenAI from 'openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesFor, resetCapabilities } from '../../src/endpoint/capabilities.ts';
 import { NO_KEY } from '../../src/endpoint/client.ts';
-import { AGENT_SPEC, type AgentSpec, parseSpec, resolveAgentSpec } from '../../src/spec/spec.ts';
 import { clean, listLines, parseJson, type SideTask, taskCall, tryAsk } from '../../src/turn/side-task.ts';
 import { sleep } from '../../src/wire/retry.ts';
 import { estimateTokens } from '../../src/wire/tokens.ts';
+import { resolvedAgent } from '../helpers.ts';
 
 describe('clean', () => {
   it('strips the decoration models put around a short answer', () => {
@@ -141,18 +141,6 @@ describe('tryAsk', () => {
   });
 });
 
-/** An agent whose own sampling is nothing a side task should pick up. */
-const agent = (tasks: Record<string, unknown>) => {
-  const { spec, errors } = parseSpec({
-    spec: AGENT_SPEC,
-    endpoint: { baseUrl: 'http://main/v1' },
-    model: { model: 'big', temperature: 1, maxTokens: 4096, reasoningEffort: 'high' },
-    tasks,
-  });
-  expect(errors).toEqual([]);
-  return resolveAgentSpec([spec as AgentSpec]);
-};
-
 afterEach(() => resetCapabilities());
 
 describe('taskCall', () => {
@@ -187,7 +175,7 @@ describe('taskCall', () => {
   });
 
   it('takes a resolved task as it comes', () => {
-    const { tasks } = agent({ title: { model: 'tiny', maxTokens: 32 } });
+    const { tasks } = resolvedAgent({ title: { model: 'tiny', maxTokens: 32 } });
     const call = taskCall(tasks.title);
     expect(call).toEqual({
       endpoint: { baseUrl: 'http://main/v1', apiKey: '' },
@@ -226,7 +214,7 @@ describe('taskCall', () => {
     const fetch = async () => new Response('{}');
     const main = { baseUrl: 'http://main/v1', apiKey: 'sk-main', fetch };
     // A resolved task on the agent's own endpoint, which names no function.
-    const { tasks } = agent({ title: { model: 'tiny' } });
+    const { tasks } = resolvedAgent({ title: { model: 'tiny' } });
     expect(taskCall(tasks.title, {}, main).endpoint).toEqual(main);
   });
 

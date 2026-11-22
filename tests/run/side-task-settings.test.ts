@@ -12,6 +12,7 @@ import {
   type Create,
   type Message,
   outcome,
+  resolvedAgent,
   says,
   summarised,
   templateRefusal,
@@ -40,9 +41,7 @@ const { NO_KEY } = await import('../../src/endpoint/client.ts');
 const { SUMMARY_LEAD, summariser } = await import('../../src/context/compaction.ts');
 const { ask, askJson, taskCall } = await import('../../src/turn/side-task.ts');
 const { resetHints } = await import('../../src/index.ts');
-const { AGENT_SPEC, parseSpec, resolveAgentSpec } = await import('../../src/spec/spec.ts');
 
-type AgentSpec = import('../../src/spec/spec.ts').AgentSpec;
 type RunEventInput = import('../../src/run/events.ts').RunEventInput;
 
 /** A streamed turn that asks for one call. */
@@ -62,19 +61,6 @@ const calls = (name: string) => ({
 /** What the nth request put in its body. */
 const body = (nth: number) => create.mock.calls[nth][0];
 
-/** An agent whose own sampling is nothing a side task should pick up. */
-const agent = (tasks: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
-  const { spec, errors } = parseSpec({
-    spec: AGENT_SPEC,
-    endpoint: { baseUrl: 'http://main/v1' },
-    model: { model: 'big', temperature: 1, maxTokens: 4096, reasoningEffort: 'high' },
-    tasks,
-    ...extra,
-  });
-  expect(errors).toEqual([]);
-  return resolveAgentSpec([spec as AgentSpec]);
-};
-
 const catalog = [{ id: 's', label: 'S', tools: [{ name: 's__read', description: 'reads' }] }];
 
 beforeEach(() => {
@@ -89,7 +75,7 @@ afterEach(() => {
 describe("a side task's own settings", () => {
   it("sends the side task's defaults, not the agent's, for what a task leaves out", async () => {
     // The agent runs at temperature 1, 4096 tokens and high effort. None of it is the titler's.
-    const resolved = agent({
+    const resolved = resolvedAgent({
       title: { model: 'tiny' },
       compaction: { model: 'tiny' },
       toolSelect: { model: 'tiny' },
@@ -135,7 +121,7 @@ describe("a side task's own settings", () => {
       reasoningEffort: 'low',
       extraBody: { top_k: 20, presence_penalty: 1.5 },
     };
-    const resolved = agent({ title: stated, compaction: stated, toolSelect: stated });
+    const resolved = resolvedAgent({ title: stated, compaction: stated, toolSelect: stated });
     create.mockResolvedValue(answer('ok'));
 
     const title = taskCall(resolved.tasks.title, {}, resolved);
@@ -232,7 +218,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       ...extra,
     });
   const onDemand = (tasks: Record<string, unknown>) => ({
-    ...agent(tasks, { tools: { discovery: ToolDiscovery.OnDemand } }),
+    ...resolvedAgent(tasks, { tools: { discovery: ToolDiscovery.OnDemand } }),
     apiKey: 'sk-main',
   });
   /** The names of the tools the nth request declared. */
@@ -514,7 +500,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
 
   it("folds by tasks.compaction on the task's own settings", async () => {
     const config = {
-      ...agent({
+      ...resolvedAgent({
         compaction: { model: 'tiny', temperature: 0, endpoint: { baseUrl: 'http://side/v1' } },
       }),
       contextLength: 1000,
@@ -553,7 +539,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const events: RunEventInput[] = [];
     create.mockResolvedValueOnce(answer('read a to d')).mockResolvedValueOnce(says('done'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: loop,
       tools: [tool('s__read')],
       dispatch: async () => 'done',
@@ -586,7 +572,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   it('sends one system message, first, once a fold has happened', async () => {
     create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       systemPrompt: 'be brief',
       messages: long,
       dispatch: async () => 'done',
@@ -609,7 +595,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       ...long,
     ];
     await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       systemPrompt: 'be brief',
       messages: stored,
       dispatch: async () => 'done',
@@ -629,7 +615,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const run = vi.fn(async () => []);
     create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -643,7 +629,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const run = vi.fn(async () => []);
     create.mockResolvedValueOnce(answer('what was said')).mockResolvedValueOnce(says('hello'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -663,7 +649,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     );
     const folding = (extra: Partial<AgentLoopHooks>, events: RunEventInput[] = []) =>
       runAgentLoop({
-        config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+        config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
         messages: long,
         dispatch: async () => 'done',
         compact: true,
@@ -696,7 +682,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
   it('does not fold without the task, however full the window', async () => {
     create.mockResolvedValue(says('hello'));
     await runAgentLoop({
-      config: { ...agent({ title: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ title: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
@@ -719,7 +705,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
       .mockResolvedValueOnce(answer('what was said'))
       .mockResolvedValueOnce(says('hello'));
     await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: short,
       tools: [tool('s__read')],
       dispatch: async () => 'done',
@@ -734,7 +720,7 @@ describe("runAgentLoop with a resolved agent's tasks", () => {
     const events: RunEventInput[] = [];
     create.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(says('hello'));
     const result = await runAgentLoop({
-      config: { ...agent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
+      config: { ...resolvedAgent({ compaction: { model: 'tiny' } }), contextLength: 1000 },
       messages: long,
       dispatch: async () => 'done',
       compact: true,
