@@ -1,3 +1,10 @@
+# [7.4.0](https://github.com/cubicecho/agent-core/compare/v7.3.1...v7.4.0) (2026-11-23)
+
+
+### Features
+
+* **run:** answer a remote agent's request for input with onElicit ([93959a3](https://github.com/cubicecho/agent-core/commit/93959a3fac38368b529f344c26e2cde1ff231966)), closes [#250](https://github.com/cubicecho/agent-core/issues/250)
+
 ## [7.3.1](https://github.com/cubicecho/agent-core/compare/v7.3.0...v7.3.1) (2026-11-22)
 
 
