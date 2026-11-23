@@ -86,6 +86,7 @@ import { recoverToolCalls, type ToolCall } from '../wire/tool-calls.ts';
 import { FinishReason, PARALLEL_TOOL_CALLS, Role } from '../wire/wire.ts';
 import { type ArtifactOptions, RECORD_ARTIFACT_TOOL, RunArtifacts } from './artifacts.ts';
 import type { EndedBy, RunArtifact, ToolCallOutcome, ToolCallRequest, ToolCallResult } from './dispatch.ts';
+import { ELICIT_TOOL, elicitor, type OnElicit } from './elicit.ts';
 import {
   ExchangeOutcome,
   endingOf,
@@ -546,6 +547,18 @@ export interface AgentLoopOptions {
    */
   onToolResult?: (result: ToolCallResult) => void;
   /**
+   * Answers a remote agent's request for input, which an MCP server behind it made mid-call. Takes
+   * the same arguments as `agent-mcp-pool`'s `ElicitHandler`, the server id being the agent's model.
+   *
+   * @remarks
+   * Read only under `config.remoteAgent`. Absent, each request is declined, so the server's tool
+   * carries on. A handler that throws or returns something else is a `cancel`. The exchange waits
+   * for it, each request costs a turn of `maxToolIterations`, and the signal it is handed aborts
+   * when the exchange is stopped. The answer is in the transcript, since the server resumes from
+   * it; a run event holds only its action and the names of the fields filled in.
+   */
+  onElicit?: OnElicit;
+  /**
    * Hooks gathered onto the question before the first request, and told the reply after — or
    * whichever of those `fire` names.
    *
@@ -875,7 +888,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   let result: AgentLoopResult | undefined;
   try {
     record.onEvent({ kind: RunEventKind.Exchange, name: options.exchange ?? '' });
-    const apart = hostToolsApart(withRecordTool(asRemoteAgent({ ...options, onEvent: record.onEvent })));
+    const apart = hostToolsApart(
+      withRecordTool(asRemoteAgent(withoutReserved({ ...options, onEvent: record.onEvent }))),
+    );
     pin = await pinSession(apart.config, apart.session, {
       signal: apart.signal,
       // A remote agent's server picks the slots of the models it runs itself.
@@ -1224,6 +1239,44 @@ function hostToolsApart(options: AgentLoopOptions): AgentLoopOptions {
     ...(loaded ? { loaded: [...loaded].filter(isCatalogued) } : {}),
     // Undefined stays undefined: an empty shortlist is an app saying it has already decided.
     ...(preselected ? { preselected: preselected.filter(isCatalogued) } : {}),
+  };
+}
+
+/**
+ * The exchange's options with no tool under the reserved `ELICIT_TOOL` name.
+ *
+ * @param options - What `runAgentLoop` was given. Not written to.
+ * @returns `options` itself where nothing takes the name, and otherwise a copy without it in `tools`,
+ * `hostTools`, the catalogue, `loaded` or `preselected`. One notice says it was dropped.
+ *
+ * @remarks
+ * Done first, so the name is never offered to a model and no tool of an agent's or an app's can
+ * answer in place of the person a server is asking.
+ */
+function withoutReserved(options: AgentLoopOptions): AgentLoopOptions {
+  const { tools, hostTools, catalog, loaded, preselected } = options;
+  const isFree = (name: string | undefined) => name !== ELICIT_TOOL;
+  const isFreeTool = (entry: OpenAI.ChatCompletionTool) => isFree(toolName(entry));
+  const hasFreeEntries = (server: CatalogServer) => server.tools.every((entry) => isFree(entry.name));
+  const isClear =
+    (tools ?? []).every(isFreeTool) &&
+    (hostTools ?? []).every(isFreeTool) &&
+    (catalog ?? []).every(hasFreeEntries) &&
+    [...(loaded ?? [])].every(isFree) &&
+    (preselected ?? []).every(isFree);
+  if (isClear) {
+    return options;
+  }
+  options.onEvent?.({ kind: RunEventKind.Notice, text: `${ELICIT_TOOL} is a reserved name; the tool was dropped` });
+  return {
+    ...options,
+    ...(tools ? { tools: tools.filter(isFreeTool) } : {}),
+    ...(hostTools ? { hostTools: hostTools.filter(isFreeTool) } : {}),
+    ...(catalog
+      ? { catalog: catalog.map((server) => ({ ...server, tools: server.tools.filter((entry) => isFree(entry.name)) })) }
+      : {}),
+    ...(loaded ? { loaded: [...loaded].filter(isFree) } : {}),
+    ...(preselected ? { preselected: preselected.filter(isFree) } : {}),
   };
 }
 
@@ -1604,6 +1657,7 @@ async function runTurns(
     onToolResult,
     announce,
     mintCallId,
+    elicit: remote ? elicitor(config.model, options.onElicit, signal, onEvent) : undefined,
   };
 
   if (shortlist.length) {

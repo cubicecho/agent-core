@@ -45,6 +45,7 @@ import type {
   ToolCallRequest,
   ToolCallResult,
 } from './dispatch.ts';
+import { ELICIT_TOOL, type Elicitor } from './elicit.ts';
 import type { LoadCounts, RunEventInput } from './events.ts';
 import { RunEventKind } from './events.ts';
 
@@ -548,6 +549,8 @@ export interface Calling {
   announce: (message: OpenAI.ChatCompletionMessageParam, turn: number) => Promise<void>;
   /** Where the id of a call the loop writes itself comes from. */
   mintCallId: CallIdMinter;
+  /** Answers the reserved `ELICIT_TOOL` call. Present only on a remote agent, the one thing that may make it. */
+  elicit: Elicitor | undefined;
 }
 
 /**
@@ -705,6 +708,8 @@ interface Prepared {
   load: boolean;
   /** Whether the call is a `record_artifact` the loop answers itself. */
   record: boolean;
+  /** Whether the call is a remote agent's request for input, which the loop answers itself. */
+  elicit: boolean;
   /** Why a `call_tool` was refused before it was dispatched, which is then its answer. */
   refused?: { error: unknown };
   /** Whether an identical repeat of it is answered from the first, as `dedupeToolCalls` said. */
@@ -716,7 +721,7 @@ interface Prepared {
 }
 
 /** A call looked through: the request every app callback is handed, and who answers it. */
-interface LookedThrough extends Pick<Prepared, 'request' | 'load' | 'record' | 'refused'> {
+interface LookedThrough extends Pick<Prepared, 'request' | 'load' | 'record' | 'elicit' | 'refused'> {
   /** Whether it is a `call_tool` looked through to the tool it names. */
   proxy: boolean;
   /** Whether it would reach `dispatch`: its arguments read, and the loop not answering it itself. */
@@ -760,8 +765,14 @@ function lookThrough(run: Calling, entry: ReadCall): LookedThrough {
   // the catalogue, and one reached through `call_tool` is refused like any other.
   const load = onDemand && call.function.name === LOAD_TOOLS;
   const record = run.declares && call.function.name === RECORD_ARTIFACT;
-  const dispatched = args !== undefined && load === false && record === false && refused === undefined;
-  return { request, load, record, refused, proxy, dispatched };
+  const isReserved = call.function.name === ELICIT_TOOL;
+  const elicit = isReserved && run.elicit !== undefined;
+  // Only a remote agent asks for input: from a model, this is a name it made up.
+  if (isReserved && elicit === false && args) {
+    refused = { error: new Error(`${ELICIT_TOOL} is reserved, and is not a tool you can call.`) };
+  }
+  const dispatched = args !== undefined && load === false && record === false && !elicit && refused === undefined;
+  return { request, load, record, elicit, refused, proxy, dispatched };
 }
 
 /**
@@ -773,10 +784,10 @@ function lookThrough(run: Calling, entry: ReadCall): LookedThrough {
  * an identical call. `dedupeToolCalls` is asked only of a call that would reach `dispatch`.
  */
 function prepare(run: Calling, entry: ReadCall): Prepared {
-  const { request, load, record, refused, proxy, dispatched } = lookThrough(run, entry);
+  const { request, load, record, elicit, refused, proxy, dispatched } = lookThrough(run, entry);
   // Keyed on the inner call, so one made through `call_tool` and one made natively share.
   const key = `${request.name}\0${proxy ? JSON.stringify(request.args) : entry.normal}`;
-  return { entry, request, load, record, refused, dedupable: dispatched && run.dedupable(request), key };
+  return { entry, request, load, record, elicit, refused, dedupable: dispatched && run.dedupable(request), key };
 }
 
 /** One call of a turn handed back to the app: the call as read, and the request the app is handed. */
@@ -857,18 +868,19 @@ function announceCall(run: Calling, request: ToolCallRequest) {
  * @param prepared - The call.
  * @param answered - The turn's calls already made, by key. A call that threw is not in it.
  * @param batch - The keys of the calls in the batch being gathered, which a repeat shares.
- * @returns True for a `load_tools`, a `record_artifact`, a call whose arguments could not be read,
+ * @returns True for a `load_tools`, a `record_artifact`, a request for input, a call whose arguments could not be read,
  * a `call_tool` that was refused, and an identical repeat that `dedupeToolCalls` answers from the
  * first.
  */
 const answersItself = (
-  { entry, load, record, refused, dedupable, key }: Prepared,
+  { entry, load, record, elicit, refused, dedupable, key }: Prepared,
   answered: ReadonlyMap<string, unknown>,
   batch: ReadonlySet<string>,
 ) =>
   entry.args === undefined ||
   load ||
   record ||
+  elicit ||
   refused !== undefined ||
   (dedupable && (answered.has(key) || batch.has(key)));
 
@@ -945,6 +957,10 @@ async function runCall(
   const { entry, request, load, record, refused, dedupable, key } = prepared;
   const { call, args, error: unreadable } = entry;
   const { name } = request;
+  // Told as its own events and to no tool callback, so what a person typed reaches only the server.
+  if (prepared.elicit && run.elicit) {
+    return { result: { id: call.id, name, ok: true, content: await run.elicit(call.id, args) }, end: false };
+  }
   announceCall(run, request);
   const { report, close } = reportFor(run, call.id, name);
   let content: string;
@@ -1047,6 +1063,8 @@ export async function runCalls(
   opens?: (at: number) => Promise<void>,
 ): Promise<TurnOutcome> {
   const { signal, toolCalls } = run;
+  // A request for input is the run's conversation with the app, and no tool the run called.
+  const isToolCall = (name: string) => run.elicit === undefined || name !== ELICIT_TOOL;
   const { back } = calls;
   const ran = calls.run;
   const parsed = [...ran, ...back.map(({ entry }) => entry)];
@@ -1106,7 +1124,9 @@ export async function runCalls(
       await Promise.all(positions.filter((at) => isRecordCall(at) === false).map(runAt));
       await Promise.all(positions.filter(isRecordCall).map(runAt));
       for (const { id, name, ok, content } of outcomes.slice(from, to).flatMap((outcome) => outcome ?? [])) {
-        toolCalls.push({ id, name, ok });
+        if (isToolCall(name)) {
+          toolCalls.push({ id, name, ok });
+        }
         await keep(id, content);
       }
       from = to;
@@ -1146,8 +1166,9 @@ export async function runCalls(
       }
       const outcome = outcomes[at];
       // Under the name it was announced by, which for a `call_tool` is the tool it names.
-      if (at < begun) {
-        toolCalls.push({ id: call.id, name: shownAs(run, entry).name, ok: outcome?.ok ?? false });
+      const shownName = shownAs(run, entry).name;
+      if (at < begun && isToolCall(shownName)) {
+        toolCalls.push({ id: call.id, name: shownName, ok: outcome?.ok ?? false });
       }
       // The exchange is already ending on `error`; an app that cannot take this result does not
       // get to replace it.

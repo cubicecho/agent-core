@@ -242,6 +242,16 @@ What the loop and a dispatcher say to each other: the call it is handed, the ans
 - `ToolCallRequest` (type) — One call the model made, as `dispatch` and `onToolCall` are handed it.
 - `ToolCallResult` (type) — One call's whole answer, as `onToolResult` is handed it.
 
+### elicit
+
+A remote agent asking its caller for input: an MCP server behind it sent `elicitation/create`, and only the app at the far end of the request can answer.
+
+- `ELICIT_TOOL` — The reserved call a remote agent asks for input with.
+- `ElicitAction` — How a person, or the app for them, answered a request for input: MCP's three actions.
+- `ElicitAnswer` (type) — What the server is told: MCP's `ElicitResult`.
+- `ElicitParams` (type) — What a server asks with: MCP's `ElicitRequestParams`, written out so this package needs no MCP SDK.
+- `OnElicit` (type) — Answers a server's request for input, with the signature of `agent-mcp-pool`'s `ElicitHandler`, so one prompt serves an app's own MCP servers and the agents behind a router.
+
 ### events
 
 What a run is doing, while it is doing it.

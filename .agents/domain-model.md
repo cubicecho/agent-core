@@ -528,6 +528,11 @@ From a JSON file, or a stored row, to the settings an exchange uses.
 - **Bus:** the in-memory store of each run's events that watchers read, with a backlog for late
   ones. Owner: `emit`, `watch`, `history`, `endRun` (`src/run/events.ts`).
 - **Stamp:** making a whole event from an input, with its run, number and time. Owner: `stamp`.
+- **Request for input (elicitation):** an MCP server behind a remote agent asking the app's person
+  something mid-call. It arrives as a reserved handed-back call, which the loop answers and resumes
+  from. Its events say the question, the action and which fields were filled in, never what was
+  typed; the answer itself is only in the transcript. Owner: `ELICIT_TOOL`, `OnElicit`,
+  `AgentLoopOptions.onElicit`, `RunEventKind.Elicit`, `RunEventKind.ElicitAnswer` (`src/run/elicit.ts`).
 - **Nested event:** an event of a run inside a tool call, republished on the calling run under that
   call; its `via` lists each inner run and call, outermost first. Shown, never acted on: it ends no
   watcher, moves no retention, and is left out of the outer run's metrics. Owner: `RunEvent.via`,
