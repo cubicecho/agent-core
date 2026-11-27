@@ -3,8 +3,8 @@
 # credential, which is what `id-token: write` below exists for. npm only makes
 # that trade for a workflow the package has been told to trust:
 #
-#   npm trust github @cubicecho/agent-core --allow-publish \
-#     --repository cubicecho/agent-core --workflow release.yml
+#   npm trust github @cubicecho/agent-core --file release.yml \
+#     --repository cubicecho/agent-core --allow-publish
 #
 # so renaming this file, or moving the publish into another workflow, revokes
 # its own access until that is run again.
